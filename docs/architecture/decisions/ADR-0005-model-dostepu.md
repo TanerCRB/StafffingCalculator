@@ -90,3 +90,32 @@ uprawnień placeholdera wymaga własnego, datowanego wpisu tutaj.
 
 **Warunek zamknięcia:** bez zmian — osobny ADR uwierzytelniania, wymagany przed jakimkolwiek
 zadaniem wystawiającym ten mechanizm poza środowisko deweloperskie/testowe.
+
+### 2026-09-18 — uprawnienia akcji zapisu na Projekcie i dostęp do kopii (SC-1-02..04)
+
+Poprzedni aneks domyka się zdaniem: "każde kolejne poszerzenie zestawu uprawnień placeholdera
+wymaga własnego, datowanego wpisu tutaj". SC-1-02 (edycja), SC-1-03 (kopiowanie) i SC-1-04
+(archiwizacja) są takim poszerzeniem.
+
+1. **Uprawnienia akcji — osobne, nie jedno wspólne.** `PROJECT_EDIT`, `PROJECT_COPY`,
+   `PROJECT_ARCHIVE` — ziarnistość odpowiadająca temu, że archiwizacja bywa uprawnieniem innej
+   osoby niż edycja (np. tylko administrator projektu archiwizuje, ale każdy autor edytuje).
+   Podstawa niezmieniona: wymiar roli (`admin`/`author`/`viewer`) nadal nie jest modelowany, więc
+   placeholder zwija go i każdy wołający jest faktycznie `author`. To nie jest decyzja, że każdy
+   może edytować, kopiować i archiwizować projekty — nierozstrzygnięte pozostaje wyłącznie to, kto
+   te uprawnienia posiada.
+2. **`PLACEHOLDER_PERMISSIONS` rośnie** o uprawnienia z punktu 1. Granica bez zmian:
+   `APP_ALLOW_PLACEHOLDER_IDENTITY` (domyślnie `false`) plus ograniczenie do środowisk
+   `development`/`test`, egzekwowane odmową startu aplikacji.
+3. **Odmowa na projekcie spoza zasięgu wołającego jest nieodróżnialna od nieistnienia — także dla
+   zapisu.** Akcja rozwiązuje swój cel przez tę samą funkcję warstwy dostępu co odczyt (ADR-0001,
+   aneks 2026-09-18), która nie zwraca powodu — endpoint zapisu nie ma z czego zbudować
+   odpowiedzi "istnieje, ale nie twój". Kody odmowy specyficzne dla zapisu (konflikt
+   współbieżności — ADR-0007, odmowa wynikająca z ADR-0004) nie mogą stać się ubocznym
+   potwierdzeniem istnienia projektu.
+4. **Dostęp do kopii (SC-1-03).** Kopia otrzymuje wiersz `project_access` wyłącznie dla
+   wołającego, który ją wykonał — tak jak projekt utworzony od zera (spójne z już przetestowanym
+   `create_project`). Wiersze `project_access` źródła **nie są replikowane**: nadanie dostępu jest
+   osobną czynnością i nie dzieje się jako skutek uboczny kopiowania. **Konsekwencja przyjęta
+   razem z tym aneksem:** kopia projektu zespołowego jest początkowo niewidoczna dla zespołu — to
+   musi być powiedziane wykonującemu kopię, nie odkryte później.

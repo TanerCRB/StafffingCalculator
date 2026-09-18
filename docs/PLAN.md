@@ -107,4 +107,55 @@ history / this file's own change log, not as tracked product work.
   — 40 testów frontendowych zielono, w tym mutation-checked kontrast WCAG, specyficzność CSS
   zaznaczonego wiersza, sticky panel, jednolite wyciszenie nieaktywnych kontrolek.
 
+- [ ] **SC-1-02** — Edytuj Projekt (name/client/owner/description zawsze; reporting_currency/
+  delivery_period zamrożone gdy istnieje scenariusz `approved`), z ochroną przed zgubioną
+  aktualizacją.
+  *Done when:* `backend/tests` prove: (1) pola opisowe edytowalne niezależnie od statusu
+  scenariuszy; (2) edycja `reporting_currency`/`delivery_period` odrzucana w warstwie dostępu do
+  danych (nie tylko w API) gdy istnieje `approved` scenariusz, przyjmowana gdy nie istnieje —
+  kontrast na tym samym projekcie przed/po zatwierdzeniu; (3) żądanie ze starym znacznikiem
+  współbieżności (`updated_at`) → `409`, nie ciche nadpisanie — kontrast: żądanie z aktualnym
+  znacznikiem → `200`; (4) edycja projektu spoza zasięgu wołającego → `404`, nieodróżnialne od
+  nieistniejącego (nie `403`); (5) wołający wyłącznie z `PROJECT_READ` (bez `PROJECT_EDIT`) → `403`,
+  zero zapisanych zmian (obowiązkowy test odmowy dla nowego uprawnienia, ADR-0005).
+  **Out of scope (explicit):** `audit_log`/historia zmian — odłożone do bloku 8, jawne odstępstwo
+  zapisane w aneksie ADR-0004 z 2026-09-18. Autosave i obsługa `409` po stronie UI — osobne
+  zadanie frontendowe. Tworzenie/usuwanie scenariuszy. Zmiana statusu projektu (archiwizacja to
+  SC-1-04). Podstawa: `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks
+  "zakres migawki wobec pól Projektu"), `docs/architecture/decisions/ADR-0007-wspolbiezna-edycja.md`,
+  `docs/architecture/decisions/ADR-0005-model-dostepu.md` (aneks "uprawnienia akcji zapisu").
+
+- [ ] **SC-1-03** — Kopiuj Projekt (deep-copy wszystkich scenariuszy, `approved` → `draft` na
+  kopii, bez migawki, dostęp wyłącznie dla kopiującego).
+  *Done when:* `backend/tests` prove: (1) kopia to nowy, niezależny wiersz Projektu; (2) każdy
+  scenariusz źródła jest skopiowany do kopii jako `draft` (także jeśli źródło było `approved`),
+  bez współdzielonej mutowalnej referencji do danych źródła — dowód na poziomie wiersza
+  scenariusza (tabele staffing/koszty/stawki nie istnieją jeszcze, więc to NIE jest pełny dowód
+  AC-02, wprost odnotowane jako ograniczenie dowodu, nie ukryte); (3) `project_access` po
+  kopiowaniu istnieje wyłącznie dla kopiującego — grant źródła NIE jest replikowany (kontrast:
+  użytkownik z dostępem do źródła, bez własnej kopii, nie widzi kopii); (4) kopiowanie projektu
+  spoza zasięgu wołającego → `404`; (5) wołający bez `PROJECT_COPY` → `403`, zero zapisanych
+  wierszy.
+  **Out of scope (explicit):** kaskada kopiowania dla przyszłych tabel-dzieci scenariusza
+  (staffing, koszty, stawki, reguły komercyjne z ADR-0003) — każde z tych zadań MUSI rozszerzyć
+  mechanizm kopiowania o swoją tabelę w tym samym zadaniu, w którym ta tabela powstaje (jawne
+  zobowiązanie naprzód, zapisane w aneksie ADR-0004). `audit_log` — jak w SC-1-02. Podstawa:
+  `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks "kopiowanie Projektu
+  jako trzeci punkt wejścia"), `agents/invariant-guardian.md` reguła 17.
+
+- [ ] **SC-1-04** — Archiwizuj Projekt (zmiana stanu widoczności, bez wpływu na niezmienność
+  scenariuszy ani na F-12).
+  *Done when:* `backend/tests` prove: (1) archiwizacja zmienia `status` Active→Archived, projekt
+  zostaje widoczny na liście (rozszerza już dowiedzione dla odczytu w SC-1-05 o samą akcję
+  zapisu); (2) archiwizacja nie zmienia żadnego wiersza scenariusza projektu (dane scenariuszy
+  identyczne przed/po — dowód że to wyłącznie flaga widoczności, nie mechanizm zamrożenia zapisu);
+  (3) archiwizacja projektu spoza zasięgu wołającego → `404`; (4) wołający bez `PROJECT_ARCHIVE`
+  → `403`, zero zmian.
+  **Out of scope (explicit):** odarchiwizowanie — F-01 wymienia wyłącznie "archive", stan jest
+  jednokierunkowy w tym zadaniu; osobne zadanie jeśli potrzebne. Blokowanie zapisu na
+  zarchiwizowanym projekcie — świadomie NIE wprowadzone (decyzja: archiwizacja to widoczność, nie
+  niezmienność — zob. aneks ADR-0004). `audit_log` — jak w SC-1-02. Podstawa:
+  `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks "archiwizacja Projektu
+  a niezmienność i odtwarzalność").
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
