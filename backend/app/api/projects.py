@@ -3,10 +3,11 @@
 - `GET /projects` — the caller's project list (SC-1-05), read only.
 - `POST /projects` — create a project (SC-1-01).
 - `GET /projects/{id}` — read one project (SC-1-01).
+- `POST /projects/{id}/archive` — archive a project (SC-1-04).
 
-No endpoint here builds a query of its own: reads go through `app.data.project_reads`, the write
-through `app.data.project_writes` (ADR-0001, addendum 2026-09-18). Editing, archiving and copying
-are SC-1-02..04 and do not exist.
+No endpoint here builds a query of its own: reads go through `app.data.project_reads`, writes
+through `app.data.project_writes` (ADR-0001, addendum 2026-09-18). Editing and copying are
+SC-1-02/03 and do not exist.
 """
 
 import uuid
@@ -20,7 +21,7 @@ from app.api.response_shaping import shape_project_detail, shape_project_list
 from app.api.schemas.project import ProjectCreateRequest, ProjectDetail, ProjectListResponse
 from app.core.identity import CallerIdentity, Permission
 from app.data.project_reads import list_projects_for_caller, project_for_caller
-from app.data.project_writes import create_project
+from app.data.project_writes import archive_project, create_project
 from app.db.session import get_session
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -103,6 +104,43 @@ def read_project(
     `project_access` never reaches this function.
     """
     project = project_for_caller(session, caller, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
+        )
+    return shape_project_detail(project, caller)
+
+
+@router.post(
+    "/{project_id}/archive",
+    response_model=ProjectDetail,
+    summary="Archive a project",
+    responses={404: {"description": PROJECT_NOT_FOUND_DETAIL}},
+)
+def archive_project_endpoint(
+    project_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_ARCHIVE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ProjectDetail:
+    """Move a project to Archived — a visibility state, not a freeze.
+
+    Why an action path (`POST …/archive`) and not a `PATCH` carrying `status`: the transition is
+    one-way (F-01 names only "archive"; ADR-0004, addendum 2026-09-18, point 4), so a field a
+    client can set to either value would advertise an un-archive this task does not have. It also
+    keeps its own permission: `PROJECT_ARCHIVE`, not `PROJECT_EDIT` (ADR-0005, addendum
+    2026-09-18, point 1). There is no request body at all — nothing for a client to smuggle an
+    identity, an access grant or a target status into.
+
+    The archived project stays on the list, marked, and every one of its scenarios stays
+    readable and writable: the archive action writes `status` on the project row and touches
+    nothing else (see `archive_project`).
+
+    `404` for a project outside the caller's scope is not a branch written here — it is the only
+    answer available, because `archive_project` resolves its target through the same access-layer
+    function as the read path and returns an indistinguishable `None` for "not yours" and "no
+    such project" (ADR-0005, addendum, point 3).
+    """
+    project = archive_project(session, caller, project_id)
     if project is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL

@@ -1,4 +1,4 @@
-"""The only path by which project rows enter the database (SC-1-01).
+"""The only path by which project rows enter or change in the database (SC-1-01, SC-1-04).
 
 The counterpart to `app.data.project_reads`. ADR-0001 (addendum 2026-09-18, variant B) makes one
 shared function the single *read* path so the `project_access` filter cannot be forgotten; the
@@ -6,8 +6,9 @@ same reasoning applies on the way in — creating a project and granting its cre
 unit of work. Split across two call sites they eventually drift apart, and a project nobody can
 see is indistinguishable from a project that was never written (see `project_for_caller`).
 
-Scope of this module: create only. Editing, archiving and copying are SC-1-02..04 and are
-deliberately absent — including any "update if it already exists" convenience.
+Scope of this module: creating a project (SC-1-01) and archiving one (SC-1-04). Editing and
+copying are SC-1-02/03 and are deliberately absent — including any "update if it already exists"
+convenience.
 """
 
 import uuid
@@ -17,7 +18,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
-from app.models.project import Project
+from app.data.project_reads import project_for_caller
+from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 
 
@@ -102,5 +104,45 @@ def create_project(
         # so re-raising *with* the original would put the very message this is here to suppress
         # back into the traceback, one line further down. The cost is the original stack — paid
         # deliberately, and softened by the SQLSTATE and constraint name kept above.
+        raise ProjectWriteFailed(_describe_without_values(error)) from None
+    return project
+
+
+def archive_project(
+    session: Session, caller: CallerIdentity, project_id: uuid.UUID
+) -> Project | None:
+    """Set one project's `status` to `archived` — or return `None` if the caller cannot see it.
+
+    Three properties this function is built to have, each of them load-bearing:
+
+    - **It resolves its target through the shared read path** (`project_for_caller`), not through
+      a `select(Project).where(Project.id == ...)` of its own. ADR-0005's addendum of 2026-09-18
+      (point 3) requires the write action to use the same access-layer function as the read, and
+      that function cannot say *why* it returned nothing. So this one cannot either: "outside your
+      scope" and "does not exist" arrive here as the same `None`, and the endpoint has nothing
+      from which to build an "exists, but not yours" answer (criterion 3).
+    - **It writes `status` and nothing else.** No scenario row is touched, loaded for mutation or
+      cascaded into, because archiving is a visibility state and not a freeze (ADR-0004, addendum
+      2026-09-18, point 3, and point 2: archiving removes and hides no row — not the project's,
+      not a scenario's, not a snapshot's). `Project.updated_at` does move, via the column's
+      `onupdate`; that is the project row's own bookkeeping, not a change to a scenario.
+    - **It is one-way and idempotent.** There is no `status` argument and no un-archive path:
+      F-01 names only "archive" (ADR-0004, addendum, point 4), so the transition cannot be
+      reversed by passing the other value, and a second archive of the same project is a no-op
+      that reports the state rather than an error. That also means there is no lost update to
+      protect against here and hence no `updated_at` concurrency token (ADR-0007): two callers
+      archiving at once agree on the result, and a caller editing descriptive fields at the same
+      time loses nothing, because this statement never writes those fields.
+    """
+    project = project_for_caller(session, caller, project_id)
+    if project is None:
+        return None
+    try:
+        project.status = ProjectStatus.ARCHIVED
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        # As in `create_project`: `from None` so the driver's `DETAIL: Failing row contains (…)`
+        # cannot reappear in the traceback as this exception's cause (NF-11).
         raise ProjectWriteFailed(_describe_without_values(error)) from None
     return project

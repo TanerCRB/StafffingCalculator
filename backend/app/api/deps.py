@@ -29,8 +29,16 @@ from app.core.identity import CallerIdentity, Permission
 # create projects. ADR-0005 assigns that to the `author`/`admin` roles, and the role dimension
 # arrives with the authentication ADR — until then the permission is declared and enforced per
 # endpoint (see `require_permission`), while who holds it is not yet a real decision.
+#
+# `PROJECT_ARCHIVE` joins them for SC-1-04 on the same terms, recorded in ADR-0005's addendum of
+# 2026-09-18 ("uprawnienia akcji zapisu na Projekcie", point 2): without it the archive endpoint
+# is unreachable while every caller is this one placeholder. Same caveat, spelled out because it
+# is easy to read the growing set as a decision: this is not a statement that everyone may
+# archive projects. The role dimension (`admin`/`author`/`viewer`) is still not modelled, so the
+# placeholder collapses it; the permission is declared and enforced per endpoint, and only *who*
+# holds it remains undecided.
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
-    {Permission.PROJECT_READ, Permission.PROJECT_CREATE}
+    {Permission.PROJECT_READ, Permission.PROJECT_CREATE, Permission.PROJECT_ARCHIVE}
 )
 
 USES_PLACEHOLDER_IDENTITY: bool = True

@@ -30,6 +30,16 @@ class Permission(StrEnum):
 
     PERSONNEL_COSTS_READ = "personnel_costs:read"
 
+    PROJECT_ARCHIVE = "project:archive"
+    """Archiving a project is its own action permission, separate from `PROJECT_EDIT` and
+    `PROJECT_COPY` (ADR-0005, addendum 2026-09-18, point 1): archiving is routinely the right of
+    a different person than editing — a project administrator retires a project, every author
+    edits it. Folding the three into one "write" permission would make that distinction
+    unexpressible, and a permission cannot be narrowed later without breaking the callers that
+    grew to rely on the wide one. What this permission is *not*: a statement about immutability.
+    ADR-0004 (addendum 2026-09-18, point 3) keeps archiving a visibility state, so holding this
+    permission changes nothing about what may be written to the project's scenarios."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:
