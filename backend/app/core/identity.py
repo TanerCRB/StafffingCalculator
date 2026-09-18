@@ -30,6 +30,14 @@ class Permission(StrEnum):
 
     PERSONNEL_COSTS_READ = "personnel_costs:read"
 
+    PROJECT_EDIT = "project:edit"
+    """Editing an existing project (SC-1-02) — separate from `PROJECT_CREATE` and from
+    `PROJECT_READ`, per ADR-0005's addendum 2026-09-18 ("uprawnienia akcji zapisu"): the
+    granularity is there because archiving, copying and editing are plausibly different people's
+    rights. Holding this permission says nothing about *which* projects may be edited: scope stays
+    a database filter (`app.data.project_reads`), so an edit of a project outside the caller's
+    `project_access` is not a forbidden edit but an invisible one (404, not 403)."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:

@@ -115,11 +115,17 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
 
     A failure here is not a broken test: it means the placeholder identity grew a permission,
     and the question to answer is whether ADR-0005's addendum grew with it.
+
+    It grew once, on 2026-09-18, by `PROJECT_EDIT` (SC-1-02) — the addendum "uprawnienia akcji
+    zapisu na Projekcie" names exactly that widening, so the expected set below was updated with
+    it and not around it. `PROJECT_COPY` and `PROJECT_ARCHIVE` are named by the same addendum but
+    are SC-1-03/04's to add, with their own endpoints and their own refusal tests; until then this
+    assertion keeps them out.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
     assert PLACEHOLDER_PERMISSIONS == frozenset(
-        {Permission.PROJECT_READ, Permission.PROJECT_CREATE}
+        {Permission.PROJECT_READ, Permission.PROJECT_CREATE, Permission.PROJECT_EDIT}
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
 

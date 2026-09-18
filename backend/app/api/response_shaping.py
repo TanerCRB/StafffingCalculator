@@ -79,7 +79,13 @@ def shape_project_detail(project: Project, caller: CallerIdentity) -> ProjectDet
     `project_access` scope. It does apply the personnel-cost gate, which is a different
     question (F-13: seeing a project ≠ seeing individual costs).
     """
-    item = ProjectDetail(**_common_project_fields(project), owner=project.owner)
+    item = ProjectDetail(
+        **_common_project_fields(project),
+        owner=project.owner,
+        # The concurrency token (ADR-0007). Added to the detail representation only, so the list
+        # contract of SC-1-05/06 is unchanged: `_common_project_fields` stays the shared subset.
+        updated_at=project.updated_at,
+    )
     return _without_personnel_costs(item, caller)
 
 

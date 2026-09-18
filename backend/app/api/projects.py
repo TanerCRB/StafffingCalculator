@@ -3,10 +3,11 @@
 - `GET /projects` — the caller's project list (SC-1-05), read only.
 - `POST /projects` — create a project (SC-1-01).
 - `GET /projects/{id}` — read one project (SC-1-01).
+- `PATCH /projects/{id}` — edit one project (SC-1-02).
 
-No endpoint here builds a query of its own: reads go through `app.data.project_reads`, the write
-through `app.data.project_writes` (ADR-0001, addendum 2026-09-18). Editing, archiving and copying
-are SC-1-02..04 and do not exist.
+No endpoint here builds a query of its own: reads go through `app.data.project_reads`, the writes
+through `app.data.project_writes` (ADR-0001, addendum 2026-09-18). Archiving and copying are
+SC-1-03/04 and do not exist.
 """
 
 import uuid
@@ -17,10 +18,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.response_shaping import shape_project_detail, shape_project_list
-from app.api.schemas.project import ProjectCreateRequest, ProjectDetail, ProjectListResponse
+from app.api.schemas.project import (
+    ProjectCreateRequest,
+    ProjectDetail,
+    ProjectEditRequest,
+    ProjectListResponse,
+)
 from app.core.identity import CallerIdentity, Permission
 from app.data.project_reads import list_projects_for_caller, project_for_caller
-from app.data.project_writes import create_project
+from app.data.project_writes import ProjectEditRefused, create_project, update_project
 from app.db.session import get_session
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -103,6 +109,60 @@ def read_project(
     `project_access` never reaches this function.
     """
     project = project_for_caller(session, caller, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
+        )
+    return shape_project_detail(project, caller)
+
+
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectDetail,
+    summary="Edit a project the caller has access to",
+    responses={
+        404: {"description": PROJECT_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the project changed since it was read, or the edit touched "
+            "fields frozen by an approved scenario."
+        },
+    },
+)
+def edit_project(
+    project_id: uuid.UUID,
+    payload: ProjectEditRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_EDIT))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ProjectDetail:
+    """Apply a partial edit, or refuse — 404, 409 or 403, and never a 200 that changed nothing.
+
+    Every decision this endpoint reports is taken one layer down, in `update_project`:
+
+    - **404** — `update_project` returns `None`, because it resolves the project through the same
+      scope-filtered read path as `GET` and therefore cannot tell "not yours" from "no such
+      project". That is also what gives ADR-0007's 404-before-409 precedence: the concurrency
+      check is never reached for a project outside the caller's scope, so a 409 cannot become a
+      side channel confirming that one exists.
+    - **409** — either reason from ADR-0007/ADR-0004, mapped from `ProjectEditRefused`. The two
+      are distinguished by the message, not by the status code: both mean "the state of the
+      project, not your request, is what stopped this", and both leave the row untouched.
+    - **403** — the permission dependency, before any of the above and before the database.
+
+    `PATCH`, not `PUT`: the request body names the fields that change, so an edit screen that
+    never loaded `reporting_currency` cannot re-send a stale copy of it — and a group-2 field
+    absent from the body is not an edit of that field, hence not something ADR-0004 needs to
+    refuse.
+    """
+    try:
+        project = update_project(
+            session,
+            caller,
+            project_id,
+            expected_updated_at=payload.updated_at,
+            changes=payload.changes(),
+        )
+    except ProjectEditRefused as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
     if project is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
