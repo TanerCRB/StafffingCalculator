@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,18 @@ class Settings(BaseSettings):
     # deployment manifest — then refuses to start instead of silently trusting a request header.
     # Unlike `environment`, this field has no permissive default to fall back on.
     allow_placeholder_identity: bool = False
+
+    # Origins allowed to call the API from a browser (CORS). The frontend dev server and the API
+    # are two different origins even on one machine — without this, every browser request needs
+    # a preflight the API never answers. Comma-separated in the environment; a list here.
+    cors_allowed_origins: list[str] = ["http://localhost:5173"]
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def _split_comma_separated(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
 
 settings = Settings()
