@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.deps import assert_identity_mechanism_allowed
 from app.api.health import router as health_router
@@ -15,5 +16,11 @@ assert_identity_mechanism_allowed(
 )
 
 app = FastAPI(title=settings.app_name)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_allowed_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=[settings.caller_id_header, "Content-Type"],
+)
 app.include_router(health_router)
 app.include_router(projects_router)
