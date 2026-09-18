@@ -29,8 +29,14 @@ from app.core.identity import CallerIdentity, Permission
 # create projects. ADR-0005 assigns that to the `author`/`admin` roles, and the role dimension
 # arrives with the authentication ADR — until then the permission is declared and enforced per
 # endpoint (see `require_permission`), while who holds it is not yet a real decision.
+#
+# `PROJECT_COPY` joins the set for the same reason and under the same reservation (ADR-0005,
+# addendum 2026-09-18 "uprawnienia akcji zapisu na Projekcie i dostęp do kopii", point 2): without
+# it `POST /projects/{id}/copy` is unreachable while every caller is this one fixed placeholder.
+# It is *not* a decision that everyone may copy projects — who holds the permission stays open
+# until the role dimension arrives with the authentication ADR.
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
-    {Permission.PROJECT_READ, Permission.PROJECT_CREATE}
+    {Permission.PROJECT_READ, Permission.PROJECT_CREATE, Permission.PROJECT_COPY}
 )
 
 USES_PLACEHOLDER_IDENTITY: bool = True

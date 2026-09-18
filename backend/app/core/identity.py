@@ -30,6 +30,14 @@ class Permission(StrEnum):
 
     PERSONNEL_COSTS_READ = "personnel_costs:read"
 
+    PROJECT_COPY = "project:copy"
+    """Copying a project is its own action permission (ADR-0005, addendum 2026-09-18 "uprawnienia
+    akcji zapisu", point 1): the addendum keeps `PROJECT_EDIT`, `PROJECT_COPY` and
+    `PROJECT_ARCHIVE` separate rather than folding them into one write permission, because the
+    person allowed to archive is not necessarily the person allowed to edit or duplicate. A copy
+    also writes a *new* `project_access` grant, so it is not covered by `PROJECT_CREATE` either —
+    the subject being copied is one the caller must already be able to see."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:
