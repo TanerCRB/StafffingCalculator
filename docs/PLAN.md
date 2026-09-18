@@ -24,7 +24,7 @@ history / this file's own change log, not as tracked product work.
 
 ## Tasks
 
-- [ ] **SC-1-01** — Persist a Project: create/read a Project with name, client, owner, delivery
+- [x] **SC-1-01** — Persist a Project: create/read a Project with name, client, owner, delivery
   period, reporting currency, description; server-side access restricted to the project's
   assigned users.
   *Done when:* `backend/tests` prove: (1) a created Project is retrievable with the fields above,
@@ -32,6 +32,13 @@ history / this file's own change log, not as tracked product work.
   "does not exist" — not a 403 that confirms the Project's existence.
   **Out of scope (explicit):** editing, archiving, copying (F-01) — separate tasks. Scenario
   creation (needs the Project to exist first).
+  **Done 2026-09-18:** `backend/tests/test_project_create_read.py::test_sc_1_01_01_created_project_is_retrievable_with_all_its_fields`
+  + `::test_sc_1_01_01_created_project_is_committed_and_readable_from_another_connection` (kryt. 1),
+  `::test_sc_1_01_02_out_of_scope_project_is_indistinguishable_from_one_that_does_not_exist`
+  (kryt. 2, z kontrastem: ten sam id, wołający z dostępem → 200) + `::test_sc_1_01_02_unknown_project_id_is_not_found` —
+  88 testów backendowych zielono na prawdziwym PostgreSQL (testcontainers); migracja
+  `backend/migrations/versions/4f0a9c1b7d62_require_non_blank_project_name_client_owner.py`.
+  PR #20.
 
 - [x] **SC-1-05** — Zwróć listę projektów wołającego użytkownika (odczyt, bez akcji zapisu).
   *Done when:* `backend/tests` prove: (1) `test_project_list_omits_projects_outside_caller_access`
