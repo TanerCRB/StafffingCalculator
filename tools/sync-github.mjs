@@ -82,6 +82,12 @@ if (LABELS_ONLY) {
       }
       if (seen.has(label.name)) fail(`label "${label.name}" is defined more than once.`);
 
+      // GitHub rejects a description over 100 characters with a 422 at creation time, not here —
+      // catching it before the gh call is cheaper than discovering it mid-run.
+      if (label.description.length > 100) {
+        fail(`label "${label.name}": description is ${label.description.length} chars, GitHub's limit is 100.`);
+      }
+
       // Pure ASCII, enforced by an assertion, not by trust — see the comment in labels.json.
       for (const field of ["name", "description"]) {
         const offending = [...label[field]].find((c) => c.charCodeAt(0) > 127);
