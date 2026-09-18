@@ -4,10 +4,11 @@
 - `POST /projects` — create a project (SC-1-01).
 - `GET /projects/{id}` — read one project (SC-1-01).
 - `PATCH /projects/{id}` — edit one project (SC-1-02).
+- `POST /projects/{id}/copy` — copy a project with all its scenarios (SC-1-03).
+- `POST /projects/{id}/archive` — archive a project (SC-1-04).
 
-No endpoint here builds a query of its own: reads go through `app.data.project_reads`, the writes
-through `app.data.project_writes` (ADR-0001, addendum 2026-09-18). Archiving and copying are
-SC-1-03/04 and do not exist.
+No endpoint here builds a query of its own: reads go through `app.data.project_reads`, writes
+through `app.data.project_writes` (ADR-0001, addendum 2026-09-18).
 """
 
 import uuid
@@ -26,7 +27,12 @@ from app.api.schemas.project import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.project_reads import list_projects_for_caller, project_for_caller
-from app.data.project_writes import ProjectEditRefused, create_project, update_project
+from app.data.project_writes import (
+    ProjectEditRefused,
+    copy_project,
+    create_project,
+    update_project,
+)
 from app.db.session import get_session
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -168,3 +174,37 @@ def edit_project(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
         )
     return shape_project_detail(project, caller)
+
+
+@router.post(
+    "/{project_id}/copy",
+    response_model=ProjectDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Copy a project with all its scenarios",
+    responses={404: {"description": PROJECT_NOT_FOUND_DETAIL}},
+)
+def copy_project_endpoint(
+    project_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_COPY))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ProjectDetail:
+    """Copy a project the caller can see; the copy belongs to the caller alone.
+
+    No request body: everything the copy needs comes from the source row and from the request's
+    own auth context. In particular the beneficiary of the new `project_access` grant is
+    `caller.user_id` and cannot be named by the client (ADR-0005, addendum, point 4), and the
+    copy keeps the source's name — renaming is the edit action (SC-1-02), not part of copying.
+
+    The source is resolved through `project_for_caller`, the same scope-filtered read path the
+    `GET` above uses, so a project outside the caller's scope is a 404 here too — identical
+    status, identical body. ADR-0005's addendum (point 3) requires that for write actions as
+    well: a write-specific refusal code must not become a side-channel confirming that a project
+    exists. There is no 403-for-an-existing-row branch to write, because the row never arrives.
+    """
+    source = project_for_caller(session, caller, project_id)
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
+        )
+    copy = copy_project(session, caller, source)
+    return shape_project_detail(copy, caller)

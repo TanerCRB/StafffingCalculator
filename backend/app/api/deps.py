@@ -30,12 +30,20 @@ from app.core.identity import CallerIdentity, Permission
 # arrives with the authentication ADR — until then the permission is declared and enforced per
 # endpoint (see `require_permission`), while who holds it is not yet a real decision.
 #
-# `PROJECT_EDIT` joins the set for the same reason and under the same reservation (ADR-0005,
-# addendum 2026-09-18, "uprawnienia akcji zapisu na Projekcie"): while every caller is this one
-# fixed placeholder, `PATCH /projects/{id}` would otherwise be unreachable. It is *not* a decision
-# that everyone may edit projects — the role dimension arrives with the authentication ADR.
+# `PROJECT_EDIT`, `PROJECT_COPY` and `PROJECT_ARCHIVE` join the set for the same reason and under
+# the same reservation (ADR-0005, addendum 2026-09-18, "uprawnienia akcji zapisu na Projekcie i
+# dostęp do kopii"): while every caller is this one fixed placeholder, `PATCH /projects/{id}`,
+# `POST /projects/{id}/copy` and `POST /projects/{id}/archive` would otherwise be unreachable. It
+# is *not* a decision that everyone may edit, copy or archive projects — the role dimension
+# arrives with the authentication ADR.
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
-    {Permission.PROJECT_READ, Permission.PROJECT_CREATE, Permission.PROJECT_EDIT}
+    {
+        Permission.PROJECT_READ,
+        Permission.PROJECT_CREATE,
+        Permission.PROJECT_EDIT,
+        Permission.PROJECT_COPY,
+        Permission.PROJECT_ARCHIVE,
+    }
 )
 
 USES_PLACEHOLDER_IDENTITY: bool = True

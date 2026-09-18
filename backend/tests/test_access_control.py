@@ -105,7 +105,7 @@ def test_project_create_denies_caller_holding_only_project_read(
 
 
 def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() -> None:
-    """The placeholder identity grants exactly project read and project create — no more.
+    """The placeholder identity grants exactly project read, create and copy — no more.
 
     Asserted as set equality rather than membership: ADR-0005's addendum requires every widening
     of this set to be a deliberate, dated entry in the decision, and a membership assertion
@@ -116,16 +116,22 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     A failure here is not a broken test: it means the placeholder identity grew a permission,
     and the question to answer is whether ADR-0005's addendum grew with it.
 
-    It grew once, on 2026-09-18, by `PROJECT_EDIT` (SC-1-02) — the addendum "uprawnienia akcji
-    zapisu na Projekcie" names exactly that widening, so the expected set below was updated with
-    it and not around it. `PROJECT_COPY` and `PROJECT_ARCHIVE` are named by the same addendum but
-    are SC-1-03/04's to add, with their own endpoints and their own refusal tests; until then this
-    assertion keeps them out.
+    It grew twice on 2026-09-18: by `PROJECT_EDIT` (SC-1-02) and `PROJECT_COPY` (SC-1-03). The
+    addendum "uprawnienia akcji zapisu na Projekcie i dostęp do kopii" names both widenings, so
+    the expected set below was updated with them and not around them. `PROJECT_ARCHIVE` is named
+    by the same addendum but is SC-1-04's to add, with its own endpoint and its own refusal test;
+    until then this assertion keeps it out. The assertion stays a set equality — the canary is
+    re-armed around the new set, not softened into a membership check.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
     assert PLACEHOLDER_PERMISSIONS == frozenset(
-        {Permission.PROJECT_READ, Permission.PROJECT_CREATE, Permission.PROJECT_EDIT}
+        {
+            Permission.PROJECT_READ,
+            Permission.PROJECT_CREATE,
+            Permission.PROJECT_EDIT,
+            Permission.PROJECT_COPY,
+        }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
 

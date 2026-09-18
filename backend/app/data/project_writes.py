@@ -6,12 +6,13 @@ same reasoning applies on the way in — creating a project and granting its cre
 unit of work. Split across two call sites they eventually drift apart, and a project nobody can
 see is indistinguishable from a project that was never written (see `project_for_caller`).
 
-Scope of this module: create (SC-1-01) and edit (SC-1-02). Archiving and copying are SC-1-03/04
-and are deliberately absent — including any "update if it already exists" convenience.
+Scope of this module: create (SC-1-01), edit (SC-1-02), copy (SC-1-03) and archive (SC-1-04) —
+including any "update if it already exists" convenience the API might otherwise be tempted to add
+outside these four named actions.
 """
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -286,3 +287,137 @@ def update_project(
     # database), so it is reloaded before anyone shapes a response out of it.
     session.refresh(project)
     return project
+
+
+# --- copying (SC-1-03) -------------------------------------------------------------------------
+# ADR-0004, addendum 2026-09-18 ("kopiowanie Projektu jako trzeci punkt wejścia"): duplicating a
+# scenario (F-09), opening a new version of an approved one (F-12) and copying a whole project
+# (F-01) are *one* mechanism with three entry points, not three copy routines. `copy_scenario`
+# below is that mechanism; `copy_project` is the third entry point and delegates to it.
+
+ScenarioChildCopier = Callable[[Session, Scenario, Scenario], None]
+"""Copies the rows of one child table from a source scenario to its copy, in that order."""
+
+SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = ()
+"""The cascade, as data rather than as prose (ADR-0004, addendum, point 4).
+
+Empty today because no child table of `scenarios` exists yet: staffing, costs, rates and
+commercial-model rules (ADR-0003) are later plan blocks. **Each of those tasks must append its
+copier here in the same task that creates its table.** A table left out does not raise anything —
+it yields a copy that shares the source's data, which is exactly what AC-02 forbids. The registry
+exists so that adding a table is one append in one named place instead of a search for every
+place that copies something.
+"""
+
+SCENARIO_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
+    {"id", "project_id", "status", "created_at", "updated_at"}
+)
+"""Scenario attributes the copy does **not** inherit, and why each one is here:
+
+- `id` — a copy is a new row, not a second name for the source one (criterion 1/2).
+- `project_id` — set from the target project, which is what makes this usable both for copying
+  into another project and for duplicating inside the same one.
+- `status` — the copy is always `draft` (ADR-0004: "dalsze zmiany wymagają nowej wersji (kopii)
+  scenariusza ze statusem draft"), including when the source is `approved`.
+- `created_at` / `updated_at` — the copy is created now; inheriting the source's timestamps would
+  backdate a row that did not exist.
+
+Everything else is copied by reflection over the mapper rather than by a hand-written field list,
+so a column added to `Scenario` later is copied by default instead of being silently dropped. The
+accompanying test asserts every mapped attribute is either copied or named here, so a new column
+forces the decision instead of inheriting one.
+"""
+
+PROJECT_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
+    {"id", "status", "created_at", "updated_at"}
+)
+"""Project attributes the copy does not inherit. `status` in particular: the copy starts Active
+(the column default) even when the source is Archived — archiving is a visibility state of the
+source (ADR-0004, addendum "archiwizacja Projektu"), and a copy nobody can act on is not what
+copying an archived project is for. Descriptive fields, including `name`, are copied verbatim:
+renaming is the edit action (SC-1-02), not a side effect of copying."""
+
+
+def _values_to_copy(instance: object, *, excluded: frozenset[str]) -> dict[str, object]:
+    """Mapped column values of `instance`, minus the excluded attribute names."""
+    mapper = sa.inspect(type(instance))
+    return {
+        attribute.key: getattr(instance, attribute.key)
+        for attribute in mapper.column_attrs
+        if attribute.key not in excluded
+    }
+
+
+def copy_scenario(session: Session, source: Scenario, *, into_project: Project) -> Scenario:
+    """Copy one scenario into `into_project` as a fresh `draft`, with its child rows.
+
+    The single copy mechanism ADR-0004 requires (addendum, point 1). Copying a project calls it
+    once per source scenario; duplicating a scenario (F-09) and opening a new version of an
+    approved one (F-12) will call it with `into_project=source.project`. Nothing about this
+    function is specific to the project-copy entry point.
+
+    Two deliberate properties:
+
+    - **The status is not a parameter.** Every copy is a `draft`, whatever the source was. A
+      parameter would make "copy an approved scenario and keep it approved" expressible, and that
+      is precisely the one-way, human-performed approval step of ADR-0004.
+    - **No snapshot is carried over** (ADR-0004, addendum, point 3). `approved_snapshot_*` rows
+      belong to the approval the copy has not been through; the copy of an approved calculation
+      is therefore *not* reproducible the way its source is, and regains reproducibility only at
+      its own approval. This is a named consequence against F-12, not an omission — and it is
+      also why the source's `approved` row is only ever read here, never written: the copy is a
+      new row, so the immutability of the approved source is untouched.
+    """
+    copy = Scenario(
+        id=uuid.uuid4(),
+        project=into_project,
+        status=ScenarioStatus.DRAFT,
+        **_values_to_copy(source, excluded=SCENARIO_COLUMNS_NOT_COPIED),
+    )
+    session.add(copy)
+    # Flush before the children so the copy has a row for them to point at; the enclosing
+    # transaction is still the caller's, so a failure further down undoes this too.
+    session.flush()
+    for copy_child_rows in SCENARIO_CHILD_COPIERS:
+        copy_child_rows(session, source, copy)
+    return copy
+
+
+def copy_project(session: Session, caller: CallerIdentity, source: Project) -> Project:
+    """Copy a project the caller can already see: a new project row, every scenario as a draft.
+
+    One transaction, like `create_project`: the project row, the caller's access grant and every
+    copied scenario either all land or none do. A half-copied project is worse than a failed
+    copy — it looks finished.
+
+    `source` is a row `app.data.project_reads.project_for_caller` has already returned, i.e. one
+    inside the caller's `project_access` scope. This function does not check access and must not
+    be asked to: "may this caller see the source?" is answered by the shared read path, so there
+    is no second, local scope check here to forget or to get subtly different.
+
+    **Access to the copy is granted to `caller.user_id` and to nobody else** (ADR-0005, addendum
+    2026-09-18, point 4). The source's `project_access` rows are deliberately not replicated:
+    granting access is its own action, not a side effect of copying. The consequence accepted
+    together with that decision is that the copy of a team project is initially invisible to the
+    team — which is something to tell the person copying, not something for them to discover.
+    """
+    copy = Project(
+        id=uuid.uuid4(),
+        **_values_to_copy(source, excluded=PROJECT_COLUMNS_NOT_COPIED),
+    )
+    try:
+        session.add(copy)
+        session.flush()
+        session.add(ProjectAccess(user_id=caller.user_id, project_id=copy.id))
+        # `list(...)` because `copy_scenario` appends to a project's `scenarios` collection, and
+        # the F-09 entry point copies into the *source* project — iterating the live collection
+        # there would append while iterating it.
+        for scenario in list(source.scenarios):
+            copy_scenario(session, scenario, into_project=copy)
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        # Same reasoning as in `create_project`: `from None` keeps psycopg's `DETAIL: Failing row
+        # contains (…)` — the whole row, owner's name included — out of the traceback (NF-11).
+        raise ProjectWriteFailed(_describe_without_values(error)) from None
+    return copy
