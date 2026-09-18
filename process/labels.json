@@ -60,7 +60,7 @@
   "severity": {
     "$comment": "Severity of an Invariant Guardian report. Scale from agents/invariant-guardian.md - adapt to your own list of invariants.",
     "labels": [
-      { "name": "severity:high", "color": "b60205", "description": "Data leak between clients, incorrect billing, silent data loss, a security mechanism that appears to work but doesn't" },
+      { "name": "severity:high", "color": "b60205", "description": "Data leak, incorrect billing, silent data loss, a security mechanism that only appears to work" },
       { "name": "severity:medium", "color": "d93f0b", "description": "API contract, missing evidence, a defect under concurrency or retry" },
       { "name": "severity:low", "color": "fbca04", "description": "Documentation drift, language, convention with no functional effect" }
     ]
