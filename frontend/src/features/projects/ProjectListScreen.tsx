@@ -5,6 +5,7 @@ import type { ProjectListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
 import { missingInputLabel } from "./scenarioInputLabels";
+import "./ProjectListScreen.css";
 
 /**
  * SC-1-06 — the project list with the scenarios of the selected project. Read only.
@@ -14,10 +15,15 @@ import { missingInputLabel } from "./scenarioInputLabels";
  * filter, no client-side sort and no locally invented empty list — an empty list is something
  * only the server can say.
  *
- * The row controls (View/Edit/Copy/Archive/Add scenario) are rendered and keyboard reachable but
- * wired to nothing: the screens behind them are SC-1-02..04 (Issue #3, out of scope 4). They are
- * `aria-disabled` with a tooltip rather than `disabled`, so that they stay in the tab order and
- * remain announced — a user may see the shape of the product ahead of its implementation.
+ * The row controls (View/Edit/Copy/Archive/Add scenario) and the list toolbar (search, filters,
+ * add project) are rendered and keyboard reachable but wired to nothing: the screens behind them
+ * are SC-1-02..04 (Issue #3, out of scope 4) and a separate search/filter story (Issue #3, out of
+ * scope 2). They are `aria-disabled` with a tooltip rather than `disabled`, so that they stay in
+ * the tab order and remain announced — a user may see the shape of the product ahead of its
+ * implementation.
+ *
+ * Layout reference: `Wymagania/UI/Project List.jpeg` — a reference, not a specification (Issue #3,
+ * out of scope 1). Colours and type come from `src/styles/tokens.css`, never from a literal here.
  */
 
 type RowAction = { readonly key: string; readonly label: string };
@@ -31,6 +37,10 @@ const ROW_ACTIONS: readonly RowAction[] = [
 ];
 
 const NOT_IMPLEMENTED_HINT = "Not implemented yet — planned in SC-1-02..04";
+const SEARCH_AND_FILTER_HINT =
+  "Not implemented yet — search and filtering are a separate story (Issue #3, out of scope 2)";
+const ADD_PROJECT_HINT =
+  "Not implemented yet — creating a project from this screen is a separate task";
 
 /**
  * The placeholder handler for every row control. It does nothing, on purpose, and it is named so
@@ -85,86 +95,174 @@ export function ProjectListScreen() {
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
   return (
-    <section aria-labelledby="project-list-heading">
-      <h2 id="project-list-heading">Projects</h2>
+    <section className="project-list" aria-labelledby="project-list-heading">
+      <div className="project-list__grid">
+        <div className="card project-list__main">
+          <div className="project-list__toolbar-row">
+            <h2 id="project-list-heading" className="card__title">
+              Projects
+            </h2>
+            {/* The toolbar belongs to a list that exists. A denied read renders a screen with no
+                action controls at all — not a toolbar above an empty table (ADR-0005). */}
+            {state.kind === "ready" && <ListToolbar />}
+          </div>
 
-      {state.kind === "loading" && <p>Loading projects…</p>}
-      {/* A denied request renders a screen with no rows and no action controls — never data
-          that is hidden afterwards (ADR-0005). */}
-      {state.kind === "denied" && (
-        <p role="status">You do not have permission to view projects.</p>
-      )}
-      {state.kind === "timed-out" && (
-        <p role="status">Projects could not be loaded — request timed out.</p>
-      )}
-      {state.kind === "failed" && <p role="status">Projects could not be loaded.</p>}
-
-      {state.kind === "ready" && projects.length === 0 && (
-        <p role="status">No projects to show.</p>
-      )}
-
-      {state.kind === "ready" && projects.length > 0 && (
-        <table>
-          <caption>Projects you have access to</caption>
-          <thead>
-            <tr>
-              <th scope="col">Project name</th>
-              <th scope="col">Client</th>
-              <th scope="col">Implementation period</th>
-              <th scope="col">Status</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {projects.map((project) => (
-              <tr key={project.id}>
-                <th scope="row">
-                  <button
-                    type="button"
-                    aria-pressed={project.id === selectedProjectId}
-                    onClick={() => setSelectedProjectId(project.id)}
-                  >
-                    {project.name}
-                  </button>
-                </th>
-                <td>{project.client}</td>
-                <td>
-                  {formatDeliveryPeriod(project.delivery_period.start, project.delivery_period.end)}
-                </td>
-                {/* The status label is the server's word, rendered as text — not a colour, not a
-                    locally computed state. */}
-                <td>{project.status}</td>
-                <td>
-                  {ROW_ACTIONS.map((action) => (
-                    <button
-                      key={action.key}
-                      type="button"
-                      aria-label={`${action.label} ${project.name}`}
-                      aria-disabled="true"
-                      title={NOT_IMPLEMENTED_HINT}
-                      onClick={handleNotYetImplemented}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {state.kind === "ready" && (
-        <section aria-labelledby="scenario-details-heading">
-          <h2 id="scenario-details-heading">Scenario details</h2>
-          {selectedProject === undefined ? (
-            <p>Select a project to see its scenarios.</p>
-          ) : (
-            <ScenarioDetails project={selectedProject} />
+          {state.kind === "loading" && <p className="project-list__message">Loading projects…</p>}
+          {/* A denied request renders a screen with no rows and no action controls — never data
+              that is hidden afterwards (ADR-0005). */}
+          {state.kind === "denied" && (
+            <p role="status" className="project-list__message project-list__message--attention">
+              You do not have permission to view projects.
+            </p>
           )}
-        </section>
-      )}
+          {state.kind === "timed-out" && (
+            <p role="status" className="project-list__message project-list__message--attention">
+              Projects could not be loaded — request timed out.
+            </p>
+          )}
+          {state.kind === "failed" && (
+            <p role="status" className="project-list__message project-list__message--attention">
+              Projects could not be loaded.
+            </p>
+          )}
+
+          {state.kind === "ready" && projects.length === 0 && (
+            <p role="status" className="project-list__message">
+              No projects to show.
+            </p>
+          )}
+
+          {state.kind === "ready" && projects.length > 0 && (
+            <table className="project-list__table">
+              {/* The layout has no room for a visible caption; a screen reader still gets one. */}
+              <caption className="visually-hidden">Projects you have access to</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Project name</th>
+                  <th scope="col">Client</th>
+                  <th scope="col">Implementation period</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projects.map((project) => (
+                  <tr
+                    key={project.id}
+                    className={
+                      project.id === selectedProjectId
+                        ? "project-list__row project-list__row--selected"
+                        : "project-list__row"
+                    }
+                  >
+                    <th scope="row">
+                      <button
+                        type="button"
+                        className="project-list__name-button"
+                        aria-pressed={project.id === selectedProjectId}
+                        onClick={() => setSelectedProjectId(project.id)}
+                      >
+                        {project.name}
+                      </button>
+                    </th>
+                    <td className="project-list__client">{project.client}</td>
+                    <td className="project-list__period">
+                      {formatDeliveryPeriod(
+                        project.delivery_period.start,
+                        project.delivery_period.end,
+                      )}
+                    </td>
+                    {/* The status label is the server's word, rendered as text — the badge fill is
+                        an additional signal on top of it, never a replacement (NF-08). */}
+                    <td>
+                      <span className="badge" data-project-status={project.status}>
+                        {project.status}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="project-list__row-actions">
+                        {ROW_ACTIONS.map((action) => (
+                          <button
+                            key={action.key}
+                            type="button"
+                            className="button button--quiet"
+                            aria-label={`${action.label} ${project.name}`}
+                            aria-disabled="true"
+                            title={NOT_IMPLEMENTED_HINT}
+                            onClick={handleNotYetImplemented}
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {state.kind === "ready" && (
+          <section
+            className="card project-list__details"
+            aria-labelledby="scenario-details-heading"
+          >
+            {/* The mockup calls this panel "Calculation details". The word here stays "Scenario":
+                gate-1 decision 5 (Issue #3) made Scenario the single name of that entity, in the
+                API, the data model and the UI. */}
+            <h2 id="scenario-details-heading" className="project-list__details-title">
+              Scenario details
+            </h2>
+            {selectedProject === undefined ? (
+              <p className="project-list__details-empty">Select a project to see its scenarios.</p>
+            ) : (
+              <ScenarioDetails project={selectedProject} />
+            )}
+          </section>
+        )}
+      </div>
     </section>
+  );
+}
+
+/**
+ * Search, Filters and Add project as they appear in the mockup — rendered, focusable, announced,
+ * and connected to nothing. No filtering runs on the client (Issue #3, out of scope 2: the list
+ * is exactly the API's answer), and Add project does not call `POST /projects` even though the
+ * endpoint exists (SC-1-01) — that screen is a separate task with its own criteria.
+ */
+function ListToolbar() {
+  return (
+    <div className="project-list__toolbar">
+      <input
+        type="search"
+        className="input project-list__search"
+        aria-label="Search projects"
+        placeholder="Search"
+        readOnly
+        aria-disabled="true"
+        title={SEARCH_AND_FILTER_HINT}
+      />
+      <button
+        type="button"
+        className="button button--secondary"
+        aria-disabled="true"
+        title={SEARCH_AND_FILTER_HINT}
+        onClick={handleNotYetImplemented}
+      >
+        Filters
+      </button>
+      <button
+        type="button"
+        className="button button--primary"
+        aria-disabled="true"
+        title={ADD_PROJECT_HINT}
+        onClick={handleNotYetImplemented}
+      >
+        Add project
+      </button>
+    </div>
   );
 }
 
@@ -172,34 +270,37 @@ function ScenarioDetails({ project }: { project: ProjectListItem }) {
   if (project.scenarios.length === 0) {
     return (
       <>
-        <p>Scenarios of {project.name}</p>
-        <p>This project has no scenarios yet.</p>
+        <p className="project-list__details-subtitle">Scenarios of {project.name}</p>
+        <p className="project-list__details-empty">This project has no scenarios yet.</p>
       </>
     );
   }
 
   return (
     <>
-      <p>Scenarios of {project.name}</p>
-      <p>Reporting currency: {project.reporting_currency}</p>
-      <ul>
+      <p className="project-list__details-subtitle">Scenarios of {project.name}</p>
+      <p className="project-list__details-meta">
+        Reporting currency: {project.reporting_currency}
+      </p>
+      <ul className="scenario-list">
         {project.scenarios.map((scenario) => (
-          <li key={scenario.id}>
-            <h3>{scenario.name}</h3>
+          <li className="scenario-card" key={scenario.id}>
+            <h3 className="scenario-card__title">{scenario.name}</h3>
             {/* Status in words. Colour alone would carry the same information for nobody who
-                cannot see it, and for no test. */}
-            <p>Status: {scenario.status}</p>
-            <p>
-              {scenario.ready_for_approval
-                ? "Ready for approval"
-                : "Not ready for approval"}
+                cannot see it, and for no test — the fill is added to the word, not instead of
+                it. */}
+            <p className="scenario-card__status badge" data-scenario-status={scenario.status}>
+              Status: {scenario.status}
+            </p>
+            <p className="scenario-card__readiness" data-ready={String(scenario.ready_for_approval)}>
+              {scenario.ready_for_approval ? "Ready for approval" : "Not ready for approval"}
             </p>
             {!scenario.ready_for_approval && scenario.missing_inputs.length > 0 && (
-              <p>
+              <p className="scenario-card__gaps">
                 Missing inputs: {scenario.missing_inputs.map(missingInputLabel).join(", ")}
               </p>
             )}
-            <p>
+            <p className="scenario-card__metric">
               Target margin:{" "}
               {/* The API value stays a decimal string all the way to the screen (ADR-0002) —
                   Number() here would round "1.005" down to 1.00%. */}

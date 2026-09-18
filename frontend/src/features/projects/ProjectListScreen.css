@@ -1,0 +1,273 @@
+/*
+ * Project list screen — layout only. Reference: Wymagania/UI/Project List.jpeg (a reference, not a
+ * specification: Issue #3, out of scope 1 — no pixel fidelity, no visual-regression tests).
+ *
+ * Colours come from src/styles/tokens.css. The orange accent appears only on white surfaces
+ * (toolbar, scenario card top bar); the table area is light steel and uses blue for its accents.
+ */
+
+.project-list {
+  display: block;
+}
+
+.project-list__grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sc-space-5);
+}
+
+.project-list__main {
+  flex: 1 1 32rem;
+  min-width: 0;
+  padding: var(--sc-space-5);
+}
+
+.project-list__toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sc-space-4);
+  margin-bottom: var(--sc-space-4);
+}
+
+.project-list__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sc-space-2);
+}
+
+.project-list__search {
+  min-width: 14rem;
+}
+
+.project-list__message {
+  padding: var(--sc-space-5);
+  border-radius: var(--sc-radius-md);
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text-muted);
+  font-weight: var(--sc-font-weight-medium);
+}
+
+.project-list__message--attention {
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+}
+
+/* --- Table ----------------------------------------------------------------------------------- */
+
+/* Separate borders, not collapsed: each row is a light-steel card with its own rounded ends, the
+   way the mockup draws it. */
+.project-list__table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 var(--sc-space-2);
+  text-align: left;
+}
+
+/* The server's strings are up to 200 characters and are not required to contain a space
+   (Reviewer R-02: `backend/app/api/schemas/project.py`), so a name may be one unbroken word.
+   Breaking mid-word is ugly; a row stretched past the viewport is worse, and a name silently
+   clipped to nothing is worst. */
+.project-list__table th,
+.project-list__table td {
+  padding: var(--sc-space-3) var(--sc-space-4);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.project-list__table thead th {
+  padding-top: 0;
+  padding-bottom: var(--sc-space-2);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+  border-bottom: 1px solid var(--sc-color-border);
+}
+
+.project-list__row > th,
+.project-list__row > td {
+  background-color: var(--sc-color-surface-muted);
+  border-top: 1px solid var(--sc-color-border);
+  border-bottom: 1px solid var(--sc-color-border);
+  font-weight: var(--sc-font-weight-regular);
+}
+
+.project-list__row > :first-child {
+  border-left: 1px solid var(--sc-color-border);
+  border-top-left-radius: var(--sc-radius-md);
+  border-bottom-left-radius: var(--sc-radius-md);
+}
+
+.project-list__row > :last-child {
+  border-right: 1px solid var(--sc-color-border);
+  border-top-right-radius: var(--sc-radius-md);
+  border-bottom-right-radius: var(--sc-radius-md);
+}
+
+/*
+ * The selected row is outlined on all four sides. The side borders need their own rules at the
+ * same shape as the ones above: `.project-list__row > :first-child` carries two class-level parts
+ * and beats a `.project-list__row--selected > td` no matter how late it appears, which left the
+ * selected row blue on top and bottom and grey down the sides (Reviewer R-04). Matching the
+ * selector shape — not source order alone — is what makes this hold.
+ */
+.project-list__row--selected > th,
+.project-list__row--selected > td {
+  background-color: var(--sc-color-white);
+  border-color: var(--sc-color-blue);
+}
+
+.project-list__row--selected > :first-child {
+  border-left-color: var(--sc-color-blue);
+}
+
+.project-list__row--selected > :last-child {
+  border-right-color: var(--sc-color-blue);
+}
+
+.project-list__client,
+.project-list__period {
+  color: var(--sc-color-text-muted);
+}
+
+.project-list__period {
+  white-space: nowrap;
+}
+
+/* The project name is the row's selector: a real button, left-aligned, that reads as the row
+   title. Blue on light steel is the pairing the style guide asks for. */
+.project-list__name-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: var(--sc-font-size-md);
+  font-weight: var(--sc-font-weight-semibold);
+  color: var(--sc-color-text);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+/* The deep blue, not `--sc-color-blue`: the bright one on a light-steel row is 4.31:1, under the
+   4.5:1 this text size and weight needs (Reviewer R-01). */
+.project-list__name-button:hover {
+  color: var(--sc-color-blue-deep);
+}
+
+.project-list__name-button[aria-pressed="true"] {
+  color: var(--sc-color-blue-deep);
+}
+
+.project-list__row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sc-space-2);
+}
+
+/* --- Details panel ---------------------------------------------------------------------------- */
+
+/* Sticky: the list is unpaginated by design for now, so selecting a project near the bottom would
+   otherwise update a panel far above the viewport and look like nothing happened (Reviewer
+   R-03). */
+.project-list__details {
+  position: sticky;
+  top: var(--sc-space-4);
+  flex: 0 1 var(--sc-layout-side-panel-width);
+  min-width: 0;
+  padding: var(--sc-space-5);
+  background-color: var(--sc-color-surface-muted);
+  overflow-wrap: anywhere;
+}
+
+.project-list__details-title {
+  font-size: var(--sc-font-size-lg);
+  font-weight: var(--sc-font-weight-bold);
+  line-height: var(--sc-line-height-tight);
+  margin-bottom: var(--sc-space-4);
+}
+
+.project-list__details-subtitle {
+  font-weight: var(--sc-font-weight-medium);
+  margin-bottom: var(--sc-space-1);
+}
+
+.project-list__details-meta,
+.project-list__details-empty {
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+  margin-bottom: var(--sc-space-4);
+}
+
+.scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-4);
+}
+
+/* White card on the light-steel panel, with the orange top accent the style guide allows on
+   white. */
+/* No `overflow: hidden` on the card: it would clip a long scenario name away without a trace
+   (Reviewer R-02). The accent bar rounds its own top corners instead of being cropped by the
+   card. */
+.scenario-card {
+  position: relative;
+  padding: var(--sc-space-4);
+  padding-top: var(--sc-space-5);
+  background-color: var(--sc-color-surface);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  box-shadow: var(--sc-shadow-card);
+}
+
+.scenario-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--sc-accent-bar-height);
+  border-radius: var(--sc-radius-md) var(--sc-radius-md) 0 0;
+  background-color: var(--sc-color-orange);
+}
+
+.scenario-card__title {
+  font-size: var(--sc-font-size-md);
+  font-weight: var(--sc-font-weight-semibold);
+  line-height: var(--sc-line-height-tight);
+  margin-bottom: var(--sc-space-2);
+  overflow-wrap: anywhere;
+}
+
+.scenario-card__status {
+  margin-bottom: var(--sc-space-2);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.scenario-card__readiness {
+  display: inline-block;
+  padding: var(--sc-space-1) var(--sc-space-3);
+  border-radius: var(--sc-radius-pill);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+  background-color: var(--sc-color-status-approved-bg);
+  color: var(--sc-color-status-approved-text);
+}
+
+.scenario-card__readiness[data-ready="false"] {
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+}
+
+.scenario-card__gaps {
+  margin-top: var(--sc-space-2);
+  font-size: var(--sc-font-size-sm);
+  color: var(--sc-color-attention-text);
+}
+
+.scenario-card__metric {
+  margin-top: var(--sc-space-2);
+  font-size: var(--sc-font-size-sm);
+  color: var(--sc-color-text-muted);
+}

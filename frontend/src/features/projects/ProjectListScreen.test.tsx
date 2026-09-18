@@ -79,6 +79,33 @@ const VESTA: ProjectListItem = {
   scenarios: [],
 };
 
+/**
+ * What the API is allowed to send: the backend caps a name at 200 characters and requires no
+ * whitespace inside it, and the scenario name in the response contract has no cap at all. A
+ * single unbroken word is therefore a legal answer, not an edge case someone has to type on
+ * purpose — and the place it breaks is the layout, silently, on someone else's screen.
+ */
+const NO_SPACES = `Programme-${"Konsolidacja".repeat(15)}-Faza2`;
+const UNBROKEN: ProjectListItem = {
+  id: "44444444-4444-4444-4444-444444444444",
+  name: NO_SPACES,
+  client: `Klient-${"Handlowy".repeat(10)}`,
+  delivery_period: { start: "2026-02-01", end: "2026-08-31" },
+  reporting_currency: "EUR",
+  description: "One word, no break opportunities.",
+  status: "Active",
+  scenarios: [
+    {
+      id: "cccccccc-0000-0000-0000-000000000001",
+      name: `Wariant-${"Optymistyczny".repeat(12)}`,
+      status: "Draft",
+      missing_inputs: ["currency"],
+      ready_for_approval: false,
+      target_margin_percent: "4.000",
+    },
+  ],
+};
+
 const ROW_ACTION_LABELS = ["View", "Edit", "Copy", "Archive", "Add scenario"];
 
 function stubProjectListResponse(projects: ProjectListItem[]) {
@@ -161,6 +188,14 @@ describe("ProjectListScreen", () => {
     for (const label of ROW_ACTION_LABELS) {
       expect(screen.queryByRole("button", { name: new RegExp(`^${label} `) })).toBeNull();
     }
+
+    // The other side of the contrast drawn by the two "denied" tests below. An empty list is a
+    // list: the server answered "you have none", so the screen still offers the list's own
+    // controls. Being denied a list and being told the list is empty are different answers, and
+    // the toolbar is the observable that separates them — without this assertion the guard could
+    // be narrowed to `projects.length > 0` and the suite would stay green.
+    expect(screen.getByRole("searchbox", { name: "Search projects" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add project" })).toBeVisible();
   });
 
   it("exposes view, edit, copy, archive and add-scenario controls for every project row as named controls reachable by keyboard", async () => {
@@ -261,6 +296,133 @@ describe("ProjectListScreen", () => {
     const signed = within(scenarioCard("Signed plan"));
     expect(signed.getByText("Ready for approval")).toBeInTheDocument();
     expect(signed.queryByText(/^Missing inputs:/)).toBeNull();
+  });
+
+  // --- Restyle (layout pass over the same data) ----------------------------------------------
+
+  it("shows search, filters and add-project as reachable controls that are wired to nothing", async () => {
+    const fetchMock = stubProjectListResponse([AURORA, HELIOS]);
+
+    render(<ProjectListScreen />);
+    await projectRows();
+
+    const search = screen.getByRole("searchbox", { name: "Search projects" });
+    const filters = screen.getByRole("button", { name: "Filters" });
+    const addProject = screen.getByRole("button", { name: "Add project" });
+
+    for (const control of [search, filters, addProject]) {
+      // Visible and in the tab order — the shape of the product ahead of its implementation
+      // (F-13), not a hidden control.
+      expect(control).toBeVisible();
+      expect(control.tabIndex).toBe(0);
+      control.focus();
+      expect(control).toHaveFocus();
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
+    }
+
+    // The box does not accept input it cannot honour. `readOnly` is the affordance, not the
+    // mechanism: what makes typing harmless is that there is no change handler and no state behind
+    // it (asserted below). Both are pinned, because a box a user can type into that silently
+    // ignores every keystroke is a different, worse lie than one that refuses the keystroke.
+    expect(search).toHaveAttribute("readonly");
+
+    fireEvent.click(filters);
+    fireEvent.click(addProject);
+    // Typing in the box filters nothing: the list is the API's answer, never a client-side
+    // subset (Issue #3, out of scope 2). Both projects are still there, including the one whose
+    // name does not contain the typed text.
+    fireEvent.change(search, { target: { value: "Aurora" } });
+
+    const rows = await projectRows();
+    expect(rows).toHaveLength(2);
+    expect(rowFor(rows, "Helios rollout").getByText("Contoso")).toBeInTheDocument();
+    // Nothing was fetched, created or re-read beyond the initial list request.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders no search, filters or add-project controls when the API denies the request", async () => {
+    // The contrast to the test above: the same toolbar that is present for a 200 is absent for a
+    // 403 — a denied screen offers no actions at all, rather than actions over hidden data.
+    stubFailedResponse(403);
+
+    render(<ProjectListScreen />);
+
+    expect(
+      await screen.findByText("You do not have permission to view projects."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add project" })).toBeNull();
+  });
+
+  it("names a server error as a server error and offers no controls over a list it never got", async () => {
+    // Two claims the 403 test above cannot make, because 403 is the one status the screen special
+    // cases. First: a 500 must not be reported as a permission problem — `return { kind: "denied" }`
+    // as the fallback of toFailureState passes every other test in this file, and tells the user
+    // they lack access to projects they do have access to. Second: "no toolbar" is a property of
+    // *not having a list*, not of being denied one; a guard written as `state.kind !== "denied"`
+    // would leak the toolbar over an error screen and nothing here would notice.
+    stubFailedResponse(500);
+
+    render(<ProjectListScreen />);
+
+    expect(await screen.findByText("Projects could not be loaded.")).toBeInTheDocument();
+    expect(screen.queryByText("You do not have permission to view projects.")).toBeNull();
+    expect(screen.queryByText("Projects could not be loaded — request timed out.")).toBeNull();
+
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add project" })).toBeNull();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText("Select a project to see its scenarios.")).toBeNull();
+  });
+
+  it("renders a long name with no break opportunities whole, leaving the breaking to the stylesheet", async () => {
+    // Truncation belongs to CSS, which can be undone by a wider window, a smaller font or a
+    // horizontal scroll. A component that shortens the string decides for every one of those
+    // cases at once, and the part it drops is gone from the DOM — unreadable, unsearchable, and
+    // invisible to the test that only asks whether the name "is in the document".
+    stubProjectListResponse([UNBROKEN]);
+
+    render(<ProjectListScreen />);
+    const rows = await projectRows();
+    expect(UNBROKEN.name.length).toBeGreaterThan(150);
+
+    const nameControl = within(rows[0]).getByRole("button", { name: UNBROKEN.name });
+    expect(nameControl.textContent).toBe(UNBROKEN.name);
+    expect(within(rows[0]).getByText(UNBROKEN.client).textContent).toBe(UNBROKEN.client);
+
+    await selectProject(UNBROKEN.name);
+
+    const scenario = UNBROKEN.scenarios[0];
+    expect(screen.getByRole("heading", { name: scenario.name }).textContent).toBe(scenario.name);
+    // No ellipsis anywhere: nothing on this screen decided the user had read enough.
+    expect(document.body.textContent).not.toContain("…");
+  });
+
+  it("keeps the project status readable as a word inside its colour-coded badge", async () => {
+    stubProjectListResponse([AURORA, HELIOS]);
+
+    render(<ProjectListScreen />);
+    const rows = await projectRows();
+
+    const active = rowFor(rows, "Aurora migration").getByText("Active");
+    const archived = rowFor(rows, "Helios rollout").getByText("Archived");
+
+    // The fill is an extra channel keyed by the server's own label, on top of the word — never
+    // instead of it (NF-08). Two different statuses cannot collapse onto one appearance.
+    expect(active).toHaveAttribute("data-project-status", "Active");
+    expect(archived).toHaveAttribute("data-project-status", "Archived");
+    expect(active.getAttribute("data-project-status")).not.toEqual(
+      archived.getAttribute("data-project-status"),
+    );
+
+    await selectProject("Aurora migration");
+    const draft = within(scenarioCard("Baseline")).getByText("Status: Draft");
+    const approved = within(scenarioCard("Signed plan")).getByText("Status: Approved");
+    expect(draft).toHaveAttribute("data-scenario-status", "Draft");
+    expect(approved).toHaveAttribute("data-scenario-status", "Approved");
   });
 
   // --- Supporting tests (not acceptance criteria) -------------------------------------------
@@ -377,6 +539,10 @@ describe("ProjectListScreen", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Loading projects…")).toBeNull();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    // A screen that gave up waiting has no list, so it offers no controls over one either.
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add project" })).toBeNull();
   });
 
   it("stops waiting when the response headers arrive but the body never finishes", async () => {

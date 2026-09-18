@@ -45,6 +45,12 @@ Evidence column uses exactly one of four values:
 | Nieudany zapis projektu nie wynosi wartości pól do logu — ani echo parametrów SQLAlchemy, ani `DETAIL: Failing row contains` z PostgreSQL | NF-11, ADR-0001 | mutation-checked test | `backend/tests/test_statement_errors_hide_parameters.py` |
 | Zestaw uprawnień placeholdera jest zamknięty i sprawdzany przez równość zbiorów, nie samo `in` | ADR-0005 aneks | mutation-checked test | `backend/tests/test_access_control.py::test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity` |
 | Bramka pól kosztów osobowych (`can_view_personnel_costs`) jest konsultowana na obu ścieżkach kształtowania (lista i detail) | F-13, AC-06 | mutation-checked test, z zastrzeżeniem | `backend/tests/test_project_detail_personnel_costs.py` — dowodzi że bramka jest wywoływana (pole zastępcze podstawione w teście); SAME POLA KOSZTOWE NADAL NIE ISTNIEJĄ w schemacie. Known gap (Reviewer R-03): kształt per-caller zamiast per-project-assignment, pozostaje otwarty |
+| Kolor, typografia i odstępy ekranu listy projektów pochodzą z jednego źródła tokenów — literał koloru, nieznany token, nazwany kolor CSS albo inline style poza `tokens.css` wywraca zestaw testów | Wymagania/UI (paleta marki), PR-template invariant "New color — through a theme token" | mutation-checked test | `frontend/src/styles/tokens.test.ts` |
+| Pasek listy (Search/Filters/Add project) widoczny i osiągalny z klawiatury mimo braku implementacji; nie filtruje listy po stronie klienta i nie wywołuje żadnego żądania | F-13, Issue #3 out of scope 2 | mutation-checked test | `frontend/src/features/projects/ProjectListScreen.test.tsx::shows search, filters and add-project as reachable controls that are wired to nothing` |
+| Kolory tekstu i tła zadeklarowane w arkuszach ekranu listy spełniają WCAG AA (4.5:1) — współczynniki liczone z wartości tokenów przez własny parser testowy, nie opisane w komentarzu | Reviewer R-01 | mutation-checked test | `frontend/src/styles/tokens.test.ts::colour contrast` |
+| Zaznaczony wiersz listy jest obrysowany z czterech stron — reguła stanu wygrywa w kaskadzie CSS, nie tylko istnieje w arkuszu | Reviewer R-04 | mutation-checked test | `frontend/src/styles/tokens.test.ts::outlines the selected row on all four sides, not only where the cascade happens to allow` |
+| Nazwa projektu/klienta/scenariusza (do 200 znaków, bez wymogu spacji) dociera do DOM w całości — skracanie należy wyłącznie do CSS, nie do komponentu | Reviewer R-02 | mutation-checked test | `frontend/src/features/projects/ProjectListScreen.test.tsx::renders a long name with no break opportunities whole, leaving the breaking to the stylesheet` |
+| Kontrolka niezaimplementowana (`aria-disabled`) wygląda tak samo niezależnie od wariantu przycisku — brak koloru marki pod opacity | F-13, Reviewer R-05 | mutation-checked test | `frontend/src/styles/tokens.test.ts::gives every not-yet-implemented control the same quietened appearance` |
 
 ## Mutation log
 
@@ -84,3 +90,22 @@ Evidence column uses exactly one of four values:
 | 2026-09-18 | SC-1-01 | `raise ProjectWriteFailed(...) from None` → gołe `raise` (runda 2) | Killed — 2 testy. Surowy komunikat psycopg z `Failing row contains` wraca do traceback. |
 | 2026-09-18 | SC-1-01 | `model_config = ConfigDict(extra="forbid")` usunięte z `DeliveryPeriod` (runda 2) | Killed — 1 test. |
 | 2026-09-18 | SC-1-01 | `_NOT_BLANK_COLUMNS = ()` w migracji `4f0a9c1b7d62` (runda 2) | Killed — 15 testów. |
+| 2026-09-18 | SC-1-07 | `test.css: true` usunięte z `vite.config.ts` | Killed — 3 testy (całe `tokens.test.ts`). Bez przetworzonego CSS asercje-strażnicy (`>10` literałów, `>20` tokenów, obecność `--sc-font-family`) nie dają się spełnić przez pustkę — pułapka pustego dowodu zamknięta. |
+| 2026-09-18 | SC-1-07 | `#ff5500` + `font-family: Arial` + `text-transform: uppercase` wstawione naraz do `ProjectListScreen.css` | Killed — 2 z 3 defektów zaraportowane naraz (asercja `uppercase` kończy test przed sprawdzeniem fontu); po rozbiciu na osobne mutacje wszystkie trzy killed pojedynczo. |
+| 2026-09-18 | SC-1-07 | `var(--sc-color-text-muted)` → literówka `var(--sc-color-text-mutedd)` w `app.css` | Killed — 1 test, z nazwą pliku w komunikacie. Żaden test DOM-owy tego nie widzi (nierozpoznany token renderuje się jako przezroczysty). |
+| 2026-09-18 | SC-1-07 | `family=Manrope` → `family=Inter` w `index.html` | Killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `data-project-status` → `data-mutant` na odznace statusu | Killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `data-project-status={project.status}` → stała `"Active"` | Killed — 1 test, na wierszu Archived. Dwa statusy nie mogą zlać się w jeden wygląd (NF-08). |
+| 2026-09-18 | SC-1-07 | `<ListToolbar />` wyniesiony poza guard `state.kind === "ready"` | Killed — 2 testy, w tym jeden sprzed restyle'u (403 → zero przycisków). |
+| 2026-09-18 | SC-1-07 | Guard zawężony do `!== "loading" && !== "denied"` — toolbar wycieka na ekran timeoutu/błędu serwera | SURVIVED pierwszy raz — nieobecność toolbara dowiedziona tylko na jednej ścieżce. QA rozszerzył kontrast na 500/timeout; killed — 2 testy. |
+| 2026-09-18 | SC-1-07 | Guard zawężony do `projects.length > 0` — brak toolbara nad pustą ale dozwoloną listą | SURVIVED pierwszy raz — brakowało dodatniej strony kontrastu. QA dopisał asercję; killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `toFailureState` fallback `{kind:"failed"}` → `{kind:"denied"}` | SURVIVED — każdy błąd 500 mówił "brak uprawnień" zamiast błędu ogólnego; gałąź `failed` nie miała testu. QA dopisał test na 500; killed — 1 test. Kod produkcyjny był poprawny — luka była wyłącznie w pokryciu testami. |
+| 2026-09-18 | SC-1-07 | `readOnly` usunięte z pola wyszukiwania | SURVIVED — nieszkodliwość pisania wynika z braku handlera/stanu (dowiedzione niezależnie), nie z atrybutu. Atrybut to afordancja, nie mechanizm; przypięty osobną asercją, killed — 1 test. |
+| 2026-09-18 | SC-1-07 | Biała etykieta przywrócona na `.button--primary` (pomarańcz `#FF5500`) | Killed — 1 test kontrastu WCAG (3.21:1 < wymagane 4.5:1). |
+| 2026-09-18 | SC-1-07 | Reguły bocznych krawędzi zaznaczonego wiersza usunięte | Killed — 1 test; komunikat wskazuje dokładnie regułę wygrywającą specyficznością (reprodukuje finding Reviewera). |
+| 2026-09-18 | SC-1-07 | `position: sticky` usunięte z panelu szczegółów | Killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `overflow-wrap: anywhere` usunięte z komórek tabeli | Killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `opacity: 0.65` + osobna reguła per-wariant przywrócone dla `aria-disabled` | Killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `color: white` (nazwany kolor CSS) zamiast tokenu w arkuszu funkcji | Killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `style={{ color: "#333" }}` (inline style) w `App.tsx` | Killed — 1 test. |
+| 2026-09-18 | SC-1-07 | `{project.name.slice(0, 40)}` wstawione w komponencie | Killed — 1 test. Skracanie należy do CSS, nie do komponentu. |

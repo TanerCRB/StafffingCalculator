@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>StafffingCalculator</title>
+    <!--
+      Manrope is the only brand typeface (Wymagania/UI/globallogic_style_guide-v3.docx). Requested
+      here rather than through an @import in the stylesheet: a <link> in <head> starts the font
+      download in parallel with the bundle, while an @import is only discovered after the CSS is
+      parsed. The family name itself stays a token (--sc-font-family in src/styles/tokens.css) —
+      this tag is the delivery, not the definition.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <div id="root"></div>

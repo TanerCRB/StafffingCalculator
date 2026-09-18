@@ -1,0 +1,251 @@
+/*
+ * Application shell: page background, base typography, the header band and the shared primitives
+ * (card, button, badge, visually-hidden) that more than one feature needs.
+ *
+ * Every colour here is a token from tokens.css. No literal, no `text-transform: uppercase` —
+ * the style guide forbids all-caps type, and `src/styles/tokens.test.ts` checks both.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--sc-color-page);
+  color: var(--sc-color-text);
+  font-family: var(--sc-font-family);
+  font-size: var(--sc-font-size-body);
+  font-weight: var(--sc-font-weight-regular);
+  line-height: var(--sc-line-height-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+ul {
+  margin: 0;
+}
+
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--sc-color-blue);
+  outline-offset: 2px;
+}
+
+/* --- Shell ---------------------------------------------------------------------------------- */
+
+.app-shell {
+  max-width: var(--sc-layout-max-width);
+  margin: 0 auto;
+  padding: var(--sc-space-5) var(--sc-space-6) var(--sc-space-7);
+}
+
+.app-shell__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sc-space-4);
+  padding-bottom: var(--sc-space-4);
+  border-bottom: 1px solid var(--sc-color-border);
+  margin-bottom: var(--sc-space-5);
+}
+
+.app-shell__title {
+  font-size: var(--sc-font-size-2xl);
+  font-weight: var(--sc-font-weight-semibold);
+  letter-spacing: -0.01em;
+  line-height: var(--sc-line-height-tight);
+}
+
+.app-shell__subtitle {
+  color: var(--sc-color-text-muted);
+  font-weight: var(--sc-font-weight-medium);
+}
+
+.app-shell__status {
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-medium);
+}
+
+.app-shell__status[data-state="unreachable"] {
+  color: var(--sc-color-attention-text);
+}
+
+/* --- Shared primitives ---------------------------------------------------------------------- */
+
+/* Kept in the accessibility tree, out of the visual layout — used for a table caption the layout
+   has no room for but a screen reader still needs. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.card {
+  background-color: var(--sc-color-surface);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-lg);
+  box-shadow: var(--sc-shadow-card);
+}
+
+.card__title {
+  font-size: var(--sc-font-size-xl);
+  font-weight: var(--sc-font-weight-bold);
+  line-height: var(--sc-line-height-tight);
+}
+
+.badge {
+  display: inline-block;
+  padding: var(--sc-space-1) var(--sc-space-3);
+  border-radius: var(--sc-radius-pill);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text);
+  white-space: nowrap;
+}
+
+.badge[data-project-status="Active"] {
+  background-color: var(--sc-color-status-active-bg);
+  color: var(--sc-color-status-active-text);
+}
+
+.badge[data-project-status="Archived"] {
+  background-color: var(--sc-color-status-archived-bg);
+  color: var(--sc-color-status-archived-text);
+}
+
+.badge[data-scenario-status="Approved"] {
+  background-color: var(--sc-color-status-approved-bg);
+  color: var(--sc-color-status-approved-text);
+}
+
+.badge[data-scenario-status="Draft"] {
+  background-color: var(--sc-color-status-draft-bg);
+  color: var(--sc-color-status-draft-text);
+}
+
+/* --- Buttons --------------------------------------------------------------------------------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sc-space-2);
+  padding: var(--sc-space-2) var(--sc-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--sc-radius-md);
+  font-size: var(--sc-font-size-body);
+  font-weight: var(--sc-font-weight-semibold);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+/*
+ * Orange is the primary accent and is used on white surfaces only — never on light steel.
+ * The label on it is black, not white: white on this orange is 3.21:1, below the 4.5:1 that
+ * WCAG 1.4.3 asks for, while black on it is 6.55:1 (Reviewer R-01). The ratios are recomputed
+ * from the tokens in src/styles/tokens.test.ts, so this comment cannot quietly go stale.
+ */
+.button--primary {
+  background-color: var(--sc-color-orange);
+  color: var(--sc-color-text);
+}
+
+.button--primary:hover {
+  background-color: var(--sc-color-orange-hover);
+}
+
+.button--secondary {
+  background-color: var(--sc-color-blue);
+  color: var(--sc-color-white);
+}
+
+.button--secondary:hover {
+  background-color: var(--sc-color-blue-hover);
+}
+
+.button--quiet {
+  background-color: var(--sc-color-surface);
+  border-color: var(--sc-color-border);
+  color: var(--sc-color-text);
+  font-size: var(--sc-font-size-sm);
+  padding: var(--sc-space-1) var(--sc-space-3);
+}
+
+.button--quiet:hover {
+  border-color: var(--sc-color-border-strong);
+}
+
+/*
+ * A control that is rendered, focusable and announced, but wired to nothing yet (F-13: a user may
+ * see the shape of the product ahead of its implementation). It is quietened, not hidden, and it
+ * is `aria-disabled` rather than `disabled` so it keeps its place in the tab order.
+ *
+ * One appearance for every variant (Reviewer R-05). A brand-coloured fill at reduced opacity still
+ * reads as a live call to action — an orange "Add project" that does nothing looks broken rather
+ * than unbuilt. The muted surface is the honest signal, and it is the same one the row controls
+ * use, so "not yet" looks the same everywhere on the screen.
+ *
+ * Specificity note: `[aria-disabled="true"]` is worth the same as a class, so these rules (two
+ * class-level components) outrank `.button--primary` / `.button--secondary` (one), and the
+ * `:hover` rule below outranks their `:hover` rules. Source order backs this up rather than
+ * carrying it alone.
+ */
+.button[aria-disabled="true"],
+.input[aria-disabled="true"] {
+  cursor: default;
+  background-color: var(--sc-color-disabled-surface);
+  border-color: var(--sc-color-border);
+  color: var(--sc-color-text-disabled);
+}
+
+.button[aria-disabled="true"]:hover {
+  background-color: var(--sc-color-disabled-surface);
+  border-color: var(--sc-color-border);
+}
+
+/* --- Inputs ---------------------------------------------------------------------------------- */
+
+.input {
+  padding: var(--sc-space-2) var(--sc-space-4);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background-color: var(--sc-color-surface);
+  color: var(--sc-color-text);
+  font-size: var(--sc-font-size-body);
+}
+
+.input::placeholder {
+  color: var(--sc-color-text-disabled);
+}
