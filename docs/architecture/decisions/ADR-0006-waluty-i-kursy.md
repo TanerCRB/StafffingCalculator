@@ -1,6 +1,6 @@
 # ADR-0006 — Waluty i kursy wymiany
 
-**Status:** Draft — pending approval
+**Status:** Accepted
 
 ## Kontekst
 

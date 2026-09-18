@@ -1,6 +1,6 @@
 # ADR-0002 — Obsługa pieniędzy: Decimal i jawne zaokrąglenia
 
-**Status:** Draft — pending approval
+**Status:** Accepted
 
 ## Kontekst
 

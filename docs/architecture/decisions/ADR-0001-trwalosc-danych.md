@@ -1,6 +1,6 @@
 # ADR-0001 — Trwałość danych backendu
 
-**Status:** Draft — pending approval
+**Status:** Accepted
 
 ## Kontekst
 
@@ -44,3 +44,17 @@ Migracje zawsze wstecznie kompatybilne: expand → deploy kodu → contract (pat
 ## Powiązane wymagania
 
 NF-01, NF-03, NF-04, F-12, F-13
+
+## Aneksy
+
+### 2026-09-18 — mechanizm izolacji per projekt (F-13)
+
+Impact map dla Issue #3 (SC-1-05/06) zidentyfikował lukę: ten ADR wymaga egzekwowania granicy
+projektu "na poziomie zapytań, nie tylko UI", ale nie rozstrzygał **jak**. Decyzja: **wariant B —
+jedna współdzielona funkcja warstwy dostępu do danych** stosująca filtr `project_access`
+(ADR-0005), bez PostgreSQL Row Level Security. Uzasadnienie: to narzędzie wewnętrzne z kontrolą
+dostępu per-projekt w obrębie jednej organizacji (F-13), nie wielodzierżawowy SaaS z nieufnymi
+najemcami — koszt dyscypliny RLS/`SET LOCAL` na pulę połączeń nie jest tu proporcjonalny do
+ryzyka. Warunek: funkcja musi być **jedyną** ścieżką odczytu projektów — używana identycznie przez
+odczyt interaktywny, eksport (F-11) i każdy przyszły interfejs serwer-serwer (reguła 6 w
+`agents/invariant-guardian.md`). Zapytanie z pominięciem tej funkcji jest naruszeniem tego ADR.

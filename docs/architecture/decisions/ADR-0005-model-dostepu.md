@@ -1,6 +1,6 @@
 # ADR-0005 — Model dostępu i uprawnień
 
-**Status:** Draft — pending approval
+**Status:** Accepted
 
 ## Kontekst
 
@@ -48,3 +48,17 @@ pominięciem warstwy uprawnień.
 ## Powiązane wymagania
 
 F-13, NF-04, F-11 (eksporty), AC-06
+
+## Aneksy
+
+### 2026-09-18 — tożsamość wołającego dla SC-1-05/06 (odstępstwo czasowe)
+
+W repozytorium nie istnieje jeszcze żaden mechanizm uwierzytelniania (brak tabeli użytkowników,
+brak sesji/tokenu) — ten ADR zakłada istnienie `user`, którego dziś nic nie tworzy. Dla zadań
+SC-1-05 (lista projektów) i SC-1-06 (ekran listy) przyjmuje się **jawne, czasowe odstępstwo**:
+tożsamość wołającego pochodzi z ustalonego, testowego identyfikatora (np. nagłówek/zmienna
+konfiguracyjna), nie z prawdziwego uwierzytelniania. Kryteria akceptacji tych zadań dowodzą
+działania **filtra `project_access`**, nie samego uwierzytelniania — ten podział musi być jawnie
+zapisany w sekcji "co to nie dowodzi" raportu Developera i w rejestrze możliwości (gate 3).
+**Warunek zamknięcia:** osobny ADR uwierzytelniania, wymagany przed jakimkolwiek zadaniem
+wystawiającym ten mechanizm poza środowisko deweloperskie/testowe.
