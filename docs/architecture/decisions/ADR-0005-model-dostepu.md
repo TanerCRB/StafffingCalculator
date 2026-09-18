@@ -62,3 +62,31 @@ działania **filtra `project_access`**, nie samego uwierzytelniania — ten podz
 zapisany w sekcji "co to nie dowodzi" raportu Developera i w rejestrze możliwości (gate 3).
 **Warunek zamknięcia:** osobny ADR uwierzytelniania, wymagany przed jakimkolwiek zadaniem
 wystawiającym ten mechanizm poza środowisko deweloperskie/testowe.
+
+### 2026-09-18 — placeholder tożsamości obejmuje SC-1-01 i uprawnienie zapisu (rozszerzenie odstępstwa)
+
+Odstępstwo z aneksu powyżej nazwane było dla SC-1-05/06 i było w praktyce wyłącznie odczytowe
+(`PLACEHOLDER_PERMISSIONS = {PROJECT_READ}`). SC-1-01 (utworzenie/odczyt Projektu) rozszerza je
+na dwa sposoby i oba wymagają zapisu, nie domysłu:
+
+1. **Zakres zadań.** Odstępstwo obejmuje także SC-1-01. Podstawa niezmieniona: nadal nie istnieje
+   żaden mechanizm uwierzytelniania, a kryteria akceptacji SC-1-01 dowodzą filtra `project_access`
+   i egzekwowania uprawnienia per endpoint — nie dowodzą uwierzytelniania.
+2. **Uprawnienie akcji w zestawie placeholdera.** `PLACEHOLDER_PERMISSIONS` zawiera teraz również
+   `PROJECT_CREATE`, bo inaczej `POST /projects` byłby nieosiągalny, dopóki każdy wołający jest tym
+   jednym ustalonym placeholderem. To **nie jest** decyzja, że każdy może tworzyć projekty. Decyzja
+   przypisuje czynności wymiarowi roli (`admin`/`author`/`viewer`), a wymiar roli nie jest jeszcze
+   modelowany — do czasu ADR uwierzytelniania placeholder zwija ten wymiar i każdy wołający jest
+   faktycznie `author`. Uprawnienie jest deklarowane i egzekwowane per endpoint
+   (`require_permission`); nierozstrzygnięte jest wyłącznie to, kto je posiada.
+
+Skutek uboczny wart nazwania: odstępstwo przestaje być odczytowe — nieuwierzytelniony nagłówek
+tworzy teraz wiersze, nie tylko je czyta.
+
+Granica bez zmian: `APP_ALLOW_PLACEHOLDER_IDENTITY` (domyślnie `false`) plus ograniczenie do
+środowisk `development`/`test`, egzekwowane odmową startu aplikacji. Granica środowiska ogranicza
+*gdzie* odstępstwo działa, nie *co* wolno w jego ramach — każde kolejne poszerzenie zestawu
+uprawnień placeholdera wymaga własnego, datowanego wpisu tutaj.
+
+**Warunek zamknięcia:** bez zmian — osobny ADR uwierzytelniania, wymagany przed jakimkolwiek
+zadaniem wystawiającym ten mechanizm poza środowisko deweloperskie/testowe.

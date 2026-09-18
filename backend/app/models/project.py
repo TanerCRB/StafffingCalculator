@@ -70,4 +70,13 @@ class Project(Base):
             name="delivery_period_ordered",
         ),
         CheckConstraint("char_length(reporting_currency) = 3", name="reporting_currency_iso4217"),
+        # F-01 names `name`, `client` and `owner` as fields of a project; `NOT NULL` on its own
+        # still admits `''` and `'   '`, and until now the only thing refusing those was the
+        # Pydantic request schema. That defends the API and nothing else — a fixture, a seed
+        # script or a future import writes straight to the table. The pattern requires at least
+        # one non-whitespace character, the same claim `strip_whitespace=True` makes at the
+        # boundary (added by migration `4f0a9c1b7d62`).
+        CheckConstraint("name ~ '[^[:space:]]'", name="name_not_blank"),
+        CheckConstraint("client ~ '[^[:space:]]'", name="client_not_blank"),
+        CheckConstraint("owner ~ '[^[:space:]]'", name="owner_not_blank"),
     )

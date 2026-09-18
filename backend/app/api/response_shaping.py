@@ -11,9 +11,11 @@ satisfied.
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 from app.api.schemas.project import (
     DeliveryPeriod,
+    ProjectDetail,
     ProjectListItem,
     ProjectListResponse,
     ScenarioListItem,
@@ -48,23 +50,42 @@ def _shape_scenario(scenario: Scenario) -> ScenarioListItem:
     )
 
 
-def _shape_project(project: Project, caller: CallerIdentity) -> ProjectListItem:
-    item = ProjectListItem(
-        id=project.id,
-        name=project.name,
-        client=project.client,
-        delivery_period=DeliveryPeriod(
+def _common_project_fields(project: Project) -> dict[str, Any]:
+    """The fields every project representation shares. One source, so the list row and the
+    detail row cannot drift into disagreeing about the same project."""
+    return {
+        "id": project.id,
+        "name": project.name,
+        "client": project.client,
+        "delivery_period": DeliveryPeriod(
             start=project.delivery_period_start, end=project.delivery_period_end
         ),
-        reporting_currency=project.reporting_currency,
-        description=project.description,
-        status=_PROJECT_STATUS_LABELS[project.status],
-        scenarios=[_shape_scenario(scenario) for scenario in project.scenarios],
-    )
+        "reporting_currency": project.reporting_currency,
+        "description": project.description,
+        "status": _PROJECT_STATUS_LABELS[project.status],
+        "scenarios": [_shape_scenario(scenario) for scenario in project.scenarios],
+    }
+
+
+def _shape_project(project: Project, caller: CallerIdentity) -> ProjectListItem:
+    return _without_personnel_costs(ProjectListItem(**_common_project_fields(project)), caller)
+
+
+def shape_project_detail(project: Project, caller: CallerIdentity) -> ProjectDetail:
+    """Shape one project the caller has already been granted by the data layer.
+
+    Like `shape_project_list`, this does not decide access and must never be asked to: it is
+    reached only with a row `app.data.project_reads` returned, i.e. one inside the caller's
+    `project_access` scope. It does apply the personnel-cost gate, which is a different
+    question (F-13: seeing a project ≠ seeing individual costs).
+    """
+    item = ProjectDetail(**_common_project_fields(project), owner=project.owner)
     return _without_personnel_costs(item, caller)
 
 
-def _without_personnel_costs(item: ProjectListItem, caller: CallerIdentity) -> ProjectListItem:
+def _without_personnel_costs[ProjectItemT: ProjectListItem](
+    item: ProjectItemT, caller: CallerIdentity
+) -> ProjectItemT:
     """Remove personnel-cost fields unless the caller holds that specific permission.
 
     Separate from project access on purpose: a caller may legitimately see a project and still

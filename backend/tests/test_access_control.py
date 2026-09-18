@@ -23,7 +23,14 @@ from app.api.deps import (
 from app.core.config import Settings
 from app.core.identity import CallerIdentity, Permission
 from app.main import app
-from tests.conftest import BACKEND_ROOT, IN_SCOPE_USER, as_caller, make_project
+from tests.conftest import (
+    BACKEND_ROOT,
+    IN_SCOPE_USER,
+    as_caller,
+    count_projects,
+    make_project,
+    project_payload,
+)
 
 
 def test_project_list_denies_caller_without_identity(
@@ -53,12 +60,67 @@ def test_project_list_denies_caller_without_project_read_permission(
     assert "Aurora migration" not in response.text
 
 
+def test_project_read_by_id_denies_caller_without_identity(
+    client: TestClient, db_session: Session
+) -> None:
+    project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+
+    response = client.get(f"/projects/{project.id}")
+
+    assert response.status_code == 401
+    assert "Aurora migration" not in response.text
+
+
+def test_project_create_denies_caller_without_identity(
+    client: TestClient, db_session: Session
+) -> None:
+    """No identity, no write — and the refusal leaves the table exactly as it was."""
+    response = client.post("/projects", json=project_payload())
+
+    assert response.status_code == 401
+    assert count_projects(db_session) == 0
+
+
+def test_project_create_denies_caller_holding_only_project_read(
+    client: TestClient, db_session: Session
+) -> None:
+    """The refusal test ADR-0005 makes mandatory for every new permission.
+
+    `PROJECT_CREATE` has to be its own permission for this test to be possible at all: a caller
+    with read access and nothing else is exactly the read-only viewer of F-13, and a viewer that
+    can create projects is the failure this separation exists to prevent.
+    """
+    app.dependency_overrides[get_caller_identity] = lambda: CallerIdentity(
+        user_id=IN_SCOPE_USER, permissions=frozenset({Permission.PROJECT_READ})
+    )
+    try:
+        response = client.post(
+            "/projects", json=project_payload(), headers=as_caller(IN_SCOPE_USER)
+        )
+    finally:
+        app.dependency_overrides.pop(get_caller_identity, None)
+
+    assert response.status_code == 403
+    assert count_projects(db_session) == 0
+
+
 def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() -> None:
-    """The placeholder identity grants project read only. Personnel-cost visibility is a
-    separate permission and stays denied until F-13's own task grants it (ADR-0005)."""
+    """The placeholder identity grants exactly project read and project create — no more.
+
+    Asserted as set equality rather than membership: ADR-0005's addendum requires every widening
+    of this set to be a deliberate, dated entry in the decision, and a membership assertion
+    cannot tell a widening apart from the status quo — it stays green while the set silently
+    grows. `PERSONNEL_COSTS_READ` is still absent, so the deny path of F-13/AC-06 remains real;
+    so is every permission that has not been added yet, and that is now part of the claim.
+
+    A failure here is not a broken test: it means the placeholder identity grew a permission,
+    and the question to answer is whether ADR-0005's addendum grew with it.
+    """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
-    assert Permission.PROJECT_READ in PLACEHOLDER_PERMISSIONS
+    assert PLACEHOLDER_PERMISSIONS == frozenset(
+        {Permission.PROJECT_READ, Permission.PROJECT_CREATE}
+    )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
 
 

@@ -34,6 +34,15 @@ def _build_engine() -> Engine:
         # cheap liveness check, not by a request failing with a bare 500.
         pool_pre_ping=True,
         pool_recycle=POOL_RECYCLE_SECONDS,
+        # NF-11: a failed statement must not carry its bound values into the log. By default
+        # SQLAlchemy appends `[parameters: (...)]` to the exception message, and on an INSERT
+        # that is the whole row — for `projects` the owner's name and the description, printed
+        # by whatever handles the unhandled exception (uvicorn's traceback, an error tracker,
+        # a support ticket somebody pastes it into). The failure does not have to be exotic:
+        # a dropped connection, a statement timeout or a NUL byte in a text field is enough.
+        # This flag replaces the values with a fixed notice and changes nothing else in the
+        # message, so the statement itself is still diagnosable.
+        hide_parameters=True,
     )
 
 
