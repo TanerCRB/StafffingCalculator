@@ -59,7 +59,18 @@ UNKNOWN_USER = "pm-celina"
 
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
-    """A throwaway PostgreSQL. `TEST_DATABASE_URL` overrides it for a locally running server."""
+    """A throwaway PostgreSQL. `TEST_DATABASE_URL` overrides it for a locally running server.
+
+    !!! THIS DATABASE GETS WIPED. Every test using the `committing_client` fixture ends by
+    deleting **all** rows from `project_access`, `scenarios` and `projects` — unconditionally,
+    with no check of what it is connected to, and the migrations are run against it on top of
+    that. Never point `TEST_DATABASE_URL` at a database holding data you want to keep: a
+    development database with hand-made projects in it is emptied by a single `pytest` run, with
+    no prompt and no backup.
+
+    The default path (no variable set) is a disposable container, which is why this is a warning
+    and not a guard — but the variable turns "disposable" into whatever the reader typed.
+    """
     existing = os.environ.get("TEST_DATABASE_URL")
     if existing:
         yield existing
@@ -88,10 +99,23 @@ def engine(database_url: str) -> Iterator[Engine]:
 
 @pytest.fixture
 def db_session(engine: Engine) -> Iterator[Session]:
-    """One transaction per test, rolled back afterwards — tests never see each other's rows."""
+    """One transaction per test, rolled back afterwards — tests never see each other's rows.
+
+    `join_transaction_mode="create_savepoint"`: SC-1-01 introduced a code path that *commits*
+    (`app.data.project_writes.create_project`). Without this the commit would end the outer
+    transaction and leak rows into the next test; with it, the session commits into a SAVEPOINT
+    the rollback below still discards. The commit is real as far as the code under test is
+    concerned — which is the point: a write path that never commits proves nothing about
+    persistence.
+    """
     connection = engine.connect()
     transaction = connection.begin()
-    session = Session(bind=connection, expire_on_commit=False, future=True)
+    session = Session(
+        bind=connection,
+        expire_on_commit=False,
+        future=True,
+        join_transaction_mode="create_savepoint",
+    )
     try:
         yield session
     finally:
@@ -110,9 +134,65 @@ def client(db_session: Session) -> Iterator[TestClient]:
         app.dependency_overrides.pop(get_session, None)
 
 
+@pytest.fixture
+def committing_client(engine: Engine) -> Iterator[TestClient]:
+    """The API with requests running in real, committed transactions — not the rolled-back one.
+
+    SC-1-01 is a task about *persistence*, and inside the shared `db_session` transaction a write
+    that merely flushes is indistinguishable from one that commits: both are visible to every
+    later read on the same connection. Here each request gets its own session straight from the
+    engine, so a row outlives the request only if the code under test really committed, and a
+    separate connection can be used to check.
+
+    **Destructive teardown.** Afterwards every row of `project_access`, `scenarios` and
+    `projects` is deleted on a separate connection — all of them, not only the ones this test
+    created, because a committed row is no longer distinguishable from pre-existing data by the
+    time the fixture ends. Nothing else cleans up after these tests, and one leftover project
+    breaks the `count_projects(...) == 0` assertions everywhere else. Read the warning on
+    `database_url` before pointing `TEST_DATABASE_URL` at anything you care about.
+    """
+
+    def session_for_request() -> Iterator[Session]:
+        with Session(bind=engine, expire_on_commit=False, future=True) as session:
+            yield session
+
+    app.dependency_overrides[get_session] = session_for_request
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        with engine.begin() as connection:
+            connection.execute(sa.delete(ProjectAccess))
+            connection.execute(sa.delete(Scenario))
+            connection.execute(sa.delete(Project))
+
+
 def as_caller(user_id: str) -> dict[str, str]:
     """Request headers carrying the placeholder caller identity (ADR-0005, addendum)."""
     return {settings.caller_id_header: user_id}
+
+
+def project_payload(**overrides: object) -> dict[str, object]:
+    """A valid `POST /projects` body: exactly F-01's project fields, nothing more.
+
+    Kept here so the access-control tests and the SC-1-01 tests send the *same* request and a
+    denial can never be an accident of a malformed body.
+    """
+    body: dict[str, object] = {
+        "name": "Aurora migration",
+        "client": "Northwind",
+        "owner": "Anna Kowalska",
+        "delivery_period": {"start": "2026-03-01", "end": "2026-11-30"},
+        "reporting_currency": "EUR",
+        "description": "Migration of the billing platform to the cloud.",
+    }
+    return body | overrides
+
+
+def count_projects(session: Session) -> int:
+    """Project rows visible in the test transaction — used to prove a refused write wrote
+    nothing, not merely that the response said no."""
+    return session.execute(sa.select(sa.func.count()).select_from(Project)).scalar_one()
 
 
 def make_project(

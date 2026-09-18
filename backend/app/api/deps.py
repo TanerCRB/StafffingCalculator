@@ -23,7 +23,15 @@ from app.core.identity import CallerIdentity, Permission
 # separate authentication ADR lands, the caller is whoever the request header says they are, and
 # the permission set is fixed. This proves the `project_access` scope filter and nothing about
 # authentication. `PERSONNEL_COSTS_READ` is deliberately absent, so the deny path is real.
-PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset({Permission.PROJECT_READ})
+#
+# `PROJECT_CREATE` is in the set because SC-1-01 needs the create endpoint to be reachable at all
+# while every caller is this one fixed placeholder; it is *not* a statement that everyone may
+# create projects. ADR-0005 assigns that to the `author`/`admin` roles, and the role dimension
+# arrives with the authentication ADR — until then the permission is declared and enforced per
+# endpoint (see `require_permission`), while who holds it is not yet a real decision.
+PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
+    {Permission.PROJECT_READ, Permission.PROJECT_CREATE}
+)
 
 USES_PLACEHOLDER_IDENTITY: bool = True
 """True while caller identity comes from a request header instead of authentication. The task

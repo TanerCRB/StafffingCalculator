@@ -6,9 +6,11 @@ The condition attached to that decision is that this function is the *single* pa
 reads, PDF/spreadsheet export (F-11) and any future server-to-server interface all compose on
 `accessible_projects()`. A `select(Project)` written anywhere else violates ADR-0001.
 
-Nothing here writes. SC-1-05 is a read-only slice; the archive/edit/copy actions are SC-1-02..04.
+Nothing here writes; the create path is `app.data.project_writes` (SC-1-01). The archive/edit/
+copy actions are SC-1-02..04 and exist nowhere yet.
 """
 
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import Select, select
@@ -49,3 +51,26 @@ def list_projects_for_caller(session: Session, caller: CallerIdentity) -> Sequen
         .order_by(Project.name, Project.id)
     )
     return session.execute(statement).scalars().unique().all()
+
+
+def project_for_caller(
+    session: Session, caller: CallerIdentity, project_id: uuid.UUID
+) -> Project | None:
+    """One project by id — or `None`, with no way to tell *why* it is `None`.
+
+    "Not in your scope" and "does not exist" collapse into the same return value here, on
+    purpose, and one step earlier than the API: the scope filter is part of the `WHERE` clause
+    (via `accessible_projects`), so an out-of-scope row is never fetched and the distinction is
+    not available to be leaked. A caller of this function *cannot* answer "does it exist?" even
+    if it wanted to — which is why the API layer can only answer 404 (SC-1-01, criterion 2).
+
+    A `select(Project).where(Project.id == ...)` written at the point of use would return the row
+    and leave the scope check to whoever remembered to write it; that is the ADR-0001 (addendum)
+    violation this function exists to make unnecessary.
+    """
+    statement = (
+        accessible_projects(caller)
+        .options(selectinload(Project.scenarios))
+        .where(Project.id == project_id)
+    )
+    return session.execute(statement).scalars().unique().one_or_none()

@@ -20,6 +20,14 @@ class Permission(StrEnum):
     one gets no caller at all (ADR-0005, "Konsekwencje", rule 7 of the Invariant Guardian)."""
 
     PROJECT_READ = "project:read"
+    PROJECT_CREATE = "project:create"
+    """Creating a project is an *action*, not a read. ADR-0005 splits the permission model by
+    role precisely along this line ("rola określa czynności: tworzenie/edycja vs. tylko odczyt"),
+    so a viewer holding `PROJECT_READ` must not be able to create — hence a separate permission
+    rather than an overloaded one. Project *scope* stays out of this enum: a project that does
+    not exist yet cannot be scoped, and scope for existing rows is a database filter
+    (`app.data.project_reads`), never a set carried in memory."""
+
     PERSONNEL_COSTS_READ = "personnel_costs:read"
 
 
