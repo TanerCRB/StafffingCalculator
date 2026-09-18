@@ -1,0 +1,5 @@
+# Load-bearing for the pre-push hook: a script checked out with CRLF on Windows fails with
+# "bad interpreter" while still reporting as installed and letting every push through (see
+# process/bootstrap-guide.md, section 3).
+.githooks/** text eol=lf
+process/hooks/** text eol=lf

@@ -1,0 +1,32 @@
+# Agent tool configuration — role definitions are synced here from agents/ via
+# tools/sync-agents.mjs and are deliberately not versioned (see TEAM-CONTRACT.md, section 5).
+# .claude/commands/ IS versioned — it carries this repository's process commands.
+.claude/agents/
+.claude/settings.local.json
+
+# Python (backend/)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node / React (frontend/)
+node_modules/
+dist/
+.vite/
+*.local
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db

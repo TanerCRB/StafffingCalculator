@@ -1,0 +1,42 @@
+name: backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    # Deliberately NO path filter here — see process/repository-settings.md §3 and
+    # process/ci-and-branch-protection.md §1: a workflow skipped by a path filter on
+    # pull_request reports no status at all, and a required check then waits forever.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Announce runner
+        run: echo "Running on ${{ runner.os }}/${{ runner.arch }}, hosted runner ubuntu-latest"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/pyproject.toml
+
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest

@@ -1,0 +1,73 @@
+name: Story
+description: Work to be done — a single task passing through the full chain of roles.
+title: "[SC-?-??] "
+labels: ["state:analysis", "role:po"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The Story is created by the product owner or the analyst. Before implementation starts,
+        **Definition of done** and **Out of scope** must be filled in — without them gate 1 is
+        not passed, because there is nothing to decide when the work is finished.
+
+  - type: input
+    id: zadanie
+    attributes:
+      label: Task identifier from the plan
+      description: For example `SC-3-02`. See docs/PLAN.md for the block numbering. If the task is not in the plan, write `none` and justify it in the description.
+      placeholder: SC-3-02
+    validations:
+      required: true
+
+  - type: textarea
+    id: opis
+    attributes:
+      label: What and why
+      description: One to three sentences. What is missing and who it affects. Do not describe the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: gotowe-gdy
+    attributes:
+      label: Definition of done
+      description: |
+        **An observable condition** — a passing test, a query returning an empty result, an artifact
+        in the repository. Not "the endpoint works," but "test X passes." Until this exists,
+        the task cannot be checked off, even if the code exists.
+      placeholder: |
+        Test `test_margin_is_not_applicable_when_revenue_is_zero` passes, and the /calculate
+        endpoint returns "n/a" for margin, never a numeric value, when revenue is 0.
+    validations:
+      required: true
+
+  - type: textarea
+    id: poza-zakresem
+    attributes:
+      label: Out of scope (explicit)
+      description: |
+        What deliberately **is not** included and why. This field exists so scope does not grow silently
+        during implementation. If nothing falls outside scope, state that explicitly.
+      placeholder: |
+        The <resource> screen in the panel — the frontend is in an earlier phase and comes in separately.
+        Email notifications — require a decision about the channel, outside this task.
+    validations:
+      required: true
+
+  - type: textarea
+    id: podstawa
+    attributes:
+      label: Basis in documentation
+      description: Links to architecture decisions, data model sections, the state machine, an entry in the plan.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: potwierdzenia
+    attributes:
+      label: Before gate 1
+      options:
+        - label: The task does not require a change to or deviation from any accepted architecture decision (if it does — add the deviation label)
+          required: false
+        - label: The foundation this task stands on is described as proven in the capability register
+          required: false

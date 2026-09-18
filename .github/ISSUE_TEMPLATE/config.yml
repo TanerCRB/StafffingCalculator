@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Process documentation
+    url: https://github.com/TanerCRB/StafffingCalculator/blob/main/FrameworkDoc.md
+    about: >-
+      How this repository's SDLC process works — roles, gates, mutation testing. See also
+      TEAM-CONTRACT.md and docs/PLAN.md for the current task register.
