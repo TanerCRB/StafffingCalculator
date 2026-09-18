@@ -15,10 +15,19 @@ export function App() {
   }, []);
 
   return (
-    <main>
-      <h1>StafffingCalculator</h1>
-      <p>IT project staffing, cost, and profitability planner.</p>
-      <p data-testid="backend-status">Backend: {backendStatus}</p>
+    <main className="app-shell">
+      <header className="app-shell__header">
+        <div>
+          <h1 className="app-shell__title">StafffingCalculator</h1>
+          <p className="app-shell__subtitle">
+            IT project staffing, cost, and profitability planner.
+          </p>
+        </div>
+        {/* The state name is the text; `data-state` only picks the colour for it. */}
+        <p className="app-shell__status" data-testid="backend-status" data-state={backendStatus}>
+          Backend: {backendStatus}
+        </p>
+      </header>
       <ProjectListScreen />
     </main>
   );

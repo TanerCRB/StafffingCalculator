@@ -85,4 +85,26 @@ history / this file's own change log, not as tracked product work.
   brakami, zaokrąglanie ADR-0002 na stringu dziesiętnym ("1.005" → "1.01%"), timeout obejmujący
   fazę nagłówków i ciała odpowiedzi. PR #18.
 
+- [x] **SC-1-07** — Wprowadź warstwę tokenów projektowych (kolor/typografia/odstępy) i zastosuj ją
+  do ekranu listy projektów (SC-1-06), zgodnie z układem `Wymagania/UI/Project List.jpeg` i paletą
+  marki wyciągniętą z `Wymagania/UI/globallogic_style_guide-v3.docx` (dokument to podręcznik do
+  prezentacji PowerPoint, nie web-owy design system — wzięto z niego tylko font Manrope, hex
+  kolorów i regułę "orange nigdy na tle Light Steel"; reszta decyzji wizualnych — spacing, stany
+  hover/focus, layout tabeli — dobrana samodzielnie, spójnie).
+  *Done when:* `frontend/src/styles/tokens.test.ts` dowodzi: jedno źródło kolorów (żaden literał
+  poza `tokens.css`, żaden nazwany kolor CSS, żaden inline style), font Manrope faktycznie
+  zamawiany, zakaz ALL CAPS, kontrast WCAG AA (4.5:1) dla wszystkich par tekst/tło zadeklarowanych
+  w arkuszach; `ProjectListScreen.test.tsx` dowodzi że pasek Search/Filters/Add project jest
+  widoczny i dostępny z klawiatury ale nieaktywny (bez filtrowania, bez wywołań API), że długie
+  nazwy (do 200 znaków, bez wymogu spacji) docierają do DOM w całości.
+  **Out of scope (explicit):** funkcjonalność wyszukiwania/filtrów/dodawania projektu (SC-1-05
+  wyklucza search/filter; "Add project" mimo że `POST /projects` istnieje — osobne zadanie, nie
+  mieszane ze zmianą wizualną); przyciski Edit/Delete w panelu scenariusza (poza zakresem F-01/
+  ADR-0004, patrz Issue #3 out of scope 4-5); test regresji wizualnej (brak w tym repo); kolor
+  marki na wyciszonych kontrolkach Filters/Add project — zostają wyciszone (`--sc-color-text-
+  disabled`) tak samo jak kontrolki wiersza, decyzja świadoma, nie błąd.
+  **Done 2026-09-18:** `frontend/src/styles/tokens.test.ts` + `frontend/src/features/projects/ProjectListScreen.test.tsx`
+  — 40 testów frontendowych zielono, w tym mutation-checked kontrast WCAG, specyficzność CSS
+  zaznaczonego wiersza, sticky panel, jednolite wyciszenie nieaktywnych kontrolek.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
