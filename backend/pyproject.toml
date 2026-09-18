@@ -8,6 +8,9 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]
@@ -15,6 +18,9 @@ dev = [
     "pytest>=8.3",
     "httpx>=0.27",
     "ruff>=0.7",
+    # Isolation/constraint behaviour is proven against a real PostgreSQL, never a stand-in
+    # (ADR-0001, "Konsekwencje").
+    "testcontainers[postgres]>=4.8",
 ]
 
 [tool.ruff]
