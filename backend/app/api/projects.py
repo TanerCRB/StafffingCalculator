@@ -29,6 +29,7 @@ from app.core.identity import CallerIdentity, Permission
 from app.data.project_reads import list_projects_for_caller, project_for_caller
 from app.data.project_writes import (
     ProjectEditRefused,
+    archive_project,
     copy_project,
     create_project,
     update_project,
@@ -169,6 +170,43 @@ def edit_project(
         )
     except ProjectEditRefused as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
+        )
+    return shape_project_detail(project, caller)
+
+
+@router.post(
+    "/{project_id}/archive",
+    response_model=ProjectDetail,
+    summary="Archive a project",
+    responses={404: {"description": PROJECT_NOT_FOUND_DETAIL}},
+)
+def archive_project_endpoint(
+    project_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_ARCHIVE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ProjectDetail:
+    """Move a project to Archived — a visibility state, not a freeze.
+
+    Why an action path (`POST …/archive`) and not a `PATCH` carrying `status`: the transition is
+    one-way (F-01 names only "archive"; ADR-0004, addendum 2026-09-18, point 4), so a field a
+    client can set to either value would advertise an un-archive this task does not have. It also
+    keeps its own permission: `PROJECT_ARCHIVE`, not `PROJECT_EDIT` (ADR-0005, addendum
+    2026-09-18, point 1). There is no request body at all — nothing for a client to smuggle an
+    identity, an access grant or a target status into.
+
+    The archived project stays on the list, marked, and every one of its scenarios stays
+    readable and writable: the archive action writes `status` on the project row and touches
+    nothing else (see `archive_project`).
+
+    `404` for a project outside the caller's scope is not a branch written here — it is the only
+    answer available, because `archive_project` resolves its target through the same access-layer
+    function as the read path and returns an indistinguishable `None` for "not yours" and "no
+    such project" (ADR-0005, addendum, point 3).
+    """
+    project = archive_project(session, caller, project_id)
     if project is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
