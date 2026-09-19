@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
-from app.data.project_reads import project_for_caller
+from app.data.project_reads import CallerProjectView, project_for_caller
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 from app.models.scenario import Scenario, ScenarioStatus
@@ -69,7 +69,7 @@ def create_project(
     delivery_period_end: date,
     reporting_currency: str,
     description: str = "",
-) -> Project:
+) -> CallerProjectView:
     """Insert one project and the `project_access` row that lets its creator see it.
 
     Two things this function deliberately does not take as arguments:
@@ -87,6 +87,13 @@ def create_project(
     The commit is here rather than in the endpoint: "the project is persisted" is this module's
     claim to make, and a caller that forgets to commit would otherwise get a Project object that
     silently never reaches the database.
+
+    Returns a `CallerProjectView` so the creation response goes through the same personnel-cost
+    gate as every other project representation (SC-1-08, K-04). The flag is read off the grant row
+    this function just inserted, not assumed: `can_view_personnel_costs` is not an argument here
+    (ADR-0005, addendum 2026-09-19, point 4 — granting the flag is its own action, not a side
+    effect of creating), so the value is the column default, `false`. The named consequence: the
+    creator of a project does not see its personnel costs until someone grants the flag.
     """
     project = Project(
         id=uuid.uuid4(),
@@ -101,7 +108,13 @@ def create_project(
     try:
         session.add(project)
         session.flush()
-        session.add(ProjectAccess(user_id=caller.user_id, project_id=project.id))
+        grant = ProjectAccess(user_id=caller.user_id, project_id=project.id)
+        session.add(grant)
+        # Flushed before the commit so the flag below is the value that was actually inserted,
+        # read while the object is guaranteed unexpired. Hard-coding `False` here would make the
+        # response agree with the gate even if the insert stopped agreeing with either.
+        session.flush()
+        grants_cost_visibility = bool(grant.can_view_personnel_costs)
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()
@@ -110,7 +123,11 @@ def create_project(
         # back into the traceback, one line further down. The cost is the original stack — paid
         # deliberately, and softened by the SQLSTATE and constraint name kept above.
         raise ProjectWriteFailed(_describe_without_values(error)) from None
-    return project
+    return CallerProjectView(
+        user_id=caller.user_id,
+        project=project,
+        can_view_personnel_costs=grants_cost_visibility,
+    )
 
 
 # --- SC-1-02, editing an existing project ------------------------------------------------------
@@ -217,7 +234,7 @@ def update_project(
     *,
     expected_updated_at: datetime,
     changes: Mapping[str, Any],
-) -> Project | None:
+) -> CallerProjectView | None:
     """Apply an edit to one project, or refuse — returning `None` when there is nothing to edit.
 
     `None` means "no such project *for this caller*" and carries no way to tell the two cases
@@ -236,6 +253,11 @@ def update_project(
     database's clock, not this process's, so two application instances cannot disagree about
     which write came last (invariant-guardian rule on injected time sources — nothing here reads
     the system clock).
+
+    The returned `CallerProjectView` carries the caller's cost-visibility flag for this project,
+    taken from the `project_for_caller` row below — the same statement that decided the caller may
+    see it. The `PATCH` response is therefore gated exactly like the `GET` one (SC-1-08, K-04),
+    with no second query and no second scope decision.
     """
     forbidden = sorted(set(changes) - EDITABLE_FIELDS)
     if forbidden:
@@ -247,9 +269,10 @@ def update_project(
     if not changes:
         raise ProjectFieldNotEditable("An edit must name at least one field to change.")
 
-    project = project_for_caller(session, caller, project_id)
-    if project is None:
+    view = project_for_caller(session, caller, project_id)
+    if view is None:
         return None
+    project = view.project
 
     touches_frozen_fields = bool(set(changes) & FROZEN_BY_APPROVED_SCENARIO)
     conditions: list[sa.ColumnElement[bool]] = [
@@ -293,7 +316,7 @@ def update_project(
     # The in-memory object still holds the pre-update values (and `updated_at` was computed by the
     # database), so it is reloaded before anyone shapes a response out of it.
     session.refresh(project)
-    return project
+    return view
 
 
 # --- copying (SC-1-03) -------------------------------------------------------------------------
@@ -390,44 +413,59 @@ def copy_scenario(session: Session, source: Scenario, *, into_project: Project) 
     return copy
 
 
-def copy_project(session: Session, caller: CallerIdentity, source: Project) -> Project:
+def copy_project(
+    session: Session, caller: CallerIdentity, source: CallerProjectView
+) -> CallerProjectView:
     """Copy a project the caller can already see: a new project row, every scenario as a draft.
 
     One transaction, like `create_project`: the project row, the caller's access grant and every
     copied scenario either all land or none do. A half-copied project is worse than a failed
     copy — it looks finished.
 
-    `source` is a row `app.data.project_reads.project_for_caller` has already returned, i.e. one
-    inside the caller's `project_access` scope. This function does not check access and must not
-    be asked to: "may this caller see the source?" is answered by the shared read path, so there
-    is no second, local scope check here to forget or to get subtly different.
+    `source` is a view `app.data.project_reads.project_for_caller` has already returned, i.e. a
+    project inside the caller's `project_access` scope — the parameter type says so, rather than
+    the docstring asking the next caller to remember it. This function does not check access and
+    must not be asked to: "may this caller see the source?" is answered by the shared read path, so
+    there is no second, local scope check here to forget or to get subtly different.
 
     **Access to the copy is granted to `caller.user_id` and to nobody else** (ADR-0005, addendum
     2026-09-18, point 4). The source's `project_access` rows are deliberately not replicated:
     granting access is its own action, not a side effect of copying. The consequence accepted
     together with that decision is that the copy of a team project is initially invisible to the
     team — which is something to tell the person copying, not something for them to discover.
+
+    **The copy's cost-visibility flag comes from the *new* grant inserted below**, i.e. `false` by
+    the column default (SC-1-08, K-04; ADR-0005, addendum 2026-09-19, point 4).
+    `source.can_view_personnel_costs` plays no part in it and is never read here at all — only
+    `source.project` is. Inheriting the flag would make copying a way to carry a cost-visibility
+    grant onto a row nobody granted anything on — the same class of mistake as replicating the
+    source's access rows, one dimension over.
     """
     copy = Project(
         id=uuid.uuid4(),
-        **_values_to_copy(source, excluded=PROJECT_COLUMNS_NOT_COPIED),
+        **_values_to_copy(source.project, excluded=PROJECT_COLUMNS_NOT_COPIED),
     )
     try:
         session.add(copy)
         session.flush()
-        session.add(ProjectAccess(user_id=caller.user_id, project_id=copy.id))
+        grant = ProjectAccess(user_id=caller.user_id, project_id=copy.id)
+        session.add(grant)
         # `list(...)` because `copy_scenario` appends to a project's `scenarios` collection, and
         # the F-09 entry point copies into the *source* project — iterating the live collection
         # there would append while iterating it.
-        for scenario in list(source.scenarios):
+        for scenario in list(source.project.scenarios):
             copy_scenario(session, scenario, into_project=copy)
+        session.flush()
+        grants_cost_visibility = bool(grant.can_view_personnel_costs)
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()
         # Same reasoning as in `create_project`: `from None` keeps psycopg's `DETAIL: Failing row
         # contains (…)` — the whole row, owner's name included — out of the traceback (NF-11).
         raise ProjectWriteFailed(_describe_without_values(error)) from None
-    return copy
+    return CallerProjectView(
+        user_id=caller.user_id, project=copy, can_view_personnel_costs=grants_cost_visibility
+    )
 
 
 # --- SC-1-04, archiving a project --------------------------------------------------------------
@@ -435,7 +473,7 @@ def copy_project(session: Session, caller: CallerIdentity, source: Project) -> P
 
 def archive_project(
     session: Session, caller: CallerIdentity, project_id: uuid.UUID
-) -> Project | None:
+) -> CallerProjectView | None:
     """Set one project's `status` to `archived` — or return `None` if the caller cannot see it.
 
     Three properties this function is built to have, each of them load-bearing:
@@ -464,16 +502,21 @@ def archive_project(
     the wrong stated reason: nothing that caller edited was touched, yet the message reads "the
     project changed since it was read." There is no separate concurrency token here because this
     statement writes only `status`, but it still invalidates the one token editors rely on.
+
+    Like `update_project`, it returns the `CallerProjectView` the read path produced, so the
+    archive response is personnel-cost gated on the same flag as every other representation of the
+    project (SC-1-08, K-04). Archiving does not touch that flag: it is a column of
+    `project_access`, and this function writes `status` on `projects` and nothing else.
     """
-    project = project_for_caller(session, caller, project_id)
-    if project is None:
+    view = project_for_caller(session, caller, project_id)
+    if view is None:
         return None
     try:
-        project.status = ProjectStatus.ARCHIVED
+        view.project.status = ProjectStatus.ARCHIVED
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()
         # As in `create_project`: `from None` so the driver's `DETAIL: Failing row contains (…)`
         # cannot reappear in the traceback as this exception's cause (NF-11).
         raise ProjectWriteFailed(_describe_without_values(error)) from None
-    return project
+    return view

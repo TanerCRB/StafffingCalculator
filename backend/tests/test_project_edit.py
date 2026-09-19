@@ -189,7 +189,7 @@ def test_sc_1_02_02_frozen_fields_are_refused_by_the_data_layer_once_a_scenario_
             db_session,
             EDITING_CALLER,
             project.id,
-            expected_updated_at=accepted.updated_at,
+            expected_updated_at=accepted.project.updated_at,
             changes={
                 "reporting_currency": "PLN",
                 "delivery_period_start": date(2028, 1, 1),
@@ -212,7 +212,7 @@ def test_sc_1_02_02_frozen_fields_are_refused_by_the_data_layer_once_a_scenario_
         db_session,
         EDITING_CALLER,
         project.id,
-        expected_updated_at=accepted.updated_at,
+        expected_updated_at=accepted.project.updated_at,
         changes={"name": "Aurora migration (renamed after approval)"},
     )
     assert still_editable is not None

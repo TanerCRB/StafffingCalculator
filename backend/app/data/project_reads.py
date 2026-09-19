@@ -13,6 +13,7 @@ below, so a write action inherits this scope filter instead of repeating it.
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, selectinload
@@ -22,7 +23,42 @@ from app.models.project import Project
 from app.models.project_access import ProjectAccess
 
 
-def accessible_projects(caller: CallerIdentity) -> Select[tuple[Project]]:
+@dataclass(frozen=True)
+class CallerProjectView:
+    """One project row *as one caller may see it*: whose view it is, the row, plus that caller's
+    own `project_access.can_view_personnel_costs` flag for it.
+
+    Why the flag travels with the row (ADR-0005, addendum 2026-09-19, point 6): the
+    personnel-cost gate lives in `app.api.response_shaping`, which never receives a `Session` and
+    must never grow a query of its own. So the flag has to arrive from here, in the same statement
+    that decided the caller may see the project at all — one query per request, not one per list
+    row, and no ORM relationship that would load *other* users' `project_access` rows and thereby
+    reveal who else has access.
+
+    The pairing is per (caller, project), not per caller: two projects in the same response can
+    disagree about the flag, which is exactly what the column means. That is also why this is a
+    two-field value object rather than a single boolean carried alongside a list of projects — a
+    single boolean would have to be resolved from *some* row, and the obvious "first one" is a
+    per-caller answer to a per-assignment question.
+
+    A view is only ever constructed from a row this module's scope-filtered statement returned,
+    so "no `project_access` row" is not a case to represent: it arrives as `None`/absence, not as
+    a view with the flag defaulted.
+
+    `user_id` names the caller the flag was resolved *for*. It is not used to decide anything here;
+    it exists so that the layer applying the gate can assert it is shaping this view for the same
+    caller it was built for (`app.api.response_shaping._without_personnel_costs`). Without it, a
+    view and an identity are two independent arguments that nothing relates, and "they always match"
+    is a convention of the single call path rather than a property of the type — a distinction that
+    starts to matter as soon as a second producer of views appears (F-11 export, server-to-server).
+    """
+
+    user_id: str
+    project: Project
+    can_view_personnel_costs: bool
+
+
+def accessible_projects(caller: CallerIdentity) -> Select[tuple[Project, bool]]:
     """A `SELECT` over projects already narrowed to the caller's `project_access` rows.
 
     Callers that need something more specific (one project, an export subset, a future filter)
@@ -31,32 +67,58 @@ def accessible_projects(caller: CallerIdentity) -> Select[tuple[Project]]:
 
     The filter is a join, not a post-read check: a project outside the caller's scope never
     reaches Python, so it cannot be leaked as a placeholder, a tombstone or a count.
+
+    The statement selects `ProjectAccess.can_view_personnel_costs` alongside the project rather
+    than discarding the joined row: the join is already narrowed to `caller.user_id`, so the flag
+    it carries is the caller's own, for this project, at no extra query and with no second place
+    that could disagree about scope. `(user_id, project_id)` is the primary key of
+    `project_access`, so adding the column cannot multiply rows.
     """
     return (
-        select(Project)
+        select(Project, ProjectAccess.can_view_personnel_costs)
         .join(ProjectAccess, ProjectAccess.project_id == Project.id)
         .where(ProjectAccess.user_id == caller.user_id)
     )
 
 
-def list_projects_for_caller(session: Session, caller: CallerIdentity) -> Sequence[Project]:
+def _as_view(row: tuple[Project, bool], caller: CallerIdentity) -> CallerProjectView:
+    """Pair one row of `accessible_projects(caller)` with the caller that statement was built for.
+
+    `caller` is the same object the statement's `WHERE` was narrowed by, so the view's `user_id` and
+    the flag on it cannot come from different callers.
+    """
+    project, can_view_personnel_costs = row
+    return CallerProjectView(
+        user_id=caller.user_id,
+        project=project,
+        can_view_personnel_costs=bool(can_view_personnel_costs),
+    )
+
+
+def list_projects_for_caller(
+    session: Session, caller: CallerIdentity
+) -> Sequence[CallerProjectView]:
     """Every project the caller has access to, archived ones included.
 
     Archived projects stay on the default list, clearly marked, rather than being hidden
     (gate-1 decision 8). Ordering is by name — stable, and deliberately not a filter,
     a search or a page: those are out of scope for SC-1-05.
+
+    Each row carries its own cost-visibility flag, resolved by the join above for that project.
+    One statement for the whole list: the alternative — reading the flag per row where it is
+    needed — is both an N+1 and a second scope decision (SC-1-08, ADR-0005 addendum point 6).
     """
     statement = (
         accessible_projects(caller)
         .options(selectinload(Project.scenarios))
         .order_by(Project.name, Project.id)
     )
-    return session.execute(statement).scalars().unique().all()
+    return [_as_view(row, caller) for row in session.execute(statement).unique().all()]
 
 
 def project_for_caller(
     session: Session, caller: CallerIdentity, project_id: uuid.UUID
-) -> Project | None:
+) -> CallerProjectView | None:
     """One project by id — or `None`, with no way to tell *why* it is `None`.
 
     "Not in your scope" and "does not exist" collapse into the same return value here, on
@@ -68,10 +130,17 @@ def project_for_caller(
     A `select(Project).where(Project.id == ...)` written at the point of use would return the row
     and leave the scope check to whoever remembered to write it; that is the ADR-0001 (addendum)
     violation this function exists to make unnecessary.
+
+    Returns a `CallerProjectView`, not a bare `Project`: the caller's cost-visibility flag for
+    this project comes out of the same statement, so no later layer has to go looking for it.
+    The write paths (`app.data.project_writes`) resolve their target through this function, which
+    is how `PATCH`, `POST …/archive` and `POST …/copy` inherit the flag as well as the scope
+    filter.
     """
     statement = (
         accessible_projects(caller)
         .options(selectinload(Project.scenarios))
         .where(Project.id == project_id)
     )
-    return session.execute(statement).scalars().unique().one_or_none()
+    row = session.execute(statement).unique().one_or_none()
+    return None if row is None else _as_view(row, caller)
