@@ -1,0 +1,325 @@
+"""The organisational catalogue: role dimensions and default rates (F-03, SC-2-01).
+
+Five tables, and one thing they all have in common: **no column ties a row to a project, a user, a
+business unit or a tenant.** That is what puts them outside the `project_access` scope filter
+(ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu", point 1) and outside
+the single-guarded-read-path requirement (ADR-0001, addendum 2026-09-19 — a guard function exists so
+a scope predicate cannot be forgotten, and there is no predicate here to forget). The moment one of
+these tables grows such a column, both exceptions expire and need their own dated entry in those
+decisions.
+
+The four dimensions are **data, not code** (NF-10): no `StrEnum` anywhere restricts which roles,
+seniorities, locations or engagement types may exist, so adding "Site Reliability Engineer" is an
+`INSERT`, not a migration. The four *kinds* are code, because they are four columns of the rate
+table — that is a different statement from the values they hold.
+
+`CatalogDefaultRate` is the first table in this repository built on ADR-0008's effective-range
+pattern (`effective_from`/`effective_to` + a generated `valid_period daterange` + `EXCLUDE USING
+gist`). It sets the precedent for `exchange_rates` (ADR-0006) and `commercial_terms` (ADR-0003), so
+the shape here is the shape those two inherit.
+
+Not a child of a scenario: `SCENARIO_CHILD_COPIERS` deliberately gains no entry for these tables
+(ADR-0004, addendum 2026-09-19 — copying a project does not copy the company's catalogue).
+"""
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import (
+    CheckConstraint,
+    Computed,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import DATERANGE, ExcludeConstraint, Range
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+RATE_UNIT_HOUR = "hour"
+"""The only unit a rate row may carry today (gate-1 decision 4).
+
+A constant, not an enum with one member: F-07 adds daily and monthly units, and an enum with one
+member invites reading "unit" as decoration. The refusal lives in the database (`unit_is_hour`
+below), because a Pydantic `Literal` only ever sees requests (criterion K-07 requires the path that
+does not go through the request schema to be refused as well)."""
+
+RATE_PRECISION = 14
+RATE_SCALE = 4
+"""`NUMERIC(14,4)` — deliberately a larger scale than any currency's minor unit (ADR-0008, point 6).
+
+A rate is *input*, not the result of a rounding step: storing it as `NUMERIC(12,2)` would silently
+change 12.345 into 12.35 at write time. Rounding to the currency unit stays the consumer's rule
+(`app.core.money.round_money`), applied where the rate enters a calculation."""
+
+
+class _CatalogDimension(Base):
+    """One row of one dimension dictionary: an id and a name, nothing else.
+
+    Abstract on purpose — the four dictionaries are four tables rather than one table with a `kind`
+    discriminator, because the rate row references each of them separately as a foreign key, and a
+    single table would make "seniority id in the location column" a valid row.
+    """
+
+    __abstract__ = True
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+DIMENSION_NAME_KEY_EXPRESSION = r"lower(btrim(regexp_replace(name, '\s+', ' ', 'g')))"
+"""What makes two dimension names "the same name", as SQL — the key of the unique index below.
+
+Case-folded, trimmed, and with every run of whitespace collapsed to one space. Measured before this
+existed (R-04, reviewer 2026-09-19): `"Senior"`, `"senior"`, `"SENIOR"`, `"Senior Dev"` and
+`"Senior  Dev"` were five rows, while this module's own docstring claimed the opposite. Five
+"Senior"s split the rate table into five halves that look like one, and no screen can tell them
+apart — which is the same class of defect as accepting `"Hour"` for the rate unit, refused two
+tables over by a CHECK constraint.
+
+**Refusal, not normalisation.** The stored `name` keeps exactly the spelling that was sent (the
+index key is computed, the column is not rewritten), for the reason `Iso4217Code` gives for
+rejecting `"eur"`: silently normalising input is how two spellings of one thing end up
+indistinguishable in a column that nobody can audit afterwards. What is refused is the *second* row
+that means the same thing.
+
+In the database rather than in a validator: a `SELECT` asking "does a similar name exist?" before an
+`INSERT` is check-then-act, and two callers adding "Senior" at once would both pass it (the mutation
+that already survived delivered tests twice in this repository — SC-1-02, SC-1-04). Every function
+in this expression (`lower`, `btrim`, `regexp_replace`) is `IMMUTABLE`, which is what lets it index.
+
+**The nesting order is load-bearing.** `regexp_replace` runs *first*, `btrim` second: PostgreSQL's
+one-argument `btrim` strips **spaces only**, so trimming first leaves a leading tab or newline in
+place, and a tab-padded "Senior" then normalises to `" senior "` — a sixth spelling,
+indistinguishable from a fix. Collapsing every whitespace run to a single space first makes the
+trim complete. Migration `4f0a9c1b7d62` names the same trap (`btrim` versus `~ '[^[:space:]]'`),
+and the tab case of `test_r_04_a_dimension_name_differing_only_in_case_or_spacing_is_the_same_name`
+is what caught it in the first version of this expression.
+
+Spelled once, next to the model, and asserted identical to the migration's copy by
+`test_the_model_and_the_migration_agree_on_every_sql_expression` (R-02)."""
+
+
+def _dimension_table_args(table_name: str) -> tuple[object, ...]:
+    """The non-blank CHECK the projects table carries, plus a unique index on the *normalised* name.
+
+    `NOT NULL` alone still admits `''` and `'   '`; the pattern `~ '[^[:space:]]'` is the exact
+    claim the API boundary makes with `strip_whitespace=True`, so the two cannot disagree about what
+    a blank name is (migration `4f0a9c1b7d62` made the same argument for projects).
+
+    Uniqueness is on the name because a dimension entry *is* its name — and on the *normalised*
+    name, because `UNIQUE (name)` alone made "Senior" and "senior" two different entries (R-04; see
+    `DIMENSION_NAME_KEY_EXPRESSION`). A plain `UNIQUE (name)` is deliberately **not** kept
+    alongside it: it refuses a strict subset of what the index refuses, so two constraints would
+    only make the error message depend on which one PostgreSQL happened to check first.
+
+    The CHECK is named short so the metadata naming convention (`app.db.base.NAMING_CONVENTION`)
+    expands it to `ck_<table>_name_not_blank`. The index carries its full name, because that
+    convention has no template for an expression index and a derived name would be unreadable.
+    """
+    return (
+        CheckConstraint("name ~ '[^[:space:]]'", name="name_not_blank"),
+        Index(
+            f"uq_{table_name}_name_normalized",
+            text(DIMENSION_NAME_KEY_EXPRESSION),
+            unique=True,
+        ),
+    )
+
+
+class CatalogRole(_CatalogDimension):
+    __tablename__ = "catalog_roles"
+    __table_args__ = _dimension_table_args("catalog_roles")
+
+
+class CatalogSeniority(_CatalogDimension):
+    __tablename__ = "catalog_seniorities"
+    __table_args__ = _dimension_table_args("catalog_seniorities")
+
+
+class CatalogLocation(_CatalogDimension):
+    __tablename__ = "catalog_locations"
+    __table_args__ = _dimension_table_args("catalog_locations")
+
+
+class CatalogEngagementType(_CatalogDimension):
+    """"Engagement type" is not defined in the requirements (named in Issue #5). In this task it is
+    a label with no behaviour: it takes part in the rate key and in nothing else. Its cost
+    consequences (overtime, stand-by, contractor vs. employee) are F-07/F-08."""
+
+    __tablename__ = "catalog_engagement_types"
+    __table_args__ = _dimension_table_args("catalog_engagement_types")
+
+
+RATE_DIMENSION_COLUMNS: tuple[str, ...] = (
+    "role_id",
+    "seniority_id",
+    "location_id",
+    "engagement_type_id",
+)
+"""The full tuple that keys a rate — as data, because it is the key of the `EXCLUDE` constraint and
+the argument list of the resolution lookup, and those two must never disagree about which columns
+identify a rate (gate-1 decision 3). All four are `NOT NULL`: a nullable dimension would mean "any",
+which is a second, unnamed resolution mechanism on top of the date window."""
+
+VALID_PERIOD_EXPRESSION = "daterange(effective_from, (effective_to + 1), '[)')"
+"""The **only** place `effective_to`'s inclusiveness is converted to PostgreSQL's canonical
+half-open form (ADR-0008, point 3). `effective_to + 1` on a `NULL` yields `NULL`, which `daterange`
+reads as "unbounded above" — so an open-ended window needs no sentinel date.
+
+Spelled once and used twice: here, to build the generated column, and in the migration that creates
+it. A second copy inside a `WHERE` clause is what ADR-0008 forbids — hence every lookup asks
+`valid_period @> :on_date` instead of rebuilding the range."""
+
+NO_OVERLAP_CONSTRAINT = "ex_catalog_default_rates_no_overlapping_periods"
+"""Name of the `EXCLUDE USING gist` constraint, spelled once.
+
+Referenced by the tests that prove a refusal came from *this* mechanism rather than from something
+else that happened to fail, so a rename is a single edit rather than a search."""
+
+
+class CatalogDefaultRate(Base):
+    """One default cost/selling rate for one dimension tuple over one effective period (F-03).
+
+    Cost and selling rate share the row (gate-1 decision 6): two columns, one row, so denying the
+    cost rate stays what SC-1-08 proved it is — a removed *field*, with the row and the selling rate
+    still present (ADR-0005, addendum 2026-09-19, point 5). Splitting them into two tables would
+    turn the same denial into a hidden row, and "this tuple has no rate" would become
+    indistinguishable from "you may not see its cost".
+    """
+
+    __tablename__ = "catalog_default_rates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+
+    # No `ondelete` — i.e. `NO ACTION`: the database refuses to delete a dimension entry a rate
+    # still references. Deleting or deactivating a dimension entry that is in use is explicitly out
+    # of scope for SC-2-01 (it needs a decision about referential history, ADR-0004), and refusing
+    # is the option that pre-empts neither answer.
+    #
+    # The four foreign keys carry explicit names rather than the ones
+    # `NAMING_CONVENTION["fk"]` derives: for `engagement_type_id` that derivation is 66 characters,
+    # so PostgreSQL's 63-character identifier limit makes SQLAlchemy truncate it and append a hash
+    # (`…_catalog_eng_0ab4`). A name with a hash in it has to be copied into the migration
+    # character by character and cannot be read back to its meaning — these say what they are.
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("catalog_roles.id", name="fk_catalog_default_rates_role_id"),
+        nullable=False,
+    )
+    seniority_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("catalog_seniorities.id", name="fk_catalog_default_rates_seniority_id"),
+        nullable=False,
+    )
+    location_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("catalog_locations.id", name="fk_catalog_default_rates_location_id"),
+        nullable=False,
+    )
+    engagement_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(
+            "catalog_engagement_types.id", name="fk_catalog_default_rates_engagement_type_id"
+        ),
+        nullable=False,
+    )
+
+    # `NUMERIC` → `Decimal`, never float, on a money path or next to one (NF-01, ADR-0002).
+    default_cost_rate: Mapped[Decimal] = mapped_column(
+        Numeric(RATE_PRECISION, RATE_SCALE), nullable=False
+    )
+    """The personnel cost of an hour of this tuple — personal-ish data in the sense of NF-11/AC-06,
+    and the field the catalogue's cost gate removes. `NOT NULL`: the column is the *default* the
+    calculation falls back to, so a row without one is a row that cannot answer the question it
+    exists for. Its visibility is a property of the response, not of the column (ADR-0005, addendum
+    2026-09-19, point 5) — see `app.api.response_shaping.shape_catalog_rate`."""
+
+    default_selling_rate: Mapped[Decimal] = mapped_column(
+        Numeric(RATE_PRECISION, RATE_SCALE), nullable=False
+    )
+
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    """ISO-4217 alphabetic code as a string — not an enum and not a foreign key (ADR-0006), so
+    adding a currency needs no migration. Deliberately **not** part of the `EXCLUDE` key (ADR-0008,
+    point 4): one tuple has at most one rate at a time, in one currency, and conversion goes through
+    `exchange_rates`, never through parallel rows in several currencies."""
+
+    unit: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=RATE_UNIT_HOUR, default=RATE_UNIT_HOUR
+    )
+
+    # Calendar dates, not points in time (invariant-guardian rule 15): "this rate applies from
+    # 1 March" has no timezone.
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    """`NULL` means open-ended, not a `9999-12-31` sentinel (ADR-0008, point 2). **Inclusive** in
+    the API and in the data: "valid to 31 December" means the 31st is covered. The conversion to the
+    half-open form PostgreSQL canonicalises to happens in exactly one place — the `valid_period`
+    expression below — and must not be repeated in any query (ADR-0008, point 3)."""
+
+    valid_period: Mapped[Range[date]] = mapped_column(
+        DATERANGE,
+        Computed(VALID_PERIOD_EXPRESSION, persisted=True),
+        nullable=False,
+    )
+    """The one representation of the window, generated by the database and read by both the
+    `EXCLUDE` constraint and the resolution lookup (`valid_period @> :on_date`).
+
+    Read-only from the ORM's point of view — `Computed`, never assigned on insert (ADR-0008,
+    "Konsekwencje"). The point of the generated column is that the constraint and the lookup cannot
+    drift apart about where the boundary is: repeating `daterange(...)` in the query would be the
+    same expression in two places, and a mismatch of one day is invisible to any test that asks
+    about a date in the middle of a window."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    # Integrity in the database, not in application code (ADR-0001, invariant-guardian rule 13).
+    #
+    # The `EXCLUDE` is the whole guarantee that a lookup never has to choose between two rows: with
+    # it, "latest row wins" is not a policy that was rejected — it is a situation that cannot arise.
+    # A Python check-then-act equivalent has already survived delivered tests twice in this
+    # repository (SC-1-02, SC-1-04), which is why ADR-0008 rejects it by name.
+    #
+    # `btree_gist` is what allows `=` on the four id columns inside a gist index (`&&` on a
+    # `daterange` is native). The extension is created by the migration, and the database privilege
+    # that needs is documented in `backend/README.md` (ADR-0008, points 5 and 7).
+    __table_args__ = (
+        CheckConstraint(f"unit = '{RATE_UNIT_HOUR}'", name="unit_is_hour"),
+        CheckConstraint("char_length(currency) = 3", name="currency_iso4217"),
+        # ISO 4217 codes are upper-case by definition; same class of defect as `unit` above —
+        # `"eur"` written through a path that skips `Iso4217Code` must not create a second
+        # spelling of one currency.
+        CheckConstraint("currency = upper(currency)", name="currency_is_upper"),
+        # Load-bearing for the EXCLUDE below it, not merely tidy: with `effective_to` one day
+        # *before* `effective_from`, `daterange` yields an *empty* range, and `&&` against an empty
+        # range is false for everything — the overlap constraint would silently stop applying to
+        # that row. Ordering the pair is what keeps every window non-empty.
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to >= effective_from",
+            name="effective_period_ordered",
+        ),
+        ExcludeConstraint(
+            *[(column, "=") for column in RATE_DIMENSION_COLUMNS],
+            ("valid_period", "&&"),
+            using="gist",
+            name=NO_OVERLAP_CONSTRAINT,
+        ),
+    )

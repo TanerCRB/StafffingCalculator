@@ -1,4 +1,5 @@
-"""The single layer that turns project rows into API payloads (ADR-0005).
+"""The layer that turns database rows into API payloads, with permission-dependent fields removed
+(ADR-0005).
 
 ADR-0005 puts permission-dependent field removal here, in response shaping, so that the API,
 the PDF/spreadsheet export (F-11) and any server-side rendering share one implementation
@@ -16,11 +17,23 @@ a view rather than a bare `Project`: there is no way to shape a project without 
 the flag, so the gate cannot be half-applied by forgetting an argument. The view also names the
 caller it was built for, and `_without_personnel_costs` refuses to shape it for anyone else — see
 its docstring.
+
+**Two gates, not one** (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu",
+point 4). `_without_personnel_costs` gates project payloads on the *conjunction* above.
+`_without_catalog_personnel_costs` gates catalogue payloads on the permission alone, because a
+catalogue row has no project for the second factor to be true or false about. The addendum accepts
+that asymmetry explicitly and fixes its direction: the single-factor form applies **only where there
+is no project**. The day a catalogue rate travels inside a response describing a project or a
+scenario (a resolved staffing-position rate — plan blocks 3-5), the conjunction applies unchanged;
+reading a project's cost rate "through the catalogue" must not become a way around the assignment
+flag. Both gates remove *fields* and never refuse the row, and both do it here rather than in the
+frontend (AC-06, NF-04), so the F-11 export inherits them.
 """
 
 from collections.abc import Sequence
 from typing import Any
 
+from app.api.schemas.catalog import CatalogRate, CatalogRateList
 from app.api.schemas.project import (
     DeliveryPeriod,
     ProjectDetail,
@@ -31,11 +44,23 @@ from app.api.schemas.project import (
 from app.core.identity import CallerIdentity, Permission
 from app.data.project_reads import CallerProjectView
 from app.domain.scenario_readiness import assess
+from app.models.catalog import CatalogDefaultRate
 from app.models.project import Project, ProjectStatus
 from app.models.scenario import Scenario, ScenarioStatus
 
 PERSONNEL_COST_FIELDS: frozenset[str] = frozenset()
 """Response fields carrying individual personnel costs. Empty until plan block 5 adds them."""
+
+CATALOG_PERSONNEL_COST_FIELDS: frozenset[str] = frozenset({"default_cost_rate"})
+"""Catalogue response fields carrying a personnel cost — one, and it is a real column (SC-2-01).
+
+Unlike `PERSONNEL_COST_FIELDS` above, this set is **not** empty, so the catalogue gate removes
+something today and the criterion tests need no stand-in field (the substitution SC-1-08 had to make
+was itself the weakest part of that proof). Emptying this set is therefore a mutation the delivered
+tests kill: a caller without `PERSONNEL_COSTS_READ` would start receiving the cost rate.
+
+A rate's *currency* and *selling* rate are not in here: F-13/AC-06 protect what a person costs, and
+removing the selling rate would make a commercial figure that every planner needs invisible."""
 
 _PROJECT_STATUS_LABELS = {
     ProjectStatus.ACTIVE: "Active",
@@ -162,3 +187,73 @@ def shape_project_list(
     readings agree.
     """
     return ProjectListResponse(projects=[_shape_project(view, caller) for view in views])
+
+
+# --- the catalogue (SC-2-01) --------------------------------------------------------------------
+# A second shaping function with a different gate input, accepted as such by ADR-0005's addendum of
+# 2026-09-19 (point 4): "jedno miejsce" becomes two functions in one module, not two modules. It
+# takes a bare row and a caller — there is no `CallerCatalogView` and there must not be one,
+# because a view object exists to carry a per-(caller, row) flag and the catalogue has no such flag
+# to carry (ADR-0001, addendum 2026-09-19). Inventing one would suggest a scope decision nobody
+# makes here.
+
+
+def _without_catalog_personnel_costs(item: CatalogRate, caller: CallerIdentity) -> CatalogRate:
+    """Remove the catalogue's cost-rate field unless the caller holds `PERSONNEL_COSTS_READ`.
+
+    One factor, and this is the exception ADR-0005's addendum of 2026-09-19 ("pierwszy zbiór danych
+    bez zasięgu projektu", point 3) creates, named as a weakening: outside a project context the
+    second factor of the SC-1-08 conjunction — `project_access.can_view_personnel_costs` — has no
+    subject, since there is no project it could be true or false *about*. Applied literally, the
+    conjunction would close this gate forever rather than gate it.
+
+    The direction of the exception must not be reversed: it holds **only where there is no
+    project**. A resolved rate inside a project or scenario response goes back through the
+    conjunction.
+
+    The permission is read from the caller the request produced
+    (`app.api.deps.get_caller_identity`, rebuilt per request, never cached and never taken from
+    a body field). The denial is the removal of a field: same `200`, same row, dimensions and
+    selling rate intact (point 5). A `403` or a `404` here would deny the *rate*, and with it
+    the selling rate the caller is entitled to; a `404` would additionally make "you may not see
+    this cost" indistinguishable from "this tuple has no rate"."""
+    if caller.has(Permission.PERSONNEL_COSTS_READ):
+        return item
+    return item.model_copy(update=dict.fromkeys(CATALOG_PERSONNEL_COST_FIELDS))
+
+
+def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> CatalogRate:
+    """One catalogue rate row as this caller may see it.
+
+    `effective_to` is passed through as stored — inclusive, `None` when open-ended. No day is added
+    or subtracted anywhere on this path: that conversion exists in exactly one place, the generated
+    `valid_period` column (ADR-0008, point 3).
+    """
+    return _without_catalog_personnel_costs(
+        CatalogRate(
+            id=rate.id,
+            role_id=rate.role_id,
+            seniority_id=rate.seniority_id,
+            location_id=rate.location_id,
+            engagement_type_id=rate.engagement_type_id,
+            default_cost_rate=rate.default_cost_rate,
+            default_selling_rate=rate.default_selling_rate,
+            currency=rate.currency,
+            unit=rate.unit,
+            effective_from=rate.effective_from,
+            effective_to=rate.effective_to,
+        ),
+        caller,
+    )
+
+
+def shape_catalog_rate_list(
+    rates: Sequence[CatalogDefaultRate], caller: CallerIdentity
+) -> CatalogRateList:
+    """Shape a sequence of rate rows — every row through `shape_catalog_rate`, no exceptions.
+
+    Not `[CatalogRate.model_validate(rate) for rate in rates]`: a list path that built payloads
+    directly would be a second, ungated way out of the database, which is how the same field ends up
+    removed on the detail path and present on the list one.
+    """
+    return CatalogRateList(rates=[shape_catalog_rate(rate, caller) for rate in rates])

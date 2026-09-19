@@ -38,6 +38,27 @@ alembic revision --autogenerate -m "<what changes>"
 Migrations are expand → deploy → contract: a destructive step never ships in the same migration
 as the code that needs the new shape. Schema changes live only in migration files.
 
+### Wymagane uprawnienie bazy: `CREATE EXTENSION btree_gist`
+
+Migracja `7b3d5c81e40a` (katalog wymiarów roli i stawek, SC-2-01) wykonuje
+`CREATE EXTENSION IF NOT EXISTS btree_gist` **przed** założeniem ograniczenia `EXCLUDE USING gist`
+na `catalog_default_rates` (ADR-0008 pkt 5). Rozszerzenie jest potrzebne nie dla samego zakresu dat
+(gist obsługuje `&&` na `daterange` natywnie), a dla operatorów `=` na kolumnach `uuid` wewnątrz
+tego samego indeksu gist. Bez niego migracja **nie przejdzie** — a wraz z nią nie powstanie jedyny
+mechanizm odrzucający nakładające się przedziały obowiązywania stawki.
+
+Rola wykonująca migracje musi mieć prawo zakładania rozszerzeń. **Rola z prawem `CREATE` na bazie
+zwykle wystarcza — `btree_gist` jest `trusted` od PostgreSQL 13 — ale nie jest to potwierdzone dla
+środowiska docelowego, bo środowisko docelowe nie zostało jeszcze wybrane** (open decision #5 w
+wymaganiach; ADR-0008 pkt 5 i 7). Zielony test w CI dowodzi, że mechanizm i migracja są poprawne,
+i **nie** dowodzi, że rola aplikacji na docelowej bazie może to wykonać: kontener testowy
+(testcontainers) uruchamia rolę nadrzędną.
+
+Jeśli docelowa baza na to nie pozwala, rozszerzenie zakłada raz administrator bazy
+(`CREATE EXTENSION btree_gist;`), a migracja przechodzi dzięki `IF NOT EXISTS`. `downgrade()`
+rozszerzenia **nie usuwa** — jest obiektem bazy, nie jednej tabeli, i dziedziczą je `exchange_rates`
+(ADR-0006) oraz `commercial_terms` (ADR-0003).
+
 ## Test / lint
 
 ```bash
@@ -55,7 +76,7 @@ PostgreSQL you run yourself instead.
 app/
   api/       # FastAPI routers, request dependencies, response shaping, response schemas
   core/      # config, caller identity/permissions, money handling (see core/money.py)
-  data/      # the shared access-filtered read path (project_reads.py)
+  data/      # the shared access-filtered read path (project_reads.py) + catalogue reads/writes
   db/        # declarative base, engine/session
   domain/    # calculation-independent rules (e.g. scenario readiness)
   models/    # SQLAlchemy models — one module per table
@@ -70,3 +91,11 @@ Money is `Decimal` everywhere; round only through `app.core.money.round_money` (
 Projects are read **only** through `app.data.project_reads` — that function applies the
 `project_access` scope filter (ADR-0001 addendum, ADR-0005). A `select(Project)` written
 anywhere else bypasses the isolation boundary.
+
+The catalogue (`app.data.catalog`) deliberately has **no** such guard function: its rows belong to
+no project, so there is no scope predicate that could be forgotten, and a wrapper named
+symmetrically to `project_reads` would imply a filter that is not there (ADR-0001 addendum
+2026-09-19, ADR-0005 addendum 2026-09-19). The exception ends at the first catalogue column tying a
+row to a project, a business unit or a tenant. What does **not** move out of the shaping layer is
+the personnel-cost gate: `app.api.response_shaping.shape_catalog_rate` removes
+`default_cost_rate` for a caller without `PERSONNEL_COSTS_READ`.

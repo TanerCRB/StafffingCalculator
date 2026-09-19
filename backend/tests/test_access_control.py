@@ -105,7 +105,7 @@ def test_project_create_denies_caller_holding_only_project_read(
 
 
 def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() -> None:
-    """The placeholder identity grants exactly read, create, edit, copy and archive — no more.
+    """The placeholder grants exactly the five project actions plus catalogue read/write — no more.
 
     Asserted as set equality rather than membership: ADR-0005's addendum requires every widening
     of this set to be a deliberate, dated entry in the decision, and a membership assertion
@@ -121,6 +121,14 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     dostęp do kopii" names all three widenings, so the expected set below was updated with them
     and not around them. The assertion stays a set equality — the canary is re-armed around the
     new set, not softened into a membership check.
+
+    It grew twice more on 2026-09-19, by `CATALOG_READ` and `CATALOG_WRITE` (SC-2-01): ADR-0005's
+    addendum "pierwszy zbiór danych bez zasięgu projektu" (point 6) names those two widenings and
+    only those two, and says in the same breath that `PERSONNEL_COSTS_READ` stays out. So the
+    catalogue's cost-rate deny path is the real one for every caller the running system has, and its
+    positive branch is reachable from a test only (`dependency_overrides`) — the same shape SC-1-08
+    accepted, and the reason the second assertion below is a separate line rather than an
+    afterthought.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
@@ -131,6 +139,8 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             Permission.PROJECT_EDIT,
             Permission.PROJECT_COPY,
             Permission.PROJECT_ARCHIVE,
+            Permission.CATALOG_READ,
+            Permission.CATALOG_WRITE,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
