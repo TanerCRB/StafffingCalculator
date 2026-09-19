@@ -138,3 +138,62 @@ rozstrzygnąć jedno z dwóch, zanim rola węższa niż `author` zacznie cokolwi
 `PROJECT_EDIT`/`PROJECT_COPY`/`PROJECT_ARCHIVE` niesie ze sobą także `PROJECT_READ` tego
 Projektu — nazwane wprost, nie domyślne; albo (b) odpowiedzi tych trzech endpointów przestają
 być pełnym `ProjectDetail` dla wołającego bez `PROJECT_READ`.
+
+### 2026-09-19 — bramka kosztów osobowych jako koniunkcja dwóch mechanizmów (SC-1-08)
+
+Decyzja nazywa trzeci wymiar jednym mechanizmem: "`can_view_personnel_costs` (bool, per
+przypisanie użytkownik-projekt)". Kod ma dwa: `Permission.PERSONNEL_COSTS_READ` w zbiorze
+uprawnień tożsamości (`backend/app/core/identity.py`) oraz kolumnę
+`project_access.can_view_personnel_costs`, której dziś nie czyta nic. Rejestr możliwości nazywa
+tę rozbieżność otwartą luką (R-03: "kształt per-caller zamiast per-project-assignment").
+SC-1-08 ją domyka — a domknięcie jest uściśleniem decyzji, nie jej odczytaniem, więc wymaga
+zapisu tutaj.
+
+1. **Koniunkcja.** Pole kosztu osobowego jest widoczne wtedy i tylko wtedy, gdy
+   `caller.has(PERSONNEL_COSTS_READ)` **oraz** `project_access.can_view_personnel_costs` dla
+   pary (wołający, projekt) jest prawdą. Brak wiersza `project_access` nie jest osobnym
+   przypadkiem: projekt spoza zasięgu nigdy nie dociera do warstwy kształtowania (ADR-0001,
+   aneks 2026-09-18). Wartość nieustalona albo nieprzekazana do warstwy kształtowania znaczy
+   `false` — bramka zamyka się, a nie otwiera, gdy nie wie.
+2. **Co znaczy każda z połówek.** `PERSONNEL_COSTS_READ` odpowiada na pytanie, czy wołający
+   *w ogóle* może widzieć koszty osobowe; `can_view_personnel_costs` zawęża to do konkretnych
+   przypisań. Zdanie decyzji "niezależne od roli" pozostaje w mocy w kierunku, w którym zostało
+   napisane: rola nie nadaje kosztów. Koniunkcja jest wyłącznie zawężająca — wobec pierwotnego
+   tekstu nie otwiera dostępu nikomu, komu tekst go nie dawał.
+3. **`PERSONNEL_COSTS_READ` jest zastępnikiem epoki placeholdera, nie trwałym wymiarem.**
+   Rozstrzygnięte (gate 1, SC-1-08): to uprawnienie nie jest niezależnym, trwałym atrybutem
+   podmiotu/roli — jest tym, co placeholder ma zamiast prawdziwej tożsamości, dokładnie jak
+   `PROJECT_EDIT`/`PROJECT_COPY`/`PROJECT_ARCHIVE` w aneksie z 2026-09-18. Gdy zjawi się ADR
+   uwierzytelniania, `PERSONNEL_COSTS_READ` zostaje *wyprowadzone* ze zbioru wierszy
+   `project_access` wołającego (np. "ma co najmniej jedno przypisanie z flagą `true`"), a nie
+   utrzymywane jako osobny, ręcznie nadawany bit — inaczej dwa magazyny prawdy muszą zostać
+   zsynchronizowane na zawsze. **Warunek zamknięcia:** ADR uwierzytelniania koduje to
+   wyprowadzenie, zanim pojawi się pierwszy wołający z tożsamością inną niż placeholder; do tego
+   czasu koniunkcja zostaje jako jest.
+4. **Nikt nie nadaje dziś tej flagi.** `create_project` i `copy_project` wstawiają wiersz
+   `ProjectAccess` bez tej kolumny, czyli `false` (`server_default`), i nie istnieje żadna
+   ścieżka zapisu ustawiająca ją na `true`. Zostaje tak — jest to spójne z aneksem 2026-09-18
+   p. 4 ("nadanie dostępu jest osobną czynnością i nie dzieje się jako skutek uboczny").
+   **Konsekwencja przyjęta razem z tym aneksem:** po SC-1-08 gałąź pozytywna bramki jest w
+   działającym systemie nieosiągalna — twórca projektu nie widzi jego kosztów osobowych — i daje
+   się dowieść wyłącznie testem podstawiającym oba czynniki naraz. To musi być powiedziane
+   wprost w rejestrze możliwości, nie odkryte później.
+5. **Zbiór uprawnień placeholdera bez zmian.** `PLACEHOLDER_PERMISSIONS` nadal nie zawiera
+   `PERSONNEL_COSTS_READ`, a kanarek równości zbiorów tego pilnuje. Dodanie go — choćby po to,
+   by uzyskać dowód end-to-end gałęzi pozytywnej — byłoby poszerzeniem odstępstwa i wymaga
+   własnego, datowanego wpisu tutaj. Ten aneks go nie obejmuje: dowód gałęzi pozytywnej idzie
+   przez `app.dependency_overrides[get_caller_identity]` w teście, wzorem
+   `backend/tests/test_project_detail_personnel_costs.py`.
+6. **Skąd warstwa kształtowania bierze flagę.** Nie z własnego zapytania. Decyzja stawia
+   egzekwowanie w warstwie serializacji i równocześnie wymaga, by generatory odpowiedzi
+   "wołały te same funkcje dostępowe co API, nigdy nie czytały bazy bezpośrednio z pominięciem
+   warstwy uprawnień" — flaga przychodzi więc razem z wierszem z `app.data.project_reads`,
+   jednym zapytaniem na żądanie, nie jednym na wiersz listy. `response_shaping` nie otrzymuje
+   `Session`. Jeśli flaga trafi do warstwy kształtowania przez relację ORM, relacja musi być
+   zawężona do `caller.user_id`: wczytanie wszystkich wierszy `project_access` projektu
+   ujawniłoby, kto jeszcze ma do niego dostęp, i przeczyłoby zasadzie, że zasięg jest filtrem
+   bazy, a nie zbiorem noszonym w pamięci.
+7. **Czego ten aneks nie domyka.** Luka z aneksu 2026-09-19 (każde uprawnienie akcji zapisu daje
+   w praktyce odczyt całego `ProjectDetail`) zostaje otwarta. Koniunkcja ją zawęża — pola
+   kosztowe w odpowiedzi `PATCH`/`copy`/`archive` są bramkowane podwójnie — ale nie zmienia tego,
+   że `owner` wraca do wołającego bez `PROJECT_READ`. Warunek zamknięcia tamtego aneksu bez zmian.
