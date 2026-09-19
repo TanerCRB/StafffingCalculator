@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 
 import { getHealth } from "./api/client";
 import { ProjectListScreen } from "./features/projects/ProjectListScreen";
-
-type BackendStatus = "checking" | "ok" | "unreachable";
+import { AppShell, type BackendStatus } from "./shell/AppShell";
 
 export function App() {
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
@@ -14,21 +13,10 @@ export function App() {
       .catch(() => setBackendStatus("unreachable"));
   }, []);
 
+  // The shell is chrome only: it renders the screen it is given and reads nothing of its own.
   return (
-    <main className="app-shell">
-      <header className="app-shell__header">
-        <div>
-          <h1 className="app-shell__title">StafffingCalculator</h1>
-          <p className="app-shell__subtitle">
-            IT project staffing, cost, and profitability planner.
-          </p>
-        </div>
-        {/* The state name is the text; `data-state` only picks the colour for it. */}
-        <p className="app-shell__status" data-testid="backend-status" data-state={backendStatus}>
-          Backend: {backendStatus}
-        </p>
-      </header>
+    <AppShell backendStatus={backendStatus}>
       <ProjectListScreen />
-    </main>
+    </AppShell>
   );
 }

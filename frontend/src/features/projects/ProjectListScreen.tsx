@@ -4,6 +4,7 @@ import { ApiError, RequestTimeoutError, getProjects } from "../../api/client";
 import type { ProjectListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
+import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
 import { missingInputLabel } from "./scenarioInputLabels";
 import "./ProjectListScreen.css";
 
@@ -36,21 +37,18 @@ const ROW_ACTIONS: readonly RowAction[] = [
   { key: "add-scenario", label: "Add scenario" },
 ];
 
-const NOT_IMPLEMENTED_HINT = "Not implemented yet — planned in SC-1-02..04";
-const SEARCH_AND_FILTER_HINT =
-  "Not implemented yet — search and filtering are a separate story (Issue #3, out of scope 2)";
-const ADD_PROJECT_HINT =
-  "Not implemented yet — creating a project from this screen is a separate task";
-
-/**
- * The placeholder handler for every row control. It does nothing, on purpose, and it is named so
- * that the next developer sees a placeholder to replace (SC-1-02..04) rather than a mechanism to
- * add code next to. Nothing here protects anything: a real handler hung on the same button would
- * run, `aria-disabled` or not — the block, when these actions exist, is the server's.
+/*
+ * The wording and the placeholder handler come from `src/lib/notImplemented.ts` — one convention
+ * for every control that is rendered, announced and wired to nothing (the navigation rail is the
+ * other user). The reasons below are this screen's own; the shape of the sentence is not.
  */
-function handleNotYetImplemented(): void {
-  // Intentionally empty — see the comment above.
-}
+const NOT_IMPLEMENTED_HINT = notImplementedHint("planned in SC-1-02..04");
+const SEARCH_AND_FILTER_HINT = notImplementedHint(
+  "search and filtering are a separate story (Issue #3, out of scope 2)",
+);
+const ADD_PROJECT_HINT = notImplementedHint(
+  "creating a project from this screen is a separate task",
+);
 
 type ScreenState =
   | { kind: "loading" }

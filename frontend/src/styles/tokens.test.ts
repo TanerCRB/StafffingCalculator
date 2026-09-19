@@ -275,15 +275,23 @@ describe("colour contrast", () => {
     // and they are listed by hand, which is this check's weak spot: a pair nobody lists is a pair
     // nobody checks.
     const declaredPairs = [
-      { where: "project name on a row", foreground: "--sc-color-text", background: "--sc-color-surface-muted" },
-      { where: "project name, hovered", foreground: "--sc-color-blue-deep", background: "--sc-color-surface-muted" },
-      { where: "project name, selected row", foreground: "--sc-color-blue-deep", background: "--sc-color-white" },
-      { where: "column headers", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
-      { where: "client and period cells", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
+      { where: "project name on a row", foreground: "--sc-color-text", background: "--sc-color-surface" },
+      { where: "project name, hovered row", foreground: "--sc-color-blue-deep", background: "--sc-color-surface-muted" },
+      { where: "project name, selected row", foreground: "--sc-color-blue-deep", background: "--sc-color-status-active-bg" },
+      { where: "column headers on the header wash", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
+      { where: "client and period cells", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
+      { where: "client and period cells, hovered row", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
+      { where: "client and period cells, selected row", foreground: "--sc-color-text-muted", background: "--sc-color-status-active-bg" },
       { where: "details panel meta text", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
       { where: "missing-input list on a scenario card", foreground: "--sc-color-attention-text", background: "--sc-color-surface" },
-      { where: "shell subtitle", foreground: "--sc-color-text-muted", background: "--sc-color-page" },
-      { where: "unreachable backend notice", foreground: "--sc-color-attention-text", background: "--sc-color-page" },
+      { where: "shell subtitle in the topbar", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
+      { where: "breadcrumb trail", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
+      { where: "backend status pill", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
+      { where: "unreachable backend notice", foreground: "--sc-color-attention-text", background: "--sc-color-attention-bg" },
+      { where: "rail entry, resting", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
+      { where: "rail entry, hovered", foreground: "--sc-color-text", background: "--sc-color-surface-muted" },
+      { where: "rail entry for the current screen", foreground: "--sc-color-status-active-text", background: "--sc-color-status-active-bg" },
+      { where: "rail entry not implemented yet", foreground: "--sc-color-text-disabled", background: "--sc-color-disabled-surface" },
       { where: "search placeholder, inactive", foreground: "--sc-color-text-disabled", background: "--sc-color-disabled-surface" },
     ];
 
