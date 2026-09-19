@@ -340,7 +340,17 @@ history / this file's own change log, not as tracked product work.
   SC-1-08); usuwanie pozycji/wiersza miesiąca (DELETE — nie istnieje, byłoby trzecią operacją
   zapisu wymagającą własnego strażnika `approved`); `audit_log` (blok 8, już objęte odstępstwem
   "bloki 1-7"); wydajność NF-03 (7200 wierszy/scenariusz, kaskada kopiowania mnoży per scenariusz —
-  mierzone na bramce 2 jak SC-1-05/SC-2-01).
+  mierzone na bramce 2 jak SC-1-05/SC-2-01); **korekta pozycji po utworzeniu** — zmierzone przez
+  reviewera (weryfikacja gate 2, 2026-09-19): brak `PATCH` na nagłówku pozycji (`headcount`,
+  `start_date`/`end_date`) i brak sposobu dodania miesiąca do już istniejącej pozycji; jedyna
+  publikowana rada przy błędzie ("skopiuj scenariusz") kopiuje błędną pozycję dosłownie.
+  Zaakceptowane jawnie: cała ścieżka zapisu tego zadania jest i tak nieosiągalna w produkcji (brak
+  tworzenia scenariusza), więc rozszerzenie teraz nie odblokowuje realnego użycia szybciej niż
+  osobne zadanie po tym. Wzorzec do reużycia gotowy (CTE `guarded_position` z `update_allocation`
+  strzeże już zapisu do nagłówka pozycji i dodania wiersza miesiąca zerem nowych strażników).
+  *Warunek zamknięcia:* osobne zadanie SC-3-0x, przed albo razem z zadaniem tworzącym scenariusze
+  (F-02, Issue #4) — inaczej pierwszy prawdziwy scenariusz w produkcji dziedziczy tę samą
+  niekorygowalność.
   **Fundament nieudowodniony:** K-06 to pierwsza implementacja w repo strażnika zapisu do
   `approved` scenariusza dla INSERT-a — ustanawia wzorzec dla wszystkich następnych tabel-dzieci;
   wyścig zatwierdzenia-kontra-zapisu pozostaje otwarty. Brak endpointu tworzenia scenariusza —
