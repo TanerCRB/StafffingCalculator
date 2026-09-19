@@ -105,7 +105,7 @@ def test_project_create_denies_caller_holding_only_project_read(
 
 
 def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() -> None:
-    """The placeholder grants exactly the five project actions plus catalogue read/write — no more.
+    """The placeholder grants exactly the five project actions, catalogue and staffing — no more.
 
     Asserted as set equality rather than membership: ADR-0005's addendum requires every widening
     of this set to be a deliberate, dated entry in the decision, and a membership assertion
@@ -129,6 +129,12 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     positive branch is reachable from a test only (`dependency_overrides`) — the same shape SC-1-08
     accepted, and the reason the second assertion below is a separate line rather than an
     afterthought.
+
+    It grew twice again on 2026-09-19, by `STAFFING_READ` and `STAFFING_WRITE` (SC-3-01): ADR-0005's
+    addendum "pozycje obsady: zasięg dziedziczony przez scenariusz" (point 3) names those two
+    widenings **and says in the same breath that `PERSONNEL_COSTS_READ` still does not belong
+    here**. So the canary is re-armed around the new set, not loosened — and the assertion below
+    stays a set equality, which is the only form that can tell a widening apart from the status quo.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
@@ -141,6 +147,8 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             Permission.PROJECT_ARCHIVE,
             Permission.CATALOG_READ,
             Permission.CATALOG_WRITE,
+            Permission.STAFFING_READ,
+            Permission.STAFFING_WRITE,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS

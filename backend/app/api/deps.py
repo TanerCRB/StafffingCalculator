@@ -45,6 +45,15 @@ from app.core.identity import CallerIdentity, Permission
 # `PERSONNEL_COSTS_READ` stays out (addendum 2026-09-19 point 5, and point 6 of the newer one), so
 # the catalogue's cost-rate deny path is the real one for every caller the running system has — the
 # positive branch is reachable from a test only, through `dependency_overrides`.
+#
+# `STAFFING_READ` and `STAFFING_WRITE` join for the same reason and under the same reservation
+# (ADR-0005, addendum 2026-09-19 "pozycje obsady: zasięg dziedziczony przez scenariusz", point 3,
+# which names this widening and only this one — `PERSONNEL_COSTS_READ` still does not belong here).
+# Without them the staffing endpoints of SC-3-01 would be unreachable while every caller is this one
+# placeholder. It is *not* a decision that everyone may plan staffing: the role dimension arrives
+# with the authentication ADR. Note what this does **not** widen — scope: a caller holding these two
+# still sees only the projects their `project_access` rows name, because the staffing path inherits
+# that filter from `project_for_caller` (ADR-0001, addendum 2026-09-19).
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.PROJECT_READ,
@@ -54,6 +63,8 @@ PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.PROJECT_ARCHIVE,
         Permission.CATALOG_READ,
         Permission.CATALOG_WRITE,
+        Permission.STAFFING_READ,
+        Permission.STAFFING_WRITE,
     }
 )
 

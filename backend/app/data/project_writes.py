@@ -22,7 +22,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
+from app.data.column_copy import values_to_copy
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.staffing import copy_staffing_positions
 from app.data.write_errors import WriteFailed, describe_without_values
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
@@ -324,15 +326,26 @@ def update_project(
 ScenarioChildCopier = Callable[[Session, Scenario, Scenario], None]
 """Copies the rows of one child table from a source scenario to its copy, in that order."""
 
-SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = ()
+SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (copy_staffing_positions,)
 """The cascade, as data rather than as prose (ADR-0004, addendum, point 4).
 
-Empty today because no child table of `scenarios` exists yet: staffing, costs, rates and
-commercial-model rules (ADR-0003) are later plan blocks. **Each of those tasks must append its
-copier here in the same task that creates its table.** A table left out does not raise anything —
-it yields a copy that shares the source's data, which is exactly what AC-02 forbids. The registry
-exists so that adding a table is one append in one named place instead of a search for every
-place that copies something.
+**Each task creating a child table of `scenarios` must append its copier here, in that same task.**
+A table left out raises nothing — it yields a copy that shares the source's data, which is exactly
+what AC-02 forbids. The registry exists so that adding a table is one append in one named place
+instead of a search for every place that copies something.
+
+One entry today: the staffing aggregate of SC-3-01 (F-04). It is **one entry for two tables** —
+positions and their monthly allocation rows — because the allocation row is a *grandchild* of the
+scenario and this contract carries no mapping from old position ids to new ones (ADR-0004, addendum
+2026-09-19, point 1). The consequence is named there and repeated here: "one entry per table" is no
+longer literally true, it is "one entry per aggregate whose root is a child of the scenario", and a
+future completeness test over this registry has to know the difference or the next grandchild table
+will look registered while it is not.
+
+Still absent, and owed by the tasks that create them: scenario-level rate overrides, cost rows and
+commercial-model rules (ADR-0003). The company catalogue is **not** absent by omission — a catalogue
+row belongs to the organisation and not to a scenario, so it has no entry here on purpose (ADR-0004,
+addendum 2026-09-19 "katalog organizacyjny nie jest dzieckiem scenariusza").
 """
 
 SCENARIO_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
@@ -364,16 +377,6 @@ copying an archived project is for. Descriptive fields, including `name`, are co
 renaming is the edit action (SC-1-02), not a side effect of copying."""
 
 
-def _values_to_copy(instance: object, *, excluded: frozenset[str]) -> dict[str, object]:
-    """Mapped column values of `instance`, minus the excluded attribute names."""
-    mapper = sa.inspect(type(instance))
-    return {
-        attribute.key: getattr(instance, attribute.key)
-        for attribute in mapper.column_attrs
-        if attribute.key not in excluded
-    }
-
-
 def copy_scenario(session: Session, source: Scenario, *, into_project: Project) -> Scenario:
     """Copy one scenario into `into_project` as a fresh `draft`, with its child rows.
 
@@ -398,7 +401,7 @@ def copy_scenario(session: Session, source: Scenario, *, into_project: Project) 
         id=uuid.uuid4(),
         project=into_project,
         status=ScenarioStatus.DRAFT,
-        **_values_to_copy(source, excluded=SCENARIO_COLUMNS_NOT_COPIED),
+        **values_to_copy(source, excluded=SCENARIO_COLUMNS_NOT_COPIED),
     )
     session.add(copy)
     # Flush before the children so the copy has a row for them to point at; the enclosing
@@ -439,7 +442,7 @@ def copy_project(
     """
     copy = Project(
         id=uuid.uuid4(),
-        **_values_to_copy(source.project, excluded=PROJECT_COLUMNS_NOT_COPIED),
+        **values_to_copy(source.project, excluded=PROJECT_COLUMNS_NOT_COPIED),
     )
     try:
         session.add(copy)

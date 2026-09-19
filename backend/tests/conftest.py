@@ -48,6 +48,8 @@ from app.models import (  # noqa: E402
     ProjectStatus,
     Scenario,
     ScenarioStatus,
+    StaffingPosition,
+    StaffingPositionAllocation,
 )
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,7 +73,8 @@ def database_url() -> Iterator[str]:
     """A throwaway PostgreSQL. `TEST_DATABASE_URL` overrides it for a locally running server.
 
     !!! THIS DATABASE GETS WIPED. Every test using the `committing_client` fixture ends by
-    deleting **all** rows from `project_access`, `scenarios`, `projects`, `catalog_default_rates`
+    deleting **all** rows from `staffing_position_allocation`, `staffing_position`,
+    `project_access`, `scenarios`, `projects`, `catalog_default_rates`
     and the four catalogue dictionaries — unconditionally, with no check of what it is connected
     to, and the migrations are run against it on top of that. Never point `TEST_DATABASE_URL` at a
     database holding data you want to keep: a development database with hand-made projects or a
@@ -171,10 +174,10 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
     engine, so a row outlives the request only if the code under test really committed, and a
     separate connection can be used to check.
 
-    **Destructive teardown.** Afterwards every row of `project_access`, `scenarios`, `projects`,
-    `catalog_default_rates` and the four catalogue dictionaries is deleted on a separate
-    connection — all of them, not only the ones this test created, because a committed row is no
-    longer distinguishable from pre-existing data by the time the fixture ends. Nothing else
+    **Destructive teardown.** Afterwards every row of the two staffing tables, `project_access`,
+    `scenarios`, `projects`, `catalog_default_rates` and the four dictionaries is deleted on a
+    separate connection — all of them, not only the ones this test created, because a committed row
+    is no longer distinguishable from pre-existing data by the time the fixture ends. Nothing else
     cleans up after these tests, and one leftover project breaks the `count_projects(...) == 0`
     assertions everywhere else — one leftover rate breaks every `EXCLUDE` assertion, since an
     overlap refusal would then have two possible causes. Read the warning on `database_url`
@@ -190,6 +193,14 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
     finally:
         app.dependency_overrides.pop(get_session, None)
         with engine.begin() as connection:
+            # Staffing first, grandchild before child (SC-3-01): every foreign key in
+            # `app.models.staffing` is `NO ACTION`, so the database refuses to empty
+            # `staffing_position` while an allocation row still points at one — and refuses to empty
+            # `scenarios` while a position does. That refusal is the intended behaviour (deleting a
+            # position is out of scope for SC-3-01), which makes this order part of the fixture
+            # rather than a detail. The same reasoning as for rates before dimension entries below.
+            connection.execute(sa.delete(StaffingPositionAllocation))
+            connection.execute(sa.delete(StaffingPosition))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -471,3 +482,135 @@ def make_scenario(
     session.add(scenario)
     session.flush()
     return scenario
+
+
+# --- scenario staffing (SC-3-01) ----------------------------------------------------------------
+#
+# `status=ScenarioStatus.APPROVED` on `make_scenario` above is the **only** way to reach an approved
+# scenario anywhere in this suite, and it is a direct database write on purpose: no production path
+# sets that status (the approval transition and the endpoint that would create a scenario are both
+# out of scope — plan entry SC-3-01, "fundament nieudowodniony", points 1-2). Every proof about the
+# refusal of a write to an approved scenario therefore stands on this fixture rather than on a full
+# cycle through the running system. That is a limit of the proof, named here so it is not mistaken
+# for an equivalence.
+
+
+def make_staffing_position(
+    session: Session,
+    scenario: Scenario,
+    dimensions: "DimensionTuple",
+    *,
+    headcount: int = 2,
+    start_date: date = date(2026, 3, 1),
+    end_date: date | None = None,
+) -> StaffingPosition:
+    """Insert one staffing position directly — no endpoint, no request schema.
+
+    Deliberately bypasses `StaffingPositionCreateRequest`: the constraints under test (the month
+    CHECK, the unique constraint, the non-negativity of hours, the foreign keys) are claims about
+    the *database*, and a path that went through Pydantic would prove only that Pydantic refused
+    first (criterion K-04).
+
+    Flushes rather than commits, so the row lives in the test's transaction; the tests that need a
+    committed row commit for themselves.
+    """
+    position = StaffingPosition(
+        id=uuid.uuid4(),
+        scenario_id=scenario.id,
+        role_id=dimensions.role_id,
+        seniority_id=dimensions.seniority_id,
+        location_id=dimensions.location_id,
+        engagement_type_id=dimensions.engagement_type_id,
+        headcount=headcount,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    session.add(position)
+    session.flush()
+    return position
+
+
+def make_allocation(
+    session: Session,
+    position: StaffingPosition,
+    *,
+    period_month: date,
+    availability_hours: Decimal = Decimal("160.00"),
+    planned_allocation_hours: Decimal = Decimal("120.00"),
+    billable_hours: Decimal = Decimal("100.00"),
+) -> StaffingPositionAllocation:
+    """Insert one month of one position's grid directly.
+
+    The three defaults are three *different* values on purpose: a fixture whose hours were all equal
+    would let an aliasing defect (`billable := planned`) pass unnoticed in every test that used it,
+    which is the mutation criterion K-05 exists to kill.
+    """
+    allocation = StaffingPositionAllocation(
+        id=uuid.uuid4(),
+        position_id=position.id,
+        period_month=period_month,
+        availability_hours=availability_hours,
+        planned_allocation_hours=planned_allocation_hours,
+        billable_hours=billable_hours,
+    )
+    session.add(allocation)
+    session.flush()
+    return allocation
+
+
+def staffing_position_payload(
+    dimensions: "DimensionTuple", **overrides: object
+) -> dict[str, object]:
+    """A valid `POST …/staffing-positions` body: hours as strings, never JSON floats (ADR-0002).
+
+    Kept here so the access-control tests and the criterion tests send the *same* request and a
+    refusal can never be an accident of a malformed body.
+    """
+    body: dict[str, object] = {
+        "role_id": str(dimensions.role_id),
+        "seniority_id": str(dimensions.seniority_id),
+        "location_id": str(dimensions.location_id),
+        "engagement_type_id": str(dimensions.engagement_type_id),
+        "headcount": 2,
+        "start_date": "2026-03-01",
+        "end_date": "2026-04-30",
+        "allocations": [
+            {
+                "period_month": "2026-03-01",
+                "availability_hours": "160.00",
+                "planned_allocation_hours": "120.00",
+                "billable_hours": "100.00",
+            }
+        ],
+    }
+    return body | overrides
+
+
+def staffing_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    """The nested address of a scenario's staffing (ADR-0001, addendum 2026-09-19).
+
+    Spelled once: the scope of this path comes from `project_id` via `project_for_caller`, so a test
+    that built the URL without it would be testing a different endpoint from the one that exists.
+    """
+    return f"/projects/{project_id}/scenarios/{scenario_id}/staffing-positions"
+
+
+def allocation_path(
+    project_id: uuid.UUID, scenario_id: uuid.UUID, position_id: uuid.UUID, period_month: date
+) -> str:
+    return (
+        f"{staffing_path(project_id, scenario_id)}/{position_id}"
+        f"/allocations/{period_month.isoformat()}"
+    )
+
+
+def count_positions(session: Session) -> int:
+    """Position rows visible in the test transaction — used to prove a refused write wrote nothing,
+    not merely that the response said no."""
+    return session.execute(sa.select(sa.func.count()).select_from(StaffingPosition)).scalar_one()
+
+
+def count_allocations(session: Session) -> int:
+    return session.execute(
+        sa.select(sa.func.count()).select_from(StaffingPositionAllocation)
+    ).scalar_one()
