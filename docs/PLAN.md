@@ -234,4 +234,31 @@ history / this file's own change log, not as tracked product work.
   nadawania flagi (ADR-0005 aneks pkt 4). Nie dowodzi AC-06 w całości: kolumny kosztów osobowych
   nadal nie istnieją. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-2-01** — Wprowadź katalog wymiarów roli (rola/senioritet/lokalizacja/typ zaangażowania)
+  jako dane, ze stawką domyślną kosztową i sprzedażową obowiązującą w rozłącznym przedziale dat.
+  *Done when:* `backend/tests` dowodzą: (1) wartość słownika nieobecna w żadnym literale
+  źródłowym przechodzi zapis/odczyt — żaden enum w kodzie; (2) stawka dla pełnej krotki wymiarów
+  jest odczytywalna z kwotą kosztową, sprzedażową, walutą ISO 4217 i jednostką, kwoty jako
+  fixed-point string (ADR-0002); (3) dla daty w drugim z trzech przedziałów zwracana jest stawka
+  drugiego przedziału, a dla daty w luce jawne "brak obowiązującej stawki", nie zero ani
+  najbliższa; (4) nakładający się przedział dla tej samej krotki odrzucany przez bazę przy
+  zapisie omijającym API, kontrast: ten sam zakres dla innej krotki przyjęty; (5) stawka kosztowa
+  nieobecna dla wołającego bez uprawnienia do kosztów osobowych przy obecnej stawce sprzedażowej
+  w tej samej odpowiedzi, status 200 — odmowa pola, nie zasobu (F-13/AC-06), z dowodem
+  niepustości bramki wzorem K-06 z SC-1-08.
+  **Out of scope (explicit):** model pozycji staffingowej (F-04, Issue #6 — §3 Definitions wiąże
+  pozycję z okresem; zadanie bloku 3 rozszerza `SCENARIO_CHILD_COPIERS` w tym samym zadaniu);
+  katalog osób nazwanych i przypisanie osoby (dane osobowe — wymaga oceny wpływu; brak tabeli
+  użytkowników — warunek zamknięcia: ADR uwierzytelniania, Issue #31); łańcuch nadpisań
+  organizacja→projekt→scenariusz i wskazywanie źródła wartości (F-02, Issue #4); AC-04 (pierwsze
+  zadanie czytające stawkę do kalkulacji — blok 4/5 — dowodzi jej własnym kryterium); stawki za
+  nadgodziny/dyżury i jednostki dzienna/miesięczna (F-06.1, F-07 — dziś przyjmowana wyłącznie
+  jednostka `hour`, warunek zamknięcia: zadanie F-07); przewalutowanie (ADR-0006, osobna tabela);
+  ekran katalogu (osobne zadanie frontendowe); nadawanie uprawnienia do stawki kosztowej (jak
+  SC-1-08); usuwanie pozycji słownika używanej przez stawkę (warunek zamknięcia: zadanie F-02).
+  **Fundament nieudowodniony:** `EXCLUDE`/`btree_gist` zadecydowany w ADR-0003/ADR-0006, nie
+  zbudowany nigdzie — to zadanie jest pierwszym użyciem i ustala precedens. Podstawa: Issue #5,
+  `Wymagania/Requirements_EN.md` §4 F-03, `docs/architecture/decisions/ADR-0002-obsluga-pieniedzy.md`,
+  `ADR-0003-model-modeli-komercyjnych.md`, `ADR-0005-model-dostepu.md`, `ADR-0006-waluty-i-kursy.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
