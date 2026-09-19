@@ -63,8 +63,8 @@ def list_projects(
     The scope filter lives in `app.data.project_reads.accessible_projects` — the one shared
     read path ADR-0001 (addendum) requires. This endpoint writes no query of its own.
     """
-    projects = list_projects_for_caller(session, caller)
-    return shape_project_list(projects, caller)
+    views = list_projects_for_caller(session, caller)
+    return shape_project_list(views, caller)
 
 
 @router.post(
@@ -84,7 +84,7 @@ def create_project_endpoint(
     read-only viewer must not reach this endpoint. The permission is declared as a dependency —
     the endpoint has no way to run without the check having run first.
     """
-    project = create_project(
+    created = create_project(
         session,
         caller,
         name=payload.name,
@@ -95,7 +95,7 @@ def create_project_endpoint(
         reporting_currency=payload.reporting_currency,
         description=payload.description,
     )
-    return shape_project_detail(project, caller)
+    return shape_project_detail(created, caller)
 
 
 @router.get(
@@ -115,12 +115,12 @@ def read_project(
     filter is inside the query (`project_for_caller`), so a project outside the caller's
     `project_access` never reaches this function.
     """
-    project = project_for_caller(session, caller, project_id)
-    if project is None:
+    view = project_for_caller(session, caller, project_id)
+    if view is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
         )
-    return shape_project_detail(project, caller)
+    return shape_project_detail(view, caller)
 
 
 @router.patch(
@@ -161,7 +161,7 @@ def edit_project(
     refuse.
     """
     try:
-        project = update_project(
+        edited = update_project(
             session,
             caller,
             project_id,
@@ -170,11 +170,11 @@ def edit_project(
         )
     except ProjectEditRefused as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
-    if project is None:
+    if edited is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
         )
-    return shape_project_detail(project, caller)
+    return shape_project_detail(edited, caller)
 
 
 @router.post(
@@ -206,12 +206,12 @@ def archive_project_endpoint(
     function as the read path and returns an indistinguishable `None` for "not yours" and "no
     such project" (ADR-0005, addendum, point 3).
     """
-    project = archive_project(session, caller, project_id)
-    if project is None:
+    archived = archive_project(session, caller, project_id)
+    if archived is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
         )
-    return shape_project_detail(project, caller)
+    return shape_project_detail(archived, caller)
 
 
 @router.post(
@@ -238,6 +238,10 @@ def copy_project_endpoint(
     status, identical body. ADR-0005's addendum (point 3) requires that for write actions as
     well: a write-specific refusal code must not become a side-channel confirming that a project
     exists. There is no 403-for-an-existing-row branch to write, because the row never arrives.
+
+    The copy is shaped from the view `copy_project` returns, i.e. against the *copy's* own
+    `project_access` grant. The source's cost-visibility flag does not follow the copy (SC-1-08,
+    K-04).
     """
     source = project_for_caller(session, caller, project_id)
     if source is None:

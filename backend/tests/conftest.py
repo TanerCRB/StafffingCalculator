@@ -201,10 +201,24 @@ def make_project(
     name: str,
     status: ProjectStatus = ProjectStatus.ACTIVE,
     accessible_to: tuple[str, ...] = (),
+    cost_visible_to: tuple[str, ...] = (),
     client_name: str = "Northwind",
     owner: str = "Anna Kowalska",
 ) -> Project:
-    """Insert a project row, plus its `project_access` rows. Direct write, no endpoint."""
+    """Insert a project row, plus its `project_access` rows. Direct write, no endpoint.
+
+    `cost_visible_to` sets `project_access.can_view_personnel_costs` on the listed users' grants
+    (SC-1-08). It must be a subset of `accessible_to`: the flag lives *on* a grant, so there is no
+    such thing as cost visibility without access, and naming a user here who is not in
+    `accessible_to` would silently do nothing. Default empty, matching the column's `server_default`
+    and the fact that no production path grants the flag.
+    """
+    unknown = sorted(set(cost_visible_to) - set(accessible_to))
+    if unknown:
+        raise ValueError(
+            "cost_visible_to must be a subset of accessible_to; no grant exists for: "
+            + ", ".join(unknown)
+        )
     project = Project(
         id=uuid.uuid4(),
         name=name,
@@ -219,9 +233,34 @@ def make_project(
     session.add(project)
     session.flush()
     for user_id in accessible_to:
-        session.add(ProjectAccess(user_id=user_id, project_id=project.id))
+        session.add(
+            ProjectAccess(
+                user_id=user_id,
+                project_id=project.id,
+                can_view_personnel_costs=user_id in cost_visible_to,
+            )
+        )
     session.flush()
     return project
+
+
+def grant_personnel_cost_visibility(
+    session: Session, *, project_id: uuid.UUID, user_id: str
+) -> None:
+    """Set `can_view_personnel_costs` on one existing grant. Direct write, no endpoint.
+
+    There is no endpoint to call: SC-1-08 deliberately ships no path that grants this flag
+    (ADR-0005, addendum 2026-09-19, point 4), so the positive branch of the gate is reachable from
+    a test only. Used where the grant already exists because the endpoint under test created it —
+    `POST /projects` grants access to its creator with the flag `false`.
+    """
+    updated = session.execute(
+        sa.update(ProjectAccess)
+        .where(ProjectAccess.user_id == user_id, ProjectAccess.project_id == project_id)
+        .values(can_view_personnel_costs=True)
+    )
+    assert updated.rowcount == 1, "no project_access grant to set the flag on"
+    session.flush()
 
 
 def make_scenario(

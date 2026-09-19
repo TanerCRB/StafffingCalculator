@@ -25,9 +25,13 @@ class ProjectAccess(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
     )
-    # Third, independent permission dimension from ADR-0005. No personnel-cost field exists in
-    # the schema yet, so nothing reads this column today — it is carried by the response-shaping
-    # layer the moment such a field appears (F-13, AC-06).
+    # Third, independent permission dimension from ADR-0005. Since SC-1-08 this column is read on
+    # every project read: `app.data.project_reads.accessible_projects` selects it alongside the
+    # project row, and `app.api.response_shaping` uses it as the per-project half of a conjunction
+    # with the caller's global `PERSONNEL_COSTS_READ` permission (ADR-0005, addendum 2026-09-19).
+    # No write path sets it to `true` — granting the flag is its own action, not yet built (F-13,
+    # AC-06) — so the gate it feeds removes nothing until a personnel-cost field exists in the
+    # schema (F-07/F-08, plan block 5).
     can_view_personnel_costs: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
