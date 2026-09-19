@@ -58,3 +58,26 @@ odrębny od błędu walidacji, ale to szczegół implementacji SC-1-02, nie tre�
 
 NF-05, F-01 (edycja projektu), F-12 (historia zmian — kto i kiedy, odłożone do bloku 8, patrz
 aneks ADR-0004)
+
+## Aneksy
+
+### 2026-09-19 — ziarnistość znacznika dla siatki miesięcy pozycji obsady (SC-3-01)
+
+"Konsekwencje" zakładają jeden wiersz, jeden znacznik, jeden `PATCH` — decyzja nie rozstrzygała
+przypadku, w którym jedno żądanie edytuje wiele wierszy naraz. Edycja alokacji pozycji obsady
+(F-04, SC-3-01) jest tym przypadkiem: siatka miesięcy pod jedną pozycją, edytowana zwykle razem.
+
+**Rozstrzygnięcie:** znacznik współbieżności żyje na **pozycji** (`staffing_position.updated_at`),
+nie na każdym wierszu miesiąca i nie na scenariuszu. Edycja alokacji przechodzi przez pozycję:
+żądanie niesie znacznik pozycji, odczytany razem z jej wierszami miesięcznymi; zapis odrzucony
+(`409`) jeśli znacznik się nie zgadza, `200` i nowy znacznik jeśli się zgadza — ten sam wzorzec co
+`PATCH /projects/{id}`, reużyty, nie wynaleziony od nowa, zgodnie z "Konsekwencjami" wyżej.
+
+**Uzasadnienie wyboru ziarnistości pośredniej (nie per wiersz, nie na scenariuszu):** znacznik per
+wiersz miesiąca wymagałby N znaczników w jednym żądaniu i nowej decyzji o semantyce częściowej
+odmowy (wszystko-albo-nic vs. odmowa per wiersz) — decyzji, której ten ADR nie ma. Znacznik na
+scenariuszu maksymalizowałby fałszywe kolizje: edycja jednej pozycji unieważniałaby token każdej
+innej pozycji tego scenariusza, dokładnie ten sam kształt problemu, który aneks ADR-0004 z
+2026-09-19 (SC-1-04, archiwizacja) już odnotował jako świadomie przyjętą, ale niepożądaną
+konsekwencję współdzielonego znacznika. Fałszywa kolizja między dwoma miesiącami **tej samej**
+pozycji jest przyjęta świadomie — pozycja jest tu jednostką edycji, nie miesiąc.
