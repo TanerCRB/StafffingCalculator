@@ -301,6 +301,9 @@ history / this file's own change log, not as tracked product work.
   (ADR-0005 aneks); paginacja katalogu (wyżej); `EXCLUDE`/`btree_gist` na środowisku docelowym
   nieudowodnione. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-2-02** — Pokaż katalog ról i stawek domyślnych jako ekran (odczyt, bez akcji zapisu).
+  Blocked by SC-2-01. Zarezerwowane, kryteria i decyzje bramki 1 w Issue #39.
+
 - [ ] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
   z alokacją miesięczną w godzinach, trzema niezależnymi wartościami (dostępność / planowana
   alokacja / czas rozliczalny) i rejestracją w kaskadzie kopiowania.
