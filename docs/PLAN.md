@@ -177,4 +177,21 @@ history / this file's own change log, not as tracked product work.
   nienaprawione: archiwizacja unieważnia token współbieżności ADR-0007 każdego równoległego
   edytora — ADR-0004 aneks 2026-09-19. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-1-08** — Egzekwuj widoczność kosztów osobowych per przypisanie do projektu
+  (`project_access.can_view_personnel_costs`), nie per wołający — domknięcie Known gap R-03.
+  *Done when:* `backend/tests` dowodzą: (1) jedna odpowiedź `GET /projects` dla tego samego
+  wołającego wybiela pole kosztowe na projekcie z flagą `false` i zwraca je na projekcie z flagą
+  `true`; (2) ta sama różnica, w obie strony, na `GET /projects/{id}`; (3) flaga nie poszerza
+  zasięgu — projekt bez wiersza `project_access` nadal `404`, nieodróżnialne od nieistniejącego;
+  (4) mutacja "bramka pyta tylko o `caller.has(PERSONNEL_COSTS_READ)`" zabija (1) lub (2), wpisana
+  do mutation logu. Pole kosztowe jest polem zastępczym po stronie testu — **to nie dowodzi AC-06**.
+  **Out of scope (explicit):** wymiar roli `admin`/`author`/`viewer` (brak ADR uwierzytelniania —
+  warunek zamknięcia: ten ADR); realne pola kosztowe w `PERSONNEL_COST_FIELDS` (F-07, blok 5 —
+  zadanie F-07 dopisuje je w tym samym zadaniu, w którym tworzy kolumny); egzekwowanie w eksporcie
+  (F-11, blok 7 — zadanie F-11 dowodzi go własnym kryterium); endpoint/ekran nadawania flagi (brak
+  zarządzania użytkownikami); ukrywanie pól w UI (NF-04 — ekran jest funkcją odpowiedzi API); luka
+  z ADR-0005 aneks 2026-09-19 (własny warunek zamknięcia); audyt wglądu (blok 8). Podstawa:
+  `docs/architecture/decisions/ADR-0005-model-dostepu.md`, `docs/architecture/capabilities.md`
+  (Known gap R-03), Issue #15.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
