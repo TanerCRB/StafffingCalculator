@@ -97,3 +97,29 @@ i CI (sprawdzone repo-wide). Ten ADR domyka fundament, zanim SC-2-01 na nim stan
 F-03 ("Rates shall support effective date ranges"), invariant-guardian reguła 13, reguła 15
 (typ tylko-datowy dla daty kalendarzowej), ADR-0001 (integralność w bazie), ADR-0002 (Decimal,
 brak float, jawna precyzja), ADR-0006 (waluty i kursy — źródło wzorca, aneks nazewniczy).
+
+## Aneksy
+
+### 2026-09-19 — zaokrąglenie do wyświetlenia jest rzutem z utratą, nigdy wejściem (SC-2-02)
+
+Punkt 6 nazywa konsumenta zaokrąglenia jednym konkretnym: regułą użytą w momencie użycia stawki w
+kalkulacji, nie w momencie zapisu do katalogu. SC-2-02 (ekran katalogu, read-only) wprowadza drugiego
+konsumenta, którego punkt 6 nie przewidział wprost: ekran, który zaokrągla przechowywaną stawkę
+`NUMERIC(14,4)` do jednostki minor waluty wyłącznie po to, żeby ją pokazać.
+
+1. **Wolno — to rzut do prezentacji, nie zapis i nie kalkulacja.** Uzasadnienie punktu 6 ("stawka
+   jest danym wejściowym, nie wynikiem zaokrąglenia") broni zapisu: zaokrąglenie przy zapisie cicho
+   zmieniałoby wprowadzoną wartość. Odczyt nie zmienia niczego w bazie.
+2. **Konsekwencja przyjęta razem z tym wpisem, nazwana wprost:** dwa różne wiersze katalogu (np.
+   100,0049 i 100,0050) mogą renderować się identycznie na tym ekranie; wartość na ekranie nie jest
+   wartością w bazie. Ekran nie jest źródłem do przepisania stawki z powrotem — pierwsze zadanie z
+   edycją stawki ładuje pełną precyzję z API, nigdy wartość widzianą na ekranie, i dowodzi tego
+   własnym kryterium.
+3. **Granica z punktu 3 bez zmian.** `effective_to` dociera do klienta jako włączające i jest
+   wyświetlane dosłownie; `null` to okno bezterminowe (punkt 2), nie brak danych. Ani klient, ani
+   ekran nie odtwarza konwersji `+ 1 dzień` — jedynym miejscem tej konwersji zostaje kolumna
+   generowana `valid_period`.
+4. **Ekran nie rozstrzyga, która stawka obowiązuje.** Lista okien bez filtra daty (SC-2-02, decyzja
+   bramki 1 pkt 3) pokazuje kilka okien jednej krotki naraz; scalanie ich albo wybieranie
+   "najnowszego" po stronie klienta byłoby drugim mechanizmem rozstrzygania, dokładnie tym, przed
+   którym broni reguła 13. Rozstrzyganie należy do `GET /catalog/rates/effective`.
