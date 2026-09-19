@@ -23,13 +23,19 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.write_errors import WriteFailed, describe_without_values
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 from app.models.scenario import Scenario, ScenarioStatus
 
 
-class ProjectWriteFailed(RuntimeError):
+class ProjectWriteFailed(WriteFailed):
     """The write failed, described without quoting anything that was being written (NF-11).
+
+    The mechanism itself lives in `app.data.write_errors` — one implementation, shared with the
+    catalogue write path, because ADR-0008 ("Konsekwencje") requires the `EXCLUDE` violation on
+    `catalog_default_rates` to be wrapped by the same thing rather than by a second copy of it. This
+    subclass stays so a caller can still catch "the *project* write broke" specifically.
 
     Raised instead of the driver's own exception, which is not safe to let propagate: even with
     `hide_parameters=True` on the engine (which removes SQLAlchemy's `[parameters: …]` echo),
@@ -40,22 +46,12 @@ class ProjectWriteFailed(RuntimeError):
 
 
 def _describe_without_values(error: SQLAlchemyError) -> str:
-    """A diagnosis built only from identifiers: error class, SQLSTATE, constraint name.
+    """`app.data.write_errors.describe_without_values` bound to this table's subject.
 
-    These come from psycopg's `diag` fields, which name *what* was violated and never carry
-    column values, so the message stays loggable. Everything else about the failure is dropped
-    on purpose — a failure is not worth a personal-data leak, and the SQLSTATE plus the
-    constraint name is what a reader actually acts on.
-    """
-    diagnostics = getattr(getattr(error, "orig", None), "diag", None)
-    parts = [type(error).__name__]
-    for label, value in (
-        ("sqlstate", getattr(diagnostics, "sqlstate", None)),
-        ("constraint", getattr(diagnostics, "constraint_name", None)),
-    ):
-        if value:
-            parts.append(f"{label}={value}")
-    return "Writing the project failed: " + ", ".join(parts)
+    A one-line alias rather than four edited call sites: the message ("Writing the project
+    failed: …", then SQLSTATE and constraint name, and nothing else) is unchanged by the
+    extraction."""
+    return describe_without_values(error, subject="project")
 
 
 def create_project(

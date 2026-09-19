@@ -36,6 +36,15 @@ from app.core.identity import CallerIdentity, Permission
 # `POST /projects/{id}/copy` and `POST /projects/{id}/archive` would otherwise be unreachable. It
 # is *not* a decision that everyone may edit, copy or archive projects — the role dimension
 # arrives with the authentication ADR.
+#
+# `CATALOG_READ` and `CATALOG_WRITE` join for the same reason and under the same reservation
+# (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu", point 6, which
+# names this widening and only this one): without them the catalogue endpoints of SC-2-01 would be
+# unreachable while every caller is this one placeholder. NF-10 puts catalogue *writing* with an
+# organisation administrator, so "everyone may write the catalogue" is not what this says either.
+# `PERSONNEL_COSTS_READ` stays out (addendum 2026-09-19 point 5, and point 6 of the newer one), so
+# the catalogue's cost-rate deny path is the real one for every caller the running system has — the
+# positive branch is reachable from a test only, through `dependency_overrides`.
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.PROJECT_READ,
@@ -43,6 +52,8 @@ PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.PROJECT_EDIT,
         Permission.PROJECT_COPY,
         Permission.PROJECT_ARCHIVE,
+        Permission.CATALOG_READ,
+        Permission.CATALOG_WRITE,
     }
 )
 

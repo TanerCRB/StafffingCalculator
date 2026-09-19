@@ -56,6 +56,27 @@ class Permission(StrEnum):
     ADR-0004 (addendum 2026-09-18, point 3) keeps archiving a visibility state, so holding this
     permission changes nothing about what may be written to the project's scenarios."""
 
+    CATALOG_READ = "catalog:read"
+    """Reading the organisational catalogue — role dimensions and default rates (F-03, SC-2-01).
+
+    A new permission rather than a widened `PROJECT_READ` (ADR-0005, addendum 2026-09-19 "pierwszy
+    zbiór danych bez zasięgu projektu", point 2): a catalogue row belongs to no project, so a
+    permission whose *name* says "project" opening a table that has no project would be exactly
+    the drift between name and mechanism the SC-1-08 addendum had just closed. It also carries no
+    scope — unlike `PROJECT_READ`, which is paired with the `project_access` filter, there is no
+    per-caller predicate on the catalogue at all, so holding this permission means seeing every
+    catalogue row (same addendum, point 1: that absence is a decision, not an oversight).
+
+    It covers the selling rate too. The *cost* rate is gated separately by `PERSONNEL_COSTS_READ`,
+    as a removed field and not as a refused row (same addendum, points 3 and 5)."""
+
+    CATALOG_WRITE = "catalog:write"
+    """Writing the organisational catalogue — new dimension entries and new rate windows.
+
+    Split from `CATALOG_READ` because NF-10 puts the two with different people: the catalogue is
+    maintained by an organisation administrator and read by everyone who plans staffing. Each of
+    the two has its own mandatory refusal test (ADR-0005, "Konsekwencje")."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:

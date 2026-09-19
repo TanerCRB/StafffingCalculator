@@ -7,21 +7,17 @@ way an inaccessible project can appear (F-13, ADR-0005).
 
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AwareDatetime,
     BaseModel,
     ConfigDict,
-    PlainSerializer,
     StringConstraints,
     model_validator,
 )
 
-DecimalString = Annotated[Decimal, PlainSerializer(lambda value: format(value, "f"), str)]
-"""Decimals cross the API boundary as fixed-point strings, never as JSON floats — a float would
-lose exactly the precision NF-01/ADR-0002 require the storage layer to keep."""
+from app.api.schemas.common import DecimalString, Iso4217Code, NonEmptyName
 
 ProjectStatusLabel = Literal["Active", "Archived"]
 ScenarioStatusLabel = Literal["Draft", "Approved"]
@@ -96,17 +92,6 @@ class ProjectListResponse(BaseModel):
     Story (explicitly out of scope here) without breaking the contract."""
 
     projects: list[ProjectListItem]
-
-
-NonEmptyName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
-]
-Iso4217Code = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
-"""ISO-4217 alphabetic code, uppercase, validated by shape and not against a closed list:
-ADR-0006 keeps currencies an open list (a string, not a database enum) so that adding one needs
-no migration. Rejected rather than silently upper-cased — a request that means `eur` is a client
-bug worth surfacing, and normalizing input on the way in is how two spellings of one currency
-end up in the same column."""
 
 
 class ProjectCreateRequest(BaseModel):
