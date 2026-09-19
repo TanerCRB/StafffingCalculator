@@ -236,29 +236,55 @@ history / this file's own change log, not as tracked product work.
 
 - [ ] **SC-2-01** — Wprowadź katalog wymiarów roli (rola/senioritet/lokalizacja/typ zaangażowania)
   jako dane, ze stawką domyślną kosztową i sprzedażową obowiązującą w rozłącznym przedziale dat.
-  *Done when:* `backend/tests` dowodzą: (1) wartość słownika nieobecna w żadnym literale
-  źródłowym przechodzi zapis/odczyt — żaden enum w kodzie; (2) stawka dla pełnej krotki wymiarów
-  jest odczytywalna z kwotą kosztową, sprzedażową, walutą ISO 4217 i jednostką, kwoty jako
-  fixed-point string (ADR-0002); (3) dla daty w drugim z trzech przedziałów zwracana jest stawka
-  drugiego przedziału, a dla daty w luce jawne "brak obowiązującej stawki", nie zero ani
-  najbliższa; (4) nakładający się przedział dla tej samej krotki odrzucany przez bazę przy
-  zapisie omijającym API, kontrast: ten sam zakres dla innej krotki przyjęty; (5) stawka kosztowa
-  nieobecna dla wołającego bez uprawnienia do kosztów osobowych przy obecnej stawce sprzedażowej
-  w tej samej odpowiedzi, status 200 — odmowa pola, nie zasobu (F-13/AC-06), z dowodem
-  niepustości bramki wzorem K-06 z SC-1-08.
-  **Out of scope (explicit):** model pozycji staffingowej (F-04, Issue #6 — §3 Definitions wiąże
-  pozycję z okresem; zadanie bloku 3 rozszerza `SCENARIO_CHILD_COPIERS` w tym samym zadaniu);
-  katalog osób nazwanych i przypisanie osoby (dane osobowe — wymaga oceny wpływu; brak tabeli
-  użytkowników — warunek zamknięcia: ADR uwierzytelniania, Issue #31); łańcuch nadpisań
-  organizacja→projekt→scenariusz i wskazywanie źródła wartości (F-02, Issue #4); AC-04 (pierwsze
-  zadanie czytające stawkę do kalkulacji — blok 4/5 — dowodzi jej własnym kryterium); stawki za
-  nadgodziny/dyżury i jednostki dzienna/miesięczna (F-06.1, F-07 — dziś przyjmowana wyłącznie
-  jednostka `hour`, warunek zamknięcia: zadanie F-07); przewalutowanie (ADR-0006, osobna tabela);
-  ekran katalogu (osobne zadanie frontendowe); nadawanie uprawnienia do stawki kosztowej (jak
-  SC-1-08); usuwanie pozycji słownika używanej przez stawkę (warunek zamknięcia: zadanie F-02).
-  **Fundament nieudowodniony:** `EXCLUDE`/`btree_gist` zadecydowany w ADR-0003/ADR-0006, nie
-  zbudowany nigdzie — to zadanie jest pierwszym użyciem i ustala precedens. Podstawa: Issue #5,
-  `Wymagania/Requirements_EN.md` §4 F-03, `docs/architecture/decisions/ADR-0002-obsluga-pieniedzy.md`,
-  `ADR-0003-model-modeli-komercyjnych.md`, `ADR-0005-model-dostepu.md`, `ADR-0006-waluty-i-kursy.md`.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07 (analyst 2026-09-19):
+  1. (K-01) Katalog jest organizacyjny — wołający z zerowym `project_access` widzi te same
+     wiersze co każdy inny (kontrast: lista projektów tego wołającego pusta, katalog nie).
+     Mutacja: odczyt zawężony filtrem podmiotowym musi zabić; osobno: stała pusta lista musi zabić.
+  2. (K-02) Katalog odmawia domyślnie — wołający bez `CATALOG_READ`/`CATALOG_WRITE` → `403`,
+     zero zapisanych wierszy. Mutacja: podmiana uprawnienia w `require_permission`; rozszerzenie
+     `PLACEHOLDER_PERMISSIONS` o nowe uprawnienia musi zabić kanarek równości zbiorów.
+  3. (K-03) Stawka kosztowa jest polem odmawianym, nie wierszem ukrywanym — wołający z
+     `CATALOG_READ` bez `PERSONNEL_COSTS_READ` → `200`, wiersz obecny, stawka kosztowa `None`,
+     sprzedażowa obecna; kontrast: z `PERSONNEL_COSTS_READ` → wartość dokładna. Dowód niepusty:
+     pole usunięte ze zbioru bramkowanych musi zabić (na realnej kolumnie, nie polu zastępczym).
+  4. (K-04) Stawka na dzień z wcześniejszego okienka to stawka wcześniejsza, nie najnowszy wiersz.
+     Trzy stawki, rozłączne okienka; data w środkowym → stawka środkowego. Mutacja: `ORDER BY
+     effective_from DESC LIMIT 1` musi zabić.
+  5. (K-05) Nakładanie się okienek dla tej samej krotki odrzucone przez bazę, także w wyścigu
+     dwóch połączeń. Mutacja: `EXCLUDE` usunięty z migracji musi zabić; strażnik przeniesiony do
+     Pythona musi zabić TYLKO w wersji z wyścigiem na dwóch połączeniach.
+  6. (K-06) Kluczem jest pełna krotka wymiarów — wiersz różniący się dokładnie jednym z czterech
+     wymiarów w tym samym okienku → przyjęty (4 przebiegi); wiersz nieróżniący się niczym →
+     odrzucony. Mutacja: jedna kolumna usunięta z klucza, cztery razy — każda musi zabić swój
+     przebieg.
+  7. (K-07) Jednostka i kwota jednoznaczne — zapis z jednostką inną niż `hour` (ścieżka poza
+     schematem żądania) odrzucony; kwota jako fixed-point string dla wartości, której domyślna
+     serializacja różniłaby się (`1.85E+2` → `"185.00"`).
+
+  **Decyzje bramki 1 (2026-09-19):** katalog bez `project_access` (pierwszy zbiór danych
+  organizacyjnych, ADR-0005 aneks); stawka kosztowa poza projektem strzeżona samym globalnym
+  `PERSONNEL_COSTS_READ` (wyjątek kierunkowy od koniunkcji SC-1-08, ADR-0005 aneks pkt 3);
+  pełna krotka wymiarów jako klucz; jednostka `hour` na razie; przedział `effective_from`/
+  `effective_to` (nullowalne = bezterminowa) + kolumna generowana `valid_period daterange` +
+  `EXCLUDE` z `btree_gist` (ADR-0008, Draft — pierwsze użycie wzorca); koszt i sprzedaż w jednym
+  wierszu; nowe uprawnienia `CATALOG_READ`/`CATALOG_WRITE`; `NUMERIC` ze skalą większą niż minor
+  unit waluty, zaokrąglanie tylko u konsumenta; waluta nie w kluczu `EXCLUDE`;
+  `CREATE EXTENSION btree_gist` w migracji + dokumentacja uprawnienia w `backend/README.md`.
+
+  **Out of scope (explicit):** model pozycji staffingowej (F-04, Issue #6 — rozszerza
+  `SCENARIO_CHILD_COPIERS` w swoim zadaniu); katalog osób nazwanych (Issue #31, zablokowane na
+  ADR uwierzytelniania); łańcuch nadpisań organizacja→projekt→scenariusz (F-02, Issue #4); AC-04
+  (zobowiązanie naprzód — pierwszy konsument stawki dowodzi go); nadgodziny/dyżury/jednostki
+  dzienna/miesięczna (F-07); przewalutowanie (ADR-0006); ekran katalogu; nadawanie uprawnień
+  (jak SC-1-08); usuwanie pozycji słownika używanej przez stawkę (F-02); czy wgląd w koszty
+  jednego projektu odblokowuje cały katalog (przekazane ADR-owi uwierzytelniania, ADR-0005
+  aneks pkt 7).
+  **Fundament nieudowodniony, przyjęty świadomie:** `EXCLUDE`/`btree_gist` — pierwsze użycie w
+  repo, precedens dla `exchange_rates`/`commercial_terms`; dowód w CI (testcontainers, rola
+  nadrzędna) nie dowodzi uprawnień na środowisku docelowym. Podstawa: Issue #5,
+  `Wymagania/Requirements_EN.md` §4 F-03, `docs/architecture/decisions/ADR-0001-trwalosc-danych.md`
+  (aneks), `ADR-0002-obsluga-pieniedzy.md`, `ADR-0004-wersjonowanie-kalkulacji.md` (aneks),
+  `ADR-0005-model-dostepu.md` (aneks), `ADR-0006-waluty-i-kursy.md` (aneks),
+  `ADR-0008-przedzialy-obowiazywania.md` (nowa, Draft).
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*

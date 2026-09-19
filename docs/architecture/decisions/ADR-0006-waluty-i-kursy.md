@@ -45,3 +45,15 @@ ramach jednej sesji edycji).
 ## Powiązane wymagania
 
 F-02, F-06.1, F-12 (odtwarzalność), sekcja 6 (MVP vs rozszerzenia), open decision #5
+
+## Aneksy
+
+### 2026-09-19 — ujednolicenie nazw kolumn przedziału dat (ADR-0008)
+
+`ADR-0008-przedzialy-obowiazywania.md` ustanawia jeden wzorzec przedziału obowiązywania dla
+wszystkich tabel, które go potrzebują (ten ADR, `commercial_terms` z ADR-0003, katalog stawek z
+SC-2-01), z nazwą kolumn `effective_from`/`effective_to` — zakotwiczoną w F-03 ("effective date
+ranges"). To poprawka nazewnicza wobec `valid_from`/`valid_to` użytych wyżej w tym dokumencie, nie
+zmiana mechanizmu: `exchange_rates` przyjmuje tę samą nazwę przy pierwszej migracji, która tę
+tabelę tworzy (jeszcze nie zaimplementowana). Semantyka (przedział, brak nakładania dla tej samej
+pary walut) zostaje bez zmian.

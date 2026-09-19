@@ -58,3 +58,29 @@ najemcami — koszt dyscypliny RLS/`SET LOCAL` na pulę połączeń nie jest tu 
 ryzyka. Warunek: funkcja musi być **jedyną** ścieżką odczytu projektów — używana identycznie przez
 odczyt interaktywny, eksport (F-11) i każdy przyszły interfejs serwer-serwer (reguła 6 w
 `agents/invariant-guardian.md`). Zapytanie z pominięciem tej funkcji jest naruszeniem tego ADR.
+
+### 2026-09-19 — tabela bez predykatu dostępu nie dostaje funkcji-strażnika (SC-2-01)
+
+Aneks wyżej stawia warunek: jedna funkcja musi być jedyną ścieżką odczytu *projektów*. Katalog
+wymiarów roli i stawek domyślnych (SC-2-01, F-03) jest pierwszą tabelą, do której ten warunek się
+nie stosuje, bo nie ma czego filtrować — wiersz katalogu nie należy do projektu (ADR-0005, aneks
+2026-09-19 "pierwszy zbiór danych bez zasięgu projektu").
+
+**Rozstrzygnięcie:** katalog **nie** dostaje modułu `catalog_reads.py` analogicznego do
+`project_reads.py`. Odczyt to zwykły `select()` w warstwie danych. Funkcja-strażnik istnieje po to,
+by predykatu zasięgu nie dało się pominąć przez zapomnienie; tam, gdzie predykatu nie ma, opakowanie
+nie dodaje gwarancji, a nazwa symetryczna do `project_reads` sugerowałaby czytelnikowi filtr, którego
+nie ma — mylenie w kierunku fałszywego poczucia bezpieczeństwa.
+
+Granice tego wyjątku, żeby nie stał się regułą:
+
+1. **Kryterium jest strukturalne, nie ocenne:** tabela nie ma żadnej kolumny wiążącej wiersz z
+   projektem, użytkownikiem, jednostką biznesową ani najemcą, i żaden endpoint nie zawęża jej po
+   tożsamości wołającego. "Uznaliśmy te dane za publiczne wewnątrz organizacji" nie jest kryterium.
+2. **Moment wygaśnięcia wyjątku:** pierwszy predykat per wołający na tej tabeli (katalog per
+   jednostka biznesowa, wersje widoczne tylko dla administratorów, wielodzierżawowość) czyni
+   rozsypane po endpointach `select()` tym samym ryzykiem pominięcia, przed którym broni
+   `project_reads` — i wymaga wtedy własnej funkcji-strażnika oraz własnego, datowanego wpisu tutaj.
+3. **Co NIE przenosi się do warstwy odczytu:** bramka stawki kosztowej. Zostaje w warstwie
+   kształtowania odpowiedzi (ADR-0005) — drugie miejsce decydujące o widoczności kosztów jest
+   dokładnie tym, co konsolidowało SC-1-08.
