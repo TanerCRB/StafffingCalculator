@@ -304,7 +304,7 @@ history / this file's own change log, not as tracked product work.
 - [ ] **SC-2-02** — Pokaż katalog ról i stawek domyślnych jako ekran (odczyt, bez akcji zapisu).
   Blocked by SC-2-01. Zarezerwowane, kryteria i decyzje bramki 1 w Issue #39.
 
-- [ ] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
+- [x] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
   z alokacją miesięczną w godzinach, trzema niezależnymi wartościami (dostępność / planowana
   alokacja / czas rozliczalny) i rejestracją w kaskadzie kopiowania.
   *Done when:* `backend/tests` dowodzą kryteriów K-01..K-08 (analyst + architect, 2026-09-19):
@@ -363,5 +363,21 @@ history / this file's own change log, not as tracked product work.
   `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (2 aneksy),
   `ADR-0005-model-dostepu.md` (aneks), `ADR-0001-trwalosc-danych.md` (aneks),
   `ADR-0007-wspolbiezna-edycja.md` (aneks), `ADR-0002-obsluga-pieniedzy.md`.
+  **Done 2026-09-19:** PR #38 (scalone `1fa4b6b`). Dowód: `backend/tests/test_staffing_positions.py`,
+  `test_staffing_approved_guards.py`, `test_staffing_schema_constraints.py`, `test_staffing_copy.py`,
+  `test_staffing_hours_precision.py`, `test_staffing_data_layer_guards.py` — 284 testy backendowe
+  zielono (było 208). Runda weryfikacji gate 2 (QA, Invariant Guardian, reviewer, security-auditor)
+  + poprawki: R-01 (precedencja 404 przed 409 w diagnozie odmowy alokacji — miesiąc-nie-istnieje
+  przed approved, stara rada "skopiuj scenariusz" była myląca); R-04 (granice wejścia API — headcount
+  ≤ 10 000, siatka miesięcy ≤ 60, sprawdzenie duplikatów O(n) zamiast O(n²)); S-01 (dowód dla granicy
+  precyzji godzin `NUMERIC(10,2)`, 20 testów); S-02 (strażniki warstwy danych bez testu — kolejność
+  scalania `id`/`position_id` przy INSERT-cie, `EDITABLE_ALLOCATION_FIELDS`/`AllocationFieldNotEditable`
+  przy UPDATE, 6 testów); R-05 (usunięty nadmiarowy indeks `position_id`, pokryty przez `UNIQUE`);
+  B-01 security-auditor (porządek scalania słownika przy wstawianiu alokacji — computed fields
+  ostatnie). Zaakceptowane, nienaprawione: R-02 (rozstrzygnięte jako equivalent mutant — "brak commit
+  ⇒ implicit rollback" chroni niezależnie od predykatu `month_row_exists`, predykat przywrócony bo
+  dokumentuje intencję); R-03 (korekta pozycji po utworzeniu — odłożone do SC-3-0x, PR #37); wyścig
+  zatwierdzenia-kontra-zapisu (K-06) — niewykonalny do przetestowania, nic dziś nie ustawia
+  `approved`. Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
