@@ -177,7 +177,7 @@ history / this file's own change log, not as tracked product work.
   nienaprawione: archiwizacja unieważnia token współbieżności ADR-0007 każdego równoległego
   edytora — ADR-0004 aneks 2026-09-19. Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-1-08** — Egzekwuj widoczność kosztów osobowych per przypisanie do projektu
+- [x] **SC-1-08** — Egzekwuj widoczność kosztów osobowych per przypisanie do projektu
   (`project_access.can_view_personnel_costs`), w koniunkcji z globalnym `PERSONNEL_COSTS_READ`,
   nie per wołający samodzielnie — domknięcie Known gap R-03.
   *Done when:* `backend/tests` dowodzą (kryteria K-01..K-06, analyst 2026-09-19):
@@ -224,5 +224,14 @@ history / this file's own change log, not as tracked product work.
   ją tylko zawęża — patrz nowy aneks pkt 7); audyt wglądu (blok 8). Podstawa:
   `docs/architecture/decisions/ADR-0005-model-dostepu.md` (aneks 2026-09-19), `docs/architecture/decisions/ADR-0001-trwalosc-danych.md`
   (aneks — jedna ścieżka odczytu), `docs/architecture/capabilities.md` (Known gap R-03), Issue #15.
+  **Done 2026-09-19:** PR #29 (scalone `980c06c`). Dowód: `backend/tests/test_project_personnel_cost_visibility.py`
+  (K-01..K-06, 8 testów) + zaktualizowany `test_project_detail_personnel_costs.py` — 133 testy
+  backendowe zielono. Bramka to koniunkcja `caller.has(PERSONNEL_COSTS_READ)` i
+  `project_access.can_view_personnel_costs` dla pary (wołający, projekt); flaga przychodzi jednym
+  zapytaniem z `app.data.project_reads` jako `CallerProjectView`, z jawną asercją podmiotu
+  (`AssertionError`, przetrwa `python -O`) przed policzeniem koniunkcji. Known gap R-03 ZAMKNIĘTY.
+  Zaakceptowane, nienaprawione: gałąź pozytywna nieosiągalna w działającym systemie — brak ścieżki
+  nadawania flagi (ADR-0005 aneks pkt 4). Nie dowodzi AC-06 w całości: kolumny kosztów osobowych
+  nadal nie istnieją. Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
