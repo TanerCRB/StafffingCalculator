@@ -107,7 +107,7 @@ history / this file's own change log, not as tracked product work.
   — 40 testów frontendowych zielono, w tym mutation-checked kontrast WCAG, specyficzność CSS
   zaznaczonego wiersza, sticky panel, jednolite wyciszenie nieaktywnych kontrolek.
 
-- [ ] **SC-1-02** — Edytuj Projekt (name/client/owner/description zawsze; reporting_currency/
+- [x] **SC-1-02** — Edytuj Projekt (name/client/owner/description zawsze; reporting_currency/
   delivery_period zamrożone gdy istnieje scenariusz `approved`), z ochroną przed zgubioną
   aktualizacją.
   *Done when:* `backend/tests` prove: (1) pola opisowe edytowalne niezależnie od statusu
@@ -129,8 +129,12 @@ history / this file's own change log, not as tracked product work.
   Podstawa: `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks
   "zakres migawki wobec pól Projektu"), `docs/architecture/decisions/ADR-0007-wspolbiezna-edycja.md`,
   `docs/architecture/decisions/ADR-0005-model-dostepu.md` (aneks "uprawnienia akcji zapisu").
+  **Done 2026-09-19:** PR #25 (scalone `81f077d`). Dowód: `backend/tests/test_project_edit.py`
+  (14 testów) + mutation-checked `test_project_write_actions_guards.py::test_the_concurrency_guard_is_evaluated_by_the_database_not_against_the_row_just_read`
+  i `::test_the_frozen_field_guard_is_evaluated_in_the_same_statement_as_the_write`. Zob.
+  `docs/architecture/capabilities.md`.
 
-- [ ] **SC-1-03** — Kopiuj Projekt (deep-copy wszystkich scenariuszy, `approved` → `draft` na
+- [x] **SC-1-03** — Kopiuj Projekt (deep-copy wszystkich scenariuszy, `approved` → `draft` na
   kopii, bez migawki, dostęp wyłącznie dla kopiującego).
   *Done when:* `backend/tests` prove: (1) kopia to nowy, niezależny wiersz Projektu; (2) każdy
   scenariusz źródła jest skopiowany do kopii jako `draft` (także jeśli źródło było `approved`),
@@ -147,8 +151,13 @@ history / this file's own change log, not as tracked product work.
   zobowiązanie naprzód, zapisane w aneksie ADR-0004). `audit_log` — jak w SC-1-02. Podstawa:
   `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks "kopiowanie Projektu
   jako trzeci punkt wejścia"), `agents/invariant-guardian.md` reguła 17.
+  **Done 2026-09-19:** PR #25 (scalone `81f077d`). Dowód: `backend/tests/test_project_copy.py`
+  (11 testów) + mutation-checked test na żywym szwie `SCENARIO_CHILD_COPIERS` i na grancie
+  `project_access` ograniczonym do wołającego. Zaakceptowane, nienaprawione: kopiowanie
+  nieidempotentne, kopia bez powiązania ze źródłem — ADR-0004 aneks 2026-09-19. Zob.
+  `docs/architecture/capabilities.md`.
 
-- [ ] **SC-1-04** — Archiwizuj Projekt (zmiana stanu widoczności, bez wpływu na niezmienność
+- [x] **SC-1-04** — Archiwizuj Projekt (zmiana stanu widoczności, bez wpływu na niezmienność
   scenariuszy ani na F-12).
   *Done when:* `backend/tests` prove: (1) archiwizacja zmienia `status` Active→Archived, projekt
   zostaje widoczny na liście (rozszerza już dowiedzione dla odczytu w SC-1-05 o samą akcję
@@ -162,5 +171,10 @@ history / this file's own change log, not as tracked product work.
   niezmienność — zob. aneks ADR-0004). `audit_log` — jak w SC-1-02. Podstawa:
   `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks "archiwizacja Projektu
   a niezmienność i odtwarzalność").
+  **Done 2026-09-19:** PR #25 (scalone `81f077d`). Dowód: `backend/tests/test_project_archive.py`
+  (7 testów) + mutation-checked `test_project_write_actions_guards.py::test_archiving_issues_no_write_statement_against_the_scenarios_table`
+  i `::test_archiving_an_already_archived_project_writes_nothing_at_all`. Zaakceptowane,
+  nienaprawione: archiwizacja unieważnia token współbieżności ADR-0007 każdego równoległego
+  edytora — ADR-0004 aneks 2026-09-19. Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
