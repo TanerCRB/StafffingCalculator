@@ -44,3 +44,28 @@ F-10 wymaga, żeby metryka z zerowym mianownikiem (np. marża przy przychodzie 0
 ## Powiązane wymagania
 
 NF-01, F-02, F-06 (base formulas), F-08, F-10, AC-01, AC-05, AC-07, AC-08, AC-09
+
+## Aneksy
+
+### 2026-09-19 — źródło jednostki minor waluty przy wyświetlaniu kwoty (SC-2-02)
+
+Decyzja mówi dwie rzeczy, które SC-2-02 (ekran katalogu ról i stawek) zderza ze sobą: zaokrąglanie
+wyłącznie przez `app.core.money.round_money` z „precyzją zależną od waluty, domyślnie 2 miejsca",
+oraz że frontend formatuje kwoty wyłącznie przez `frontend/src/lib/money.ts`. Stan faktyczny na
+2026-09-19: `round_money` kwantyzuje do modułowej stałej `TWO_PLACES` i **nie przyjmuje waluty** —
+klauzula „precyzja zależna od waluty" nie jest zaimplementowana w żadnej warstwie. Katalog przechowuje
+stawki jako `NUMERIC(14,4)`; SC-2-02 jest pierwszym konsumentem, który musi je zaokrąglić do
+wyświetlenia.
+
+1. **Rozstrzygnięcie:** 2 miejsca po przecinku dla każdej waluty, bez wyjątku — lustro dzisiejszego
+   `round_money`. Zero zmian backendu wymaganych teraz.
+2. **Reguła kierunkowa, niezależna od wariantu:** liczba miejsc po przecinku dla danej waluty ma
+   jedno źródło dla obu warstw. Front nie wprowadza reguły waluty, której backend nie zna — byłby to
+   drugi punkt zaokrąglania dla tej samej kwoty (reguła 2 Strażnika Niezmienników), a rozjazd
+   ujawniłby się jako różnica między ekranem a przyszłym eksportem, nie jako błąd.
+3. **Punkt wejścia bez zmian:** formatowanie kwoty z API idzie przez `frontend/src/lib/money.ts` i
+   operuje na stringu dziesiętnym; funkcja przyjmująca `number` (`formatMoney`) nie jest dopuszczalna
+   dla kwoty pochodzącej z API.
+4. **Warunek zamknięcia:** pierwsza waluta w katalogu, której jednostka minor nie ma 2 miejsc (np.
+   JPY = 0, BHD = 3) — wtedy „2 miejsca dla każdej waluty" przestaje być dopuszczalne i wraca tu jako
+   nowy, datowany wpis wymagający zmiany `round_money` (parametr waluty) i frontendu razem.
