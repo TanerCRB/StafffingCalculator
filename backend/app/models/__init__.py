@@ -10,6 +10,7 @@ from app.models.catalog import (
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 from app.models.scenario import Scenario, ScenarioStatus
+from app.models.staffing import StaffingPosition, StaffingPositionAllocation
 
 __all__ = [
     "CatalogDefaultRate",
@@ -22,4 +23,6 @@ __all__ = [
     "ProjectStatus",
     "Scenario",
     "ScenarioStatus",
+    "StaffingPosition",
+    "StaffingPositionAllocation",
 ]

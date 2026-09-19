@@ -41,12 +41,18 @@ from app.api.schemas.project import (
     ProjectListResponse,
     ScenarioListItem,
 )
+from app.api.schemas.staffing import (
+    StaffingAllocation,
+    StaffingPositionList,
+    StaffingPositionRead,
+)
 from app.core.identity import CallerIdentity, Permission
 from app.data.project_reads import CallerProjectView
 from app.domain.scenario_readiness import assess
 from app.models.catalog import CatalogDefaultRate
 from app.models.project import Project, ProjectStatus
 from app.models.scenario import Scenario, ScenarioStatus
+from app.models.staffing import StaffingPosition
 
 PERSONNEL_COST_FIELDS: frozenset[str] = frozenset()
 """Response fields carrying individual personnel costs. Empty until plan block 5 adds them."""
@@ -244,6 +250,64 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
             effective_to=rate.effective_to,
         ),
         caller,
+    )
+
+
+def shape_staffing_position(position: StaffingPosition) -> StaffingPositionRead:
+    """One staffing position with its month rows, as the API returns it (SC-3-01).
+
+    **No `caller` argument, and that absence is the statement.** Every other function in this module
+    takes one because it gates a field on a permission; a staffing position has no gated field to
+    remove — it carries a dimension tuple, a headcount, a period and hours, and not one figure a
+    currency could be attached to (ADR-0005, addendum 2026-09-19, point 5). A caller parameter here
+    would suggest a gate that is not there, which is the dangerous direction to be wrong in (the
+    argument `app.data.catalog` makes for having no guard function).
+
+    What that means for the day a resolved rate does appear on a position (F-07, plan block 5): this
+    function grows a `caller` argument *and* the SC-1-08 conjunction — the caller's
+    `PERSONNEL_COSTS_READ` **and** `project_access.can_view_personnel_costs` for the position's
+    project — because that is a rate inside a response describing a scenario, where the addendum's
+    single-factor exception explicitly does not apply. Reading a project's cost rate "through the
+    staffing grid" must not become a way around the assignment flag.
+
+    Hours are passed through as stored and nothing here rounds them: `NUMERIC(10,2)` is the input's
+    own precision, and rounding is the consumer's rule (`app.core.money.round_money`), applied where
+    hours meet a rate.
+    """
+    return StaffingPositionRead(
+        id=position.id,
+        role_id=position.role_id,
+        seniority_id=position.seniority_id,
+        location_id=position.location_id,
+        engagement_type_id=position.engagement_type_id,
+        headcount=position.headcount,
+        start_date=position.start_date,
+        end_date=position.end_date,
+        updated_at=position.updated_at,
+        allocations=[
+            StaffingAllocation(
+                id=allocation.id,
+                period_month=allocation.period_month,
+                availability_hours=allocation.availability_hours,
+                planned_allocation_hours=allocation.planned_allocation_hours,
+                billable_hours=allocation.billable_hours,
+            )
+            for allocation in position.allocations
+        ],
+    )
+
+
+def shape_staffing_position_list(
+    positions: Sequence[StaffingPosition],
+) -> StaffingPositionList:
+    """Shape an already scope-filtered sequence of positions — every row through the function above.
+
+    This function decides no access and must never be asked to: the scope is applied in the query
+    (`app.data.staffing`, which inherits it from `project_for_caller`), so a position of a scenario
+    the caller may not see is never in this sequence in the first place.
+    """
+    return StaffingPositionList(
+        positions=[shape_staffing_position(position) for position in positions]
     )
 
 

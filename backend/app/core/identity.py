@@ -77,6 +77,33 @@ class Permission(StrEnum):
     maintained by an organisation administrator and read by everyone who plans staffing. Each of
     the two has its own mandatory refusal test (ADR-0005, "Konsekwencje")."""
 
+    STAFFING_READ = "staffing:read"
+    """Reading a scenario's staffing positions and their monthly hours (F-04, SC-3-01).
+
+    A new permission, but for a different reason than `CATALOG_*` (ADR-0005, addendum 2026-09-19
+    "pozycje obsady", point 2): the catalogue argument was "a permission whose name says *project*
+    must not open a table that has no project", and a staffing position *does* belong to a project.
+    What applies here is the action-granularity argument of the 2026-09-18 addendum: planning
+    staffing is routinely the right of a different person than editing the project header, and a
+    permission once merged into one "write to the project" cannot be narrowed later without breaking
+    callers.
+
+    Unlike `CATALOG_READ`, this permission carries **no** authority over which rows: scope stays the
+    `project_access` filter, inherited through `scenario_id → scenarios.project_id`
+    (`app.data.staffing`). Holding it and holding access to no project means seeing nothing."""
+
+    STAFFING_WRITE = "staffing:write"
+    """Creating a staffing position and editing a month of its allocation (F-04, SC-3-01).
+
+    Split from `STAFFING_READ` for the same reason `CATALOG_WRITE` is split from `CATALOG_READ`, and
+    each of the two has its own mandatory refusal test (ADR-0005, "Konsekwencje").
+
+    **The known widening it inherits** (ADR-0005, addendum 2026-09-19, point 6): a write endpoint
+    that answers with the full representation of the row it wrote is in practice a read permission
+    for that row — the same gap as `PROJECT_EDIT`/`COPY`/`ARCHIVE`, one table over. It stays latent
+    while every caller is the one placeholder identity that holds everything; the closing condition
+    is the authentication ADR, unchanged."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:
