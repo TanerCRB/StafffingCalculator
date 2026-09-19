@@ -301,4 +301,38 @@ history / this file's own change log, not as tracked product work.
   (ADR-0005 aneks); paginacja katalogu (wyżej); `EXCLUDE`/`btree_gist` na środowisku docelowym
   nieudowodnione. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
+  z alokacją miesięczną w godzinach, trzema niezależnymi wartościami (dostępność / planowana
+  alokacja / czas rozliczalny) i rejestracją w kaskadzie kopiowania.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07: (1) pozycja wraca z czterema FK
+  katalogu i headcount, obcy wymiar odrzucony przez FK w bazie; (2) edycja jednego miesiąca nie
+  rusza pozostałych, dwa wiersze na (pozycja, miesiąc) odrzucone przez bazę; (3) trzy wartości
+  różne round-tripują różne, mutacja "billable := planned" zabija; (4) obsada projektu spoza
+  zasięgu wołającego → `404`, nieodróżnialne od nieistniejącej, z kontrastem na tym samym
+  identyfikatorze; (5) wołający bez uprawnienia zapisu obsady → `403`, zero wierszy w bazie;
+  (6) zapis do scenariusza `approved` odrzucony w tej samej instrukcji co zapis, także w wyścigu
+  dwóch połączeń, kontrast na `draft` — pierwsza implementacja tej reguły ADR-0004 w repo;
+  (7) AC-02: zmiana obsady w skopiowanym scenariuszu nie rusza źródła — obie tabele w
+  `SCENARIO_CHILD_COPIERS`, każdy kopiujący usunięty osobno zabija.
+  **Decyzje bramki 1 (2026-09-19):** alokacja to suma pozycji, nie na głowę; okres jako
+  `period_month DATE` + `UNIQUE(position_id, period_month)`, NIE wzorzec ADR-0008 (`EXCLUDE` byłby
+  tu błędny — nakładające się pozycje tej samej roli są legalne); pozycja/alokacja NIE wchodzą do
+  migawki `approved` (aneks ADR-0004); nowa para uprawnień `STAFFING_READ`/`STAFFING_WRITE` (aneks
+  ADR-0005); dostępność na wierszu miesiąca, nie na pozycji.
+  **Out of scope (explicit):** FTE jako jednostka (F-05, Issue #7 — brak podstawy konwersji);
+  kalendarze/nieobecności jako źródło dostępności (F-05 — tu wartość ręczna, ryzyko nazwane: do
+  F-05 system nie wie o ani jednym dniu wolnym); faza dostawy jako wymiar (encji nie ma, F-02,
+  Issue #4, ADR-0003 w Draft); onboarding/handover jako nazwane typy (F-06/F-07/F-10); ostrzeżenie
+  o przeciążeniu (brak progu z F-02, osobne zadanie — nie `CHECK`, przeciążenie jest stanem
+  legalnym); koszt nierozliczalnego wysiłku (F-07, Issue #9); rozwiązana stawka na pozycji
+  (uruchamia koniunkcję ADR-0005 — F-07); osoba nazwana (Issue #31); ekran (osobne zadanie FE);
+  endpoint tworzenia scenariusza (F-02 — gałąź pozytywna zapisu nieosiągalna w produkcji do tego
+  czasu, jak SC-1-08); `audit_log` (blok 8); wydajność NF-03 (7200 wierszy/scenariusz, mierzone na
+  bramce 2 jak SC-1-05/SC-2-01).
+  **Fundament nieudowodniony:** K-06 to pierwsza implementacja w repo strażnika zapisu do
+  `approved` scenariusza — ustanawia wzorzec dla wszystkich następnych tabel-dzieci. Podstawa:
+  Issue #6, `Wymagania/Requirements_EN.md` §4 F-04, `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md`
+  (aneks), `ADR-0005-model-dostepu.md` (aneks), `ADR-0001-trwalosc-danych.md`,
+  `ADR-0002-obsluga-pieniedzy.md`, `ADR-0007-wspolbiezna-edycja.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
