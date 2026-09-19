@@ -6,10 +6,9 @@ The condition attached to that decision is that this function is the *single* pa
 reads, PDF/spreadsheet export (F-11) and any future server-to-server interface all compose on
 `accessible_projects()`. A `select(Project)` written anywhere else violates ADR-0001.
 
-Nothing here writes; the write paths (create — SC-1-01, archive — SC-1-04) live in
-`app.data.project_writes` and resolve their target by calling `project_for_caller` below, so a
-write action inherits this scope filter instead of repeating it. The edit and copy actions are
-SC-1-02/03 and exist nowhere yet.
+Nothing here writes; the write paths (create — SC-1-01, edit — SC-1-02, copy — SC-1-03, archive —
+SC-1-04) live in `app.data.project_writes` and resolve their target by calling `project_for_caller`
+below, so a write action inherits this scope filter instead of repeating it.
 """
 
 import uuid

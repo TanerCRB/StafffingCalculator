@@ -3,7 +3,7 @@
 Scope note: `status` (Active/Archived) is a visibility state and nothing more. The one code path
 that writes it is `app.data.project_writes.archive_project` (SC-1-04); ADR-0004 (addendum
 2026-09-18) keeps it out of the immutability question entirely — the only immutability boundary is
-a scenario's `approved` status. The edit and copy actions are SC-1-02/03 and do not exist here.
+a scenario's `approved` status.
 """
 
 import uuid

@@ -7,8 +7,9 @@ unit of work. Split across two call sites they eventually drift apart, and a pro
 see is indistinguishable from a project that was never written (see `project_for_caller`).
 
 Scope of this module: create (SC-1-01), edit (SC-1-02), copy (SC-1-03) and archive (SC-1-04) —
-including any "update if it already exists" convenience the API might otherwise be tempted to add
-outside these four named actions.
+and nothing else. In particular, no "update if it already exists" convenience: that would be an
+upsert with no prior row to take an ADR-0007 concurrency token from, hence no 409 and a silent
+lost update.
 """
 
 import uuid
@@ -269,20 +270,26 @@ def update_project(
     )
     try:
         applied = session.execute(statement).one_or_none()
+        if applied is None:
+            # Deliberately no `session.rollback()` here: the single statement above matched no
+            # row, so there is nothing written to undo, and a rollback would additionally discard
+            # unrelated work the caller's transaction may already hold. "Zero saved changes" is a
+            # property of the statement not matching, not of a cleanup afterwards. The exception
+            # raised here is `ProjectEditRefused`, not `SQLAlchemyError`, so it passes through the
+            # `except` below untouched.
+            raise _diagnose_refusal(
+                session, project_id, touches_frozen_fields=touches_frozen_fields
+            )
+        session.commit()
     except SQLAlchemyError as error:
         session.rollback()
         # Same reasoning as in `create_project`: the driver's own message would carry
-        # `DETAIL: Failing row contains (…)`, i.e. the whole row (NF-11).
+        # `DETAIL: Failing row contains (…)`, i.e. the whole row (NF-11). Covering `commit()` here
+        # too, not just `execute()`: a failure at commit is otherwise a raw, unwrapped
+        # `SQLAlchemyError` that a retry cannot tell apart from "never applied" — and on a token
+        # that already changed, the retry would land on a misleading 409 for a change that was in
+        # fact the caller's own.
         raise ProjectWriteFailed(_describe_without_values(error)) from None
-
-    if applied is None:
-        # Deliberately no `session.rollback()` here: the single statement above matched no row, so
-        # there is nothing written to undo, and a rollback would additionally discard unrelated
-        # work the caller's transaction may already hold. "Zero saved changes" is a property of
-        # the statement not matching, not of a cleanup afterwards.
-        raise _diagnose_refusal(session, project_id, touches_frozen_fields=touches_frozen_fields)
-
-    session.commit()
     # The in-memory object still holds the pre-update values (and `updated_at` was computed by the
     # database), so it is reloaded before anyone shapes a response out of it.
     session.refresh(project)
@@ -447,10 +454,16 @@ def archive_project(
     - **It is one-way and idempotent.** There is no `status` argument and no un-archive path:
       F-01 names only "archive" (ADR-0004, addendum, point 4), so the transition cannot be
       reversed by passing the other value, and a second archive of the same project is a no-op
-      that reports the state rather than an error. That also means there is no lost update to
-      protect against here and hence no `updated_at` concurrency token (ADR-0007): two callers
-      archiving at once agree on the result, and a caller editing descriptive fields at the same
-      time loses nothing, because this statement never writes those fields.
+      that reports the state rather than an error — setting `status` to the value it already
+      holds leaves the ORM's change set empty, so `onupdate` does not fire and `updated_at` does
+      not move either.
+
+    What this function does **not** protect: a caller mid-edit elsewhere. A first archive *does*
+    move `updated_at` (the column's `onupdate`), and `updated_at` is ADR-0007's concurrency token —
+    so a concurrent `PATCH` carrying the pre-archive token is correctly refused with a 409, but for
+    the wrong stated reason: nothing that caller edited was touched, yet the message reads "the
+    project changed since it was read." There is no separate concurrency token here because this
+    statement writes only `status`, but it still invalidates the one token editors rely on.
     """
     project = project_for_caller(session, caller, project_id)
     if project is None:

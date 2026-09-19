@@ -119,3 +119,22 @@ wymaga własnego, datowanego wpisu tutaj". SC-1-02 (edycja), SC-1-03 (kopiowanie
    osobną czynnością i nie dzieje się jako skutek uboczny kopiowania. **Konsekwencja przyjęta
    razem z tym aneksem:** kopia projektu zespołowego jest początkowo niewidoczna dla zespołu — to
    musi być powiedziane wykonującemu kopię, nie odkryte później.
+
+### 2026-09-19 — każde uprawnienie akcji zapisu daje w praktyce odczyt całego Projektu (weryfikacja SC-1-02..04)
+
+Security-auditor przy gate 2 zauważył, że `PATCH`, `POST .../copy` i `POST .../archive` zwracają
+`ProjectDetail` (włącznie z `owner` — dane osobowe) każdemu wołającemu, który ma odpowiednio tylko
+`PROJECT_EDIT`, `PROJECT_COPY` lub `PROJECT_ARCHIVE` — bez wymogu `PROJECT_READ`. Punkt 1 wyżej
+rozdziela te trzy uprawnienia od siebie właśnie po to, żeby administrator archiwizujący projekt
+nie musiał być tą samą osobą, co autor edytujący go — ale żadne z trzech uprawnień nie było
+zamyślane jako uprawnienie odczytu, a w obecnym kształcie odpowiedzi każde z nich nim jest.
+
+**Zaakceptowane, nienaprawione teraz:** dziś nieszkodliwe, bo placeholder daje każdemu
+wołającemu wszystkie pięć uprawnień naraz (punkt 2 poprzedniego aneksu) — nie istnieje jeszcze
+wołający z węższym zestawem, więc luka jest utajona, nie aktywna. Staje się aktywna dokładnie w
+momencie, gdy wymiar roli (`admin`/`author`/`viewer`, wspomniany w punkcie 1) przestaje być
+zwinięty przez placeholder — czyli z ADR uwierzytelniania. **Warunek zamknięcia:** to ADR musi
+rozstrzygnąć jedno z dwóch, zanim rola węższa niż `author` zacznie cokolwiek wołać: (a) każde z
+`PROJECT_EDIT`/`PROJECT_COPY`/`PROJECT_ARCHIVE` niesie ze sobą także `PROJECT_READ` tego
+Projektu — nazwane wprost, nie domyślne; albo (b) odpowiedzi tych trzech endpointów przestają
+być pełnym `ProjectDetail` dla wołającego bez `PROJECT_READ`.

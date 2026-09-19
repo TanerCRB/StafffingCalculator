@@ -121,7 +121,12 @@ history / this file's own change log, not as tracked product work.
   **Out of scope (explicit):** `audit_log`/historia zmian — odłożone do bloku 8, jawne odstępstwo
   zapisane w aneksie ADR-0004 z 2026-09-18. Autosave i obsługa `409` po stronie UI — osobne
   zadanie frontendowe. Tworzenie/usuwanie scenariuszy. Zmiana statusu projektu (archiwizacja to
-  SC-1-04). Podstawa: `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks
+  SC-1-04). **Uwaga dla tego przyszłego zadania (reviewer, weryfikacja gate 2 z 2026-09-19):**
+  `updated_at` ma precyzję mikrosekundy i backend porównuje go bit-do-bitu; klient, który
+  przepuści go przez typ daty z precyzją milisekundy (`new Date()`, `.toISOString()` i podobne)
+  zamiast trzymać go jako nieprzezroczysty string, dostanie trwały `409` przy każdej edycji.
+  Zadanie frontendowe musi przechować i odesłać surowy string, nigdy go nie parsując.
+  Podstawa: `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks
   "zakres migawki wobec pól Projektu"), `docs/architecture/decisions/ADR-0007-wspolbiezna-edycja.md`,
   `docs/architecture/decisions/ADR-0005-model-dostepu.md` (aneks "uprawnienia akcji zapisu").
 

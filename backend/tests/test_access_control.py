@@ -105,7 +105,7 @@ def test_project_create_denies_caller_holding_only_project_read(
 
 
 def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() -> None:
-    """The placeholder identity grants exactly project read, create and copy — no more.
+    """The placeholder identity grants exactly read, create, edit, copy and archive — no more.
 
     Asserted as set equality rather than membership: ADR-0005's addendum requires every widening
     of this set to be a deliberate, dated entry in the decision, and a membership assertion
