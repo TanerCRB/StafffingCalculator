@@ -178,20 +178,51 @@ history / this file's own change log, not as tracked product work.
   edytora — ADR-0004 aneks 2026-09-19. Zob. `docs/architecture/capabilities.md`.
 
 - [ ] **SC-1-08** — Egzekwuj widoczność kosztów osobowych per przypisanie do projektu
-  (`project_access.can_view_personnel_costs`), nie per wołający — domknięcie Known gap R-03.
-  *Done when:* `backend/tests` dowodzą: (1) jedna odpowiedź `GET /projects` dla tego samego
-  wołającego wybiela pole kosztowe na projekcie z flagą `false` i zwraca je na projekcie z flagą
-  `true`; (2) ta sama różnica, w obie strony, na `GET /projects/{id}`; (3) flaga nie poszerza
-  zasięgu — projekt bez wiersza `project_access` nadal `404`, nieodróżnialne od nieistniejącego;
-  (4) mutacja "bramka pyta tylko o `caller.has(PERSONNEL_COSTS_READ)`" zabija (1) lub (2), wpisana
-  do mutation logu. Pole kosztowe jest polem zastępczym po stronie testu — **to nie dowodzi AC-06**.
+  (`project_access.can_view_personnel_costs`), w koniunkcji z globalnym `PERSONNEL_COSTS_READ`,
+  nie per wołający samodzielnie — domknięcie Known gap R-03.
+  *Done when:* `backend/tests` dowodzą (kryteria K-01..K-06, analyst 2026-09-19):
+  1. (K-01) Jedna odpowiedź `GET /projects` dla tego samego wołającego, dwa projekty różniące się
+     wyłącznie `can_view_personnel_costs` — pole kosztowe obecne na jednym, `None` na drugim, w tej
+     samej odpowiedzi. Mutacja: rozstrzyganie flagi aliasowane na pierwszy wiersz `project_access`
+     wołającego zamiast per projekt — musi zabić.
+  2. (K-02) Wołający z flagą `true` na przypisaniu, ale bez globalnego `PERSONNEL_COSTS_READ` →
+     pole `None`; kontrast: ten sam wołający z uprawnieniem → pole obecne. Mutacja: usunięcie
+     koniunktu `caller.has(PERSONNEL_COSTS_READ)` z bramki.
+  3. (K-03) Wołający z `PERSONNEL_COSTS_READ`, ale flaga przypisania `false` → pole `None` (status
+     `200`, nie `403`/`404` — to odmowa pola, nie projektu); kontrast: flaga `true` → pole obecne.
+     Mutacja: usunięcie koniunktu `can_view_personnel_costs` z bramki (stan dzisiejszy).
+  4. (K-04) Bramka wpięta na WSZYSTKICH ścieżkach zwracających reprezentację projektu — list,
+     detail, `PATCH`, `POST .../copy`, `POST .../archive` — nie tylko list+detail. Dla kopii: pole
+     kosztowe kopii rozstrzyga flaga NOWEGO przypisania kopiującego, nie źródła. Dwie mutacje
+     (pominięcie bramki w ścieżce list vs. detail) muszą zabić niezależnie.
+  5. (K-05) Nowe przypisanie (`POST /projects` → grant twórcy) ma `can_view_personnel_costs=false`
+     domyślnie — sprawdzone w bazie, nie tylko w payloadzie; kontrast: flaga ustawiona po fakcie →
+     pole widoczne przy kolejnym odczycie. Mutacja: `can_view_personnel_costs=True` przy wstawianiu
+     grantu w `create_project`.
+  6. (K-06) Żaden z testów 1–5 nie jest pustym dowodem: uruchomienie z podstawianym
+     `PERSONNEL_COST_FIELDS = frozenset()` (stan dzisiejszy) wywraca każdy test odmowy — inaczej
+     `_without_personnel_costs`'s `or not PERSONNEL_COST_FIELDS` przepuszcza wszystko bez różnicy.
+
+  Pole kosztowe jest polem zastępczym po stronie testu (wzorzec `test_project_detail_personnel_costs.py`)
+  — kolumny kosztów osobowych nadal nie istnieją. **To zadanie nie dowodzi AC-06 w całości.**
+
+  **Decyzje bramki 1 (2026-09-19):** koniunkcja, nie zamiennik (ADR-0005 aneks "bramka kosztów
+  osobowych jako koniunkcja dwóch mechanizmów"); flaga przychodzi z wierszem z `app.data.project_reads`,
+  jednym zapytaniem na żądanie — `response_shaping` nie dostaje `Session`, żadna relacja ORM
+  niezawężona do `caller.user_id`; flaga nie dostaje ścieżki nadawania w tym zadaniu (gałąź
+  pozytywna nieosiągalna w produkcji do czasu zadania zarządzania uprawnieniami — nazwane, nie
+  odkryte później); dowód gałęzi pozytywnej przez `dependency_overrides` w teście, `PLACEHOLDER_PERMISSIONS`
+  bez zmian.
+
   **Out of scope (explicit):** wymiar roli `admin`/`author`/`viewer` (brak ADR uwierzytelniania —
-  warunek zamknięcia: ten ADR); realne pola kosztowe w `PERSONNEL_COST_FIELDS` (F-07, blok 5 —
+  warunek zamknięcia: ten ADR, koduje też czy `PERSONNEL_COSTS_READ` zostaje wyprowadzone z
+  `project_access` — aneks pkt 3); realne pola kosztowe w `PERSONNEL_COST_FIELDS` (F-07, blok 5 —
   zadanie F-07 dopisuje je w tym samym zadaniu, w którym tworzy kolumny); egzekwowanie w eksporcie
   (F-11, blok 7 — zadanie F-11 dowodzi go własnym kryterium); endpoint/ekran nadawania flagi (brak
   zarządzania użytkownikami); ukrywanie pól w UI (NF-04 — ekran jest funkcją odpowiedzi API); luka
-  z ADR-0005 aneks 2026-09-19 (własny warunek zamknięcia); audyt wglądu (blok 8). Podstawa:
-  `docs/architecture/decisions/ADR-0005-model-dostepu.md`, `docs/architecture/capabilities.md`
-  (Known gap R-03), Issue #15.
+  z ADR-0005 aneks 2026-09-19 dot. odczytu bez PROJECT_READ (własny warunek zamknięcia, koniunkcja
+  ją tylko zawęża — patrz nowy aneks pkt 7); audyt wglądu (blok 8). Podstawa:
+  `docs/architecture/decisions/ADR-0005-model-dostepu.md` (aneks 2026-09-19), `docs/architecture/decisions/ADR-0001-trwalosc-danych.md`
+  (aneks — jedna ścieżka odczytu), `docs/architecture/capabilities.md` (Known gap R-03), Issue #15.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
