@@ -3,7 +3,8 @@
  * specification: Issue #3, out of scope 1 — no pixel fidelity, no visual-regression tests).
  *
  * Colours come from src/styles/tokens.css. The orange accent appears only on white surfaces
- * (toolbar, scenario card top bar); the table area is light steel and uses blue for its accents.
+ * (toolbar, scenario card top bar); the table uses light steel for its header band and for hover,
+ * and blue for the selection.
  */
 
 .project-list {
@@ -78,18 +79,32 @@
   overflow-wrap: anywhere;
 }
 
+/* The header band is the wash the design proposal puts behind `th`, with its own rounded ends —
+   the table is separated, so the band is drawn per cell rather than per row. */
 .project-list__table thead th {
-  padding-top: 0;
+  padding-top: var(--sc-space-2);
   padding-bottom: var(--sc-space-2);
+  background-color: var(--sc-color-surface-muted);
   color: var(--sc-color-text-muted);
-  font-size: var(--sc-font-size-sm);
+  font-size: var(--sc-font-size-xs);
   font-weight: var(--sc-font-weight-semibold);
-  border-bottom: 1px solid var(--sc-color-border);
 }
 
+.project-list__table thead th:first-child {
+  border-top-left-radius: var(--sc-radius-sm);
+  border-bottom-left-radius: var(--sc-radius-sm);
+}
+
+.project-list__table thead th:last-child {
+  border-top-right-radius: var(--sc-radius-sm);
+  border-bottom-right-radius: var(--sc-radius-sm);
+}
+
+/* White rows against the wash header, as in the design proposal — the fill is reserved for the
+   selection. */
 .project-list__row > th,
 .project-list__row > td {
-  background-color: var(--sc-color-surface-muted);
+  background-color: var(--sc-color-surface);
   border-top: 1px solid var(--sc-color-border);
   border-bottom: 1px solid var(--sc-color-border);
   font-weight: var(--sc-font-weight-regular);
@@ -107,6 +122,14 @@
   border-bottom-right-radius: var(--sc-radius-md);
 }
 
+/* Hover is a wash, never a border change: a row that grew a coloured outline under the pointer
+   would be indistinguishable from the selected one. Background only, so these rules stay outside
+   the four-sides check below. */
+.project-list__row:hover > th,
+.project-list__row:hover > td {
+  background-color: var(--sc-color-surface-muted);
+}
+
 /*
  * The selected row is outlined on all four sides. The side borders need their own rules at the
  * same shape as the ones above: `.project-list__row > :first-child` carries two class-level parts
@@ -116,7 +139,7 @@
  */
 .project-list__row--selected > th,
 .project-list__row--selected > td {
-  background-color: var(--sc-color-white);
+  background-color: var(--sc-color-status-active-bg);
   border-color: var(--sc-color-blue);
 }
 
@@ -126,6 +149,14 @@
 
 .project-list__row--selected > :last-child {
   border-right-color: var(--sc-color-blue);
+}
+
+/* The hover rules above carry one more class-level part than the selected ones and would take the
+   tint off the selected row whenever the pointer crossed it. Restated at hover's own specificity,
+   later in the file — the same shape the disabled-button rules in app.css use. */
+.project-list__row--selected:hover > th,
+.project-list__row--selected:hover > td {
+  background-color: var(--sc-color-status-active-bg);
 }
 
 .project-list__client,
@@ -174,7 +205,9 @@
    R-03). */
 .project-list__details {
   position: sticky;
-  top: var(--sc-space-4);
+  /* Clear of the shell's sticky topbar, whose height is a token for exactly this reason — parked
+     under it, the panel would be half-covered at the moment it is supposed to be read. */
+  top: calc(var(--sc-layout-topbar-height) + var(--sc-space-4));
   flex: 0 1 var(--sc-layout-side-panel-width);
   min-width: 0;
   padding: var(--sc-space-5);

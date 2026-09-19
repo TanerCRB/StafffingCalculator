@@ -117,4 +117,9 @@
   --sc-layout-max-width: 1360px;
   --sc-layout-side-panel-width: 22rem;
   --sc-accent-bar-height: 4px;
+  /* The chrome's two fixed dimensions. The topbar height is a token because a second element
+     depends on it: the sticky scenario-details panel offsets itself by exactly this much, and a
+     topbar that grew past a hardcoded copy of the number would scroll over the panel it covers. */
+  --sc-layout-topbar-height: 4.5rem;
+  --sc-layout-rail-width: 13.5rem;
 }

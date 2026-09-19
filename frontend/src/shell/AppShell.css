@@ -1,0 +1,233 @@
+/*
+ * Application chrome — topbar, navigation rail, content frame.
+ *
+ * Every colour is a token from src/styles/tokens.css; src/styles/tokens.test.ts fails the build if
+ * a literal appears here.
+ *
+ * No `@media` anywhere: the stylesheet reader in tokens.test.ts refuses a construct it cannot see,
+ * and the rest of this application is already written to reflow without breakpoints. The rail and
+ * the content frame are two flex items that wrap — the rail goes above the content when the two no
+ * longer fit side by side, instead of being hidden at some width nobody tests.
+ */
+
+.app-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--sc-color-page);
+}
+
+/* Off-screen until focused: the rail sits between the top of the page and the content, so a
+   keyboard user needs a way past it. */
+.app-shell__skip-link {
+  position: absolute;
+  top: -5rem;
+  left: var(--sc-space-4);
+  z-index: 30;
+  padding: var(--sc-space-2) var(--sc-space-4);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background-color: var(--sc-color-surface);
+  color: var(--sc-color-text);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.app-shell__skip-link:focus {
+  top: var(--sc-space-2);
+}
+
+/* --- Topbar ----------------------------------------------------------------------------------- */
+
+/* Sticky, as in the design proposal. `min-height`, not `height`: the band grows rather than
+   clipping its own content when the type is scaled up. */
+.app-shell__topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sc-space-5);
+  min-height: var(--sc-layout-topbar-height);
+  padding: var(--sc-space-3) var(--sc-space-6);
+  border-bottom: 1px solid var(--sc-color-border);
+  background-color: var(--sc-color-surface);
+}
+
+.app-shell__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sc-space-3);
+}
+
+/* The tool mark: three bars, drawn here rather than shipped as an asset. It is a placeholder for a
+   brand mark, not the GlobalLogic logo — see Wymagania/prototyp/README.md. */
+.app-shell__brandmark {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  width: 1.5625rem;
+  height: 1.875rem;
+}
+
+.app-shell__brandmark i {
+  width: 0.3125rem;
+  border-radius: 1px;
+  background-color: var(--sc-color-orange);
+}
+
+.app-shell__brandmark i:nth-child(1) {
+  height: 50%;
+}
+
+.app-shell__brandmark i:nth-child(2) {
+  height: 100%;
+}
+
+.app-shell__brandmark i:nth-child(3) {
+  height: 74%;
+}
+
+.app-shell__title {
+  font-size: var(--sc-font-size-md);
+  font-weight: var(--sc-font-weight-bold);
+  line-height: var(--sc-line-height-tight);
+  letter-spacing: -0.01em;
+}
+
+.app-shell__subtitle {
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-xs);
+  line-height: var(--sc-line-height-tight);
+}
+
+.app-shell__breadcrumb-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sc-space-3);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-xs);
+}
+
+.app-shell__breadcrumb-list li + li::before {
+  content: "›";
+  margin-right: var(--sc-space-3);
+}
+
+.app-shell__breadcrumb-list li[aria-current="page"] {
+  color: var(--sc-color-text);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.app-shell__topright {
+  display: flex;
+  align-items: center;
+  gap: var(--sc-space-3);
+  margin-left: auto;
+}
+
+/* The backend indicator, as the design proposal's top-right pill. Word first, fill second. */
+.app-shell__status {
+  padding: var(--sc-space-1) var(--sc-space-3);
+  border-radius: var(--sc-radius-sm);
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-xs);
+  font-weight: var(--sc-font-weight-medium);
+  white-space: nowrap;
+}
+
+.app-shell__status[data-state="unreachable"] {
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+}
+
+/* --- Body: rail and content ------------------------------------------------------------------- */
+
+.app-shell__body {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+/*
+ * The rail keeps its width where there is room and wraps above the content where there is not.
+ * The lopsided grow factors are what holds it at the design's width: side by side, the content
+ * takes essentially all the free space; wrapped, the rail is alone on its line and fills it.
+ */
+.app-shell__rail {
+  flex: 1 1 var(--sc-layout-rail-width);
+  padding: var(--sc-space-5) var(--sc-space-4);
+  border-right: 1px solid var(--sc-color-border);
+  background-color: var(--sc-color-surface);
+}
+
+.app-shell__nav {
+  position: sticky;
+  top: calc(var(--sc-layout-topbar-height) + var(--sc-space-4));
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-1);
+}
+
+.app-shell__nav-item {
+  display: block;
+  width: 100%;
+  padding: var(--sc-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--sc-radius-md);
+  background-color: transparent;
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Qualified by the element on purpose: hover belongs to the entries that are controls. The entry
+   for the current screen is a `span`, and a wash sliding over it under the pointer would undo the
+   one piece of state the rail shows. */
+button.app-shell__nav-item:hover {
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text);
+}
+
+/* The screen the user is on. Rendered as text, not as a control, so it is announced by
+   `aria-current` rather than by a colour. */
+.app-shell__nav-item--current {
+  background-color: var(--sc-color-status-active-bg);
+  color: var(--sc-color-status-active-text);
+  font-weight: var(--sc-font-weight-bold);
+  cursor: default;
+}
+
+/*
+ * A navigation entry for a screen that does not exist yet (F-13: visible, never hidden). Same
+ * quietened appearance as the not-yet-implemented controls in app.css — muted surface, muted text,
+ * no opacity over a live colour (Reviewer R-05) — so "not yet" reads the same in the rail as it
+ * does on the screen. These two rules follow `:hover` on purpose: they carry the same specificity,
+ * so source order is what decides, exactly as in app.css.
+ */
+.app-shell__nav-item[aria-disabled="true"] {
+  background-color: var(--sc-color-disabled-surface);
+  color: var(--sc-color-text-disabled);
+  cursor: default;
+}
+
+.app-shell__nav-item[aria-disabled="true"]:hover {
+  background-color: var(--sc-color-disabled-surface);
+  color: var(--sc-color-text-disabled);
+}
+
+.app-shell__main {
+  flex: 999 1 32rem;
+  min-width: 0;
+  padding: var(--sc-space-5) var(--sc-space-6) var(--sc-space-7);
+}
+
+.app-shell__content {
+  max-width: var(--sc-layout-max-width);
+  margin: 0 auto;
+}
