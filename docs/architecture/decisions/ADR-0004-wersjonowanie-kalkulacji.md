@@ -175,3 +175,15 @@ odkryte przypadkiem przez kolejne zadanie.
    projektów). Warunek zamknięcia: jeśli frontend wprowadzi automatyczny retry na tym endpointzie
    (np. w ramach ogólnego mechanizmu ponawiania żądań), warunek znika i idempotency-key przestaje
    być opcjonalny.
+
+### 2026-09-19 — katalog organizacyjny nie jest dzieckiem scenariusza (SC-2-01)
+
+Aneks z 2026-09-18 ("kopiowanie Projektu jako trzeci punkt wejścia") pkt 4 wymienia "stawki" wśród
+tabel-dzieci scenariusza, które muszą wejść do kaskady kopiowania w tym samym zadaniu, w którym
+powstają. Katalog wymiarów roli i stawek domyślnych (SC-2-01, F-03) **nie** jest taką tabelą:
+jego wiersze należą do organizacji, nie do scenariusza ani projektu (ADR-0005, aneks 2026-09-19).
+Kopiowanie projektu nie kopiuje katalogu firmy i nie rejestruje go w `SCENARIO_CHILD_COPIERS` —
+brak wpisu jest tu poprawnością, nie pominięciem. Zobowiązanie z pkt 4 pozostaje w mocy dla
+przyszłych tabel *nadpisań* stawek na poziomie scenariusza, jeśli takie powstaną, oraz dla
+migawki: zatwierdzenie kopiuje "rozwiązane stawki" jako wartości, nie jako referencję do
+katalogu (Decyzja, AC-04/AC-10 — zmiana stawki domyślnej nigdy nie rusza zatwierdzonej kalkulacji).

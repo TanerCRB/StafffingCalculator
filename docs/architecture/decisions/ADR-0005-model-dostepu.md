@@ -197,3 +197,68 @@ zapisu tutaj.
    w praktyce odczyt całego `ProjectDetail`) zostaje otwarta. Koniunkcja ją zawęża — pola
    kosztowe w odpowiedzi `PATCH`/`copy`/`archive` są bramkowane podwójnie — ale nie zmienia tego,
    że `owner` wraca do wołającego bez `PROJECT_READ`. Warunek zamknięcia tamtego aneksu bez zmian.
+
+### 2026-09-19 — pierwszy zbiór danych bez zasięgu projektu i asymetria bramki kosztowej (SC-2-01)
+
+Katalog wymiarów roli (rola / senioritet / lokalizacja / typ zaangażowania) ze stawkami domyślnymi
+(F-03, NF-10) jest pierwszymi danymi w tym systemie, które **nie należą do żadnego projektu**.
+Wszystkie zdania tej decyzji o zasięgu są ograniczone do projektów ("które *projekty* użytkownik
+w ogóle widzi", "każdy endpoint zwracający *dane projektu*"), więc decyzja danych organizacyjnych
+nie zakazuje — ale i nie przewiduje. Rozstrzygnięcie (bramka 1, SC-2-01):
+
+1. **Dane organizacyjne bez zasięgu — dopuszczone wprost.** Tabele katalogu nie mają wiersza
+   `project_access` i nie przechodzą przez filtr zasięgu. Zasięg projektu pozostaje filtrem bazy
+   dla danych projektu; brak filtra na katalogu jest decyzją, nie przeoczeniem. Kryterium jest
+   twarde i wąskie: wiersz nie należy do żadnego projektu i nie ma żadnego predykatu per wołający.
+   Pierwsza tabela, której wiersz da się przypisać do projektu, jednostki biznesowej albo najemcy,
+   przestaje być objęta tym punktem i wymaga własnego wpisu tutaj.
+2. **Uprawnienia katalogu: `CATALOG_READ` i `CATALOG_WRITE`, nowe.** `PROJECT_READ` nie zostaje
+   rozciągnięte: uprawnienie o nazwie mówiącej "projekt" otwierające tabelę bez projektu byłoby
+   dokładnie tą rozbieżnością nazwy i mechanizmu, którą aneks 2026-09-19 (SC-1-08) domykał.
+   Rozdział odczytu od zapisu jest tu wymogiem NF-10: katalog edytuje administrator organizacji,
+   czyta każdy, kto planuje staffing. Każde z nich ma obowiązkowy test odmowy.
+3. **Bramka stawki kosztowej poza kontekstem projektu ma JEDEN czynnik — i to jest osłabienie,
+   nazwane jako takie.** Aneks 2026-09-19 pkt 1 stawia koniunkcję jako "wtedy i tylko wtedy" i
+   każe traktować brak drugiego czynnika jako `false`. Literalnie zastosowane do katalogu zamyka
+   bramkę na zawsze. Ten aneks tworzy wyjątek, wąski i kierunkowy: **poza kontekstem projektu**
+   stawkę kosztową katalogu strzeże samo globalne `Permission.PERSONNEL_COSTS_READ`, bo drugi
+   czynnik (`project_access.can_view_personnel_costs`) nie ma tu podmiotu — nie istnieje projekt,
+   względem którego mógłby być prawdą lub fałszem.
+   **Asymetria, przyjęta świadomie:** ta sama nazwa uprawnienia znaczy od teraz dwie różne rzeczy.
+   W odpowiedzi niosącej projekt jest *jednym z dwóch* warunków (mechanizm mocniejszy, ziarnistość
+   per przypisanie). W odpowiedzi katalogu jest *całą* bramką (mechanizm słabszy, ziarnistość per
+   wołający, żadnego zawężenia). Reguła kierunkowa, która z tego wynika i której nie wolno
+   odwrócić: **wyjątek obowiązuje wyłącznie tam, gdzie projektu nie ma.** W chwili, gdy stawka
+   katalogowa trafia do odpowiedzi opisującej projekt albo scenariusz (rozwiązana stawka pozycji
+   staffingowej, blok 3-5), obowiązuje koniunkcja z aneksu 2026-09-19 bez zmian — nie da się
+   odczytać stawki kosztowej projektu "przez katalog", omijając flagę przypisania.
+4. **Drugie miejsce egzekwowania w warstwie kształtowania.** Decyzja stawia egzekwowanie "w jednym
+   miejscu: warstwie serializacji odpowiedzi". Katalog nie ma `CallerProjectView`, więc nie
+   przechodzi przez `_without_personnel_costs` ani przez asercję zgodności podmiotu widoku i
+   wołającego (aneks 2026-09-19 pkt 6). Konsekwencja przyjęta razem z tym aneksem: "jedno miejsce"
+   staje się dwiema funkcjami kształtującymi o różnych wejściach bramki. Wymóg pozostaje ten sam —
+   pole jest usuwane z payloadu po stronie serwera, nie ukrywane w UI (AC-06, NF-04) — i ta sama
+   funkcja kształtująca obsługuje eksport (F-11).
+5. **Kształt odmowy: wybielenie pola, nie odmowa zasobu.** Precedens K-03 (SC-1-08) — "to odmowa
+   pola, nie projektu", status 200 z polem `None`. Wiersz katalogu bez widocznej stawki kosztowej
+   wraca jako wiersz z pustym polem kosztowym, nie jako 403 i nie jako brak wiersza: sam fakt
+   istnienia roli, senioritetu czy lokalizacji nie jest daną chronioną. Reguła nieodróżnialności
+   od nieistnienia (aneks 2026-09-18 pkt 3) **nie rozciąga się na katalog** — istniała, by nie
+   potwierdzać istnienia projektu spoza zasięgu; katalog nie ma zasięgu, więc nie ma czego ukrywać.
+6. **Placeholder rośnie o `CATALOG_*`, i tylko o nie.** Zgodnie z regułą "każde kolejne poszerzenie
+   zestawu uprawnień placeholdera wymaga własnego, datowanego wpisu tutaj" (aneks 2026-09-18):
+   `PLACEHOLDER_PERMISSIONS` obejmuje `CATALOG_READ` i `CATALOG_WRITE`. `PERSONNEL_COSTS_READ`
+   nadal do niego **nie należy** (aneks 2026-09-19 pkt 5, kanarek równości zbiorów).
+   **Konsekwencja przyjęta razem z tym aneksem:** gałąź pozytywna stawki kosztowej katalogu jest w
+   działającym systemie nieosiągalna — żaden dzisiejszy wołający nie ma `PERSONNEL_COSTS_READ` —
+   i daje się dowieść wyłącznie testem podstawiającym tożsamość (`dependency_overrides`). To musi
+   być powiedziane wprost w rejestrze możliwości, nie odkryte później. Granica bez zmian:
+   `APP_ALLOW_PLACEHOLDER_IDENTITY`, środowiska `development`/`test`.
+7. **Warunek zamknięcia — nowy, wobec ADR uwierzytelniania.** Aneks 2026-09-19 pkt 3 zobowiązuje
+   ADR uwierzytelniania do *wyprowadzenia* `PERSONNEL_COSTS_READ` ze zbioru wierszy
+   `project_access` wołającego ("ma co najmniej jedno przypisanie z flagą `true`"). Po tym aneksie
+   takie wyprowadzenie znaczy więcej, niż znaczyło: wgląd w koszty **jednego** projektu otwierałby
+   **całą** organizacyjną tabelę stawek kosztowych. ADR uwierzytelniania musi rozstrzygnąć to
+   wprost — albo (a) tak, wgląd w koszty jakiegokolwiek projektu daje wgląd w katalog stawek
+   (nazwane, nie uboczne), albo (b) katalog dostaje własne uprawnienie kosztowe, niezależne od
+   przypisań projektowych. Do tego czasu punkt 3 obowiązuje jako jest.
