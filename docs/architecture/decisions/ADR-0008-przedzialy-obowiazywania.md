@@ -26,9 +26,11 @@ i CI (sprawdzone repo-wide). Ten ADR domyka fundament, zanim SC-2-01 na nim stan
    mechanizmu — istniejący kod `exchange_rates` (jeśli powstał) migruje przy pierwszej okazji, nie
    wstecznie w tym zadaniu.
 2. **Reprezentacja: kolumna generowana `valid_period daterange GENERATED ALWAYS AS
-   (daterange(effective_from, effective_to, '[)')) STORED`**, obok kolumn `effective_from DATE
+   (daterange(effective_from, effective_to + 1, '[)')) STORED`**, obok kolumn `effective_from DATE
    NOT NULL` i `effective_to DATE NULL` (`NULL` = bezterminowa, brak wartownika typu
-   `9999-12-31`). Kolumna generowana, nie samo wyrażenie powtórzone w każdym zapytaniu: największym
+   `9999-12-31`). `+ 1` jest tu konieczne — `effective_to` jest włączające (punkt 3), a `daterange`
+   przyjmuje granicę górną wyłączającą; bez tego przesunięcia ostatni dzień okna nie byłby przez
+   nie objęty. Kolumna generowana, nie samo wyrażenie powtórzone w każdym zapytaniu: największym
    ryzykiem tego wzorca nie jest ograniczenie samo, a wyszukiwanie stawki używające innych granic
    niż ograniczenie — błąd niewidoczny w teście na dacie w środku okresu. Jedna kolumna, czytana i
    przez `EXCLUDE`, i przez wyszukiwanie (`valid_period @> :date`, z indeksem gist), likwiduje tę

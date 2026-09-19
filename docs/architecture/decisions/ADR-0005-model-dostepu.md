@@ -262,3 +262,14 @@ nie zakazuje — ale i nie przewiduje. Rozstrzygnięcie (bramka 1, SC-2-01):
    wprost — albo (a) tak, wgląd w koszty jakiegokolwiek projektu daje wgląd w katalog stawek
    (nazwane, nie uboczne), albo (b) katalog dostaje własne uprawnienie kosztowe, niezależne od
    przypisań projektowych. Do tego czasu punkt 3 obowiązuje jako jest.
+
+   **Druga połowa tego samego ryzyka, dopisana po weryfikacji SC-2-01 (security-auditor,
+   2026-09-19):** wariant (a) nie tylko poszerza to, co pokazuje katalog — on też *odwraca*
+   zawężenie, które SC-1-08 wprowadziło. Wołający z `can_view_personnel_costs=true` na jednym
+   projekcie i `false` na drugim, którego pozycje staffingowe wycenia domyślna stawka z katalogu,
+   dostaje z katalogu dokładnie tę stawkę bez żadnego filtra (K-01) — i może ją przyłożyć do
+   pozycji drugiego projektu ręcznie, z pamięci, całkowicie omijając flagę przypisania. Punkt 3
+   zamyka to wyłącznie dla stawki podróżującej *wewnątrz* odpowiedzi projektu/scenariusza; nie
+   zamyka złożenia "katalog + osobny odczyt projektu w tym samym żądaniu przez tego samego
+   wołającego". Wybór (a) musi to nazwać jako świadomie przyjętą konsekwencję, nie odkryć jej przy
+   pierwszym zadaniu bloku 4/5.

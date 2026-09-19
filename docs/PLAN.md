@@ -278,7 +278,11 @@ history / this file's own change log, not as tracked product work.
   dzienna/miesięczna (F-07); przewalutowanie (ADR-0006); ekran katalogu; nadawanie uprawnień
   (jak SC-1-08); usuwanie pozycji słownika używanej przez stawkę (F-02); czy wgląd w koszty
   jednego projektu odblokowuje cały katalog (przekazane ADR-owi uwierzytelniania, ADR-0005
-  aneks pkt 7).
+  aneks pkt 7); **paginacja `GET /catalog/rates`/list słowników** — zmierzone przez reviewera
+  (weryfikacja gate 2, 2026-09-19): 48k wierszy / 19.7 MB / 1.6 s dla realistycznego katalogu
+  (40 ról × 5 senioritetów × 20 lokalizacji × 4 typy zaangażowania × 3 okna). Zaakceptowane na
+  tych samych warunkach co lista projektów (SC-1-05): osobna Story, gdy katalog realnie przekroczy
+  rozmiar, przy którym jedna odpowiedź jest problemem — nie teraz, na wyrost.
   **Fundament nieudowodniony, przyjęty świadomie:** `EXCLUDE`/`btree_gist` — pierwsze użycie w
   repo, precedens dla `exchange_rates`/`commercial_terms`; dowód w CI (testcontainers, rola
   nadrzędna) nie dowodzi uprawnień na środowisku docelowym. Podstawa: Issue #5,
