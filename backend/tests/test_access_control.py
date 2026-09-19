@@ -105,7 +105,7 @@ def test_project_create_denies_caller_holding_only_project_read(
 
 
 def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() -> None:
-    """The placeholder identity grants exactly project read and project create — no more.
+    """The placeholder identity grants exactly read, create, edit, copy and archive — no more.
 
     Asserted as set equality rather than membership: ADR-0005's addendum requires every widening
     of this set to be a deliberate, dated entry in the decision, and a membership assertion
@@ -115,11 +115,23 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
 
     A failure here is not a broken test: it means the placeholder identity grew a permission,
     and the question to answer is whether ADR-0005's addendum grew with it.
+
+    It grew three times on 2026-09-18: by `PROJECT_EDIT` (SC-1-02), `PROJECT_COPY` (SC-1-03) and
+    `PROJECT_ARCHIVE` (SC-1-04). ADR-0005's addendum "uprawnienia akcji zapisu na Projekcie i
+    dostęp do kopii" names all three widenings, so the expected set below was updated with them
+    and not around them. The assertion stays a set equality — the canary is re-armed around the
+    new set, not softened into a membership check.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
     assert PLACEHOLDER_PERMISSIONS == frozenset(
-        {Permission.PROJECT_READ, Permission.PROJECT_CREATE}
+        {
+            Permission.PROJECT_READ,
+            Permission.PROJECT_CREATE,
+            Permission.PROJECT_EDIT,
+            Permission.PROJECT_COPY,
+            Permission.PROJECT_ARCHIVE,
+        }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
 

@@ -134,3 +134,44 @@ SC-1-04 są pierwszymi trzema akcjami generującymi zdarzenia, których F-12 wym
 będą miały odtwarzalnego autora ani czasu w rejestrze historii — `updated_at` na wierszu nie jest
 substytutem historii zmian (brak autora, brak "affected data"). **Warunek zamknięcia:** blok 8
 planu, przed jakimkolwiek zadaniem opierającym się na F-12 jako spełnionym w całości.
+
+### 2026-09-19 — trzy konsekwencje SC-1-02..04 zaakceptowane, nie naprawione (weryfikacja SC-1-02..04)
+
+Weryfikacja gate 2 dla SC-1-02..04 (reviewer, security-auditor) wykryła trzy efekty uboczne
+mechanizmów już zaakceptowanych w tym ADR. Żaden nie jest błędem implementacji — wszystkie są
+konsekwencją decyzji podjętych wyżej, dotąd nienazwaną wprost. Nazwane teraz, żeby nie zostały
+odkryte przypadkiem przez kolejne zadanie.
+
+1. **Archiwizacja unieważnia token współbieżności ADR-0007 każdego równoległego edytora.**
+   `archive_project` pisze wyłącznie `status`, ale kolumna `updated_at` — czyli token ADR-0007 —
+   rusza przez `onupdate` niezależnie od tego, które pole faktycznie się zmieniło. Caller A czyta
+   projekt (token T0), caller B go archiwizuje (token → T1), A zapisuje edycję pól opisowych z T0
+   i dostaje 409 "projekt się zmienił od odczytu" — komunikat prawdziwy, ale wskazujący złą
+   przyczynę: A nie edytował niczego, co B dotknął. **Zaakceptowane:** token jest własnością
+   wiersza Projektu, nie pojedynczego pola, i to samo dotyczyłoby każdej przyszłej akcji piszącej
+   `status` lub inne pole poza `EDITABLE_FIELDS`. Rozdzielenie tokenów per grupa pól
+   kosztowałoby więcej, niż dają rzadkie kolizje archiwizacja-kontra-edycja. Warunek: komunikat
+   409 nie może nazywać przyczyny, której nie potwierdził (dziś nie nazywa — mówi tylko "zmienił
+   się", nie "ktoś edytował").
+2. **Kopia nie jest powiązana z projektem źródłowym i przetrwa odebranie dostępu do źródła.**
+   Aneks z 2026-09-18 ("kopiowanie Projektu…") nazywa już, że kopia zespołowego projektu jest
+   początkowo niewidoczna dla zespołu — to część tej samej decyzji o nie replikowaniu
+   `project_access`. Dwie konsekwencje tego, nienazwane wcześniej: (a) odebranie dostępu do
+   źródła nie ma żadnego wpływu na kopię — kopia nie przechowuje odniesienia do źródła, więc nie
+   ma nic do unieważnienia; (b) nikt poza autorem kopii nie może się o niej dowiedzieć ani jej
+   odnaleźć, włącznie z administratorem źródłowego projektu. **Zaakceptowane** na tych samych
+   warunkach co aneks z 2026-09-18: F-12 i F-01 nie wymagają rejestru pochodzenia kopii, a
+   `audit_log` jest już odłożone do bloku 8 (aneks powyżej). Kolumna łącząca kopię ze źródłem
+   (`copied_from`) jest naturalnym miejscem do tego wrócić, jeśli blok 8 albo przyszłe zadanie
+   dotyczące ról/uprawnień (ADR-0005) tego zażąda — nie jest potrzebna wcześniej.
+3. **Kopiowanie nie jest idempotentne, a duplikat jest trwały.** `POST /projects/{id}/copy` nie
+   przyjmuje ciała żądania, więc dwa wywołania (podwójny klik, retry sieciowy) są nie do
+   odróżnienia i tworzą dwa osobne projekty o identycznych polach opisowych. Żadna kolumna
+   `projects` nie ma unikalności na `name` (w przeciwieństwie do `scenarios`), a w tym planie nie
+   istnieje akcja usuwania — archiwizacja jest stanem widoczności, nie usunięciem (aneks z
+   2026-09-18, punkt 2) — więc przypadkowy duplikat zostaje na zawsze. **Zaakceptowane:** koszt
+   klucza idempotentności lub odróżniającego sufiksu nazwy przewyższa dziś ryzyko — akcja wymaga
+   świadomego kliknięcia, a duplikat jest widoczny i nieszkodliwy (nie wpływa na kalkulacje innych
+   projektów). Warunek zamknięcia: jeśli frontend wprowadzi automatyczny retry na tym endpointzie
+   (np. w ramach ogólnego mechanizmu ponawiania żądań), warunek znika i idempotency-key przestaje
+   być opcjonalny.

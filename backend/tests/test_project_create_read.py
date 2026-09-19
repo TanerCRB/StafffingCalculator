@@ -11,7 +11,7 @@ The database is a real PostgreSQL (see `conftest`), and the create path really c
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -50,11 +50,20 @@ def test_sc_1_01_01_created_project_is_retrievable_with_all_its_fields(
     read = client.get(f"/projects/{project_id}", headers=as_caller(IN_SCOPE_USER))
 
     assert read.status_code == 200, read.text
+    concurrency_token = read.json()["updated_at"]
+    assert datetime.fromisoformat(concurrency_token).tzinfo is not None
     assert read.json() == {
         **payload,
         "id": project_id,
         "status": "Active",
         "scenarios": [],
+        # Added to the detail contract by SC-1-02 (ADR-0007, accepted 2026-09-18): the
+        # concurrency token the edit request has to send back. Its value comes from the
+        # database's clock, not from anything the request carried, so it is named as a key here
+        # and taken from the response — with the type assertion above standing in for the value.
+        # Every other key stays pinned, so a field that appears without being asked for still
+        # fails this test.
+        "updated_at": concurrency_token,
     }
     # The POST answered with the same representation it persisted — no "write shape" that
     # quietly differs from the "read shape".
