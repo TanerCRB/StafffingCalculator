@@ -273,3 +273,44 @@ nie zakazuje — ale i nie przewiduje. Rozstrzygnięcie (bramka 1, SC-2-01):
    zamyka złożenia "katalog + osobny odczyt projektu w tym samym żądaniu przez tego samego
    wołającego". Wybór (a) musi to nazwać jako świadomie przyjętą konsekwencję, nie odkryć jej przy
    pierwszym zadaniu bloku 4/5.
+
+### 2026-09-19 — pozycje obsady: zasięg dziedziczony przez scenariusz, uprawnienia STAFFING_* (SC-3-01)
+
+Aneks 2026-09-19 (SC-2-01) pkt 1 domyka się zdaniem: "Pierwsza tabela, której wiersz da się
+przypisać do projektu, jednostki biznesowej albo najemcy, przestaje być objęta tym punktem i wymaga
+własnego wpisu tutaj." Pozycja obsady scenariusza i jej alokacja miesięczna (F-04, SC-3-01) są tą
+tabelą. To wpis, którego tamto zdanie wymaga.
+
+1. **Zasięg bez nowej decyzji.** Wiersz pozycji należy do projektu przez `staffing_position
+   .scenario_id → scenarios.project_id` (kolumna `NOT NULL`), więc obowiązuje filtr `project_access`
+   z "Decyzji" — bez nowego wymiaru i bez własnej tabeli dostępu. Wyjątek "dane organizacyjne bez
+   zasięgu" (aneks 2026-09-19 pkt 1) tej tabeli **nie** obejmuje i nie wolno go tu rozciągać:
+   kryterium tamtego punktu jest strukturalne ("wiersz nie należy do żadnego projektu"), a tutaj
+   należy.
+2. **Uprawnienia: `STAFFING_READ` i `STAFFING_WRITE`, nowe — ale z innego powodu niż `CATALOG_*`.**
+   Argument katalogowy (uprawnienie mówiące "projekt" otwierające tabelę bez projektu) tu nie
+   obowiązuje, bo projekt istnieje. Obowiązuje argument ziarnistości akcji z aneksu 2026-09-18
+   pkt 1: planowanie obsady jest rutynowo prawem innej osoby niż edycja nagłówka projektu, a
+   uprawnienia raz zlanego w jedno "zapis do projektu" nie da się później zawęzić bez złamania
+   wołających. Rozdział odczytu od zapisu jak w `CATALOG_*`. Każde z dwóch ma obowiązkowy test
+   odmowy ("Konsekwencje").
+3. **`PLACEHOLDER_PERMISSIONS` rośnie o `STAFFING_READ`/`STAFFING_WRITE`, i tylko o nie.**
+   `PERSONNEL_COSTS_READ` nadal do niego nie należy (aneks 2026-09-19 pkt 5) — kanarek równości
+   zbiorów zostaje przezbrojony, nie poluzowany. Granica bez zmian:
+   `APP_ALLOW_PLACEHOLDER_IDENTITY`, środowiska `development`/`test`.
+4. **Nieodróżnialność obejmuje obie ścieżki.** Pozycja w scenariuszu spoza zasięgu wołającego jest
+   nieodróżnialna od nieistniejącej — `404`, nigdy `403`, także dla zapisu (aneks 2026-09-18 pkt 3).
+   Scenariusz należący do innego projektu niż ten w adresie jest tym samym przypadkiem. Kody odmowy
+   specyficzne dla zapisu (`409` z ADR-0007, odmowa z ADR-0004, `422` walidacji) nie mogą stać się
+   ubocznym potwierdzeniem, że pozycja albo scenariusz istnieje.
+5. **Bramka kosztów osobowych — SC-3-01 nie niesie żadnej stawki.** Rozstrzygnięte (bramka 1):
+   odpowiedź pozycji obsady zwraca krotkę wymiarów katalogu, headcount i godziny — żadnego pola
+   kosztowego ani rozstrzygniętej stawki. Kierunek wyjątku z aneksu 2026-09-19 pkt 3 (koniunkcja
+   obowiązuje, gdy stawka trafia do odpowiedzi opisującej scenariusz) zostaje więc **nieaktywowany
+   przez to zadanie** — nazwane wprost, nie ukryte jako "gotowe": pierwsze zadanie faktycznie
+   pokazujące rozwiązaną stawkę na pozycji (F-07, blok 5) musi odtworzyć koniunkcję i dowieść jej
+   własnym kryterium; kierunek wyjątku pozostaje nieudowodniony (`docs/architecture/capabilities.md`).
+6. **Luka z aneksu 2026-09-19 rozszerza się, nie zamyka.** `STAFFING_WRITE` zwracające pełną
+   reprezentację pozycji jest w praktyce uprawnieniem odczytu tej pozycji — ta sama luka co dla
+   `PROJECT_EDIT`/`COPY`/`ARCHIVE`, na nowej tabeli. Warunek zamknięcia bez zmian (ADR
+   uwierzytelniania rozstrzyga (a) albo (b)); dziś utajona, bo placeholder daje wszystko naraz.

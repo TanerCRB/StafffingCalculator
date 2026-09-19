@@ -84,3 +84,24 @@ Granice tego wyjątku, żeby nie stał się regułą:
 3. **Co NIE przenosi się do warstwy odczytu:** bramka stawki kosztowej. Zostaje w warstwie
    kształtowania odpowiedzi (ADR-0005) — drugie miejsce decydujące o widoczności kosztów jest
    dokładnie tym, co konsolidowało SC-1-08.
+
+### 2026-09-19 — pierwsza tabela z zasięgiem dziedziczonym przez rodzica (SC-3-01)
+
+Aneks wyżej zwalnia z funkcji-strażnika tabelę bez predykatu zasięgu, a jego warunek wygaśnięcia
+jest strukturalny: "tabela nie ma żadnej kolumny wiążącej wiersz z projektem". Pozycja obsady
+(F-04, SC-3-01) ma taką kolumnę pośrednio — `scenario_id → scenarios.project_id` — więc wyjątek jej
+nie obejmuje i obowiązuje warunek z aneksu 2026-09-18: predykat zasięgu musi być w tej samej
+ścieżce, która pobiera wiersze, a nie w kodzie wołającego zbudowanym od nowa.
+
+**Rozstrzygnięcie:** odczyt i zapis pozycji obsady **nie** dostają własnej, niezależnej funkcji
+zasięgu. Adres niesie oba identyfikatory (`/projects/{project_id}/scenarios/{scenario_id}/...`);
+zasięg pochodzi wyłącznie z `project_for_caller(session, caller, project_id)` — ten sam punkt
+wejścia co dla projektu — a przynależność scenariusza do projektu sprawdzana jest względem już
+wczytanej kolekcji `Project.scenarios` (eager load w `project_for_caller`), nie osobnym
+zapytaniem. Scenariusz spoza tej kolekcji (inny projekt, albo nieistniejący) daje ten sam `404` co
+projekt spoza zasięgu — jedna funkcja, nie dwie komponujące się na jednym zapytaniu.
+
+**Czego to nie zmienia:** bramka kosztów osobowych zostaje w warstwie kształtowania odpowiedzi, nie
+przenosi się do warstwy odczytu (ADR-0005, aneks 2026-09-19). Nieodróżnialność odmowy od
+nieistnienia zostaje własnością `project_for_caller`: scenariusz z innego projektu i scenariusz
+nieistniejący wracają jako ten sam brak wyniku.
