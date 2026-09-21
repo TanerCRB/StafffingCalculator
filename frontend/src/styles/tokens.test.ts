@@ -293,6 +293,16 @@ describe("colour contrast", () => {
       { where: "rail entry for the current screen", foreground: "--sc-color-status-active-text", background: "--sc-color-status-active-bg" },
       { where: "rail entry not implemented yet", foreground: "--sc-color-text-disabled", background: "--sc-color-disabled-surface" },
       { where: "search placeholder, inactive", foreground: "--sc-color-text-disabled", background: "--sc-color-disabled-surface" },
+      // SC-2-02, the catalogue screen. Every pair its stylesheet leaves to the cascade: the count
+      // sentence and the panel titles sit on a `.card`, the period and the withheld cost sit on a
+      // rate row. The withheld cost is the one that matters most — "Restricted" is the only thing
+      // in that cell, so if it is unreadable the cell is empty, and a screenshot shows a gap that
+      // looks deliberate.
+      { where: "rate count sentence on a panel card", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
+      { where: "effective period cell on a rate row", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
+      { where: "withheld cost rate on a rate row", foreground: "--sc-color-attention-text", background: "--sc-color-surface" },
+      { where: "dictionary entry chip", foreground: "--sc-color-text", background: "--sc-color-surface-muted" },
+      { where: "catalogue failure message", foreground: "--sc-color-attention-text", background: "--sc-color-attention-bg" },
     ];
 
     const failures = declaredPairs
@@ -306,6 +316,62 @@ describe("colour contrast", () => {
       })
       .filter((pair) => pair.ratio < AA_NORMAL_TEXT);
     expect(failures).toEqual([]);
+  });
+
+  it("meets WCAG AA for every colour the catalogue stylesheet sets without a background of its own", () => {
+    // QA, SC-2-02. The list above is a list of intentions: it pairs two token names and checks them
+    // against each other, and never asks the stylesheet which token it actually applies. Two
+    // mutations proved that it cannot fail for this screen — `.catalog__restricted` and
+    // `.catalog__cell-period` each set to `var(--sc-color-data-amber)`, 1.75:1 on white, left all
+    // the tests green while the declared rows still read `--sc-color-attention-text` and
+    // `--sc-color-text-muted`. The withheld cost is the worst case: the refusal word is the entire
+    // content of that cell, so a colour nobody can read is a cell that looks empty, which is the
+    // one thing gate-1 decision 2 exists to prevent.
+    //
+    // This check reads the foreground from the rule instead. The surface each rule sits on still
+    // has to be stated by hand — the cascade is not reconstructed here — but an unstated rule is a
+    // failure rather than a silent omission, which is what the comment above calls this check's
+    // weak spot.
+    const surfaces: Readonly<Record<string, string>> = {
+      // `.catalog__count` sits inside a `.card`; the two cell rules sit on `.catalog__row > td`.
+      // Both of those set `--sc-color-surface`, and both set it together with their own colour, so
+      // the pairing test above is what keeps them honest.
+      ".catalog__count": "--sc-color-surface",
+      ".catalog__cell-period": "--sc-color-surface",
+      ".catalog__restricted": "--sc-color-surface",
+    };
+
+    const colourOnly = rules.filter(
+      (rule) =>
+        rule.file.endsWith("/CatalogScreen.css") &&
+        rule.declarations.has("color") &&
+        !rule.declarations.has("background-color") &&
+        !rule.declarations.has("background"),
+    );
+    // Found, or this is an elaborate way of iterating over nothing.
+    expect(colourOnly.length).toBeGreaterThan(0);
+    // Every such rule is accounted for, and nothing is listed that the stylesheet no longer has: a
+    // colour added later with no surface named here fails instead of joining the set nobody checks.
+    expect(colourOnly.map((rule) => rule.selector).sort()).toEqual(Object.keys(surfaces).sort());
+
+    const failures = colourOnly
+      .map((rule) => {
+        const declared = rule.declarations.get("color") ?? "";
+        const foreground = resolveColour(declared);
+        const background = resolveColour(`var(${surfaces[rule.selector]})`);
+        if (foreground === null || background === null) {
+          throw new Error(`Not a colour: ${rule.selector} { color: ${declared} }`);
+        }
+        return { where: rule.selector, ratio: contrastRatio(foreground, background) };
+      })
+      .filter((pair) => pair.ratio < AA_NORMAL_TEXT);
+    expect(failures).toEqual([]);
+
+    // And the one cell K-03 hangs on names the same token the declared row above claims, so the
+    // list cannot quietly come to describe a screen that no longer exists.
+    expect(
+      rules.find((rule) => rule.selector === ".catalog__restricted")?.declarations.get("color"),
+    ).toBe("var(--sc-color-attention-text)");
   });
 });
 

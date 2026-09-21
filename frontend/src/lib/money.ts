@@ -25,6 +25,19 @@ export function formatMoney(value: number, currency: string): string {
 // the decimal representation itself — no Number(), no parseFloat(), at any stage.
 
 const PERCENT_FRACTION_DIGITS = 2;
+
+/**
+ * How many decimal places a displayed amount keeps, for every currency without exception.
+ *
+ * ADR-0002, addendum 2026-09-19 (SC-2-02): the mirror of today's `round_money`, which quantises to
+ * `TWO_PLACES` and takes no currency argument. The decision's "precision depends on the currency"
+ * clause is implemented in neither layer, and the frontend must not introduce a currency rule the
+ * backend does not know — that would be a second rounding point for the same amount, surfacing as a
+ * difference between this screen and a future export rather than as an error. Closing condition:
+ * the first catalogue currency whose minor unit is not 2 places (JPY = 0, BHD = 3), which changes
+ * `round_money` and this constant together.
+ */
+const MONEY_FRACTION_DIGITS = 2;
 const DECIMAL_PATTERN = /^([+-]?)(\d*)(?:\.(\d*))?$/;
 
 function incrementDigits(digits: string): string {
@@ -93,4 +106,34 @@ export function formatPercentString(value: string): string {
     return NOT_APPLICABLE;
   }
   return `${roundDecimalString(value, PERCENT_FRACTION_DIGITS)}%`;
+}
+
+/**
+ * Renders an amount the API sent as a fixed-point decimal string, in the currency the API sent
+ * with it ("100.0050", "EUR" → "100.01 EUR").
+ *
+ * This is the entry point for an amount that came from the API; `formatMoney` above takes a JS
+ * number and is **not** admissible for one (ADR-0002, addendum 2026-09-19, point 3) — `Number()`
+ * would turn "100.005" into 100.00499999999999… and display "100.00" where the backend's
+ * ROUND_HALF_UP gives 100.01.
+ *
+ * The currency is appended as its code rather than a symbol: the catalogue carries ISO-4217 codes,
+ * amounts in several currencies sit in one table, and a symbol shared by more than one currency
+ * ($, kr) would make two different rows read identically. Rounding here is a lossy projection for
+ * display only — never a value fed back as input (ADR-0008, addendum 2026-09-19, points 1-2).
+ */
+export function formatMoneyString(value: string, currency: string): string {
+  return `${roundDecimalString(value, MONEY_FRACTION_DIGITS)} ${currency}`;
+}
+
+/**
+ * Renders a rate: an amount per unit of time, with both the currency and the unit taken from the
+ * response ("100.0050", "EUR", "hour" → "100.01 EUR / hour").
+ *
+ * The unit is joined here rather than at the call site for the same reason the amount is formatted
+ * here: a cell that assembles "… / hour" of its own would keep saying "hour" when F-07 adds daily
+ * and monthly rates, and nothing would look broken.
+ */
+export function formatRatePerUnit(value: string, currency: string, unit: string): string {
+  return `${formatMoneyString(value, currency)} / ${unit}`;
 }
