@@ -105,3 +105,40 @@ projekt spoza zasięgu — jedna funkcja, nie dwie komponujące się na jednym z
 przenosi się do warstwy odczytu (ADR-0005, aneks 2026-09-19). Nieodróżnialność odmowy od
 nieistnienia zostaje własnością `project_for_caller`: scenariusz z innego projektu i scenariusz
 nieistniejący wracają jako ten sam brak wyniku.
+
+### 2026-09-21 — kolumna kontrahenta nie jest kolumną zasięgu; przebudowa ograniczenia `EXCLUDE` (SC-2-03)
+
+Aneks z 2026-09-19 zwalnia katalog z funkcji-strażnika kryterium strukturalnym: "tabela nie ma
+żadnej kolumny wiążącej wiersz z projektem, użytkownikiem, jednostką biznesową ani najemcą, i żaden
+endpoint nie zawęża jej po tożsamości wołającego". SC-2-03 dodaje do wiersza stawki kolumnę
+wskazującą podmiot gospodarczy (`vendor_id`). Czy to już jest "kolumna wiążąca" w rozumieniu tamtego
+zdania — tekst tego nie rozstrzygał, a milczące odczytanie go w którąkolwiek stronę byłoby
+dokładnie tym dryfem, przed którym broni zasada aneksów. Stąd ten wpis.
+
+1. **Rozstrzygnięcie: `vendor_id` jest atrybutem *kontrahenta* stawki, nie nosicielem zasięgu.**
+   Wymienione w tamtym zdaniu podmioty — projekt, użytkownik, jednostka biznesowa, najemca — to
+   podmioty, w imieniu których działa wołający. Poddostawca jest drugą stroną umowy, nie stroną
+   wołającą. Wyjątek z 2026-09-19 obowiązuje więc dalej: katalog nadal nie dostaje modułu
+   `catalog_reads.py`, odczyt zostaje zwykłym `select()`.
+2. **Warunek wygaśnięcia bez zmian i wprost przypomniany.** Drugi punkt tamtego aneksu mówi o
+   pierwszym predykacie per wołający na tej tabeli. Gdyby kiedykolwiek powstało zawężanie
+   widoczności stawek po poddostawcy (np. "cennik poddostawcy X widzą tylko osoby pracujące z X"),
+   wyjątek wygasa w tym momencie — wymaga własnej funkcji-strażnika oraz własnego, datowanego wpisu
+   tutaj. Ten aneks takiego zawężania **nie** wprowadza; zakres widoczności rozstrzyga ADR-0005,
+   aneks z tą samą datą (zero nowego uprawnienia, decyzja biznesowa Issue #46).
+3. **Przebudowa ograniczenia `EXCLUDE` w jednej migracji — odstępstwo od expand → deploy →
+   contract, nazwane i ograniczone.** Zdjęcie czterokolumnowego ograniczenia i założenie
+   pięciokolumnowego w jednym kroku tej reguły nie spełnia. Podstawa odstępstwa jest faktograficzna,
+   nie wygodnościowa: nie istnieje żadne wdrożone środowisko — środowisko docelowe nie zostało
+   wybrane (open decision #5, `backend/README.md`, ADR-0008 pkt 5 i 7), a aplikacja odmawia startu
+   poza `development`/`test`. Jedyne bazy, których ta migracja dotyka, to efemeryczne kontenery
+   testowe i lokalne bazy deweloperskie. Wariant literalny (oba ograniczenia obok siebie, stare
+   zdejmowane później) sprawdzony i **niewykonalny, nie tylko droższy**: stare ograniczenie
+   odrzucałoby wiersze, o które chodzi w zadaniu.
+   **Warunek zamknięcia:** odstępstwo wygasa z chwilą wyboru i uruchomienia pierwszego środowiska
+   trwałego. Pierwsza migracja po tym momencie nie może się na ten punkt powołać.
+4. **Kształt kolumny zostawia poprawnym `INSERT` wykonywany przez kod sprzed tej migracji** —
+   `vendor_id` nullable, bez wymogu `server_default`.
+5. **Czego ten aneks nie zmienia.** Bramka stawki kosztowej zostaje w warstwie kształtowania
+   odpowiedzi i nie przenosi się do warstwy odczytu (punkt 3 aneksu z 2026-09-19) — także dla
+   wiersza z poddostawcą.

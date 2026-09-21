@@ -12,7 +12,12 @@ Two claims that pull in opposite directions and are proven here side by side:
   `CATALOG_READ` or `CATALOG_WRITE`, and the denied caller in every test below holds *all five
   project permissions* — so a `require_permission` mutated to any project permission would let
   them through and these tests would fail. A denied caller holding nothing at all would prove
-  much less."""
+  much less.
+
+SC-2-03 adds **K-05**: the vendor dictionary is the fifth entry in `DIMENSION_MODELS` and no
+mechanism of its own. It belongs in this file because the claim is about the guards — the same two
+permissions, no third one — and because the two tests above already cover vendors without being
+edited, deriving their paths from that mapping."""
 
 from datetime import date
 
@@ -33,6 +38,7 @@ from tests.conftest import (
     make_dimension_tuple,
     make_project,
     make_rate,
+    make_vendor,
     rate_payload,
 )
 
@@ -122,6 +128,86 @@ def test_k_01_a_caller_with_no_project_access_sees_the_whole_catalogue(
     ]
     rates = without_projects["/catalog/rates"].json()["rates"]
     assert [rate["role_id"] for rate in rates] == [str(dimensions.role_id)]
+
+
+def test_the_catalogue_scope_exception_covers_vendor_rows_and_the_vendor_dictionary(
+    client: TestClient, db_session: Session
+) -> None:
+    """ADR-0005, addendum 2026-09-21, point 1 — in the one fixture that can show it (SC-2-03, QA).
+
+    That point says SC-2-01's K-01 "obowiązuje bez zmian i obejmuje wiersze poddostawców": the
+    catalogue has no per-caller predicate, *including* on the rows that name a subcontractor. The
+    test above derives its paths from `DIMENSION_MODELS`, so it does call
+    `/catalog/dimensions/vendors` — but its fixture creates no vendor and no vendor rate, so for
+    this dimension it compares `[]` with `[]` and asserts nothing at all. A narrowing applied only
+    to vendors (the "price list of vendor X only for roles working with X" model ADR-0005's
+    addendum point 4 puts out of scope and makes expiry-triggering) survives it.
+
+    Measured, not assumed: that narrowing — vendor rows and vendor entries hidden from a caller
+    with no `project_access` row — left this file's K-01 green. It was caught only by K-05 and by
+    K-06, i.e. by the dictionary-mechanism test and by the cost-gate test, whose fixtures happen to
+    contain a vendor. Neither of them is a claim about scope, and either one's fixture could stop
+    containing a vendor without anybody noticing what it had been holding up.
+
+    So the fixture here carries what the claim is about: one tuple priced **both** internally and
+    by a subcontractor — the coexistence SC-2-03 exists to allow — plus a vendor in the dictionary.
+
+    Two contrasts, both in this test:
+
+    - across callers on the same data: `UNKNOWN_USER` (no `project_access` row at all) and
+      `IN_SCOPE_USER` (who owns a project) receive byte-identical catalogue payloads, while their
+      project lists differ. The scope boundary is real; it just is not this one.
+    - within the payload: the vendor row and the vendor entry are asserted **by value**, so a read
+      that answered a constant empty list — the way a negative test is most often satisfied — fails
+      here instead of passing.
+    """
+    dimensions = make_dimension_tuple(db_session)
+    vendor = make_vendor(db_session, name="Contoso Sp. z o.o.")
+    make_rate(db_session, dimensions, effective_from=WINDOW_START, effective_to=WINDOW_END)
+    make_rate(
+        db_session,
+        dimensions,
+        effective_from=WINDOW_START,
+        effective_to=WINDOW_END,
+        vendor_id=vendor.id,
+    )
+    make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+
+    paths = ("/catalog/rates", "/catalog/dimensions/vendors")
+    with_projects = {path: client.get(path, headers=as_caller(IN_SCOPE_USER)) for path in paths}
+    without_projects = {path: client.get(path, headers=as_caller(UNKNOWN_USER)) for path in paths}
+    projects_of_each = {
+        user: client.get("/projects", headers=as_caller(user))
+        for user in (IN_SCOPE_USER, UNKNOWN_USER)
+    }
+
+    # The contrast that keeps this from being a test of two empty payloads: the same pair of
+    # callers is told different things about projects.
+    assert [row["name"] for row in projects_of_each[IN_SCOPE_USER].json()["projects"]] == [
+        "Aurora migration"
+    ]
+    assert projects_of_each[UNKNOWN_USER].json()["projects"] == [], (
+        "the caller without project access can see a project — the contrast in this test is void"
+    )
+
+    for path, response in without_projects.items():
+        assert response.status_code == 200, f"{path}: {response.text}"
+        assert response.json() == with_projects[path].json(), (
+            f"{path} answers differently for a caller with no project access — a per-caller "
+            "predicate on subcontractor data expires both the ADR-0001 and the ADR-0005 exception"
+        )
+
+    # By value, on the caller who has nothing: the subcontractor's price row is present, and it is
+    # present *beside* the internal one for the same tuple and window.
+    listed = without_projects["/catalog/rates"].json()["rates"]
+    assert sorted((rate["vendor_id"] for rate in listed), key=str) == sorted(
+        [None, str(vendor.id)], key=str
+    ), (
+        "a caller with no project access did not receive both the internal rate and the vendor's"
+    )
+    assert [entry["name"] for entry in without_projects[paths[1]].json()["entries"]] == [
+        "Contoso Sp. z o.o."
+    ], "the vendor dictionary was narrowed for a caller with no project access"
 
 
 def test_k_02_reading_the_catalogue_is_denied_without_catalog_read(
@@ -237,6 +323,77 @@ def test_k_02_a_caller_holding_the_catalogue_permissions_is_not_refused(
     assert listed.status_code == 200, listed.text
     assert "Germany" in [entry["name"] for entry in listed.json()["entries"]]
     assert rate.status_code == 201, rate.text
+
+
+def test_k_05_the_vendor_dictionary_is_the_fifth_dictionary_not_a_fifth_mechanism(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-05 (SC-2-03). Vendors arrive as a row in `DIMENSION_MODELS` and nothing else.
+
+    Four claims in one test, because they are one claim: the vendor dictionary reuses the mechanism
+    the other four use, so there is nothing vendor-specific to get wrong.
+
+    1. `"vendors"` is in `DIMENSION_MODELS`, which is what makes the existing pair of endpoints
+       serve it — and what makes every other test in this file (the K-01 catalogue comparison, the
+       K-02 denials) cover it automatically, since they derive their paths from that mapping.
+    2. `GET` and `POST` work through the same `CATALOG_READ`/`CATALOG_WRITE` gates. **No new
+       permission was added**, which was a business decision at gate 1 and not an omission
+       (ADR-0005, addendum 2026-09-21, point 2): everyone who may read the catalogue sees every
+       subcontractor's price list. The permission canary in `test_access_control.py` stays exactly
+       as it was — asserted here by name, so a vendor-specific permission slipped into the enum
+       fails this test rather than passing unnoticed.
+    3. A duplicate name is refused by the normalised-name index, like every other dictionary: two
+       "Contoso"s would split one supplier's price list into two halves that look like one (R-04).
+    4. The contrast: a caller with every project permission and no catalogue one is refused on both
+       verbs, and nothing is written.
+
+    The mutation the criterion names — deleting the `"vendors"` entry from `DIMENSION_MODELS` —
+    fails assertion 1 immediately and takes the endpoints with it.
+    """
+    from app.core.identity import Permission as PermissionEnum
+    from app.models import CatalogVendor
+
+    assert "vendors" in DIMENSION_MODELS
+    assert DIMENSION_MODELS["vendors"] is CatalogVendor
+    assert "/catalog/dimensions/vendors" in _dimension_paths()
+    assert not [name for name in PermissionEnum if "vendor" in name.lower()], (
+        "a vendor-specific permission exists — gate 1 decided CATALOG_READ/CATALOG_WRITE cover "
+        "subcontractors, and a new permission needs its own dated entry in ADR-0005"
+    )
+
+    created = client.post(
+        "/catalog/dimensions/vendors",
+        json={"name": "Contoso Sp. z o.o."},
+        headers=as_caller(IN_SCOPE_USER),
+    )
+    duplicate = client.post(
+        "/catalog/dimensions/vendors",
+        json={"name": "  contoso   sp. z o.o. "},
+        headers=as_caller(IN_SCOPE_USER),
+    )
+    listed = client.get("/catalog/dimensions/vendors", headers=as_caller(IN_SCOPE_USER))
+
+    assert created.status_code == 201, created.text
+    assert duplicate.status_code == 409, duplicate.text
+    assert "uq_catalog_vendors_name_normalized" in duplicate.json()["detail"]
+    assert listed.status_code == 200, listed.text
+    assert [entry["name"] for entry in listed.json()["entries"]] == ["Contoso Sp. z o.o."]
+    assert count_dimension_entries(db_session, CatalogVendor) == 1
+
+    with caller_holding(*EVERY_PROJECT_PERMISSION):
+        denied_read = client.get(
+            "/catalog/dimensions/vendors", headers=as_caller(IN_SCOPE_USER)
+        )
+        denied_write = client.post(
+            "/catalog/dimensions/vendors",
+            json={"name": "Fabrikam"},
+            headers=as_caller(IN_SCOPE_USER),
+        )
+
+    assert denied_read.status_code == 403, denied_read.text
+    assert "Contoso" not in denied_read.text
+    assert denied_write.status_code == 403, denied_write.text
+    assert count_dimension_entries(db_session, CatalogVendor) == 1, "the refused write was saved"
 
 
 def test_an_unknown_dimension_segment_is_a_404_naming_the_known_ones(

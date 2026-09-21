@@ -129,9 +129,15 @@ class StaffingPositionCreateRequest(BaseModel):
     seniority_id: uuid.UUID
     location_id: uuid.UUID
     engagement_type_id: uuid.UUID
-    """The full catalogue tuple, all four required. Validated as *identifiers* only — that they name
-    existing catalogue rows is decided by the foreign keys in the database, which is the path a
-    client cannot go around (criterion K-01's contrast)."""
+    """The four business dimensions of the catalogue tuple, all required. Validated as *identifiers*
+    only — that they name existing catalogue rows is decided by the foreign keys in the database,
+    which is the path a client cannot go around (criterion K-01's contrast).
+
+    **Not, since SC-2-03, the full key of a rate's `EXCLUDE` constraint** — that key has a fifth
+    element, `vendor_id` (`app.models.catalog.RATE_EXCLUDE_KEY`), absent from this schema because
+    nothing here resolves a rate. A future consumer that reads a rate for this position's tuple
+    (Issue #9) must decide `vendor_id` itself; `app.data.catalog.resolve_rate` takes it as a
+    required keyword argument with no default for exactly that reason (R-03)."""
 
     headcount: Annotated[int, Field(gt=0, le=MAX_HEADCOUNT)]
     """How many people the position plans for. The hours below are the total for the position, not

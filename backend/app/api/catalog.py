@@ -1,9 +1,9 @@
-"""Catalogue endpoints — role dimensions and default rates (F-03, SC-2-01).
+"""Catalogue endpoints — role dimensions, vendors and default rates (F-03, SC-2-01, SC-2-03).
 
 - `GET  /catalog/dimensions/{dimension}` — one dictionary's entries (`CATALOG_READ`)
 - `POST /catalog/dimensions/{dimension}` — add an entry (`CATALOG_WRITE`)
-- `GET  /catalog/rates` — every rate, optionally only those effective on a given day
-(`CATALOG_READ`)
+- `GET  /catalog/rates` — a page of rates (default 2000, max 5000), optionally only those
+effective on a given day (`CATALOG_READ`)
 - `GET  /catalog/rates/effective` — the one rate for one dimension tuple on one day (`CATALOG_READ`)
 - `POST /catalog/rates` — add a rate window (`CATALOG_WRITE`)
 
@@ -41,7 +41,10 @@ from app.api.schemas.catalog import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.catalog import (
+    DEFAULT_RATE_LIST_LIMIT,
     DIMENSION_MODELS,
+    MAX_RATE_LIST_LIMIT,
+    MAX_RATE_LIST_OFFSET,
     CatalogWriteRefused,
     create_dimension_entry,
     create_rate,
@@ -59,16 +62,17 @@ DimensionSegment = Annotated[
         description="Which dimension dictionary: " + ", ".join(sorted(DIMENSION_MODELS)),
     ),
 ]
-"""The dictionary is a path segment, not a body field, and the four dictionaries share one pair of
+"""The dictionary is a path segment, not a body field, and the five dictionaries share one pair of
 endpoints.
 
-Why one pair rather than eight endpoints: the permission dependency is then declared once per verb.
-Eight endpoints are eight chances for the fourth one to be added without a guard, and nothing in
-FastAPI would notice. The mapping from segment to table is `app.data.catalog.DIMENSION_MODELS`.
+Why one pair rather than ten endpoints: the permission dependency is then declared once per verb.
+Ten endpoints are ten chances for the fifth one to be added without a guard, and nothing in
+FastAPI would notice — which is exactly what SC-2-03 tested when it added `vendors` and wrote no
+endpoint at all. The mapping from segment to table is `app.data.catalog.DIMENSION_MODELS`.
 
-A `str` validated against that mapping rather than a Python `Enum` of the four segments: an `Enum`
-would render an unknown segment as a `422` naming the four valid ones, which reads like a schema
-statement about the catalogue's *contents*. NF-10 keeps the contents data; the *kinds* are four
+A `str` validated against that mapping rather than a Python `Enum` of the five segments: an `Enum`
+would render an unknown segment as a `422` naming the five valid ones, which reads like a schema
+statement about the catalogue's *contents*. NF-10 keeps the contents data; the *kinds* are five
 columns of the rate table, and they are validated below with a `404`, which is what an unknown
 collection is."""
 
@@ -129,7 +133,13 @@ def create_dimension(
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_WRITE))],
     session: Annotated[Session, Depends(get_session)],
 ) -> DimensionEntry:
-    """Add one role / seniority / location / engagement type.
+    """Add one role / seniority / location / engagement type / vendor.
+
+    Vendors go through this endpoint and no other (SC-2-03, criterion K-05): one pair of endpoints,
+    one pair of permissions, one refusal of duplicate names. A vendor-specific endpoint would be a
+    fifth mechanism where a fifth dictionary was decided, and `CATALOG_READ`/`CATALOG_WRITE`
+    covering subcontractors is an explicit business decision (ADR-0005, addendum 2026-09-21,
+    point 2), not an accident of reusing a route.
 
     `CATALOG_WRITE`, not `CATALOG_READ`: NF-10 puts maintaining the catalogue with an organisation
     administrator and reading it with everyone who plans staffing, so a reader reaching this
@@ -166,8 +176,25 @@ def list_catalog_rates(
         date | None,
         Query(description="Only rates whose effective window covers this calendar date."),
     ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=MAX_RATE_LIST_LIMIT,
+            description="Maximum rows to return. Refused above the maximum rather than clamped.",
+        ),
+    ] = DEFAULT_RATE_LIST_LIMIT,
+    offset: Annotated[
+        int,
+        Query(
+            ge=0,
+            le=MAX_RATE_LIST_OFFSET,
+            description="Rows to skip before the page, for stable paging with limit. Refused "
+            "above the maximum rather than clamped.",
+        ),
+    ] = 0,
 ) -> CatalogRateList:
-    """Rate rows, shaped through the cost gate row by row.
+    """One page of rate rows, shaped through the cost gate row by row, with the total row count.
 
     `on_date` is an optional *filter* on a list, resolved by the same `valid_period @> :date`
     predicate as the single-rate lookup (`app.data.catalog.covering`) — one definition of "covers
@@ -176,8 +203,31 @@ def list_catalog_rates(
     It is a query parameter with no default value of "today": deriving the default from the
     system clock would make the same request answer differently tomorrow, and the boundary of
     "today" belongs to a team's working calendar and an injected time source, not to this
-    process."""
-    return shape_catalog_rate_list(list_rates(session, on_date=on_date), caller)
+    process.
+
+    **K-11.** `limit`/`offset` bound the page — default 2000, refused above 5000 rather than
+    silently clamped (a clamp would answer fewer rows than asked for without saying so). The
+    default with no query parameters at all is never "the whole catalogue": that was the shape
+    measured at 125MB/9.4s against a 12s client budget (reviewer, R-02), and it is now unreachable
+    at any catalogue size, not merely improved for today's one. `total` in the response is the
+    count matching `on_date` before the page is applied, so a client can tell a full answer from
+    page one of more.
+
+    **`offset` is bounded at both ends, for the same two reasons** (R-02, gate-2 review
+    2026-09-21). It used to have a floor and no ceiling, so a value past PostgreSQL's `bigint`
+    reached the driver and came back as an unhandled `500` — this application installs no exception
+    handler, deliberately (`app.data.catalog.CatalogWriteFailed`), so nothing downstream was going
+    to turn that into an answer about the request. And a `LIMIT` alone does not bound the server:
+    `OFFSET n` walks and discards `n` rows first, so the page is bounded by `limit + offset` and
+    both halves need a ceiling (`app.data.catalog.MAX_RATE_LIST_OFFSET`). Refused with a `422`
+    naming the field, never clamped.
+
+    Rows come back newest window first (`app.data.catalog.list_rates`, R-02, reviewer 2026-09-21):
+    the frontend has no control to move past page one, so the default, no-parameters call is the
+    only page most callers ever see, and it must be the one carrying today's rates rather than the
+    catalogue's oldest, expired window."""
+    rates, total = list_rates(session, on_date=on_date, limit=limit, offset=offset)
+    return shape_catalog_rate_list(rates, caller, total=total)
 
 
 @router.get(
@@ -194,12 +244,31 @@ def read_effective_rate(
     location_id: uuid.UUID,
     engagement_type_id: uuid.UUID,
     on_date: date,
+    vendor_id: Annotated[
+        uuid.UUID | None,
+        Query(
+            description="Whose rate to resolve. Omit it for the organisation's own (internal) "
+            "rate — omitting it never means 'any vendor'."
+        ),
+    ] = None,
 ) -> CatalogRate:
     """The one rate that applies — resolved by effective window, never by "latest row wins".
 
-    All four dimension ids are required, because the full tuple is the key (gate-1 decision 3):
-    optional ones would need a rule for "any", which is a second resolution mechanism on top of the
-    date window, and rule 13 of the Invariant Guardian exists to keep the resolution single.
+    All four dimension ids are required, because the full tuple of business dimensions is the key
+    to *what* is priced (gate-1 decision 3): optional ones would need a rule for "any", which is a
+    second resolution mechanism on top of the date window, and rule 13 of the Invariant Guardian
+    exists to keep the resolution single. **This tuple alone is not, since SC-2-03, the full key of
+    a rate's `EXCLUDE` constraint** — `vendor_id` below is the fifth element
+    (`app.models.catalog.RATE_EXCLUDE_KEY`), answering *whose* price it is rather than *what* is
+    priced, which is why it is a separate parameter with its own required decision in
+    `resolve_rate` rather than a fifth dimension id here.
+
+    **`vendor_id` is optional and its absence is an answer, not a wildcard** (SC-2-03, K-03/K-04).
+    Omitted, it resolves the internal rate; a tuple priced only by a subcontractor therefore answers
+    `404` to a request that names no vendor, rather than quietly returning the subcontractor's
+    price. Read as "any" it would be the second resolution mechanism this endpoint refuses to have —
+    and the failure would not even be subtle: an internal rate and a vendor rate covering one day
+    are two rows, so `one_or_none()` would raise on perfectly valid data.
 
     A `404` here means "no window covers that date for that tuple" — a statement about the
     catalogue, not about the caller. It is emphatically *not* how a denied cost rate is answered:
@@ -216,6 +285,7 @@ def read_effective_rate(
         seniority_id=seniority_id,
         location_id=location_id,
         engagement_type_id=engagement_type_id,
+        vendor_id=vendor_id,
         on_date=on_date,
     )
     if rate is None:
@@ -271,6 +341,7 @@ def create_catalog_rate(
             seniority_id=payload.seniority_id,
             location_id=payload.location_id,
             engagement_type_id=payload.engagement_type_id,
+            vendor_id=payload.vendor_id,
             default_cost_rate=payload.default_cost_rate,
             default_selling_rate=payload.default_selling_rate,
             currency=payload.currency,

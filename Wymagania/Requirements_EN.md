@@ -66,6 +66,17 @@ The MVP proposal and numerical non-functional targets below are recommendations 
 - Assigning a named person shall be optional.
 - Rates shall support effective date ranges.
 
+> **Addendum 2026-09-21 (SC-2-03, Issue #46) — the subcontractor is a dimension of a rate.**
+> Users shall be able to define subcontractors and to record default cost and selling rates per
+> subcontractor, for the same role / seniority / location / engagement type tuple and the same
+> effective date range as the organisation's own rate. A rate naming no subcontractor is the
+> organisation's own ("internal") rate; the two are distinct rows and neither substitutes for the
+> other. Decided by the business at gate 1 of SC-2-03 and written down here because the four
+> bullets above do not imply it — the original F-03 does not mention subcontractors, and they
+> appear elsewhere in this document only as a cost category (F-08). Deliberately left undecided:
+> contract terms per subcontractor, named people on the subcontractor's side, and any narrowing of
+> who may see which subcontractor's price list (see ADR-0005, addendum 2026-09-21).
+
 ### F-04. Staffing planning
 
 - Users shall be able to add roles or people, specify headcount, and plan allocation in hours or FTE.

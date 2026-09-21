@@ -145,6 +145,20 @@ function isOptionalString(value: unknown): boolean {
 }
 
 /**
+ * A field that is present and either `null` or a string — the shape `vendor_id` takes, and a
+ * deliberately stricter check than `isOptionalString` above (SC-2-03).
+ *
+ * `undefined` is rejected rather than folded into `null`: on this field `null` carries a meaning —
+ * "this is the organisation's own rate" — and a payload that simply does not mention vendors (an
+ * older backend, a proxy stripping fields) would otherwise render as a table of rates all stated to
+ * be internal. That is a false statement about money, rendered without anything throwing, which is
+ * exactly the failure a shape check exists to turn into a stated failure.
+ */
+function isRequiredNullableString(value: unknown): boolean {
+  return value === null || typeof value === "string";
+}
+
+/**
  * Whether one rate row has the shape `CatalogRate` promises, field by field — not merely "this
  * parsed as an array" (Reviewer R-02). `formatRatePerUnit` calls `roundDecimalString`, which calls
  * `.trim()` on its input: a row missing `default_selling_rate`, or carrying it as a number a
@@ -170,6 +184,7 @@ function isCatalogRateShape(value: unknown): value is CatalogRate {
   ];
   return (
     requiredStrings.every((field) => typeof value[field] === "string") &&
+    isRequiredNullableString(value.vendor_id) &&
     isOptionalString(value.default_cost_rate) &&
     isOptionalString(value.effective_to)
   );
@@ -199,11 +214,17 @@ export async function getCatalogRates(signal?: AbortSignal): Promise<CatalogRate
         throw new ApiError(response.status, `GET /catalog/rates failed: ${response.status}`);
       }
       const payload = (await response.json()) as CatalogRateList | null;
-      if (!Array.isArray(payload?.rates) || !payload.rates.every(isCatalogRateShape)) {
+      if (
+        !Array.isArray(payload?.rates) ||
+        !payload.rates.every(isCatalogRateShape) ||
+        typeof payload.total !== "number"
+      ) {
         // Same rule as the project list: an empty list is a statement ("the catalogue holds no
         // rates") and may only come from the server. A payload that does not match the contract —
-        // missing the array, or carrying a row of the wrong shape — is an error, never an empty
-        // catalogue and never a row rendered on faith.
+        // missing the array, missing `total`, or carrying a row of the wrong shape — is an error,
+        // never an empty catalogue and never a row rendered on faith. `total` is required here, not
+        // merely optional-checked: a backend that omitted it would leave the screen unable to tell
+        // a complete catalogue from a truncated page (K-12), silently understating its own size.
         throw new ApiError(
           response.status,
           "GET /catalog/rates returned a payload without a valid rate list",

@@ -25,4 +25,4 @@ the same file — never a silent edit of the original text.
 | [ADR-0005](ADR-0005-model-dostepu.md) | Model dostępu i uprawnień | Accepted |
 | [ADR-0006](ADR-0006-waluty-i-kursy.md) | Waluty i kursy wymiany | Accepted |
 | [ADR-0007](ADR-0007-wspolbiezna-edycja.md) | Współbieżna edycja i ochrona przed zgubioną aktualizacją | Accepted |
-| [ADR-0008](ADR-0008-przedzialy-obowiazywania.md) | Przedziały obowiązywania i ich egzekwowanie w bazie | Draft — pending approval |
+| [ADR-0008](ADR-0008-przedzialy-obowiazywania.md) | Przedziały obowiązywania i ich egzekwowanie w bazie | Accepted |

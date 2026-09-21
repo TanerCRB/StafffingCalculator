@@ -1,6 +1,6 @@
-"""The organisational catalogue: role dimensions and default rates (F-03, SC-2-01).
+"""The organisational catalogue: role dimensions, vendors and default rates (F-03, SC-2-01/SC-2-03).
 
-Five tables, and one thing they all have in common: **no column ties a row to a project, a user, a
+Six tables, and one thing they all have in common: **no column ties a row to a project, a user, a
 business unit or a tenant.** That is what puts them outside the `project_access` scope filter
 (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu", point 1) and outside
 the single-guarded-read-path requirement (ADR-0001, addendum 2026-09-19 — a guard function exists so
@@ -8,10 +8,17 @@ a scope predicate cannot be forgotten, and there is no predicate here to forget)
 these tables grows such a column, both exceptions expire and need their own dated entry in those
 decisions.
 
-The four dimensions are **data, not code** (NF-10): no `StrEnum` anywhere restricts which roles,
-seniorities, locations or engagement types may exist, so adding "Site Reliability Engineer" is an
-`INSERT`, not a migration. The four *kinds* are code, because they are four columns of the rate
-table — that is a different statement from the values they hold.
+**`vendor_id` is not that column, and the distinction is decided rather than assumed** (ADR-0001,
+addendum 2026-09-21, point 1; ADR-0005, addendum 2026-09-21, point 1). A subcontractor is the
+*other side of a contract*, not a subject the caller acts on behalf of: no endpoint narrows rates by
+the caller's relationship to a vendor, and `CATALOG_READ` shows every vendor's price list to
+everybody who holds it. That consequence was taken deliberately at gate 1 (Issue #46), not
+discovered afterwards. The exception expires the day any read is narrowed per vendor.
+
+The five dictionaries are **data, not code** (NF-10): no `StrEnum` anywhere restricts which roles,
+seniorities, locations, engagement types or vendors may exist, so adding "Site Reliability Engineer"
+is an `INSERT`, not a migration. The five *kinds* are code, because they are five columns of the
+rate table — that is a different statement from the values they hold.
 
 `CatalogDefaultRate` is the first table in this repository built on ADR-0008's effective-range
 pattern (`effective_from`/`effective_to` + a generated `valid_period daterange` + `EXCLUDE USING
@@ -64,7 +71,7 @@ change 12.345 into 12.35 at write time. Rounding to the currency unit stays the 
 class _CatalogDimension(Base):
     """One row of one dimension dictionary: an id and a name, nothing else.
 
-    Abstract on purpose — the four dictionaries are four tables rather than one table with a `kind`
+    Abstract on purpose — the five dictionaries are five tables rather than one table with a `kind`
     discriminator, because the rate row references each of them separately as a foreign key, and a
     single table would make "seniority id in the location column" a valid row.
     """
@@ -164,16 +171,75 @@ class CatalogEngagementType(_CatalogDimension):
     __table_args__ = _dimension_table_args("catalog_engagement_types")
 
 
+VENDOR_KEY_SENTINEL = "00000000-0000-0000-0000-000000000000"
+"""The nil UUID, used by the `EXCLUDE` key to stand for "no vendor" — and refused as a vendor id.
+
+Why a sentinel at all: an `EXCLUDE` constraint reports a violation only when *every* operator in the
+key yields `TRUE`, and `NULL = NULL` yields `NULL`. Adding `vendor_id` to the key as a plain column
+would therefore switch the overlap protection off for exactly the rows that have it today — the
+internal rates, where the column is `NULL` (ADR-0008, addendum 2026-09-21, point 3; criterion K-02).
+
+Why it cannot collide with a real vendor: `CatalogVendor` carries a CHECK refusing this id, so
+"internal" and "some vendor" are distinguishable by construction rather than by the odds of
+`uuid4()` producing the nil UUID."""
+
+VENDOR_KEY_EXPRESSION = f"COALESCE(vendor_id, '{VENDOR_KEY_SENTINEL}'::uuid)"
+"""The fifth element of the `EXCLUDE` key, as SQL. Spelled once here, once in migration
+`c1a4f7b92e05`, and asserted identical by
+`test_the_model_and_the_migration_agree_on_every_sql_expression`."""
+
+
+class CatalogVendor(_CatalogDimension):
+    """A subcontractor whose rates the catalogue may carry (SC-2-03, Issue #46).
+
+    The fifth dictionary, not a fifth mechanism: same two columns, same normalised-name index, same
+    pair of endpoints, same `CATALOG_READ`/`CATALOG_WRITE` gates. That was a gate-1 decision with an
+    expiry condition attached (Issue #46, decision 2): **the first attribute beyond `name`** — a
+    currency, a contract, a confidentiality flag — takes vendors out of the shared endpoints and
+    needs its own dated decision.
+
+    `name` is expected to identify a company. Nothing here enforces that: a sole-trader (JDG)
+    subcontractor entered as a person's name makes this row personal data, and no mechanism on
+    this table or its callers catches that case (security review, 2026-09-21). Do not treat this
+    table as personal-data-free by construction in a future audit — treat it as unclassified.
+
+    The extra CHECK is the other half of `VENDOR_KEY_SENTINEL`: an id equal to the nil UUID would be
+    indistinguishable from "no vendor" inside the `EXCLUDE` key.
+    """
+
+    __tablename__ = "catalog_vendors"
+    __table_args__ = (
+        *_dimension_table_args("catalog_vendors"),
+        CheckConstraint(
+            f"id <> '{VENDOR_KEY_SENTINEL}'::uuid", name="id_is_not_the_exclude_sentinel"
+        ),
+    )
+
+
 RATE_DIMENSION_COLUMNS: tuple[str, ...] = (
     "role_id",
     "seniority_id",
     "location_id",
     "engagement_type_id",
 )
-"""The full tuple that keys a rate — as data, because it is the key of the `EXCLUDE` constraint and
-the argument list of the resolution lookup, and those two must never disagree about which columns
-identify a rate (gate-1 decision 3). All four are `NOT NULL`: a nullable dimension would mean "any",
-which is a second, unnamed resolution mechanism on top of the date window."""
+"""The **business dimensions** of a rate — the four `NOT NULL` columns that say *what* is priced.
+
+Unchanged by SC-2-03, and deliberately no longer the whole key of the `EXCLUDE` constraint: see
+`RATE_EXCLUDE_KEY` for that. All four are `NOT NULL`, because a nullable dimension would mean "any",
+which is a second, unnamed resolution mechanism on top of the date window. `vendor_id` is nullable
+precisely because it answers a different question — *whose* price this is — and `NULL` there means
+one specific thing ("the organisation's own"), never "any" (criteria K-03/K-04).
+
+As data, because it is both the tuple of the resolution lookup and the first four elements of the
+constraint key, and those must never disagree."""
+
+RATE_EXCLUDE_KEY: tuple[str, ...] = (*RATE_DIMENSION_COLUMNS, VENDOR_KEY_EXPRESSION)
+"""What the database treats as "the same rate": the four business dimensions plus the vendor.
+
+Five elements, four of them columns and the fifth an expression (`VENDOR_KEY_EXPRESSION`). The
+vendor joined the key in SC-2-03 because the criterion of ADR-0008 point 4 — "one tuple has at most
+one rate at a time" — is simply false once subcontractors exist: the same tuple legitimately carries
+the internal rate and one rate per vendor at once (ADR-0008, addendum 2026-09-21, points 1-2)."""
 
 VALID_PERIOD_EXPRESSION = "daterange(effective_from, (effective_to + 1), '[)')"
 """The **only** place `effective_to`'s inclusiveness is converted to PostgreSQL's canonical
@@ -183,6 +249,32 @@ reads as "unbounded above" — so an open-ended window needs no sentinel date.
 Spelled once and used twice: here, to build the generated column, and in the migration that creates
 it. A second copy inside a `WHERE` clause is what ADR-0008 forbids — hence every lookup asks
 `valid_period @> :on_date` instead of rebuilding the range."""
+
+RATE_PAGE_INDEX = "ix_catalog_default_rates_effective_from_id"
+"""The btree index that makes one page of `GET /catalog/rates` a bounded top-N (R-01, gate-2
+review 2026-09-21).
+
+Before it, this table carried two indexes and neither could order a page: the primary key (on `id`
+alone) and the `EXCLUDE`'s gist index (leading on the four dimension columns and the vendor
+expression). `ORDER BY effective_from DESC, id DESC LIMIT n` therefore had to sort *every* filtered
+row before the `LIMIT` could cut, so the response shrank while the server-side cost stayed linear in
+the size of the catalogue — the `LIMIT` bounded what was sent, not what was done.
+
+**Ascending, although the page is read descending.** A btree is scannable in both directions
+(`Index Scan Backward`), so one ascending index serves the descending page order as well as a
+`DESC, DESC` index would, and it also serves any later ascending reader — two indexes for two
+directions of the same key would be two objects to maintain for one ordering.
+
+`(effective_from, id)` and not `(effective_from)` alone: the tie-breaker is part of the order
+`list_rates` pages by (`app.data.catalog.list_rates`), and an index on the leading column only
+leaves the rows sharing one `effective_from` to be sorted after the scan — which is the whole
+top-N property, lost on exactly the rows that need it.
+
+What it does **not** bound: the `on_date` variant. `valid_period @> :date` is a containment
+predicate no btree can answer, so with a filter this index provides the *order* (the scan stops as
+soon as the page is full) but the number of rows walked to fill the page depends on how selective
+the filter is. And `total` is a count of the filtered set — unbounded by construction, whichever
+statement produces it."""
 
 NO_OVERLAP_CONSTRAINT = "ex_catalog_default_rates_no_overlapping_periods"
 """Name of the `EXCLUDE USING gist` constraint, spelled once.
@@ -239,6 +331,29 @@ class CatalogDefaultRate(Base):
         ),
         nullable=False,
     )
+
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("catalog_vendors.id", name="fk_catalog_default_rates_vendor_id"),
+        nullable=True,
+    )
+    """Whose price this is: a subcontractor, or the organisation itself when `NULL` (SC-2-03).
+
+    **`NULL` means "internal", never "any".** It is a value of the vendor axis, not an absent one,
+    which is why the `EXCLUDE` key reads it through `COALESCE` (`VENDOR_KEY_EXPRESSION`) and why the
+    resolution lookup filters on `vendor_id IS NULL` when a caller names no vendor. Read as "any",
+    it would be a second resolution mechanism — and the concrete failure is immediate, not
+    theoretical: a tuple priced both internally and by one vendor would make `one_or_none()` raise
+    on perfectly valid data (criteria K-03/K-04).
+
+    Nullable, unlike the four dimensions above, and for the opposite reason: a nullable *dimension*
+    would mean "any", while a nullable vendor names the one case that has no vendor. It is the only
+    column of this table that points at a business entity rather than at a label, and ADR-0001's
+    addendum of 2026-09-21 (point 1) decides explicitly that this does not make the row scoped: a
+    subcontractor is a counterparty, not a subject the caller acts for.
+
+    No `ondelete`, like the other four foreign keys: the database refuses to delete a vendor a rate
+    still references (Issue #46, "Out of scope" point 9)."""
 
     # `NUMERIC` → `Decimal`, never float, on a money path or next to one (NF-01, ADR-0002).
     default_cost_rate: Mapped[Decimal] = mapped_column(
@@ -298,9 +413,10 @@ class CatalogDefaultRate(Base):
     # A Python check-then-act equivalent has already survived delivered tests twice in this
     # repository (SC-1-02, SC-1-04), which is why ADR-0008 rejects it by name.
     #
-    # `btree_gist` is what allows `=` on the four id columns inside a gist index (`&&` on a
-    # `daterange` is native). The extension is created by the migration, and the database privilege
-    # that needs is documented in `backend/README.md` (ADR-0008, points 5 and 7).
+    # `btree_gist` is what allows `=` on the five `uuid` key elements inside a gist index (`&&` on a
+    # `daterange` is native). The extension is created by migration `7b3d5c81e40a`, and the database
+    # privilege that needs is documented in `backend/README.md` (ADR-0008, points 5 and 7 — the
+    # dependency grew with the fifth element and is still unproven on any target environment).
     __table_args__ = (
         CheckConstraint(f"unit = '{RATE_UNIT_HOUR}'", name="unit_is_hour"),
         CheckConstraint("char_length(currency) = 3", name="currency_iso4217"),
@@ -316,10 +432,25 @@ class CatalogDefaultRate(Base):
             "effective_to IS NULL OR effective_to >= effective_from",
             name="effective_period_ordered",
         ),
+        # Five elements, and the fifth is an expression rather than a column (`RATE_EXCLUDE_KEY`):
+        # `COALESCE(vendor_id, '00000000-0000-0000-0000-000000000000'::uuid)` — the literal
+        # `VENDOR_KEY_SENTINEL`, not `uuid_nil()`. `uuid_nil()` would return the identical value
+        # but needs the `uuid-ossp` extension, which this database does not have (only
+        # `btree_gist`); the literal is what `VENDOR_KEY_EXPRESSION` and the migration actually
+        # write. Either way, `NULL = NULL` is not `TRUE`, and a plain nullable column in the key
+        # would exempt every internal rate from the guarantee (K-02).
         ExcludeConstraint(
-            *[(column, "=") for column in RATE_DIMENSION_COLUMNS],
+            *[
+                (text(element) if element == VENDOR_KEY_EXPRESSION else element, "=")
+                for element in RATE_EXCLUDE_KEY
+            ],
             ("valid_period", "&&"),
             using="gist",
             name=NO_OVERLAP_CONSTRAINT,
         ),
+        # Not an integrity constraint — the one index this table has for *reading* (R-01). Declared
+        # here as well as created by migration `e2c7b04d9a31`, so the model keeps describing the
+        # database that exists: an index absent from the model is one a reader of this file cannot
+        # know a query may depend on. See `RATE_PAGE_INDEX`.
+        Index(RATE_PAGE_INDEX, "effective_from", "id"),
     )

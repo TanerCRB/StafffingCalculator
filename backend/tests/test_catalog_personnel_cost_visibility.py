@@ -1,4 +1,5 @@
-"""SC-2-01, K-03 — the catalogue's cost rate is a denied *field*, not a hidden row.
+"""SC-2-01 (K-03) and SC-2-03 (K-06) — the catalogue's cost rate is a denied *field*, not a hidden
+row, and a subcontractor's price list is gated by exactly the same field.
 
 The shape is SC-1-08's, repeated one table over, with two differences that both matter:
 
@@ -35,6 +36,7 @@ from tests.conftest import (
     caller_holding,
     make_dimension_tuple,
     make_rate,
+    make_vendor,
     rate_payload,
 )
 
@@ -149,6 +151,91 @@ def test_k_03_every_catalogue_path_carrying_a_rate_applies_the_cost_gate(
     # satisfied by a request that failed.
     assert created.json()["default_selling_rate"] == "150.0000"
     assert str(COST_RATE) not in created.text
+
+
+def test_k_06_the_cost_rate_of_a_vendor_row_is_gated_exactly_like_an_internal_one(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-06 (SC-2-03). A rate row carrying a vendor goes through the same gate, on all three paths.
+
+    **Named as over-protection, not as a claim about personal data** (ADR-0005, addendum
+    2026-09-21, point 3). What a subcontractor charges *the company* is not an individual's
+    personnel cost in the sense of NF-11/AC-06, and nothing here says it is. The decision is to keep
+    one gate on one field rather than teach the shaping layer to classify a row by whether it names
+    a vendor — because that branch is the mutation this test kills: "a vendor's price is not a
+    personnel cost, so pass it through" would leak `default_cost_rate` for exactly the rows the
+    catalogue gained in this task, and every existing SC-2-01 proof would stay green.
+
+    All three rate paths are asserted together (list, resolution, `POST` response), for the reason
+    `test_k_03_every_catalogue_path_carrying_a_rate_applies_the_cost_gate` gives: a path that
+    quietly answers with the cost rate must not be able to hide behind the two that do not.
+
+    Two contrasts. Within the denial: `default_selling_rate` and `vendor_id` come through intact —
+    the vendor is *not* a gated field, so a gate that removed it would be refusing data
+    `CATALOG_READ` covers. Across callers: the same requests with `PERSONNEL_COSTS_READ` carry the
+    exact stored cost.
+    """
+    dimensions = make_dimension_tuple(db_session, suffix=" (vendor gate)")
+    vendor = make_vendor(db_session, name="Contoso")
+    make_rate(
+        db_session,
+        dimensions,
+        effective_from=WINDOW_START,
+        effective_to=WINDOW_END,
+        vendor_id=vendor.id,
+        default_cost_rate=COST_RATE,
+        default_selling_rate=SELLING_RATE,
+    )
+    for_the_write_path = make_dimension_tuple(db_session, suffix=" (vendor write)")
+    resolution = {
+        **dimensions.as_query(),
+        "on_date": "2026-03-15",
+        "vendor_id": str(vendor.id),
+    }
+
+    listed = client.get("/catalog/rates", headers=as_caller(IN_SCOPE_USER))
+    resolved = client.get(
+        "/catalog/rates/effective", params=resolution, headers=as_caller(IN_SCOPE_USER)
+    )
+    created = client.post(
+        "/catalog/rates",
+        json=rate_payload(
+            for_the_write_path, vendor_id=str(vendor.id), default_cost_rate=str(COST_RATE)
+        ),
+        headers=as_caller(IN_SCOPE_USER),
+    )
+
+    assert [listed.status_code, resolved.status_code, created.status_code] == [200, 200, 201], (
+        listed.text,
+        resolved.text,
+        created.text,
+    )
+    denied_rows = {
+        "list": listed.json()["rates"][0],
+        "effective": resolved.json(),
+        "create": created.json(),
+    }
+    assert {path: row["default_cost_rate"] for path, row in denied_rows.items()} == {
+        "list": None,
+        "effective": None,
+        "create": None,
+    }, "a row naming a vendor carried its cost rate to a caller without PERSONNEL_COSTS_READ"
+    assert {path: row["vendor_id"] for path, row in denied_rows.items()} == {
+        "list": str(vendor.id),
+        "effective": str(vendor.id),
+        "create": str(vendor.id),
+    }, "the vendor was removed with the cost rate — it is not a gated field"
+    assert all(row["default_selling_rate"] for row in denied_rows.values())
+    assert str(COST_RATE) not in listed.text + resolved.text + created.text
+
+    with caller_holding(Permission.CATALOG_READ, Permission.PERSONNEL_COSTS_READ):
+        granted = client.get(
+            "/catalog/rates/effective", params=resolution, headers=as_caller(IN_SCOPE_USER)
+        )
+
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["default_cost_rate"] == str(COST_RATE)
+    assert granted.json()["vendor_id"] == str(vendor.id)
 
 
 def test_k_03_the_gated_field_set_is_not_empty_so_the_denials_above_are_not_vacuous(

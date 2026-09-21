@@ -40,6 +40,17 @@
   font-size: var(--sc-font-size-sm);
 }
 
+/*
+ * The count reads as a page, not the whole catalogue (K-12: `total > rates.length`). Set apart from
+ * the complete-count state by weight and colour *in addition to* the wording (NF-08, the same rule
+ * `.catalog__restricted` follows) — the sentence is what carries the meaning, the colour only flags
+ * that this one is worth a second look.
+ */
+.catalog__count--truncated {
+  color: var(--sc-color-attention-text);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
 .catalog__message {
   margin-top: var(--sc-space-2);
   padding: var(--sc-space-5);
@@ -132,9 +143,21 @@
   font-weight: var(--sc-font-weight-semibold);
 }
 
+/*
+ * A rate that belongs to the organisation itself (`vendor_id: null`, SC-2-03). Set apart from a
+ * vendor's name because it is a *state* and the other cells in that column are *names* — but
+ * deliberately NOT in the attention colour `.catalog__restricted` uses: nothing is withheld here
+ * and nothing needs attention. The word is what carries the meaning (NF-08); the colour only says
+ * "this is not a company name".
+ */
+.catalog__internal {
+  color: var(--sc-color-text-muted);
+  font-weight: var(--sc-font-weight-medium);
+}
+
 /* --- Dictionary panels ------------------------------------------------------------------------ */
 
-/* Four panels side by side where there is room, wrapping where there is not. No panel is ever
+/* Five panels side by side where there is room, wrapping where there is not. No panel is ever
    hidden: each one is the only statement that its dictionary exists. */
 .catalog__dictionaries {
   display: flex;

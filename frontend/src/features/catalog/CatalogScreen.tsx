@@ -14,11 +14,11 @@ import { DIMENSION_LABELS, emptyDictionaryLabel, unknownEntryLabel } from "./dim
 import "./CatalogScreen.css";
 
 /**
- * SC-2-02 — the catalogue of roles, seniorities, locations, engagement types and default rates.
- * Read only: no write, no filter, no date resolution of its own.
+ * SC-2-02 — the catalogue of roles, seniorities, locations, engagement types, vendors (SC-2-03) and
+ * default rates. Read only: no write, no filter, no date resolution of its own.
  *
- * It is a pure function of five responses (NF-04, ADR-0005): `GET /catalog/rates` and
- * `GET /catalog/dimensions/{dimension}` for the four dictionaries. Three consequences are the point
+ * It is a pure function of six responses (NF-04, ADR-0005): `GET /catalog/rates` and
+ * `GET /catalog/dimensions/{dimension}` for the five dictionaries. Four consequences are the point
  * of the screen rather than details of it:
  *
  *   * **It takes no cost-visibility decision.** A row whose `default_cost_rate` the server removed
@@ -27,10 +27,15 @@ import "./CatalogScreen.css";
  *     preflight, and no configuration flag (AC-06, K-04). The column header stays in place either
  *     way, because hiding it would make "you may not see this cost" and "the catalogue has no
  *     costs" the same screen (gate-1 decision 2).
- *   * **The four dictionaries are read because a rate row carries UUIDs only.** The id → name join
+ *   * **The five dictionaries are read because a rate row carries UUIDs only.** The id → name join
  *     happens here (gate-1 decision 8), and an id that no dictionary entry matches gets a named
- *     absence rather than a blank cell or a dropped row — five requests are not one transaction.
- *   * **Any one of the five reads failing collapses the whole screen into one failure state, with
+ *     absence rather than a blank cell or a dropped row — six requests are not one transaction.
+ *   * **It takes no vendor-visibility decision either** (SC-2-03, K-10). The vendor dictionary is
+ *     read on every mount, unconditionally, and the vendor column is rendered on every row: nothing
+ *     here asks who the caller is, and nothing here decides that a vendor's price list is or is not
+ *     for them. `CATALOG_READ` covers every vendor (ADR-0005, addendum 2026-09-21, point 2) — a
+ *     screen that narrowed that would be inventing a permission the server does not have.
+ *   * **Any one of the six reads failing collapses the whole screen into one failure state, with
  *     zero rate rows** (gate-1 decision 9). A table of rates with a silently unnamed dimension
  *     column would look like data.
  *
@@ -43,16 +48,34 @@ import "./CatalogScreen.css";
  * 2) — not a dash, not a zero, and not a symbol shared with any other kind of absence. */
 export const RESTRICTED_COST_RATE = "Restricted";
 
+/**
+ * Rendered in the vendor cell of a rate the response carried with `vendor_id: null` (SC-2-03,
+ * K-09).
+ *
+ * A *state*, not an absence: `null` on that field means "this is the organisation's own rate", it
+ * is the same answer for every caller, and the backend says so in the same words (see the
+ * `vendor_id` docstring in backend/app/api/schemas/catalog.py). It is therefore a fourth literal,
+ * deliberately sharing nothing with the three kinds of *missing* this screen already renders —
+ * `RESTRICTED_COST_RATE` ("removed for you"), `OPEN_ENDED_PERIOD` ("no end date") and
+ * `unknownEntryLabel` ("this id matched no dictionary entry"). A dash, a blank, or any placeholder
+ * borrowed from one of those would say "we do not know whose price this is" about a row where the
+ * server knows exactly.
+ */
+export const INTERNAL_RATE = "Internal";
+
 const ADD_RATE_HINT = notImplementedHint(
   "adding a default rate is a separate task (Issue #39, out of scope 1)",
 );
 
-/** All four dictionaries, always. The record is exhaustive over `CatalogDimension`, so a fifth
+/** All five dictionaries, always. The record is exhaustive over `CatalogDimension`, so a sixth
  * dimension added to the contract fails the build here instead of quietly going unread. */
 type Dictionaries = Readonly<Record<CatalogDimension, DimensionEntry[]>>;
 
 interface CatalogSnapshot {
   readonly rates: CatalogRate[];
+  /** Every row matching the backend's filter, without the page limit applied (K-11) — may be
+   * larger than `rates.length` when the catalogue does not fit in one page (K-12). */
+  readonly total: number;
   readonly dictionaries: Dictionaries;
 }
 
@@ -74,12 +97,16 @@ function toFailureState(error: unknown): ScreenState {
 }
 
 /**
- * The five reads, as one outcome. `Promise.all` is the mechanism: it rejects as soon as any one of
- * them does, so there is no state in which the screen holds four answers and a gap.
+ * The six reads, as one outcome. `Promise.all` is the mechanism: it rejects as soon as any one of
+ * them does, so there is no state in which the screen holds five answers and a gap.
  *
- * `controller` ends all five early together — the caller passes one `AbortController`, not five
- * signals, so a bounce off this screen cannot leave some of the five reads still running (Reviewer
- * R-01). It also ends them early when one of the five rejects for a real reason while the screen
+ * All six are issued together, unconditionally, before anything is known about the rows: the vendor
+ * dictionary is not read "if a rate turns out to have a vendor", because a conditional read is a
+ * decision, and this screen takes none (K-10).
+ *
+ * `controller` ends all six early together — the caller passes one `AbortController`, not six
+ * signals, so a bounce off this screen cannot leave some of the six reads still running (Reviewer
+ * R-01). It also ends them early when one of the six rejects for a real reason while the screen
  * stays mounted: `Promise.all` settles as soon as the first rejection lands, but the other reads —
  * not cancelled by anything — keep running in the background to their own completion or deadline,
  * spending transfer and a socket on a screen that already committed to a failure state (Reviewer
@@ -90,23 +117,26 @@ function toFailureState(error: unknown): ScreenState {
  */
 async function readCatalogue(controller: AbortController): Promise<CatalogSnapshot> {
   const { signal } = controller;
-  const [rates, roles, seniorities, locations, engagementTypes] = await Promise.all([
+  const [rates, roles, seniorities, locations, engagementTypes, vendors] = await Promise.all([
     getCatalogRates(signal),
     getCatalogDimension("roles", signal),
     getCatalogDimension("seniorities", signal),
     getCatalogDimension("locations", signal),
     getCatalogDimension("engagement-types", signal),
+    getCatalogDimension("vendors", signal),
   ]).catch((error: unknown) => {
     controller.abort();
     throw error;
   });
   return {
     rates: rates.rates,
+    total: rates.total,
     dictionaries: {
       roles: roles.entries,
       seniorities: seniorities.entries,
       locations: locations.entries,
       "engagement-types": engagementTypes.entries,
+      vendors: vendors.entries,
     },
   };
 }
@@ -116,7 +146,7 @@ export function CatalogScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    // Bouncing off this screen before the five reads finish must not leave them running: each one
+    // Bouncing off this screen before the six reads finish must not leave them running: each one
     // holds one of the browser's six same-origin HTTP/1.1 sockets, contended with whatever screen
     // the user bounced to (Reviewer R-01, docs/PLAN.md:281-285 — a real catalogue read is ~19.7MB).
     const controller = new AbortController();
@@ -179,7 +209,7 @@ export function CatalogScreen() {
 
       {state.kind === "ready" && (
         <>
-          <RatesPanel rates={state.rates} dictionaries={state.dictionaries} />
+          <RatesPanel rates={state.rates} total={state.total} dictionaries={state.dictionaries} />
           <DictionaryPanels dictionaries={state.dictionaries} />
         </>
       )}
@@ -187,13 +217,79 @@ export function CatalogScreen() {
   );
 }
 
-/** The number of rate rows the response carried, as a sentence. The count comes from the body — the
- * screen filters nothing, so it has nothing else it could count (gate-1 decisions 3 and 5). */
+/**
+ * The number of rate rows the response carried, as a sentence — a *complete* count, used only when
+ * `total === rates.length` (K-11, K-12). The count comes from the body — the screen filters
+ * nothing, so it has nothing else it could count (gate-1 decisions 3 and 5).
+ */
 function rateCountLabel(count: number): string {
   return count === 1 ? "1 default rate" : `${count} default rates`;
 }
 
-function RatesPanel({ rates, dictionaries }: { rates: CatalogRate[]; dictionaries: Dictionaries }) {
+/**
+ * The named state for a page that is not the whole catalogue (K-12): `total` from the response
+ * exceeds `rates.length`, so the backend paged (K-11, default `limit` 2000) rather than sending
+ * everything. Deliberately not the same literal `rateCountLabel` produces for a complete catalogue
+ * of the same `total` — "2347 default rates" would state, falsely, that every one of those rows is
+ * on screen. This sentence names the cut instead of hiding it in a number that merely happens to be
+ * smaller than expected.
+ */
+function truncatedRateCountLabel(count: number, total: number): string {
+  return `Showing first ${count} of ${total} default rates`;
+}
+
+/**
+ * The catalogue holds nothing at all — `total === 0`, so the absence of rows is a fact about the
+ * whole catalogue and not about the page that was sent (K-11, K-12).
+ */
+export const EMPTY_CATALOGUE = "The catalogue holds no default rates.";
+
+/**
+ * A page that carried no rows out of a catalogue that holds some (`rates` empty, `total > 0`,
+ * Reviewer R-03). Reachable without anything failing: `offset` and `on_date` are parameters of
+ * `GET /catalog/rates`, so a page past the end of a non-empty result set comes back `200` with an
+ * empty list and a `total` that contradicts it.
+ *
+ * Deliberately not `EMPTY_CATALOGUE`: "the catalogue holds no default rates" is a claim about every
+ * row the filter matched, and this response says in the same breath that it matched `total` of
+ * them. Stating the emptiness of a page as the emptiness of the catalogue is the error that renders
+ * correctly — nothing throws, the screen looks like a calm answer, and a project manager concludes
+ * the organisation has no price list.
+ *
+ * It states the same two numbers `truncatedRateCountLabel` does, for the same reason and in the
+ * same voice — what is on screen, and how large the catalogue actually is — and, like that one,
+ * offers no control of its own: this screen builds no pager (K-12).
+ */
+function emptyPageLabel(total: number): string {
+  return `Showing 0 of ${total} default rates — this page of the catalogue is empty.`;
+}
+
+/** The two ways a rate table can have no rows, told apart by `total` and never by `rates.length`
+ * alone (Reviewer R-03). */
+function NoRatesMessage({ total }: { total: number }) {
+  if (total === 0) {
+    return (
+      <p role="status" className="catalog__message">
+        {EMPTY_CATALOGUE}
+      </p>
+    );
+  }
+  return (
+    <p role="status" className="catalog__message catalog__message--attention">
+      {emptyPageLabel(total)}
+    </p>
+  );
+}
+
+function RatesPanel({
+  rates,
+  total,
+  dictionaries,
+}: {
+  rates: CatalogRate[];
+  total: number;
+  dictionaries: Dictionaries;
+}) {
   return (
     <section className="card catalog__panel" aria-labelledby="catalog-rates-heading">
       <div className="catalog__panel-header">
@@ -215,12 +311,20 @@ function RatesPanel({ rates, dictionaries }: { rates: CatalogRate[]; dictionarie
       </div>
 
       {rates.length === 0 ? (
-        <p role="status" className="catalog__message">
-          The catalogue holds no default rates.
-        </p>
+        <NoRatesMessage total={total} />
       ) : (
         <>
-          <p className="catalog__count">{rateCountLabel(rates.length)}</p>
+          {/* `total > rates.length`: the backend paged (K-11) and this is not the whole catalogue.
+              A separate, named sentence and a separate class — never `rateCountLabel`'s literal
+              with a bigger number silently substituted in, which would state a page's size as the
+              catalogue's (K-12). */}
+          <p
+            className={
+              total > rates.length ? "catalog__count catalog__count--truncated" : "catalog__count"
+            }
+          >
+            {total > rates.length ? truncatedRateCountLabel(rates.length, total) : rateCountLabel(rates.length)}
+          </p>
           <RatesTable rates={rates} dictionaries={dictionaries} />
         </>
       )}
@@ -254,8 +358,7 @@ function RatesTable({ rates, dictionaries }: { rates: CatalogRate[]; dictionarie
           <tr key={rate.id} className="catalog__row">
             {CATALOG_DIMENSIONS.map((dimension) => (
               <td key={dimension} className="catalog__cell-name">
-                {names[dimension].get(dimensionIdOf(rate, dimension)) ??
-                  unknownEntryLabel(dimension)}
+                <DimensionCell rate={rate} dimension={dimension} names={names} />
               </td>
             ))}
             {/* The dates are the API's calendar strings, printed as they arrived (see lib/dates.ts):
@@ -316,9 +419,13 @@ function DictionaryPanels({ dictionaries }: { dictionaries: Dictionaries }) {
   );
 }
 
+/** The four dimensions a rate row must name. `vendors` is not among them: it is the one dimension
+ * whose id is allowed to be absent, and "absent" there is a state with its own word. */
+type RequiredDimension = Exclude<CatalogDimension, "vendors">;
+
 /** Which id on a rate row addresses which dictionary. An exhaustive `switch`, so a new dimension
  * cannot be forgotten silently. */
-function dimensionIdOf(rate: CatalogRate, dimension: CatalogDimension): string {
+function dimensionIdOf(rate: CatalogRate, dimension: RequiredDimension): string {
   switch (dimension) {
     case "roles":
       return rate.role_id;
@@ -329,6 +436,40 @@ function dimensionIdOf(rate: CatalogRate, dimension: CatalogDimension): string {
     case "engagement-types":
       return rate.engagement_type_id;
   }
+}
+
+/**
+ * One dimension cell of one rate row.
+ *
+ * The vendor column is the only one that can read two different ways for reasons that are not a
+ * failure of the join (SC-2-03, K-09):
+ *
+ *   * `vendor_id: null` — the row *is* an internal rate. A named state, `INTERNAL_RATE`.
+ *   * `vendor_id` naming a vendor no entry of the dictionary matched — the same gap between two
+ *     reads the other four columns already have, and it keeps their wording.
+ *
+ * Conflating the two is the mutation this cell exists to make impossible: `?? ""`, a dash, or
+ * reusing `unknownEntryLabel` for the null case would all turn "this is our own rate" into "we do
+ * not know whose rate this is".
+ */
+function DimensionCell({
+  rate,
+  dimension,
+  names,
+}: {
+  rate: CatalogRate;
+  dimension: CatalogDimension;
+  names: Readonly<Record<CatalogDimension, ReadonlyMap<string, string>>>;
+}) {
+  if (dimension === "vendors") {
+    if (rate.vendor_id === null) {
+      return <span className="catalog__internal">{INTERNAL_RATE}</span>;
+    }
+    return <>{names.vendors.get(rate.vendor_id) ?? unknownEntryLabel("vendors")}</>;
+  }
+  return (
+    <>{names[dimension].get(dimensionIdOf(rate, dimension)) ?? unknownEntryLabel(dimension)}</>
+  );
 }
 
 function namesById(entries: DimensionEntry[]): ReadonlyMap<string, string> {
@@ -344,5 +485,6 @@ function nameLookups(dictionaries: Dictionaries): Readonly<
     seniorities: namesById(dictionaries.seniorities),
     locations: namesById(dictionaries.locations),
     "engagement-types": namesById(dictionaries["engagement-types"]),
+    vendors: namesById(dictionaries.vendors),
   };
 }
