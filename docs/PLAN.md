@@ -320,6 +320,92 @@ history / this file's own change log, not as tracked product work.
   `AbortSignal` (ta sama klasa co R-01/R-02, ale na `ProjectListScreen`, sprzed tego zadania) —
   wydzielone do Issue #43.
 
+- [x] **SC-2-03** — Rozszerz katalog stawek domyślnych o stawki poddostawców (z podziałem na
+  lokalizacje), rozszerz ekran katalogu o wyświetlanie poddostawcy.
+  Blocked by SC-2-01, SC-2-02. Kryteria i decyzje bramki 1 w Issue #46.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-08 i `frontend/src` (vitest) dowodzi
+  K-09..K-10 (analyst, 2026-09-21):
+  1. (K-01) Poddostawca jako piąta kolumna klucza: stawka wewnętrzna i stawki dwóch poddostawców
+     współistnieją dla jednej krotki i jednego okna. Mutacja: piąta kolumna usunięta z
+     `ExcludeConstraint`.
+  2. (K-02) Dopisanie nullowalnej kolumny do klucza NIE wyłącza ochrony dla wierszy wewnętrznych
+     (pułapka `NULL = NULL`). Mutacja: `COALESCE(vendor_id, sentinel)` zamieniony na goły
+     `vendor_id`.
+  3. (K-03) Pominięcie `vendor_id` przy rozstrzyganiu znaczy „wewnętrzna”, nigdy wybór. Mutacja:
+     predykat na `vendor_id` usunięty z `WHERE`.
+  4. (K-04) Brak stawki wewnętrznej to brak stawki, nigdy cichy fallback do stawki poddostawcy.
+     Mutacja: `ORDER BY vendor_id NULLS FIRST LIMIT 1` dodane.
+  5. (K-05) Poddostawca jest piątym słownikiem, nie piątym mechanizmem — te same bramki
+     `CATALOG_READ`/`CATALOG_WRITE`. Mutacja: wpis `"vendors"` usunięty z `DIMENSION_MODELS`.
+  6. (K-06) Stawka kosztowa wiersza z poddostawcą bramkowana dokładnie jak wewnętrzna. Mutacja:
+     gałąź `vendor_id` pominięta w `_without_catalog_personnel_costs`.
+  7. (K-07) `vendor_id` jest referencją albo niczym — nieznany `vendor_id` odrzucony przez FK,
+     brak `vendor_id` zapisuje `NULL`, nie sentinel. Mutacja: FK usunięty; druga mutacja: sentinel
+     podstawiony zamiast `NULL`.
+  8. (K-08) Przebudowane `EXCLUDE` istnieje w zmigrowanej bazie w jednym egzemplarzu, model zgodny
+     z migracją (asercja równością). Mutacja: rozjazd modelu z migracją.
+  9. (K-09) Ekran katalogu rozróżnia stawkę wewnętrzną od stawki poddostawcy bez decyzji o
+     widoczności — nazwany stan „Internal”, nigdy pusta komórka. Mutacja: `?? ""` zamiast
+     nazwanego stanu.
+  10. (K-10) Ekran nie podejmuje żadnej decyzji o widoczności cennika poddostawcy — dokładnie 6
+      żądań GET, zero żądań o tożsamość. Mutacja: warunkowe pominięcie odczytu `vendors`.
+
+  **Decyzje bramki 1 (2026-09-21, Issue #46):** `vendor_id UUID NULL` jako piąta kolumna klucza
+  `EXCLUDE`, `COALESCE(vendor_id, uuid_nil())` z `CHECK` zabraniającym wiersza `catalog_vendors`
+  o `id = uuid_nil()`; `catalog_vendors` jako piąty słownik `_CatalogDimension`; jedna migracja
+  przebudowująca `EXCLUDE` (nie expand/contract — środowisko docelowe nie istnieje, open decision
+  #5); zero nowego uprawnienia — `CATALOG_READ`/`CATALOG_WRITE` obejmują cennik poddostawców,
+  decyzja biznesowa przyjęta świadomie mimo że to zwykle dane pod NDA; `default_cost_rate` wiersza
+  z poddostawcą nadal bramkowany przez `PERSONNEL_COSTS_READ`, nazwana ochrona nadpłacona; ADR-0008
+  podniesiony z Draft do Accepted; ekran (SC-2-02) rozszerzony w tym samym PR, bez zapisu z UI.
+
+  **Decyzja bramki 2 (2026-09-21, komentarz na Issue #46):** paginacja `GET /catalog/rates` —
+  pierwotnie poza zakresem (Out of scope pkt 10, jak SC-2-01) — pozostaje w zakresie tego zadania
+  zamiast osobnej Story, pod warunkiem zamknięcia trzech zastrzeżeń reviewera (R-01/R-02/R-03,
+  patrz niżej). Wyłącznie syntetyczne dane w bazach dev/test dla cenników poddostawców do czasu
+  ADR uwierzytelniania (ADR-0005 aneks pkt 6).
+
+  **Out of scope (explicit):** zapis z UI (SC-2-04); osoby nazwane po stronie poddostawcy, dane
+  kontaktowe (Issue #31 + ADR uwierzytelniania); poddostawca jako kategoria kosztu dodatkowego
+  F-08 (Issue #10); warunki handlowe per poddostawca (Issue #8); przewalutowanie (ADR-0006);
+  nadpisanie stawki projekt/scenariusz (Issue #4); wskazanie dostawcy na pozycji obsady (Issue #9);
+  kalendarz roboczy per poddostawca (Issue #7); usuwanie wpisu słownika używanego przez stawkę;
+  migawka AC-04 (Issue #9); wymiar kraju/hierarchia lokalizacji — odrzucone na bramce 1, nieotwarte.
+
+  **Fundament nieudowodniony, przyjęty świadomie:** rola aplikacyjna do `CREATE EXTENSION
+  btree_gist`/przebudowy `EXCLUDE` na środowisku docelowym (open decision #5); wydajność indeksu
+  gist na pięcioelementowym kluczu w produkcyjnej skali; `PERSONNEL_COSTS_READ` nadal przez nic nie
+  nadawane — gałąź autoryzowana dowodliwa wyłącznie testem.
+
+  **Done 2026-09-21:** PR #47 (scalone `73de5d2`). Dowód: `backend/tests/
+  test_catalog_schema_constraints.py` (K-01, K-02, K-07, K-08), `test_catalog_rate_resolution.py`
+  (K-03, K-04), `test_catalog_access.py` (K-05), `test_catalog_personnel_cost_visibility.py`
+  (K-06), `test_catalog_migration_reversibility.py` (odwracalność migracji `c1a4f7b92e05`),
+  `frontend/src/features/catalog/CatalogScreen.test.tsx` (K-09, K-10) — 310 testów backendowych
+  zielono (było 307), 84 frontendowych (było 83). Runda weryfikacji (QA, Invariant Guardian,
+  reviewer, security-auditor) + poprawki: QA domknęło lukę w kierunku usuwania FK `vendor_id`
+  (`ON DELETE` musi być `NO ACTION`, nie `SET NULL`/`CASCADE` — usunięcie poddostawcy inaczej po
+  cichu przemianowywało jego stawki na wewnętrzne). Invariant Guardian: PASS, jedna uwaga poza
+  listą reguł (paginacja poza jawnym zakresem — zamknięta aneksem bramki 2, patrz wyżej).
+  Reviewer R-01 (medium): `count(*) OVER()` bez indeksu ograniczał tylko rozmiar odpowiedzi, nie
+  pracę serwera (pełny sort całej tabeli na każdą stronę) — poprawione: indeks
+  `ix_catalog_default_rates_effective_from_id` (migracja `e2c7b04d9a31`), strona czytana jako
+  ograniczone top-N, `total` jako podzapytanie skalarne w tym samym zdaniu (gwarancja jednego
+  snapshotu bez zmiany). R-02 (low): `offset` bez górnej granicy kończył się nieobsłużonym `500`
+  zamiast `422` — dodana górna granica (`MAX_RATE_LIST_OFFSET`), wzorem `limit`. R-03 (low): pusta
+  strona odpowiedzi (`rates: [], total > 0`) renderowana jako pusty katalog — rozróżnione
+  (`NoRatesMessage`/`emptyPageLabel`). Security-auditor: PASS WITH RESERVATIONS — komentarz
+  „vendor = firma, więc nigdy dane osobowe” doprecyzowany w `backend/app/models/catalog.py`
+  (sole trader = dane osobowe, nic tego nie pilnuje — nie klasyfikować tabeli jako wolnej od
+  danych osobowych z automatu w przyszłym audycie).
+  **Zaakceptowane, nienaprawione:** widoczność cennika per poddostawca (Out of scope wyżej);
+  wydajność planu zapytania nie zmierzona na realnym rozmiarze (test dowodzi kształtu planu,
+  `enable_seqscan`/`enable_sort` wyłączone), tylko że ograniczona ścieżka istnieje i jest o nią
+  proszone; koszt `total` pozostaje liniowy względem przefiltrowanego zbioru (świadomie — patrz
+  R-01 wyżej); paginacja słowników (w tym `vendors`) pozostaje nieograniczona — sprawdzone
+  świadomie jako nieszkodliwe przy dzisiejszej skali poddostawców, zmienia się jeśli liczba
+  poddostawców urośnie do dziesiątek tysięcy. Zob. `docs/architecture/capabilities.md`.
+
 - [x] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
   z alokacją miesięczną w godzinach, trzema niezależnymi wartościami (dostępność / planowana
   alokacja / czas rozliczalny) i rejestracją w kaskadzie kopiowania.
