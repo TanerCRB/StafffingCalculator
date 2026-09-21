@@ -301,8 +301,24 @@ history / this file's own change log, not as tracked product work.
   (ADR-0005 aneks); paginacja katalogu (wyżej); `EXCLUDE`/`btree_gist` na środowisku docelowym
   nieudowodnione. Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-2-02** — Pokaż katalog ról i stawek domyślnych jako ekran (odczyt, bez akcji zapisu).
-  Blocked by SC-2-01. Zarezerwowane, kryteria i decyzje bramki 1 w Issue #39.
+- [x] **SC-2-02** — Pokaż katalog ról i stawek domyślnych jako ekran (odczyt, bez akcji zapisu).
+  Blocked by SC-2-01. Kryteria i decyzje bramki 1 w Issue #39.
+  **Done 2026-09-21:** `frontend/src/features/catalog/CatalogScreen.test.tsx` (K-01..K-08, 20
+  testów) + `frontend/src/App.test.tsx::makes the catalogue screen reachable from the running
+  application, not only from its own test` (K-09); rozszerzone `frontend/src/lib/money.test.ts`
+  i `frontend/src/styles/tokens.test.ts` (kontrast WCAG AA dla nowego arkusza) — 79 testów
+  frontendowych zielono, lint i build czyste. PR #44.
+  Runda weryfikacji (QA, Invariant Guardian, reviewer) + poprawki: R-01/R-06 (anulowanie
+  wszystkich 5 odczytów katalogu przy odmontowaniu ekranu i przy porażce dowolnego z nich —
+  bez tego odbicie się w railu marnowało transfer zmierzonego katalogu, 48k wierszy/19.7 MB);
+  R-02 (walidacja kształtu wiersza w kliencie — zły payload trafia w istniejący stan awarii
+  zamiast wybuchać `TypeError` w renderze); R-03 (fokus przenoszony na nagłówek nowego ekranu po
+  nawigacji railem, `role="status"` na stanie ładowania). QA znalazł i zamknął dwie dziury w
+  dowodzie K-03 (etykieta odmowy kosztu nieprzypięta do treści ekranu, kontrast koloru sprawdzany
+  między tokenami zamiast czytany z arkusza), 11 mutacji, zob. `docs/architecture/capabilities.md`.
+  **Zaakceptowane, nienaprawione:** brak error boundary w aplikacji i `getProjects` bez
+  `AbortSignal` (ta sama klasa co R-01/R-02, ale na `ProjectListScreen`, sprzed tego zadania) —
+  wydzielone do Issue #43.
 
 - [x] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
   z alokacją miesięczną w godzinach, trzema niezależnymi wartościami (dostępność / planowana
