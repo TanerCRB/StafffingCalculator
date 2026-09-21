@@ -1,3 +1,10 @@
+import type {
+  CatalogDimension,
+  CatalogRate,
+  CatalogRateList,
+  DimensionEntry,
+  DimensionEntryList,
+} from "./contracts/catalog";
 import type { HealthResponse } from "./contracts/health";
 import type { ProjectListResponse } from "./contracts/projects";
 
@@ -46,15 +53,31 @@ export class RequestTimeoutError extends Error {
  * upstream, chunked response with no terminator, a dead connection after a rolling deploy). If
  * the timer were cleared as soon as `fetch()` resolved, `response.json()` would hang forever and
  * the screen would sit in "Loading…" — the exact state this mechanism exists to prevent.
+ *
+ * `signal` is a second, independent reason to give up: the caller's own — typically a screen
+ * unmounting before the read finished. Without it, a read that is no longer wanted keeps running
+ * to completion anyway, competing for one of the browser's six same-origin HTTP/1.1 sockets with
+ * the reads the screen the user is actually on is waiting for (Reviewer R-01).
  */
 async function readWithDeadline<T>(
   url: string,
   init: RequestInit,
   handle: (response: Response) => Promise<T>,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+  // The caller's signal aborts the same controller the deadline does, so `fetch` only ever sees
+  // one signal no matter which of the two fires first.
+  if (signal !== undefined) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+  }
 
   const expiry = new Promise<never>((_resolve, reject) => {
     timeoutHandle = setTimeout(() => {
@@ -108,5 +131,122 @@ export async function getProjects(): Promise<ProjectListResponse> {
       }
       return payload;
     },
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** A field that is either absent, `null`, or a string — the shape `default_cost_rate` and
+ * `effective_to` are contractually allowed to take (`contracts/catalog.ts`). */
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+/**
+ * Whether one rate row has the shape `CatalogRate` promises, field by field — not merely "this
+ * parsed as an array" (Reviewer R-02). `formatRatePerUnit` calls `roundDecimalString`, which calls
+ * `.trim()` on its input: a row missing `default_selling_rate`, or carrying it as a number a
+ * backend change serialised differently, would not fail here — it would throw a `TypeError` mid
+ * render, in a codebase with no error boundary, taking the whole screen down to a blank page. A row
+ * that fails this check becomes a named `ApiError` instead, which the screen's existing
+ * `toFailureState` machinery already turns into a stated failure.
+ */
+function isCatalogRateShape(value: unknown): value is CatalogRate {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const requiredStrings: readonly (keyof CatalogRate)[] = [
+    "id",
+    "role_id",
+    "seniority_id",
+    "location_id",
+    "engagement_type_id",
+    "default_selling_rate",
+    "currency",
+    "unit",
+    "effective_from",
+  ];
+  return (
+    requiredStrings.every((field) => typeof value[field] === "string") &&
+    isOptionalString(value.default_cost_rate) &&
+    isOptionalString(value.effective_to)
+  );
+}
+
+function isDimensionEntryShape(value: unknown): value is DimensionEntry {
+  return isRecord(value) && typeof value.id === "string" && typeof value.name === "string";
+}
+
+/**
+ * Every default rate the catalogue holds (SC-2-01, `GET /catalog/rates`). Read only.
+ *
+ * No `on_date` parameter: the backend deliberately refused a default of "today"
+ * (`list_catalog_rates`), and a client that supplied one would be inventing the resolution rule
+ * the server declined to own (SC-2-02, gate-1 decision 3). The rows come back exactly as sent,
+ * including a row whose `default_cost_rate` the server removed for this caller.
+ *
+ * `signal`, when given, ends the read early — typically because the screen that asked for it has
+ * unmounted (Reviewer R-01).
+ */
+export async function getCatalogRates(signal?: AbortSignal): Promise<CatalogRateList> {
+  return readWithDeadline(
+    `${API_BASE_URL}/catalog/rates`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET /catalog/rates failed: ${response.status}`);
+      }
+      const payload = (await response.json()) as CatalogRateList | null;
+      if (!Array.isArray(payload?.rates) || !payload.rates.every(isCatalogRateShape)) {
+        // Same rule as the project list: an empty list is a statement ("the catalogue holds no
+        // rates") and may only come from the server. A payload that does not match the contract —
+        // missing the array, or carrying a row of the wrong shape — is an error, never an empty
+        // catalogue and never a row rendered on faith.
+        throw new ApiError(
+          response.status,
+          "GET /catalog/rates returned a payload without a valid rate list",
+        );
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
+/**
+ * One dimension dictionary's entries (`GET /catalog/dimensions/{dimension}`). Read only.
+ *
+ * `dimension` is typed by `CATALOG_DIMENSIONS`, so a segment the backend answers with a `404`
+ * cannot be spelled at a call site.
+ *
+ * `signal`, when given, ends the read early — typically because the screen that asked for it has
+ * unmounted (Reviewer R-01).
+ */
+export async function getCatalogDimension(
+  dimension: CatalogDimension,
+  signal?: AbortSignal,
+): Promise<DimensionEntryList> {
+  const path = `/catalog/dimensions/${dimension}`;
+  return readWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload = (await response.json()) as DimensionEntryList | null;
+      if (!Array.isArray(payload?.entries) || !payload.entries.every(isDimensionEntryShape)) {
+        throw new ApiError(
+          response.status,
+          `GET ${path} returned a payload without a valid entry list`,
+        );
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
   );
 }

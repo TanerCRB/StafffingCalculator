@@ -204,8 +204,12 @@ button.app-shell__nav-item:hover {
 }
 
 /*
- * A navigation entry for a screen that does not exist yet (F-13: visible, never hidden). Same
- * quietened appearance as the not-yet-implemented controls in app.css — muted surface, muted text,
+ * A navigation entry for a screen that does not exist yet (F-13: visible, never hidden). No rail
+ * entry is in that state today — SC-2-02 wired the second of the two — and these rules are kept
+ * rather than deleted for the next entry the rail gains: the appearance of "not yet" is a
+ * convention shared with app.css, and `src/styles/tokens.test.ts` still checks its contrast pair.
+ *
+ * Same quietened appearance as the not-yet-implemented controls in app.css — muted surface, muted text,
  * no opacity over a live colour (Reviewer R-05) — so "not yet" reads the same in the rail as it
  * does on the screen. These two rules follow `:hover` on purpose: they carry the same specificity,
  * so source order is what decides, exactly as in app.css.

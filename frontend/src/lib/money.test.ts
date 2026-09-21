@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { NOT_APPLICABLE, formatPercent, formatPercentString, roundDecimalString } from "./money";
+import {
+  NOT_APPLICABLE,
+  formatMoneyString,
+  formatPercent,
+  formatPercentString,
+  formatRatePerUnit,
+  roundDecimalString,
+} from "./money";
 
 describe("formatPercent", () => {
   it("renders a numeric ratio with two decimals and a percent sign", () => {
@@ -40,6 +47,41 @@ describe("formatPercentString", () => {
   it("refuses a value that is not a fixed-point decimal string instead of inventing a number", () => {
     expect(() => formatPercentString("twelve")).toThrow(/fixed-point decimal string/);
     expect(() => formatPercentString("")).toThrow(/fixed-point decimal string/);
+  });
+});
+
+describe("formatMoneyString", () => {
+  it("rounds an amount half up, the way the backend's round_money does, where a JS float rounds down", () => {
+    // Number("100.005") is 100.00499999999999…, so a float path renders "100.00" here while
+    // backend/app/core/money.py gives 100.01 (ADR-0002).
+    expect(formatMoneyString("100.005", "EUR")).toBe("100.01 EUR");
+    expect(formatMoneyString("-0.005", "EUR")).toBe("-0.01 EUR");
+  });
+
+  it("keeps two places for every currency, because round_money takes no currency argument", () => {
+    // ADR-0002, addendum 2026-09-19: the "precision depends on the currency" clause is implemented
+    // in neither layer. A frontend that quantised JPY to zero places would disagree with every
+    // amount the backend computes, and nothing would throw. Closing condition is named there.
+    expect(formatMoneyString("1234.5", "JPY")).toBe("1234.50 JPY");
+    expect(formatMoneyString("1.005", "BHD")).toBe("1.01 BHD");
+  });
+
+  it("keeps digits a JS number could not hold, and pads a value shorter than the scale", () => {
+    expect(formatMoneyString("9007199254740993.004", "PLN")).toBe("9007199254740993.00 PLN");
+    expect(formatMoneyString("7", "USD")).toBe("7.00 USD");
+  });
+
+  it("refuses a value that is not a fixed-point decimal string instead of inventing an amount", () => {
+    expect(() => formatMoneyString("a lot", "EUR")).toThrow(/fixed-point decimal string/);
+  });
+});
+
+describe("formatRatePerUnit", () => {
+  it("takes the currency and the unit from the response, joining them in one place", () => {
+    // A call site that assembled "… / hour" of its own would keep saying "hour" when F-07 adds
+    // daily and monthly rates, and nothing would look broken.
+    expect(formatRatePerUnit("100.005", "EUR", "hour")).toBe("100.01 EUR / hour");
+    expect(formatRatePerUnit("100.005", "PLN", "day")).toBe("100.01 PLN / day");
   });
 });
 

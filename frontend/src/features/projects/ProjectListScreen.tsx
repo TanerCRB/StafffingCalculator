@@ -97,7 +97,11 @@ export function ProjectListScreen() {
       <div className="project-list__grid">
         <div className="card project-list__main">
           <div className="project-list__toolbar-row">
-            <h2 id="project-list-heading" className="card__title">
+            {/* `tabIndex={-1}`: focusable by script, never by Tab. `AppShell` focuses this heading
+                after a rail activation mounts this screen, so keyboard focus does not fall through
+                to `document.body` when the rail entry that held it leaves the DOM (Reviewer
+                R-03, SC-2-02). */}
+            <h2 id="project-list-heading" className="card__title" tabIndex={-1}>
               Projects
             </h2>
             {/* The toolbar belongs to a list that exists. A denied read renders a screen with no

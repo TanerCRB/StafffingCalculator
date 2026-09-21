@@ -1,0 +1,164 @@
+/*
+ * Catalogue screen — layout only. Reference: Wymagania/prototyp/screens/15-catalog.png (a
+ * reference, not a specification: Issue #39, out of scope 9 — no pixel fidelity, no
+ * visual-regression tests).
+ *
+ * Every colour is a token from src/styles/tokens.css; src/styles/tokens.test.ts fails the build if a
+ * literal appears here. No `@media` either — the panels are flex items that wrap, the same way the
+ * shell's rail does, so there is no breakpoint at which a section disappears untested.
+ */
+
+.catalog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-5);
+}
+
+.catalog__panel {
+  min-width: 0;
+  padding: var(--sc-space-5);
+}
+
+.catalog__panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sc-space-4);
+  margin-bottom: var(--sc-space-2);
+}
+
+.catalog__panel-title {
+  font-size: var(--sc-font-size-lg);
+  font-weight: var(--sc-font-weight-bold);
+  line-height: var(--sc-line-height-tight);
+}
+
+.catalog__count {
+  margin-bottom: var(--sc-space-4);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+}
+
+.catalog__message {
+  margin-top: var(--sc-space-2);
+  padding: var(--sc-space-5);
+  border-radius: var(--sc-radius-md);
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text-muted);
+  font-weight: var(--sc-font-weight-medium);
+}
+
+.catalog__message--attention {
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+}
+
+/* --- Rates table ------------------------------------------------------------------------------ */
+
+/* Separated borders: each row is its own white card with rounded ends, as on the project list. */
+.catalog__table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 var(--sc-space-2);
+  text-align: left;
+}
+
+/* Dictionary names are server strings with no guaranteed whitespace, so a name may be one unbroken
+   word. Breaking mid-word is ugly; a table pushed past the viewport is worse, and a name clipped to
+   nothing is worst — nothing here truncates. */
+.catalog__table th,
+.catalog__table td {
+  padding: var(--sc-space-3) var(--sc-space-4);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.catalog__table thead th {
+  padding-top: var(--sc-space-2);
+  padding-bottom: var(--sc-space-2);
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-xs);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.catalog__table thead th:first-child {
+  border-top-left-radius: var(--sc-radius-sm);
+  border-bottom-left-radius: var(--sc-radius-sm);
+}
+
+.catalog__table thead th:last-child {
+  border-top-right-radius: var(--sc-radius-sm);
+  border-bottom-right-radius: var(--sc-radius-sm);
+}
+
+.catalog__row > td {
+  background-color: var(--sc-color-surface);
+  border-top: 1px solid var(--sc-color-border);
+  border-bottom: 1px solid var(--sc-color-border);
+}
+
+.catalog__row > td:first-child {
+  border-left: 1px solid var(--sc-color-border);
+  border-top-left-radius: var(--sc-radius-md);
+  border-bottom-left-radius: var(--sc-radius-md);
+}
+
+.catalog__row > td:last-child {
+  border-right: 1px solid var(--sc-color-border);
+  border-top-right-radius: var(--sc-radius-md);
+  border-bottom-right-radius: var(--sc-radius-md);
+}
+
+.catalog__cell-period {
+  color: var(--sc-color-text-muted);
+  white-space: nowrap;
+}
+
+/* Tabular figures so amounts of different lengths still line up down the column. */
+.catalog__cell-amount {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+ * A cost rate the response did not carry. Set apart from an amount by weight and colour *in
+ * addition to* the word (NF-08) — the word is what carries the meaning, and there is no shared
+ * placeholder glyph any other empty value could borrow.
+ */
+.catalog__restricted {
+  color: var(--sc-color-attention-text);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+/* --- Dictionary panels ------------------------------------------------------------------------ */
+
+/* Four panels side by side where there is room, wrapping where there is not. No panel is ever
+   hidden: each one is the only statement that its dictionary exists. */
+.catalog__dictionaries {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sc-space-5);
+}
+
+.catalog__dictionaries > .catalog__panel {
+  flex: 1 1 14rem;
+}
+
+.catalog__entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-1);
+  margin-top: var(--sc-space-3);
+}
+
+.catalog__entry {
+  padding: var(--sc-space-2) var(--sc-space-3);
+  border-radius: var(--sc-radius-sm);
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text);
+  font-size: var(--sc-font-size-sm);
+  overflow-wrap: anywhere;
+}
