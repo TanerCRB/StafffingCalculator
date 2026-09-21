@@ -10,15 +10,18 @@ import {
 } from "../../api/contracts/catalog";
 import { OPEN_ENDED_PERIOD } from "../../lib/dates";
 import { NOT_APPLICABLE } from "../../lib/money";
-import { CatalogScreen, RESTRICTED_COST_RATE } from "./CatalogScreen";
+import { CatalogScreen, INTERNAL_RATE, RESTRICTED_COST_RATE } from "./CatalogScreen";
 import { DIMENSION_LABELS, emptyDictionaryLabel, unknownEntryLabel } from "./dimensionLabels";
 
 /**
- * SC-2-02, K-01..K-08. K-09 (the screen is reachable from the running application) is in
- * src/App.test.tsx, because it is a claim about the application, not about this component.
+ * SC-2-02, K-01..K-08, and SC-2-03, K-09..K-10 (the vendor column and the sixth read) and K-12 (the
+ * screen names a page as a page once the backend started paginating, K-11). SC-2-02's own K-09 —
+ * the screen is reachable from the running application — is in src/App.test.tsx, because it is a
+ * claim about the application, not about this component. The two K-09s belong to different tasks;
+ * nothing here renumbers them.
  *
- * Every test here stubs the five reads. That is the only input the screen has — which is itself
- * the subject of K-04 — so a fixture is a complete description of what the user sees.
+ * Every test here stubs the six reads. That is the only input the screen has — which is itself
+ * the subject of K-04 and of K-10 — so a fixture is a complete description of what the user sees.
  */
 
 // --- Fixtures ----------------------------------------------------------------------------------
@@ -42,12 +45,18 @@ const ENGAGEMENT_TYPES: DimensionEntry[] = [
   { id: "d0000000-0000-0000-0000-000000000001", name: "Time & materials" },
   { id: "d0000000-0000-0000-0000-000000000002", name: "Fixed price" },
 ];
+/** SC-2-03. The fifth dictionary, read like the other four. */
+const VENDORS: DimensionEntry[] = [
+  { id: "f0000000-0000-0000-0000-000000000001", name: "Contoso Sp. z o.o." },
+  { id: "f0000000-0000-0000-0000-000000000002", name: "Northwind GmbH" },
+];
 
 const FULL_DICTIONARIES: Readonly<Record<CatalogDimension, DimensionEntry[]>> = {
   roles: ROLES,
   seniorities: SENIORITIES,
   locations: LOCATIONS,
   "engagement-types": ENGAGEMENT_TYPES,
+  vendors: VENDORS,
 };
 
 /**
@@ -65,6 +74,8 @@ const RATE_SENIOR: CatalogRate = {
   seniority_id: SENIORITIES[0].id,
   location_id: LOCATIONS[0].id,
   engagement_type_id: ENGAGEMENT_TYPES[0].id,
+  // The organisation's own rate. Always in the body, never absent (SC-2-03 contract).
+  vendor_id: null,
   default_cost_rate: "60.005",
   default_selling_rate: "100.005",
   currency: "EUR",
@@ -95,6 +106,7 @@ const RATE_OPEN_ENDED: CatalogRate = {
   seniority_id: SENIORITIES[0].id,
   location_id: LOCATIONS[1].id,
   engagement_type_id: ENGAGEMENT_TYPES[1].id,
+  vendor_id: null,
   default_cost_rate: null,
   default_selling_rate: "9007199254740993.004",
   currency: "PLN",
@@ -105,7 +117,7 @@ const RATE_OPEN_ENDED: CatalogRate = {
 
 /**
  * A rate whose role id matches no entry of the roles dictionary — reachable without any read
- * failing, because the five reads are five requests and not one transaction (gate-1 decision 8).
+ * failing, because the six reads are six requests and not one transaction (gate-1 decision 8).
  * It also carries no cost rate and no end date, so one row holds three different kinds of absence
  * at once and they can be compared with each other.
  */
@@ -123,7 +135,30 @@ const RATE_COST_KEY_ABSENT: CatalogRate = (() => {
   return rate;
 })();
 
-// --- The five reads, stubbed -------------------------------------------------------------------
+/**
+ * SC-2-03. A rate that belongs to a subcontractor. Identical to `RATE_SENIOR` in every field but
+ * `vendor_id` — the same tuple, the same window, the same money — because that is the only way to
+ * show that what changes on screen is the vendor and nothing else (K-09). On the backend side this
+ * pair is exactly the coexistence K-01 proves the database now allows.
+ */
+const RATE_FROM_VENDOR: CatalogRate = {
+  ...RATE_SENIOR,
+  id: "e0000000-0000-0000-0000-000000000008",
+  vendor_id: VENDORS[0].id,
+};
+
+/**
+ * A rate naming a vendor that no entry of the dictionary matched — reachable without any read
+ * failing, like `RATE_UNKNOWN_ROLE`. "The id on this row matched nothing" and "this rate is ours"
+ * are two different facts, and the screen owes them two different words.
+ */
+const RATE_UNKNOWN_VENDOR: CatalogRate = {
+  ...RATE_SENIOR,
+  id: "e0000000-0000-0000-0000-000000000009",
+  vendor_id: "ffffffff-ffff-ffff-ffff-fffffffffffe",
+};
+
+// --- The six reads, stubbed -------------------------------------------------------------------
 
 const RATES_PATH = "/catalog/rates";
 
@@ -142,11 +177,16 @@ interface StubOptions {
   readonly dictionaries?: Partial<Record<CatalogDimension, DimensionEntry[]>>;
   /** Path → HTTP status for the reads that must fail. Everything else answers `200`. */
   readonly failures?: Readonly<Record<string, number>>;
+  /** `total` on the `/catalog/rates` response (K-11). Defaults to `rates.length` — a complete
+   * catalogue — so every existing test stays a claim about a page that is the whole thing, and only
+   * a test that says otherwise (K-12) exercises the truncated case. */
+  readonly total?: number;
 }
 
-function stubCatalog({ rates, dictionaries, failures = {} }: StubOptions = {}) {
+function stubCatalog({ rates, dictionaries, failures = {}, total }: StubOptions = {}) {
   const body = rates ?? [RATE_SENIOR, RATE_JUNIOR];
   const dicts = { ...FULL_DICTIONARIES, ...dictionaries };
+  const rateCount = total ?? body.length;
 
   const fetchMock = vi.fn(async (url: string) => {
     const path = pathOf(url);
@@ -155,7 +195,7 @@ function stubCatalog({ rates, dictionaries, failures = {} }: StubOptions = {}) {
       return { ok: false, status: failure };
     }
     if (path === RATES_PATH) {
-      return { ok: true, status: 200, json: async () => ({ rates: body }) };
+      return { ok: true, status: 200, json: async () => ({ rates: body, total: rateCount }) };
     }
     const dimension = CATALOG_DIMENSIONS.find((candidate) => dimensionPath(candidate) === path);
     if (dimension !== undefined) {
@@ -190,9 +230,13 @@ const ROLE_CELL = 0;
 const SENIORITY_CELL = 1;
 const LOCATION_CELL = 2;
 const ENGAGEMENT_CELL = 3;
-const PERIOD_CELL = 4;
-const SELLING_CELL = 5;
-const COST_CELL = 6;
+/** SC-2-03: the fifth dimension column, in the order `CATALOG_DIMENSIONS` states. */
+const VENDOR_CELL = 4;
+const PERIOD_CELL = 5;
+const SELLING_CELL = 6;
+const COST_CELL = 7;
+/** Four dimensions, the vendor, the period and the two rates. */
+const COLUMN_COUNT = 8;
 
 function cellsOf(row: HTMLElement): HTMLElement[] {
   return within(row).getAllByRole("cell");
@@ -388,6 +432,7 @@ describe("CatalogScreen", () => {
       SENIORITY_CELL,
       LOCATION_CELL,
       ENGAGEMENT_CELL,
+      VENDOR_CELL,
       PERIOD_CELL,
       SELLING_CELL,
     ]) {
@@ -426,11 +471,12 @@ describe("CatalogScreen", () => {
 
     const header = screen.getByRole("columnheader", { name: "Default cost rate" });
     expect(header).toBeVisible();
-    // Seven columns, not six: the four dimensions, the period, and both rates.
-    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
+    // Eight columns, not seven: the four dimensions, the vendor (SC-2-03), the period, and both
+    // rates.
+    expect(screen.getAllByRole("columnheader")).toHaveLength(COLUMN_COUNT);
 
     for (const row of rows) {
-      expect(cellsOf(row)).toHaveLength(7);
+      expect(cellsOf(row)).toHaveLength(COLUMN_COUNT);
       expect(textOf(row, COST_CELL)).toBe(RESTRICTED_COST_RATE);
       // The selling rate is not behind the personnel-cost gate and is still there — so "no cost
       // column" could not be excused as "no amounts at all".
@@ -450,10 +496,11 @@ describe("CatalogScreen", () => {
     expect(textOf(first[0], COST_CELL)).toBe("60.01 EUR / hour");
     const authorisedHtml = (await screen.findByRole("table")).outerHTML;
 
-    // Exactly five reads, on exactly the five catalogue paths. No preflight, no `/me`, no
-    // permission or role lookup — nothing the screen could have based a decision on (AC-06).
+    // Exactly six reads, on exactly the six catalogue paths (five since SC-2-03 added the vendor
+    // dictionary). No preflight, no `/me`, no permission or role lookup — nothing the screen could
+    // have based a decision on (AC-06).
     const paths = requestedPaths(fetchMock);
-    expect(paths).toHaveLength(5);
+    expect(paths).toHaveLength(6);
     expect([...paths].sort()).toEqual([...CATALOG_PATHS].sort());
     expect(paths.some((path) => /permission|identity|whoami|\/me\b|auth|role-assignment/i.test(path)))
       .toBe(false);
@@ -480,6 +527,264 @@ describe("CatalogScreen", () => {
     const refusedRows = await rateRows();
     expect(textOf(refusedRows[0], COST_CELL)).toBe(RESTRICTED_COST_RATE);
     expect((await screen.findByRole("table")).outerHTML).not.toBe(authorisedHtml);
+  });
+
+  // --- SC-2-03, K-09 ---------------------------------------------------------------------------
+
+  it('renders the vendor name for a vendor rate and a named "Internal" state for a rate with no vendor', async () => {
+    // Three rows, one tuple, one window, one set of amounts. They differ in `vendor_id` and in
+    // nothing else, so every difference on screen is a difference the response actually carried.
+    const internal: CatalogRate = { ...RATE_SENIOR, id: "e0000000-0000-0000-0000-00000000000a" };
+    stubCatalog({ rates: [internal, RATE_FROM_VENDOR, RATE_UNKNOWN_VENDOR] });
+
+    render(<CatalogScreen />);
+
+    const rows = await rateRows();
+    expect(rows).toHaveLength(3);
+    const [internalRow, vendorRow, unknownVendorRow] = rows;
+
+    // The vendor rate names its vendor, as a name — joined here from the sixth read, exactly the
+    // way the other four dimensions are joined.
+    expect(textOf(vendorRow, VENDOR_CELL)).toBe("Contoso Sp. z o.o.");
+    expect(screen.getByRole("columnheader", { name: "Vendor" })).toBeVisible();
+
+    // The rate with no vendor says which rate it is. Read off the screen first, then held against
+    // everything it must not be.
+    const internalText = textOf(internalRow, VENDOR_CELL);
+    expect(internalText.trim()).not.toBe("");
+    // A word, in letters: `?? ""`, a dash, an asterisk or a bracketed glyph all fail here.
+    expect(internalText).toMatch(/^[A-Za-z][A-Za-z ]*$/);
+    expect(internalText).toBe(INTERNAL_RATE);
+
+    // Not the label for an id that matched nothing — that row is in the same table, two rows down,
+    // and it reads differently.
+    expect(textOf(unknownVendorRow, VENDOR_CELL)).toBe(unknownEntryLabel("vendors"));
+    expect(internalText).not.toBe(textOf(unknownVendorRow, VENDOR_CELL));
+
+    // And not a label this product already spends on some other kind of absence. Each one is taken
+    // from the module that owns it, so this check follows them if they are ever reworded. Neither
+    // direction of containment either: "Internal" must not be a fragment of one of them, and none
+    // of them a fragment of it.
+    const otherAbsences = [
+      RESTRICTED_COST_RATE,
+      OPEN_ENDED_PERIOD,
+      NOT_APPLICABLE,
+      ...CATALOG_DIMENSIONS.map(unknownEntryLabel),
+      ...CATALOG_DIMENSIONS.map(emptyDictionaryLabel),
+    ];
+    for (const other of otherAbsences) {
+      expect(internalText.toLowerCase()).not.toBe(other.toLowerCase());
+      expect(internalText.toLowerCase()).not.toContain(other.toLowerCase());
+      expect(other.toLowerCase()).not.toContain(internalText.toLowerCase());
+    }
+
+    // The three rows differ on screen in exactly the one cell they differ in in the response.
+    for (const cell of [
+      ROLE_CELL,
+      SENIORITY_CELL,
+      LOCATION_CELL,
+      ENGAGEMENT_CELL,
+      PERIOD_CELL,
+      SELLING_CELL,
+      COST_CELL,
+    ]) {
+      expect(textOf(vendorRow, cell)).toBe(textOf(internalRow, cell));
+      expect(textOf(unknownVendorRow, cell)).toBe(textOf(internalRow, cell));
+    }
+    expect(new Set(rows.map((row) => textOf(row, VENDOR_CELL))).size).toBe(3);
+
+    // No cell anywhere is blank, and no identifier reached the screen — the vendor column included.
+    for (const row of rows) {
+      for (const cell of cellsOf(row)) {
+        expect(cell.textContent?.trim()).not.toBe("");
+      }
+    }
+    expect(screenText()).not.toMatch(UUID_PATTERN);
+
+    // The vendor dictionary is listed like the other four, so a reader can see which vendors the
+    // catalogue knows — not only the ones some rate happens to reference.
+    const vendors = within(screen.getByRole("region", { name: "Vendors" }));
+    expect(vendors.getByText("Contoso Sp. z o.o.")).toBeVisible();
+    expect(vendors.getByText("Northwind GmbH")).toBeVisible();
+  });
+
+  // --- SC-2-03, K-10 ---------------------------------------------------------------------------
+
+  it("takes no vendor-visibility decision of its own", async () => {
+    const fetchMock = stubCatalog({ rates: [RATE_SENIOR, RATE_FROM_VENDOR] });
+
+    render(<CatalogScreen />);
+    const rows = await rateRows();
+    // Every rate the response carried is on screen, the vendor's included. Nothing here decides
+    // that a vendor's price list is not for this caller: `CATALOG_READ` covers every vendor
+    // (ADR-0005, addendum 2026-09-21, point 2), and the screen has nothing it could decide with.
+    expect(rows).toHaveLength(2);
+    expect(textOf(rows[1], VENDOR_CELL)).toBe("Contoso Sp. z o.o.");
+    const html = (await screen.findByRole("table")).outerHTML;
+
+    // Exactly six reads, on exactly the six catalogue paths. No preflight, no `/me`, no permission,
+    // role or vendor-access lookup — nothing the screen could have based a decision on.
+    const paths = requestedPaths(fetchMock);
+    expect(paths).toHaveLength(6);
+    expect([...paths].sort()).toEqual([...CATALOG_PATHS].sort());
+    expect(paths).toContain("/catalog/dimensions/vendors");
+    expect(
+      paths.some((path) =>
+        /permission|identity|whoami|\/me\b|auth|role-assignment|vendor-access/i.test(path),
+      ),
+    ).toBe(false);
+    for (const [, init] of recordedCalls(fetchMock)) {
+      expect(init.method === undefined || init.method === "GET").toBe(true);
+      expect(init.body).toBeUndefined();
+    }
+
+    // The same body renders the same screen, byte for byte, from a fresh mount.
+    cleanup();
+    vi.unstubAllGlobals();
+    stubCatalog({ rates: [RATE_SENIOR, RATE_FROM_VENDOR] });
+    render(<CatalogScreen />);
+    await rateRows();
+    expect((await screen.findByRole("table")).outerHTML).toBe(html);
+
+    // A body differing only in `vendor_id` renders differently, so the equality above is not the
+    // equality of a screen that ignores the field.
+    cleanup();
+    vi.unstubAllGlobals();
+    stubCatalog({ rates: [RATE_SENIOR, { ...RATE_FROM_VENDOR, vendor_id: VENDORS[1].id }] });
+    render(<CatalogScreen />);
+    const changed = await rateRows();
+    expect(textOf(changed[1], VENDOR_CELL)).toBe("Northwind GmbH");
+    expect((await screen.findByRole("table")).outerHTML).not.toBe(html);
+
+    // And the vendor dictionary is read whatever the rates turn out to be — including when not one
+    // of them names a vendor, and when there are no rates at all. A read conditioned on any state
+    // of this client would be the screen deciding whether vendors are worth asking about.
+    for (const rates of [[RATE_SENIOR], []]) {
+      cleanup();
+      vi.unstubAllGlobals();
+      const mock = stubCatalog({ rates });
+      render(<CatalogScreen />);
+      await screen.findByRole("region", { name: "Vendors" });
+
+      expect(requestedPaths(mock)).toContain("/catalog/dimensions/vendors");
+      expect(requestedPaths(mock)).toHaveLength(6);
+    }
+  });
+
+  // --- SC-2-03, K-12 -----------------------------------------------------------------------------
+
+  it("names a page as a page, never as the whole catalogue, when the backend's total exceeds the rows it sent", async () => {
+    // Contrast, in one test: the same two rows, once as everything the catalogue holds and once as
+    // page one of more. The only thing that differs between the two stubs is `total` — never the
+    // rows — so any difference on screen is a difference the screen drew from `total` alone.
+    stubCatalog({ rates: [RATE_SENIOR, RATE_JUNIOR], total: 2 });
+
+    render(<CatalogScreen />);
+    await rateRows();
+
+    const completeLabel = screen.getByText("2 default rates");
+    expect(completeLabel).toBeVisible();
+    expect(completeLabel.className).not.toContain("catalog__count--truncated");
+    expect(screenText()).not.toMatch(/showing/i);
+
+    // Re-mounted from scratch with a `total` larger than `rates.length` — the mutation this test
+    // exists to kill is a screen that ignores `total` and always renders `rates.length` as if it
+    // were complete, which would print "2 default rates" here too, exactly as above.
+    cleanup();
+    vi.unstubAllGlobals();
+    stubCatalog({ rates: [RATE_SENIOR, RATE_JUNIOR], total: 2347 });
+    render(<CatalogScreen />);
+    await rateRows();
+
+    // Not the complete-catalogue literal, with or without the true count spliced in — either would
+    // claim the two rows on screen are all there is, or claim 2347 rows are on screen when there
+    // are two.
+    expect(screen.queryByText("2 default rates")).not.toBeInTheDocument();
+    expect(screen.queryByText("2347 default rates")).not.toBeInTheDocument();
+
+    // A named, distinct sentence that states both numbers — what was shown and how large the
+    // catalogue actually is — read off the screen first, then held against the complete-catalogue
+    // wording so neither is a fragment of the other.
+    const truncatedLabel = screen.getByText("Showing first 2 of 2347 default rates");
+    expect(truncatedLabel).toBeVisible();
+    expect(truncatedLabel.className).toContain("catalog__count--truncated");
+    expect(truncatedLabel.textContent).not.toBe(completeLabel.textContent);
+    expect(truncatedLabel.textContent).not.toContain(completeLabel.textContent);
+
+    // The table itself is unaffected: this criterion is about naming the count, not about hiding or
+    // adding rows, and it builds no pagination control of its own (no "load more", no page number).
+    const rows = await rateRows();
+    expect(rows).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /load more|next page/i })).not.toBeInTheDocument();
+  });
+
+  // --- Reviewer R-03 -----------------------------------------------------------------------------
+
+  it("tells a page that carried no rows apart from a catalogue that holds none, instead of calling both an empty catalogue", async () => {
+    // Contrast, in one test, and the only thing that differs between the two stubs is `total` —
+    // the rate list is empty in both. `{rates: [], total: N>0}` is a `200` the backend sends for an
+    // `offset` past the end of a non-empty result set (K-11: `offset` and `on_date` are parameters
+    // of `GET /catalog/rates`), and it is the error that renders correctly — nothing throws, the
+    // screen reads as a calm answer, and it tells a project manager the organisation has no price
+    // list at all.
+    stubCatalog({ rates: [], total: 0 });
+    render(<CatalogScreen />);
+
+    const emptyCatalogue = await within(
+      await screen.findByRole("region", { name: "Default rates" }),
+    ).findByRole("status");
+    const emptyCatalogueText = emptyCatalogue.textContent ?? "";
+    expect(emptyCatalogue).toBeVisible();
+    expect(emptyCatalogueText).toBe("The catalogue holds no default rates.");
+    // A statement about the catalogue, carrying no count: nothing here for the page-level case to
+    // be mistaken for.
+    expect(emptyCatalogueText).not.toMatch(/\d|showing/i);
+
+    // Re-mounted from scratch, same empty list, a `total` that contradicts it.
+    cleanup();
+    vi.unstubAllGlobals();
+    stubCatalog({ rates: [], total: 2347 });
+    render(<CatalogScreen />);
+
+    const ratesPanel = within(await screen.findByRole("region", { name: "Default rates" }));
+    // The mutation this kills: an empty branch that ignores `total` and states the catalogue is
+    // empty whenever the page is — which renders exactly the sentence above, here.
+    expect(screen.queryByText("The catalogue holds no default rates.")).toBeNull();
+
+    // Something is still said — a screen that fell silent on this branch would leave the reader
+    // with a heading, a dead button and nothing else.
+    const emptyPage = await ratesPanel.findByRole("status");
+    const emptyPageText = emptyPage.textContent ?? "";
+    expect(emptyPage).toBeVisible();
+    // Read off the screen, then held against the catalogue-level sentence: two different facts,
+    // two different sentences, and neither one a fragment of the other.
+    expect(emptyPageText).not.toBe(emptyCatalogueText);
+    expect(emptyPageText).not.toContain(emptyCatalogueText);
+    expect(emptyCatalogueText).not.toContain(emptyPageText);
+    // In words, and it states how large the catalogue actually is — the same two facts
+    // `truncatedRateCountLabel` states for a page that did carry rows (K-12).
+    expect(emptyPageText).toMatch(/[A-Za-z]/);
+    expect(emptyPageText).toContain("2347");
+    // Not the complete-count literal with a zero in it either: "0 default rates" would say the
+    // catalogue holds none, in the wording reserved for a count that is complete (K-07).
+    expect(ratesPanel.queryByText("0 default rates")).toBeNull();
+    expect(ratesPanel.queryByText("2347 default rates")).toBeNull();
+    // Set apart by more than the wording, the way the truncated count is (NF-08).
+    expect(emptyPage.className).not.toBe(emptyCatalogue.className);
+
+    // No table and no pager: this branch names the state, it does not invent a control this screen
+    // does not have (K-12).
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryAllByRole("row")).toHaveLength(0);
+    expect(
+      screen.queryByRole("button", { name: /load more|next page|previous page/i }),
+    ).not.toBeInTheDocument();
+
+    // The five dictionaries were read and are still shown, exactly as on the truly empty catalogue
+    // (K-07): an empty page of rates says nothing about them.
+    for (const dimension of CATALOG_DIMENSIONS) {
+      expect(screen.getByRole("region", { name: DIMENSION_LABELS[dimension].section })).toBeVisible();
+    }
   });
 
   // --- K-05 ------------------------------------------------------------------------------------
@@ -524,7 +829,7 @@ describe("CatalogScreen", () => {
     render(<CatalogScreen />);
     await rateRows();
 
-    // Four sections from four responses, each one named.
+    // Five sections from five responses, each one named.
     for (const dimension of CATALOG_DIMENSIONS) {
       expect(
         screen.getByRole("region", { name: DIMENSION_LABELS[dimension].section }),
@@ -584,7 +889,7 @@ describe("CatalogScreen", () => {
     expect(screen.queryAllByRole("row")).toHaveLength(0);
     expect(screen.queryByText(/default rates$/)).toBeNull();
     // The dictionaries were still read and are still shown: an empty rate list says nothing about
-    // them, and the four sections are the only statement that the dimensions exist.
+    // them, and the five sections are the only statement that the dimensions exist.
     for (const dimension of CATALOG_DIMENSIONS) {
       expect(screen.getByRole("region", { name: DIMENSION_LABELS[dimension].section })).toBeVisible();
     }
@@ -633,7 +938,7 @@ describe("CatalogScreen", () => {
   });
 
   it("states the failure of a single catalogue read without presenting the rest as complete", async () => {
-    // Five requests are five chances to fail, and four of them are dictionaries. A screen that
+    // Six requests are six chances to fail, and five of them are dictionaries. A screen that
     // rendered the rates it did get, with one column of unnamed ids, would look like data
     // (gate-1 decision 9).
     for (const failingPath of CATALOG_PATHS) {
@@ -687,7 +992,7 @@ describe("CatalogScreen", () => {
     expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
 
     fireEvent.click(control);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it("sends the placeholder caller identity header with every catalogue read", async () => {
@@ -703,7 +1008,7 @@ describe("CatalogScreen", () => {
 
   // --- Reviewer R-01 -----------------------------------------------------------------------------
 
-  it("aborts all five reads when the screen unmounts before they settle, instead of letting them run to completion", async () => {
+  it("aborts all six reads when the screen unmounts before they settle, instead of letting them run to completion", async () => {
     // A `fetch` that only ever resolves once its own signal aborts — the shape a hung or slow read
     // has in the running application, and the one case that shows whether the abort actually
     // reaches the network layer rather than only the component's own `cancelled` flag.
@@ -719,15 +1024,15 @@ describe("CatalogScreen", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { unmount } = render(<CatalogScreen />);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
     const signals = recordedCalls(fetchMock).map(([, init]) => init.signal as AbortSignal);
     expect(signals.every((signal) => signal.aborted)).toBe(false);
 
     unmount();
 
-    // Every one of the five reads carried a signal, and every one of them is now aborted — a
-    // screen bounced away from cannot leave any of its five requests still occupying a socket.
-    expect(signals).toHaveLength(5);
+    // Every one of the six reads carried a signal, and every one of them is now aborted — a
+    // screen bounced away from cannot leave any of its six requests still occupying a socket.
+    expect(signals).toHaveLength(6);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
 
@@ -763,11 +1068,11 @@ describe("CatalogScreen", () => {
 
   // --- Reviewer R-06 -----------------------------------------------------------------------------
 
-  it("aborts the other four reads as soon as one of the five rejects, without waiting for the screen to unmount", async () => {
-    // The rates read fails fast (a real 500, not an abort); the other four hang until their own
+  it("aborts the other five reads as soon as one of the six rejects, without waiting for the screen to unmount", async () => {
+    // The rates read fails fast (a real 500, not an abort); the other five hang until their own
     // signal aborts — the same shape as the R-01 fixture above, but nothing here ever unmounts the
     // screen. If the fix regresses to "only the cleanup aborts", this test hangs instead of failing
-    // false-green, because nothing else would ever settle these four promises.
+    // false-green, because nothing else would ever settle these five promises.
     const pendingSignals: AbortSignal[] = [];
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const path = pathOf(url);
@@ -795,9 +1100,9 @@ describe("CatalogScreen", () => {
     expect(screen.queryByText("You do not have permission to view the catalogue.")).toBeNull();
 
     // The screen is still mounted — nothing here ever called `unmount` — and yet every one of the
-    // four dictionary reads has its signal aborted, because the rejection of the fifth stopped them
+    // five dictionary reads has its signal aborted, because the rejection of the sixth stopped them
     // on its own (Reviewer R-06).
-    expect(pendingSignals).toHaveLength(4);
+    expect(pendingSignals).toHaveLength(5);
     expect(pendingSignals.every((signal) => signal.aborted)).toBe(true);
   });
 
@@ -829,6 +1134,22 @@ describe("CatalogScreen", () => {
 
     expect(await screen.findByText("The catalogue could not be loaded.")).toBeVisible();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("renders a stated failure when a rate row does not say whose rate it is, rather than calling it internal", async () => {
+    // SC-2-03. `vendor_id` is always in the body; `null` is the statement "ours". A row that simply
+    // does not mention a vendor — an older backend, a proxy dropping fields — is a payload this
+    // client cannot read. Treating the absent key as `null` would put a subcontractor's price on
+    // screen labelled as the organisation's own, with nothing thrown and nothing to notice.
+    const malformed = { ...RATE_SENIOR } as Record<string, unknown>;
+    delete malformed.vendor_id;
+    stubCatalog({ rates: [malformed as unknown as CatalogRate] });
+
+    render(<CatalogScreen />);
+
+    expect(await screen.findByText("The catalogue could not be loaded.")).toBeVisible();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screenText()).not.toContain(INTERNAL_RATE);
   });
 
   it("renders a stated failure when a dictionary entry is missing its name", async () => {

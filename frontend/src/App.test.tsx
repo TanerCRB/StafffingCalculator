@@ -5,7 +5,7 @@ import { App } from "./App";
 
 /**
  * Answers every read the running application makes, by path — health, the project list and the
- * five catalogue reads. A single blanket `{ status: "ok" }` would make the screens fail their
+ * six catalogue reads. A single blanket `{ status: "ok" }` would make the screens fail their
  * contract checks and render failure states, which is not what a navigation test is about.
  */
 function stubRunningBackend() {
@@ -14,11 +14,12 @@ function stubRunningBackend() {
     const body: Record<string, unknown> = {
       "/health": { status: "ok" },
       "/projects": { projects: [] },
-      "/catalog/rates": { rates: [] },
+      "/catalog/rates": { rates: [], total: 0 },
       "/catalog/dimensions/roles": { entries: [] },
       "/catalog/dimensions/seniorities": { entries: [] },
       "/catalog/dimensions/locations": { entries: [] },
       "/catalog/dimensions/engagement-types": { entries: [] },
+      "/catalog/dimensions/vendors": { entries: [] },
     }[path] ?? {};
     return { ok: true, status: 200, json: async () => body };
   });

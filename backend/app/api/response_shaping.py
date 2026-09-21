@@ -242,6 +242,12 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
             seniority_id=rate.seniority_id,
             location_id=rate.location_id,
             engagement_type_id=rate.engagement_type_id,
+            # Passed through for every caller, on all three paths that carry a rate. The vendor is
+            # not a gated field: ADR-0005's addendum of 2026-09-21 (point 2) puts every vendor's
+            # price list inside `CATALOG_READ`, explicitly and as a business decision. What *is*
+            # gated is `default_cost_rate` below — identically for a vendor row and an internal one
+            # (point 3, criterion K-06).
+            vendor_id=rate.vendor_id,
             default_cost_rate=rate.default_cost_rate,
             default_selling_rate=rate.default_selling_rate,
             currency=rate.currency,
@@ -312,12 +318,19 @@ def shape_staffing_position_list(
 
 
 def shape_catalog_rate_list(
-    rates: Sequence[CatalogDefaultRate], caller: CallerIdentity
+    rates: Sequence[CatalogDefaultRate], caller: CallerIdentity, *, total: int
 ) -> CatalogRateList:
     """Shape a sequence of rate rows — every row through `shape_catalog_rate`, no exceptions.
 
     Not `[CatalogRate.model_validate(rate) for rate in rates]`: a list path that built payloads
     directly would be a second, ungated way out of the database, which is how the same field ends up
     removed on the detail path and present on the list one.
+
+    `total` is passed through, not derived from `rates` (K-11): `rates` is already the bounded page
+    `app.data.catalog.list_rates` returned, and `len()` on it would silently report "the whole
+    catalogue" for however many rows fit in one page — exactly the field this parameter exists so a
+    client never has to guess at.
     """
-    return CatalogRateList(rates=[shape_catalog_rate(rate, caller) for rate in rates])
+    return CatalogRateList(
+        rates=[shape_catalog_rate(rate, caller) for rate in rates], total=total
+    )

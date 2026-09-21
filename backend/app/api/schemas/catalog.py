@@ -94,6 +94,18 @@ class CatalogRate(BaseModel):
     location_id: uuid.UUID
     engagement_type_id: uuid.UUID
 
+    vendor_id: uuid.UUID | None = None
+    """The subcontractor this price belongs to, or `null` for the organisation's own rate
+    (SC-2-03).
+
+    `null` is a **named state**, not a missing value, and the two are spelled differently on
+    purpose: `default_cost_rate: null` means "removed for this caller", while `vendor_id: null`
+    means "internal" and is the same answer for every caller. A client renders it as a named state
+    ("Internal"), never as an empty cell shared with other absences (criterion K-09).
+
+    Not gated by anything: `CATALOG_READ` covers every vendor's price list, a business decision
+    taken explicitly at gate 1 and recorded in ADR-0005's addendum of 2026-09-21, point 2."""
+
     default_cost_rate: DecimalString | None = None
     """`None` means "removed for this caller", and it is the only reason it can be `None`: the
     column is `NOT NULL`. A caller without `PERSONNEL_COSTS_READ` receives the row with this field
@@ -112,6 +124,10 @@ class CatalogRate(BaseModel):
 
 class CatalogRateList(BaseModel):
     rates: list[CatalogRate]
+    total: int
+    """The count of every row matching the request's filter (`on_date`), without the page limit
+    applied — never `len(rates)`, which is only true while the catalogue fits in one page (K-11).
+    A client compares the two to know whether it is holding everything or page one of more."""
 
 
 class CatalogRateCreateRequest(BaseModel):
@@ -128,6 +144,12 @@ class CatalogRateCreateRequest(BaseModel):
     seniority_id: uuid.UUID
     location_id: uuid.UUID
     engagement_type_id: uuid.UUID
+
+    vendor_id: uuid.UUID | None = None
+    """Optional on the way in, and its absence means "internal" — the same reading as everywhere
+    else (SC-2-03). The reference itself is guaranteed by the database
+    (`fk_catalog_default_rates_vendor_id`), not by this schema: a vendor that does not exist is a
+    `409`, because a rate naming a vendor nobody created is a price belonging to nobody (K-07)."""
 
     default_cost_rate: RateAmount
     default_selling_rate: RateAmount

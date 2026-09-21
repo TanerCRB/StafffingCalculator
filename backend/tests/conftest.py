@@ -43,6 +43,7 @@ from app.models import (  # noqa: E402
     CatalogLocation,
     CatalogRole,
     CatalogSeniority,
+    CatalogVendor,
     Project,
     ProjectAccess,
     ProjectStatus,
@@ -75,7 +76,7 @@ def database_url() -> Iterator[str]:
     !!! THIS DATABASE GETS WIPED. Every test using the `committing_client` fixture ends by
     deleting **all** rows from `staffing_position_allocation`, `staffing_position`,
     `project_access`, `scenarios`, `projects`, `catalog_default_rates`
-    and the four catalogue dictionaries — unconditionally, with no check of what it is connected
+    and the five catalogue dictionaries — unconditionally, with no check of what it is connected
     to, and the migrations are run against it on top of that. Never point `TEST_DATABASE_URL` at a
     database holding data you want to keep: a development database with hand-made projects or a
     hand-built rate catalogue in it is emptied by a single `pytest` run, with no prompt and no
@@ -175,7 +176,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
     separate connection can be used to check.
 
     **Destructive teardown.** Afterwards every row of the two staffing tables, `project_access`,
-    `scenarios`, `projects`, `catalog_default_rates` and the four dictionaries is deleted on a
+    `scenarios`, `projects`, `catalog_default_rates` and the five dictionaries is deleted on a
     separate connection — all of them, not only the ones this test created, because a committed row
     is no longer distinguishable from pre-existing data by the time the fixture ends. Nothing else
     cleans up after these tests, and one leftover project breaks the `count_projects(...) == 0`
@@ -204,7 +205,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
-            # Rates first: the four dictionaries are referenced by foreign keys with no `ON DELETE`
+            # Rates first: the five dictionaries are referenced by foreign keys with no `ON DELETE`
             # action, so the database refuses to empty them while a rate still points at one. That
             # refusal is the intended behaviour (deleting a dimension entry in use is out of scope
             # for SC-2-01), which makes the order here part of the fixture, not a detail.
@@ -214,6 +215,10 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
                 CatalogSeniority,
                 CatalogLocation,
                 CatalogEngagementType,
+                # Vendors last for the same reason rates come before the dictionaries: a rate row
+                # may still reference a vendor, and `fk_catalog_default_rates_vendor_id` carries no
+                # `ON DELETE` action (SC-2-03).
+                CatalogVendor,
             ):
                 connection.execute(sa.delete(dimension))
 
@@ -385,12 +390,26 @@ def make_dimension_tuple(session: Session, *, suffix: str = "") -> DimensionTupl
     )
 
 
+def make_vendor(session: Session, *, name: str = "Contoso Sp. z o.o.") -> CatalogVendor:
+    """Insert one vendor dictionary entry directly — no endpoint, no request schema (SC-2-03).
+
+    A vendor is a company and nothing else on this table: an id and a name, exactly like the other
+    four dictionaries. Tests that need two vendors pass two names, because the normalised-name index
+    refuses a repeat.
+    """
+    vendor = CatalogVendor(id=uuid.uuid4(), name=name)
+    session.add(vendor)
+    session.flush()
+    return vendor
+
+
 def make_rate(
     session: Session,
     dimensions: DimensionTuple,
     *,
     effective_from: date,
     effective_to: date | None = None,
+    vendor_id: uuid.UUID | None = None,
     default_cost_rate: Decimal = Decimal("100.0000"),
     default_selling_rate: Decimal = Decimal("150.0000"),
     currency: str = "EUR",
@@ -404,6 +423,9 @@ def make_rate(
 
     Flushes rather than commits, so the row lives in the test's transaction; the tests that need a
     committed row (the two-connection race) commit for themselves.
+
+    `vendor_id` defaults to `None`, i.e. an internal rate — the same default the production write
+    path has, and the same meaning the column carries (SC-2-03).
     """
     rate = CatalogDefaultRate(
         id=uuid.uuid4(),
@@ -411,6 +433,7 @@ def make_rate(
         seniority_id=dimensions.seniority_id,
         location_id=dimensions.location_id,
         engagement_type_id=dimensions.engagement_type_id,
+        vendor_id=vendor_id,
         default_cost_rate=default_cost_rate,
         default_selling_rate=default_selling_rate,
         currency=currency,

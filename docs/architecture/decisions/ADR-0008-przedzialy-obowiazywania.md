@@ -1,6 +1,6 @@
 # ADR-0008 — Przedziały obowiązywania i ich egzekwowanie w bazie
 
-**Status:** Draft — pending approval
+**Status:** Accepted
 
 ## Kontekst
 
@@ -123,3 +123,53 @@ konsumenta, którego punkt 6 nie przewidział wprost: ekran, który zaokrągla p
    bramki 1 pkt 3) pokazuje kilka okien jednej krotki naraz; scalanie ich albo wybieranie
    "najnowszego" po stronie klienta byłoby drugim mechanizmem rozstrzygania, dokładnie tym, przed
    którym broni reguła 13. Rozstrzyganie należy do `GET /catalog/rates/effective`.
+
+### 2026-09-21 — poddostawca jako piąta kolumna klucza `EXCLUDE` (SC-2-03)
+
+Punkt 4 keyuje ograniczenie na "pełnej krotce wymiarów biznesowych + `valid_period WITH &&`", a
+"Konsekwencje" nazywają zmianę kształtu tego wzorca migracją dotykającą trzech tabel, nie jednej.
+SC-2-03 (Issue #46) jest pierwszą taką zmianą: poddostawca wchodzi do klucza jako piąta kolumna.
+
+Podstawą nie jest F-03 w jego pierwotnym brzmieniu. F-03 wymieniał rolę, senioritet, lokalizację,
+typ zaangażowania i stawki domyślne z przedziałami dat — poddostawcy nie znał; w wymaganiach padał
+on wyłącznie jako kategoria kosztu w F-08. Podstawą jest decyzja biznesowa z Issue #46;
+`Wymagania/Requirements_EN.md` dostał własny, datowany aneks przy F-03 tym samym zadaniem, żeby
+przyszły czytelnik nie odczytał tej kolumny jako realizacji pierwotnej litery F-03.
+
+1. **Poddostawca jest w kluczu, waluta nadal nie — i to nie jest niespójność.** Kryterium punktu 4
+   brzmi: krotka wymiarów ma w danym momencie co najwyżej jedną stawkę. Dla waluty to prawda
+   (przeliczenie idzie przez `exchange_rates`, nie przez równoległe wiersze). Dla poddostawcy jest
+   fałszem z definicji: ta sama rola, ten sam senioritet, ta sama lokalizacja i ten sam typ
+   zaangażowania mają jednocześnie stawkę wewnętrzną i stawkę poddostawcy A, i stawkę poddostawcy B.
+   Bez tej kolumny w kluczu ograniczenie odrzucałoby wiersze legalne.
+2. **Poddostawca jest osią własności stawki, nie wariantem lokalizacji.** Nie zastępuje
+   `location_id`: ten sam poddostawca ma różne stawki dla różnych lokalizacji, dokładnie jak stawka
+   wewnętrzna (rozstrzygnięcie człowieka, Issue #46).
+3. **Reprezentacja "stawki wewnętrznej":** `vendor_id UUID NULL` + klucz `EXCLUDE` po
+   `COALESCE(vendor_id, '00000000-0000-0000-0000-000000000000'::uuid)`. PostgreSQL zgłasza
+   naruszenie `EXCLUDE` tylko gdy każdy operator klucza zwróci `TRUE`, a `NULL = NULL` zwraca
+   `NULL` — naiwne dopisanie nullowalnej kolumny do klucza wyłączyłoby ochronę przed nakładaniem
+   dokładnie dla stawek wewnętrznych, tych, które dziś są chronione. Sentinel: nil UUID PostgreSQL
+   (`00000000-0000-0000-0000-000000000000`), zapisany jako **literał**, nie jako wywołanie
+   `uuid_nil()` — `uuid_nil()` zwróciłoby tę samą wartość, ale wymaga rozszerzenia `uuid-ossp`,
+   którego ta baza nie ma (jest tylko `btree_gist`); kod i migracja piszą literał. Z `CHECK` na
+   `catalog_vendors` zabraniającym wiersza o `id` równym temu literałowi — kolizja z realnym
+   poddostawcą wykluczona konstrukcyjnie, nie tylko nieprawdopodobieństwem `uuid4()`. Obowiązkowy
+   dowód: test wstawiający dwa nakładające się okna stawki wewnętrznej dla jednej krotki,
+   oczekujący odmowy (K-02, SC-2-03).
+4. **Przebudowa ograniczenia jest jedną migracją, nie parą expand/contract.** Współistnienie
+   starego, czterokolumnowego ograniczenia z nowym jest sprzeczne z celem zadania: stare odrzucałoby
+   stawkę poddostawcy nakładającą się w czasie ze stawką wewnętrzną na tej samej krotce — wiersz, o
+   który całe zadanie chodzi. Szczegóły i warunek wygaśnięcia tego odstępstwa — w ADR-0001, aneks z
+   tą samą datą.
+5. **Punkt 7 rośnie, nie zmienia się.** Klucz `EXCLUDE` zyskuje piątą kolumnę `uuid`, czyli kolejny
+   operator `=` wewnątrz indeksu gist — zależność od `btree_gist` jest po tym zadaniu większa, nadal
+   nieudowodniona dla roli aplikacyjnej na środowisku docelowym (open decision #5).
+6. **Czego ten aneks nie rozstrzyga.** Pominięcie poddostawcy przy odczycie (`GET
+   /catalog/rates/effective` bez `vendor_id`) **nie wolno** interpretować jako "dowolny" — musi
+   znaczyć "wewnętrzna" (K-03/K-04, SC-2-03). To byłby drugi mechanizm rozstrzygania obok okna dat,
+   dokładnie to, przed czym broni reguła 13 w swojej drugiej połowie.
+
+**Status decyzji podniesiony tym zadaniem z Draft do Accepted** (rozstrzygnięcie bramki 1, Issue
+#46) — mechanizm okien obowiązywania jest mutation-checked od SC-2-01, to drugie zadanie, które na
+nim stoi.

@@ -299,9 +299,15 @@ describe("colour contrast", () => {
       // in that cell, so if it is unreadable the cell is empty, and a screenshot shows a gap that
       // looks deliberate.
       { where: "rate count sentence on a panel card", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
+      // K-12: the same sentence's truncated-page state, on the same card.
+      { where: "truncated rate count sentence on a panel card", foreground: "--sc-color-attention-text", background: "--sc-color-surface" },
       { where: "effective period cell on a rate row", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
       { where: "withheld cost rate on a rate row", foreground: "--sc-color-attention-text", background: "--sc-color-surface" },
       { where: "dictionary entry chip", foreground: "--sc-color-text", background: "--sc-color-surface-muted" },
+      // SC-2-03. Same reasoning as the withheld cost one line up: "Internal" is the whole content
+      // of the vendor cell on every internal rate, so an unreadable colour empties the cell — and
+      // an empty vendor cell is exactly the reading K-09 forbids.
+      { where: "internal rate in the vendor cell of a rate row", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
       { where: "catalogue failure message", foreground: "--sc-color-attention-text", background: "--sc-color-attention-bg" },
     ];
 
@@ -337,8 +343,12 @@ describe("colour contrast", () => {
       // Both of those set `--sc-color-surface`, and both set it together with their own colour, so
       // the pairing test above is what keeps them honest.
       ".catalog__count": "--sc-color-surface",
+      // K-12: the truncated-page state of the same sentence, on the same `.card` surface.
+      ".catalog__count--truncated": "--sc-color-surface",
       ".catalog__cell-period": "--sc-color-surface",
       ".catalog__restricted": "--sc-color-surface",
+      // SC-2-03: the vendor cell of an internal rate, also on `.catalog__row > td`.
+      ".catalog__internal": "--sc-color-surface",
     };
 
     const colourOnly = rules.filter(
@@ -372,6 +382,16 @@ describe("colour contrast", () => {
     expect(
       rules.find((rule) => rule.selector === ".catalog__restricted")?.declarations.get("color"),
     ).toBe("var(--sc-color-attention-text)");
+
+    // SC-2-03: the internal-rate state is not painted in the colour this screen spends on a
+    // withheld value. Both are "not a number/name", and a reader who has learned that the amber
+    // word means "you may not see this" must not meet the same amber word on a row where nothing
+    // is being withheld at all.
+    const internal = rules
+      .find((rule) => rule.selector === ".catalog__internal")
+      ?.declarations.get("color");
+    expect(internal).toBe("var(--sc-color-text-muted)");
+    expect(internal).not.toBe("var(--sc-color-attention-text)");
   });
 });
 

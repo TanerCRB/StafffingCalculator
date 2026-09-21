@@ -314,3 +314,55 @@ tabelą. To wpis, którego tamto zdanie wymaga.
    reprezentację pozycji jest w praktyce uprawnieniem odczytu tej pozycji — ta sama luka co dla
    `PROJECT_EDIT`/`COPY`/`ARCHIVE`, na nowej tabeli. Warunek zamknięcia bez zmian (ADR
    uwierzytelniania rozstrzyga (a) albo (b)); dziś utajona, bo placeholder daje wszystko naraz.
+
+### 2026-09-21 — stawki poddostawców w katalogu bez zasięgu; bramka kosztowa obejmuje cenę kontrahenta (SC-2-03)
+
+Aneks z 2026-09-19 (SC-2-01) pkt 1 kończy się zdaniem: "Pierwsza tabela, której wiersz da się
+przypisać do projektu, jednostki biznesowej albo najemcy, przestaje być objęta tym punktem i wymaga
+własnego wpisu tutaj." Wiersz stawki z kolumną poddostawcy da się przypisać do podmiotu
+gospodarczego — nie do projektu i nie do wołającego, ale wystarczająco blisko, by wymagać wpisu
+zamiast interpretacji.
+
+1. **Zasięg: bez zmian.** Wiersz stawki poddostawcy nadal nie należy do żadnego projektu i żaden
+   endpoint nie zawęża go po tożsamości wołającego. Poddostawca jest kontrahentem, nie podmiotem, w
+   imieniu którego działa wołający (ADR-0001, aneks z tą samą datą, pkt 1). Kryterium "wołający z
+   zerowym `project_access` widzi ten sam katalog co każdy inny" (SC-2-01, K-01) obowiązuje bez
+   zmian i obejmuje wiersze poddostawców.
+2. **Uprawnienia: bez zmian — decyzja biznesowa rozstrzygnięta wprost na bramce 1 (Issue #46,
+   2026-09-21).** `CATALOG_READ`/`CATALOG_WRITE` obejmują też słownik poddostawców i stawki
+   poddostawców. **Konsekwencja przyjęta świadomie, nie odkryta później:** każdy, kto planuje
+   staffing, widzi cennik każdego poddostawcy — w wielu organizacjach dane objęte umową o
+   poufności, chronione ostrzej niż wewnętrzna stawka kosztowa.
+3. **Bramka stawki kosztowej obejmuje stawkę kosztową poddostawcy — i jest wobec niej ochroną
+   nadpłaconą, nazwaną jako taka.** `CATALOG_PERSONNEL_COST_FIELDS` zostaje jednoelementowy;
+   `default_cost_rate` wiersza z poddostawcą jest wybielany na tych samych zasadach co wewnętrzny.
+   **To nie jest twierdzenie, że cena płacona firmie jest indywidualnym kosztem osobowym w
+   rozumieniu NF-11/AC-06 — nie jest.** Jest to decyzja, żeby nie wprowadzać drugiej bramki na
+   jednym polu i nie zmuszać warstwy kształtowania do klasyfikowania wiersza ("czy ten wiersz ma
+   poddostawcę"). Cena tej decyzji jest nazewnicza i realna: uprawnienie o nazwie mówiącej "koszty
+   osobowe" bramkuje od teraz także cenę kontrahenta — ta sama rozbieżność nazwy i mechanizmu, którą
+   punkt 2 aneksu z 2026-09-19 odrzucił, odmawiając rozciągnięcia `PROJECT_READ` na katalog.
+   Pierwsze zadanie, w którym ta rozbieżność zacznie przeszkadzać, rozdziela te dwie bramki i
+   wymaga własnego, datowanego wpisu tutaj.
+4. **Widoczność per poddostawca — jawnie poza zakresem, nie przemilczana.** Model "stawka
+   poddostawcy X widoczna tylko dla ról projektu współpracujących z X" nie jest przez to zadanie
+   wprowadzany. Dwa powody: (a) wymagałby tabeli dostępu dla podmiotu, który nie jest projektem —
+   pierwszego predykatu per wołający na tabeli katalogu, wygaszającego zarówno wyjątek "dane
+   organizacyjne bez zasięgu" (pkt 1 aneksu z 2026-09-19), jak i zwolnienie z funkcji-strażnika
+   (ADR-0001, aneks 2026-09-19 pkt 2); (b) nie istnieje dziś dana, na której mógłby się oprzeć —
+   żadna kolumna nie wiąże projektu z poddostawcą — ani tożsamość, na której dałoby się go dowieść.
+   **Warunek otwarcia:** wymaga ADR uwierzytelniania oraz własnego, datowanego wpisu tutaj i w
+   ADR-0001; nie wolno go wprowadzić jako skutek uboczny zadania o cennikach.
+5. **Kształt odmowy bez zmian.** Wiersz stawki poddostawcy bez widocznej stawki kosztowej wraca jako
+   `200` z pustym polem kosztowym, nie jako `403` i nie jako brak wiersza (pkt 5 aneksu z
+   2026-09-19).
+6. **Dane deweloperskie/testowe: wyłącznie syntetyczne cenniki poddostawców, nie realne.**
+   Rozstrzygnięte na bramce 2 (audyt bezpieczeństwa, 2026-09-21): dopóki nie istnieje ADR
+   uwierzytelniania (pkt 4 wyżej), placeholder identity daje `CATALOG_READ` każdemu wołającemu w
+   środowisku `development`/`test` (ADR-0001, aneks 2026-09-19 pkt 6; `deps.py`,
+   `assert_identity_mechanism_allowed`). Realny cennik poddostawcy objęty umową o poufności,
+   załadowany do takiej bazy, jest czytelny dla każdego, kto dotrze do portu — nie tylko dla osób
+   planujących staffing. Żadna baza deweloperska ani testowa (w tym kontenery efemeryczne) nie
+   ładuje realnych stawek poddostawców; wyłącznie dane syntetyczne. **Warunek zamknięcia:** ADR
+   uwierzytelniania zamyka placeholder identity — od tego momentu decyzja wymaga ponownego
+   rozpatrzenia, nie wygasa automatycznie.

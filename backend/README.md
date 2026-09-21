@@ -38,6 +38,18 @@ alembic revision --autogenerate -m "<what changes>"
 Migrations are expand → deploy → contract: a destructive step never ships in the same migration
 as the code that needs the new shape. Schema changes live only in migration files.
 
+**Jedno nazwane odstępstwo, z datą i warunkiem wygaśnięcia.** Migracja `c1a4f7b92e05` (stawki
+poddostawców, SC-2-03) **przebudowuje** ograniczenie `EXCLUDE` na `catalog_default_rates` — `DROP`
+i `CREATE` w jednej migracji, nie w parze expand/contract. Powód nie jest kosztowy, tylko
+faktograficzny: stare, czterokolumnowe ograniczenie odrzuca dokładnie te wiersze, o które chodzi w
+zadaniu, więc współistnienie obu kształtów znaczyłoby "funkcja wyłączona", a nie "wdrożenie
+etapowe". Podstawą przyjęcia jest brak jakiegokolwiek wdrożonego środowiska (open decision #5) —
+jedyne bazy to efemeryczne kontenery testowe i lokalne bazy deweloperskie. **Odstępstwo wygasa z
+chwilą wyboru i uruchomienia pierwszego środowiska trwałego** (ADR-0001, aneks 2026-09-21 pkt 3;
+ADR-0008, aneks 2026-09-21 pkt 4). Sama kolumna `vendor_id` jest wstecznie zgodna: nullable, bez
+`server_default`, więc `INSERT` z kodu sprzed migracji nadal działa i nadal znaczy "stawka
+wewnętrzna".
+
 ### Wymagane uprawnienie bazy: `CREATE EXTENSION btree_gist`
 
 Migracja `7b3d5c81e40a` (katalog wymiarów roli i stawek, SC-2-01) wykonuje
@@ -96,6 +108,11 @@ The catalogue (`app.data.catalog`) deliberately has **no** such guard function: 
 no project, so there is no scope predicate that could be forgotten, and a wrapper named
 symmetrically to `project_reads` would imply a filter that is not there (ADR-0001 addendum
 2026-09-19, ADR-0005 addendum 2026-09-19). The exception ends at the first catalogue column tying a
-row to a project, a business unit or a tenant. What does **not** move out of the shaping layer is
-the personnel-cost gate: `app.api.response_shaping.shape_catalog_rate` removes
-`default_cost_rate` for a caller without `PERSONNEL_COSTS_READ`.
+row to a project, a business unit or a tenant. `catalog_default_rates.vendor_id` (SC-2-03) is not
+that column: a subcontractor is the *counterparty* of a rate, not a subject the caller acts on
+behalf of, and no read narrows rates by the caller's relation to a vendor — decided explicitly in
+ADR-0001's and ADR-0005's addenda of 2026-09-21, together with the business consequence that
+everyone holding `CATALOG_READ` sees every subcontractor's price list. What does **not** move out
+of the shaping layer is the personnel-cost gate: `app.api.response_shaping.shape_catalog_rate`
+removes `default_cost_rate` for a caller without `PERSONNEL_COSTS_READ` — for a vendor row exactly
+as for an internal one.

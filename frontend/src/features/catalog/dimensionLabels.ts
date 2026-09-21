@@ -25,15 +25,21 @@ export const DIMENSION_LABELS: Readonly<Record<CatalogDimension, DimensionLabels
     column: "Engagement type",
     inSentence: "engagement types",
   },
+  vendors: { section: "Vendors", column: "Vendor", inSentence: "vendors" },
 };
 
 /**
  * What a rate row says when the id it carries is in no entry of the dictionary that was read.
  *
- * This is reachable without any read failing: the five reads are five requests, not one
+ * This is reachable without any read failing: the six reads are six requests, not one
  * transaction, so an entry can be renamed or removed between them (SC-2-02, gate-1 decision 8). The
  * answer is a named absence — never a blank cell, and never a row quietly dropped from the table,
  * which would make the rate itself disappear.
+ *
+ * On the `vendors` dimension this is **not** the same statement as a rate with no vendor at all:
+ * "the id on this row matched no vendor" is a gap between two reads, while `vendor_id: null` is the
+ * named state "internal" (`INTERNAL_RATE` in CatalogScreen.tsx). Two different facts, two different
+ * words — never the one placeholder that would make them read alike (SC-2-03, K-09).
  */
 export function unknownEntryLabel(dimension: CatalogDimension): string {
   return `Not in the ${DIMENSION_LABELS[dimension].inSentence} dictionary`;

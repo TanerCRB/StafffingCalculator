@@ -1,4 +1,4 @@
-"""Reading and writing the organisational catalogue (F-03, SC-2-01).
+"""Reading and writing the organisational catalogue (F-03, SC-2-01, SC-2-03).
 
 **Why this module is not `catalog_reads.py` + `catalog_writes.py`, and has no guard function.**
 ADR-0001's addendum of 2026-09-19 decides it explicitly: `project_reads.accessible_projects` exists
@@ -21,7 +21,14 @@ What this module therefore does **not** do:
 The expiry condition of the exception is structural, not a judgement call: the first per-caller
 predicate on any of these tables (a catalogue per business unit, multi-tenancy, admin-only rows)
 brings back the risk `project_reads` defends against, and then needs a guard function of its own
-plus its own dated entry in ADR-0001."""
+plus its own dated entry in ADR-0001.
+
+**SC-2-03 added a vendor column and did not open that door** (ADR-0001/ADR-0005, addenda
+2026-09-21). `vendor_id` names a counterparty, not a subject the caller acts for, and no function
+here filters by it on the caller's behalf: the only place it appears in a `WHERE` clause is
+`vendor_is`, where it comes from the request as a question, not from the identity as a scope. A
+narrowing of "which vendors' price lists this caller may see" would be the first per-caller
+predicate on this table and expires both exceptions."""
 
 import uuid
 from collections.abc import Sequence
@@ -30,7 +37,7 @@ from decimal import Decimal
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.models.catalog import (
@@ -39,22 +46,35 @@ from app.models.catalog import (
     CatalogLocation,
     CatalogRole,
     CatalogSeniority,
+    CatalogVendor,
 )
 
-DimensionModel = type[CatalogRole | CatalogSeniority | CatalogLocation | CatalogEngagementType]
+DimensionRow = (
+    CatalogRole | CatalogSeniority | CatalogLocation | CatalogEngagementType | CatalogVendor
+)
+"""One row of any of the five dictionaries. Named `…Row` rather than `…Entry` so it cannot be
+confused with `app.api.schemas.catalog.DimensionEntry`, which is the payload, not the row."""
+
+DimensionModel = type[DimensionRow]
 
 DIMENSION_MODELS: dict[str, DimensionModel] = {
     "roles": CatalogRole,
     "seniorities": CatalogSeniority,
     "locations": CatalogLocation,
     "engagement-types": CatalogEngagementType,
+    "vendors": CatalogVendor,
 }
-"""The four dictionaries, keyed by the path segment that addresses them.
+"""The five dictionaries, keyed by the path segment that addresses them.
 
-As data rather than as four pairs of endpoints: the permission dependency is then declared once per
-verb instead of eight times, so a dictionary cannot be the one that was added without a guard. The
-four *kinds* being code here is not a breach of NF-10 — they are four columns of the rate table. The
-*values* (which roles exist) are rows, and nothing in this codebase enumerates them.
+As data rather than as five pairs of endpoints: the permission dependency is then declared once per
+verb instead of ten times, so a dictionary cannot be the one that was added without a guard. The
+five *kinds* being code here is not a breach of NF-10 — they are five columns of the rate table. The
+*values* (which roles or vendors exist) are rows, and nothing in this codebase enumerates them.
+
+`"vendors"` is an entry in this mapping and nothing else (SC-2-03, gate-1 decision 2): no endpoint
+of its own, no permission of its own, no branch anywhere that asks whether a dictionary is the
+vendor one. That is the whole content of criterion K-05, and the mutation it names is deleting this
+line.
 """
 
 
@@ -96,9 +116,7 @@ def _failure(error: SQLAlchemyError, *, subject: str) -> WriteFailed:
     )
 
 
-def list_dimension_entries(
-    session: Session, model: DimensionModel
-) -> Sequence[CatalogRole | CatalogSeniority | CatalogLocation | CatalogEngagementType]:
+def list_dimension_entries(session: Session, model: DimensionModel) -> Sequence[DimensionRow]:
     """Every row of one dimension dictionary, ordered by name.
 
     Every row, for every caller: there is no `WHERE` clause narrowing this by identity, and that is
@@ -110,7 +128,7 @@ def list_dimension_entries(
 
 def create_dimension_entry(
     session: Session, model: DimensionModel, *, name: str
-) -> CatalogRole | CatalogSeniority | CatalogLocation | CatalogEngagementType:
+) -> DimensionRow:
     """Insert one dimension entry and commit it.
 
     The commit is here rather than in the endpoint, as in
@@ -147,23 +165,196 @@ def covering(on_date: date) -> sa.ColumnElement[bool]:
     return CatalogDefaultRate.valid_period.bool_op("@>")(sa.cast(on_date, sa.Date))
 
 
+DEFAULT_RATE_LIST_LIMIT = 2000
+"""The page size `GET /catalog/rates` uses when the caller names none (K-11).
+
+Measured, not guessed (reviewer, R-02): five subcontractors' catalogues answered the unbounded
+query in 9.4s and 125MB, against the client's 12s budget — with no `LIMIT` at all, that number
+grows with the catalogue and eventually the endpoint answers nothing at all. 2000 rows is well
+inside a single response the client already renders comfortably, and a caller that genuinely needs
+more pages by asking for them, deliberately, rather than by the catalogue quietly growing past a
+budget nobody set."""
+
+MAX_RATE_LIST_LIMIT = 5000
+"""The ceiling `limit` may name — above it the API refuses with a `422`, not a silent clamp to this
+value (K-11): a clamp would make `?limit=50000` behave like a lie the server tells back, answering
+5000 rows to a caller who asked for 50000 and has no way to tell the difference from "there are
+only 5000")."""
+
+MAX_RATE_LIST_OFFSET = 1_000_000
+"""The ceiling `offset` may name — refused with a `422` above it, exactly as `limit` is (R-02,
+gate-2 review 2026-09-21).
+
+Two separate things made this necessary, and only the first was reported:
+
+1. **A large enough value was a `500`.** `offset` had a floor (`ge=0`) and no ceiling, so anything
+   Python accepts as an `int` reached `OFFSET :n`. Past PostgreSQL's `bigint` the driver refuses the
+   parameter, and this application installs no exception handler — so a query string a client can
+   type by accident surfaced as an unhandled server error instead of a `422` naming the field.
+2. **An unbounded `offset` reopens R-01.** The page query is a bounded top-N now, but what it is
+   bounded *by* is `limit + offset`: `OFFSET n` still walks and discards `n` rows through the index
+   before the first row of the page is emitted. A ceiling on `limit` alone would leave the server
+   side unbounded through the other parameter, which is the finding this pair of changes exists to
+   close.
+
+A million rows is past any catalogue this system plans for (`DEFAULT_RATE_LIST_LIMIT` documents the
+measured one at five subcontractors), so the refusal falls only on a caller that is paging past the
+end of everything — and it is a **refusal, not a clamp**, for the reason `MAX_RATE_LIST_LIMIT`
+gives: silently answering a different page from the one asked for is a lie the caller cannot detect.
+A client that genuinely needs to walk deeper than this needs keyset paging (a `WHERE
+(effective_from, id) < (…)` cursor), which is a different API and a decision nobody has taken."""
+
+
+def _rate_filters(on_date: date | None) -> tuple[sa.ColumnElement[bool], ...]:
+    """The `WHERE` of both halves of a rate listing — spelled once so they cannot disagree.
+
+    The page and `total` answer the same question about different numbers of rows, so a filter
+    applied to one and not the other makes the response describe a set that does not exist.
+    Dropping `where(*filters)` from the count alone left the whole suite green once already
+    (QA, 2026-09-21) — this is the shape that makes the same edit impossible to write."""
+    return (covering(on_date),) if on_date is not None else ()
+
+
+def rate_page_statement(
+    *, on_date: date | None, limit: int, offset: int
+) -> sa.Select[tuple[CatalogDefaultRate, int]]:
+    """The **one** statement `list_rates` runs: one page of rates, plus the total, in one snapshot.
+
+    Public rather than private because its *plan* is a claim this module makes
+    (`test_r_01_a_page_is_read_as_a_bounded_top_n_not_a_sort_of_the_whole_catalogue`): a test that
+    re-built the statement for itself would be asking the planner about a query nobody runs.
+
+    Two properties that pull in opposite directions, both kept:
+
+    - **One statement** (R-04). `total` is a scalar subquery in the target list, not a second
+      `SELECT`: it is evaluated inside the same statement and therefore the same snapshot as the
+      page, so no concurrent write can land between the two and make the response describe a table
+      that never existed at any instant (a `total` below the page's own length, or one counting a
+      row the page could not see).
+    - **A bounded page** (R-01, gate-2 review 2026-09-21). The page is a subquery carrying its own
+      `ORDER BY … LIMIT … OFFSET`, so with `ix_catalog_default_rates_effective_from_id` in place the
+      planner answers it with an index scan that stops after `limit + offset` rows.
+      `count(*) OVER ()` — what this replaced — could not: a window function with no partition has
+      to consume every filtered row before it can emit the first one, so the `LIMIT` above it cut
+      the *response* while the server still sorted the whole catalogue underneath. That is the
+      single reason for the subquery shape here; read as a stylistic rewrite, it invites being
+      folded back into the shorter window-function spelling that was the defect.
+
+    **The two are not in tension, and the resolution is worth naming**: what has to be bounded is
+    the *page*, and `total` is a count of the filtered set, which is linear in that set whichever
+    statement produces it and whichever index exists. So the count stays deliberately linear,
+    inside the page's snapshot, and the work that scales with the catalogue is one `count(*)` the
+    planner can answer from an index-only scan rather than a full sort plus a materialised window.
+    The outer `ORDER BY` repeats the page's own: a subquery's order is not guaranteed to survive
+    into the enclosing query by SQL's rules, and it is free here (the planner sees the input already
+    sorted), unlike the sort this change exists to remove.
+    """
+    filters = _rate_filters(on_date)
+    page = (
+        sa.select(CatalogDefaultRate)
+        .where(*filters)
+        .order_by(CatalogDefaultRate.effective_from.desc(), CatalogDefaultRate.id.desc())
+        .limit(limit)
+        .offset(offset)
+        .subquery()
+    )
+    paged_rate = aliased(CatalogDefaultRate, page)
+    total = (
+        sa.select(sa.func.count()).select_from(CatalogDefaultRate).where(*filters).scalar_subquery()
+    )
+    return sa.select(paged_rate, total.label("total")).order_by(
+        paged_rate.effective_from.desc(), paged_rate.id.desc()
+    )
+
+
+def rate_total_statement(*, on_date: date | None) -> sa.Select[tuple[int]]:
+    """`count(*)` over the same filtered set — the fallback for the one case the page cannot carry.
+
+    Used only when the page comes back empty: the total travels *on* the page rows, so an empty page
+    has nothing to carry it (see `list_rates`). Shares `_rate_filters` with the page, which is what
+    keeps "the count of what the filter matched" one definition rather than two."""
+    return sa.select(sa.func.count()).select_from(CatalogDefaultRate).where(*_rate_filters(on_date))
+
+
 def list_rates(
     session: Session,
     *,
     on_date: date | None = None,
-) -> Sequence[CatalogDefaultRate]:
-    """Every rate row, or only those whose window covers `on_date`.
+    limit: int = DEFAULT_RATE_LIST_LIMIT,
+    offset: int = 0,
+) -> tuple[Sequence[CatalogDefaultRate], int]:
+    """One page of rate rows, or only those whose window covers `on_date`, and the total count.
 
     No caller predicate here either (K-01). `on_date` is an *optional filter* on a list; resolving
     one rate for one tuple is `resolve_rate` below, and the two share `covering` so that "which rate
     applies on day D" has one answer whichever entry point asks.
+
+    **K-11.** Returns `(page, total)`: `page` is at most `limit` rows, `total` is every row
+    matching `on_date` (or the whole table, with none) counted without a limit — so a caller can
+    tell "this is everything" from "this is page one of more" without a second request.
+
+    Ordered by `(effective_from, id)`, both **descending**, both always present (R-02, reviewer
+    2026-09-21). Newest window first: with a realistic catalogue carrying several windows per
+    dimension tuple (`docs/PLAN.md`), an ascending default page put the entire oldest, expired
+    window first and nothing in the frontend lets a caller move to a later page — the default page
+    is the only page a user ever sees, so it must be the one whose rates plausibly apply today, not
+    the oldest history the table happens to hold. `id` remains the tie-breaker for the identical
+    reason it always was — two rows sharing `effective_from` still need one fixed order between
+    calls — descending along with `effective_from` rather than mixed, so the combined key stays one
+    direction and a page boundary is still `(effective_from, id)` compared the same way on both
+    columns. Without the tie-breaker, `offset`/`limit` paging over rows the database is free to
+    reorder among ties could duplicate or skip a row between two calls, the gap K-11 asks a test to
+    close.
+
+    **R-04.** `total` and `page` are read from *one* statement, not two. Two separate `SELECT`s
+    (a `count(*)` then the page) each get their own snapshot under READ COMMITTED, so a concurrent
+    write between them could move `total` and `len(page)` out of step with each other — a `total`
+    that undercounts what the page just proved exists ("fewer rows than this" while holding more),
+    or one that overcounts a row the page's own snapshot no longer sees. `rate_page_statement` folds
+    the total into the same query, and therefore the same snapshot, as the page — closing that
+    window for the case that matters: whenever the page is non-empty, `total` describes the exact
+    snapshot the page came from.
+
+    **R-01 (gate-2 review 2026-09-21).** That fold used to be `count(*) OVER ()`, which made the
+    `LIMIT` bound the response and nothing else: the window function has to consume every filtered
+    row before emitting the first, so the server sorted the whole catalogue to answer one page. It
+    is now a scalar subquery next to a self-contained page subquery, over an index that produces the
+    page's order — see `rate_page_statement` for why that keeps both properties at once, and for
+    what is still linear on purpose (`total` itself).
+
+    The total travels *on* the page's rows, so a page with no rows carries no total — which reads
+    identically to "the query matched nothing", whether that is because the table is empty or
+    because `offset` overshot a non-empty one. Either way a plain `count(*)` is needed to tell the
+    two apart, so that one case alone keeps a second statement (`rate_total_statement`).
     """
-    statement = sa.select(CatalogDefaultRate).order_by(
-        CatalogDefaultRate.effective_from, CatalogDefaultRate.id
-    )
-    if on_date is not None:
-        statement = statement.where(covering(on_date))
-    return list(session.execute(statement).scalars().all())
+    rows = session.execute(rate_page_statement(on_date=on_date, limit=limit, offset=offset)).all()
+    if not rows:
+        return [], session.execute(rate_total_statement(on_date=on_date)).scalar_one()
+    page = [row[0] for row in rows]
+    total = rows[0].total
+    return page, total
+
+
+def vendor_is(vendor_id: uuid.UUID | None) -> sa.ColumnElement[bool]:
+    """`vendor_id = :vendor` — or `vendor_id IS NULL` when no vendor is named (SC-2-03, K-03/K-04).
+
+    The one place this codebase turns "which vendor" into SQL, for the reason `covering` exists:
+    **omitting the vendor means "the organisation's own rate", never "any vendor"**, and a second
+    spelling of that rule is a second chance to get it backwards.
+
+    Written as an explicit `is_(None)` rather than left to SQLAlchemy's `== None`: the two compile
+    the same way today, and the difference between them is invisible until somebody passes the value
+    through a bound parameter — at which point `vendor_id = NULL` matches nothing and every internal
+    lookup silently starts answering `404`.
+
+    What "any vendor" would cost, concretely: a tuple priced both internally and by a vendor covers
+    one day with two rows, so a lookup without this predicate makes `one_or_none()` raise on valid
+    data (K-03), and a lookup that picked one would answer a subcontractor's price to a question
+    about the organisation's own (K-04).
+    """
+    if vendor_id is None:
+        return CatalogDefaultRate.vendor_id.is_(None)
+    return CatalogDefaultRate.vendor_id == vendor_id
 
 
 def resolve_rate(
@@ -173,9 +364,24 @@ def resolve_rate(
     seniority_id: uuid.UUID,
     location_id: uuid.UUID,
     engagement_type_id: uuid.UUID,
+    vendor_id: uuid.UUID | None,
     on_date: date,
 ) -> CatalogDefaultRate | None:
     """The rate for one full dimension tuple on one calendar day, or `None` if no window covers it.
+
+    `vendor_id` is a required keyword argument with **no default** (R-03, reviewer 2026-09-21) —
+    unlike `create_rate`'s, which keeps its default for the opposite reason documented there. A
+    resolution call is answering "whose price", and `None` is one specific, valid answer to that
+    question (**the internal rate**, the same thing it means in the column, SC-2-03) — but it must
+    be an answer the caller chose, not one this function chose for a caller that forgot to. The
+    concrete failure a default would reopen: a future consumer resolving a rate from a full
+    dimension tuple it already has in hand (Issue #9, a rate on a staffing position) calls this with
+    the tuple's fields spread in and nothing else, gets the organisation's own rate for a tuple that
+    may only be priced by a subcontractor, and never sees an error — `unit` on `create_rate` is kept
+    explicit for the identical reason (`app.data.catalog.create_rate`). The one call site there is
+    (`app.api.catalog.read_effective_rate`) already passes `vendor_id` explicitly, so this changes
+    no behaviour today; it only closes the door a later, careless call site would otherwise walk
+    through.
 
     Two properties, both of them the point of the criterion (K-04):
 
@@ -197,6 +403,7 @@ def resolve_rate(
         CatalogDefaultRate.seniority_id == seniority_id,
         CatalogDefaultRate.location_id == location_id,
         CatalogDefaultRate.engagement_type_id == engagement_type_id,
+        vendor_is(vendor_id),
         covering(on_date),
     )
     return session.execute(statement).scalars().one_or_none()
@@ -209,6 +416,7 @@ def create_rate(
     seniority_id: uuid.UUID,
     location_id: uuid.UUID,
     engagement_type_id: uuid.UUID,
+    vendor_id: uuid.UUID | None = None,
     default_cost_rate: Decimal,
     default_selling_rate: Decimal,
     currency: str,
@@ -232,6 +440,12 @@ def create_rate(
     whatever this function happened to prefer; the accepted value is enforced by the database
     (`ck_catalog_default_rates_unit_is_hour`) and, for the API, by the request schema.
 
+    `vendor_id` does have a default, and the opposite reasoning applies: `None` is not "unspecified"
+    but the stored value that means "the organisation's own rate" (SC-2-03), so an omitted argument
+    writes a well-defined row rather than an ambiguous one. `NULL` is written as `NULL` and never as
+    `VENDOR_KEY_SENTINEL`: the sentinel exists inside the `EXCLUDE` key expression and nowhere in
+    the data (K-07).
+
     Nothing here rounds `default_cost_rate` or `default_selling_rate`. The column's scale is
     larger than the currency's minor unit on purpose (ADR-0008, point 6) — rounding at write
     time would silently change an input value, and rounding is the consumer's rule
@@ -249,6 +463,7 @@ def create_rate(
         seniority_id=seniority_id,
         location_id=location_id,
         engagement_type_id=engagement_type_id,
+        vendor_id=vendor_id,
         default_cost_rate=default_cost_rate,
         default_selling_rate=default_selling_rate,
         currency=currency,

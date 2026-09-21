@@ -142,9 +142,17 @@ class StaffingPosition(Base):
         index=True,
     )
 
-    # The full catalogue tuple, all four `NOT NULL`, exactly as it keys a rate
-    # (`app.models.catalog.RATE_DIMENSION_COLUMNS`): a nullable dimension would mean "any", which is
-    # a rate-resolution rule nobody decided (rule 13 of the Invariant Guardian). The foreign keys
+    # The four business dimensions, all `NOT NULL`, exactly as `app.models.catalog.
+    # RATE_DIMENSION_COLUMNS` names them — but **not**, since SC-2-03, the full key of a rate's
+    # `EXCLUDE` constraint. That key (`app.models.catalog.RATE_EXCLUDE_KEY`) has a fifth element,
+    # `vendor_id`, nullable in the column and a required keyword argument (no default, R-03) on
+    # `app.data.catalog.resolve_rate`. A future consumer of this position's tuple (Issue #9, a
+    # rate on a staffing position) that calls `resolve_rate(**tuple, on_date=...)` is therefore
+    # refused by Python before it reaches the database — the signature forces a conscious choice
+    # of whose price is wanted (`None` for the organisation's own, an id for one vendor's;
+    # K-03/K-04) rather than silently defaulting to "internal" for a tuple that may only be
+    # priced by a subcontractor. A nullable dimension, in contrast, would mean "any", which is a
+    # rate-resolution rule nobody decided (rule 13 of the Invariant Guardian). The foreign keys
     # carry explicit names for the reason `catalog_default_rates` documents — the derived name for
     # `engagement_type_id` exceeds PostgreSQL's 63-character identifier limit and gets truncated
     # with a hash appended.

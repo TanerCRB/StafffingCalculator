@@ -6,6 +6,7 @@ from app.models.catalog import (
     CatalogLocation,
     CatalogRole,
     CatalogSeniority,
+    CatalogVendor,
 )
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
@@ -18,6 +19,7 @@ __all__ = [
     "CatalogLocation",
     "CatalogRole",
     "CatalogSeniority",
+    "CatalogVendor",
     "Project",
     "ProjectAccess",
     "ProjectStatus",

@@ -1,4 +1,11 @@
-"""SC-2-01, K-04 and K-07 — which rate applies on a day, and how an amount crosses the boundary.
+"""SC-2-01 (K-04, K-07) and SC-2-03 (K-03, K-04) — which rate applies on a day, whose it is, and
+how an amount crosses the boundary.
+
+SC-2-03 adds a second axis to the same question. "Which rate applies" now has a second half —
+*whose* — and the rule is one sentence: **omitting the vendor means the organisation's own rate,
+never "any vendor"**. Both tests at the end of this file exist because the two plausible ways of
+getting that wrong (matching every vendor; falling back to a vendor when there is nothing internal)
+are different mistakes with different consequences, and each survives the other's test.
 
 K-04 is the read half of Invariant Guardian rule 13: a rate lookup resolves **by effective window**,
 and "latest row wins" is not a fallback it is allowed to reach for. The mutation the criterion names
@@ -31,6 +38,7 @@ from tests.conftest import (
     caller_holding,
     make_dimension_tuple,
     make_rate,
+    make_vendor,
 )
 
 EARLY = (date(2025, 1, 1), date(2025, 12, 31))
@@ -171,11 +179,11 @@ def test_k_04_an_unfiltered_list_still_carries_every_window(
 
     assert response.status_code == 200, response.text
     assert [rate["default_selling_rate"] for rate in response.json()["rates"]] == [
-        str(EARLY_SELLING),
-        str(MIDDLE_SELLING),
         str(OPEN_SELLING),
-    ]
-    assert response.json()["rates"][-1]["effective_to"] is None, (
+        str(MIDDLE_SELLING),
+        str(EARLY_SELLING),
+    ], "list_rates orders newest effective_from first (R-02, reviewer 2026-09-21)"
+    assert response.json()["rates"][0]["effective_to"] is None, (
         "an open-ended window must cross the boundary as null, not as a sentinel date"
     )
 
@@ -274,9 +282,9 @@ def test_k_04_the_list_filter_also_drops_a_window_that_has_ended(
         "the list filter answered with a window that had already ended"
     )
     assert [rate["default_selling_rate"] for rate in unfiltered.json()["rates"]] == [
-        str(GAP_EARLY_SELLING),
         str(GAP_LATER_SELLING),
-    ]
+        str(GAP_EARLY_SELLING),
+    ], "list_rates orders newest effective_from first (R-02, reviewer 2026-09-21)"
 
 
 def test_k_04_the_effective_date_is_required_and_never_taken_from_the_clock(
@@ -317,6 +325,126 @@ def test_k_04_the_effective_date_is_required_and_never_taken_from_the_clock(
     assert "on_date" in without_date.text
     assert with_date.status_code == 200, with_date.text
     assert with_date.json()["default_selling_rate"] == str(GAP_EARLY_SELLING)
+
+
+# --- SC-2-03, K-03 / K-04: omitting the vendor means "internal", never "any" ---------------------
+
+
+VENDOR_SELLING = Decimal("320.0000")
+INTERNAL_SELLING = Decimal("180.0000")
+COVERED_DAY = date(2026, 3, 15)
+
+
+def test_k_03_a_lookup_naming_no_vendor_resolves_the_internal_rate_and_never_has_to_choose(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-03 (SC-2-03). One tuple, one day, two rates: the internal one and vendor V's.
+
+    This shape is exactly what SC-2-03 made legal and what the resolution has to survive. A `WHERE`
+    clause without a vendor predicate matches both rows, and `resolve_rate` ends in `one_or_none()`
+    — deliberately, so a broken invariant raises instead of being resolved by a coin toss. The
+    mutation the criterion names (dropping the predicate) therefore does not return the wrong rate;
+    it turns a `200` into a `500` on data that is perfectly valid, which is why this test asserts
+    the status code as well as the amount.
+
+    The request naming no vendor answers the **internal** rate — the organisation's own price — and
+    the identical request naming `V` answers `V`'s. Those two assertions together also kill a
+    predicate written backwards (`IS NOT NULL`) and one that ignores the parameter.
+    """
+    dimensions = make_dimension_tuple(db_session)
+    vendor = make_vendor(db_session, name="Contoso")
+    make_rate(
+        db_session,
+        dimensions,
+        effective_from=MIDDLE[0],
+        effective_to=MIDDLE[1],
+        default_selling_rate=INTERNAL_SELLING,
+    )
+    make_rate(
+        db_session,
+        dimensions,
+        effective_from=MIDDLE[0],
+        effective_to=MIDDLE[1],
+        vendor_id=vendor.id,
+        default_selling_rate=VENDOR_SELLING,
+    )
+
+    internal = client.get(
+        "/catalog/rates/effective",
+        params={**dimensions.as_query(), "on_date": COVERED_DAY.isoformat()},
+        headers=as_caller(IN_SCOPE_USER),
+    )
+    of_the_vendor = client.get(
+        "/catalog/rates/effective",
+        params={
+            **dimensions.as_query(),
+            "on_date": COVERED_DAY.isoformat(),
+            "vendor_id": str(vendor.id),
+        },
+        headers=as_caller(IN_SCOPE_USER),
+    )
+
+    assert internal.status_code == 200, internal.text
+    assert internal.json()["default_selling_rate"] == str(INTERNAL_SELLING), (
+        "a request naming no vendor answered something other than the internal rate"
+    )
+    assert internal.json()["vendor_id"] is None
+    assert of_the_vendor.status_code == 200, of_the_vendor.text
+    assert of_the_vendor.json()["default_selling_rate"] == str(VENDOR_SELLING)
+    assert of_the_vendor.json()["vendor_id"] == str(vendor.id)
+
+
+def test_k_04_a_tuple_priced_only_by_a_vendor_has_no_internal_rate_rather_than_the_vendors_one(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-04 (SC-2-03). No internal rate is `404` — never a quiet fallback to a subcontractor's.
+
+    A separate criterion from K-03 and a separate mutation: a resolution that fell back (`ORDER BY
+    vendor_id NULLS FIRST LIMIT 1`, or any "if nothing internal, take what there is") still answers
+    K-03 correctly, because there the internal row exists and sorts first. Only a tuple priced
+    *exclusively* by a vendor separates the two.
+
+    The harm is concrete and it is the same one rule 13 names for "latest row wins": a plan quoting
+    a subcontractor's price as the organisation's own cost is wrong in the direction nobody checks —
+    it looks like an answer. "No internal rate for this tuple" is a fact about the catalogue and has
+    to stay visible as one.
+
+    The contrast, in the same test: the identical request naming the vendor answers `200`, so a
+    resolution that refused everything would fail here.
+    """
+    dimensions = make_dimension_tuple(db_session, suffix=" (vendor only)")
+    vendor = make_vendor(db_session, name="Fabrikam")
+    make_rate(
+        db_session,
+        dimensions,
+        effective_from=MIDDLE[0],
+        effective_to=MIDDLE[1],
+        vendor_id=vendor.id,
+        default_selling_rate=VENDOR_SELLING,
+    )
+
+    without_vendor = client.get(
+        "/catalog/rates/effective",
+        params={**dimensions.as_query(), "on_date": COVERED_DAY.isoformat()},
+        headers=as_caller(IN_SCOPE_USER),
+    )
+    with_vendor = client.get(
+        "/catalog/rates/effective",
+        params={
+            **dimensions.as_query(),
+            "on_date": COVERED_DAY.isoformat(),
+            "vendor_id": str(vendor.id),
+        },
+        headers=as_caller(IN_SCOPE_USER),
+    )
+
+    assert without_vendor.status_code == 404, (
+        "a tuple priced only by a subcontractor answered a request about the organisation's own "
+        f"rate: {without_vendor.text}"
+    )
+    assert str(VENDOR_SELLING) not in without_vendor.text
+    assert with_vendor.status_code == 200, with_vendor.text
+    assert with_vendor.json()["default_selling_rate"] == str(VENDOR_SELLING)
 
 
 def test_k_07_an_amount_crosses_the_api_boundary_as_a_fixed_point_string(
