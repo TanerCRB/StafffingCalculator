@@ -235,3 +235,33 @@ button.app-shell__nav-item:hover {
   max-width: var(--sc-layout-max-width);
   margin: 0 auto;
 }
+
+/* --- The crashed-screen fallback (SC-1-09, ADR-0010) ------------------------------------------ */
+
+/*
+ * Sits where the screen would be, inside `.app-shell__content`, so the chrome around it is
+ * untouched — that is the whole point of the boundary being here rather than around the shell.
+ *
+ * Both colours are declared in this one rule on purpose: `src/styles/tokens.test.ts` pairs a
+ * foreground with a background wherever a single rule sets both, so this combination is checked for
+ * WCAG AA contrast automatically instead of depending on somebody remembering to list it.
+ */
+.app-shell__screen-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sc-space-4);
+  padding: var(--sc-space-5);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-lg);
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+}
+
+.app-shell__screen-error-message {
+  margin: 0;
+  max-width: 44rem;
+  font-size: var(--sc-font-size-body);
+  line-height: var(--sc-line-height-body);
+  overflow-wrap: anywhere;
+}

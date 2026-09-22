@@ -1,8 +1,10 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CALLER_ID_HEADER, REQUEST_TIMEOUT_MS } from "../../api/client";
 import type { ProjectListItem } from "../../api/contracts/projects";
+import { SCREEN_CRASH_MESSAGE } from "../../shell/ScreenErrorBoundary";
 import { ProjectListScreen } from "./ProjectListScreen";
 
 // Fixtures. Two projects with *different* scenario sets, and two drafts with *different* gaps:
@@ -576,5 +578,291 @@ describe("ProjectListScreen", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Loading projects…")).toBeNull();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  // --- SC-1-09, K-01: the contract is checked at the network boundary, not at the render one ----
+
+  /** One field removed from a copy of a row — a payload a real JSON body can carry, which
+   * `{ ...row, field: undefined }` is not. */
+  function without<T extends object>(row: T, field: keyof T): unknown {
+    const copy = { ...row };
+    delete copy[field];
+    return copy;
+  }
+
+  /**
+   * The three ways a project row can violate the contract without anything looking wrong until it
+   * is too late. Each one is a separate run of the same criterion, because each one fails at a
+   * different place in the render and a predicate can be weakened to let exactly one through.
+   */
+  const CONTRACT_VIOLATIONS: readonly { readonly what: string; readonly row: unknown }[] = [
+    {
+      // Throws `TypeError` on `project.delivery_period.start` — the original defect.
+      what: "a row that carries no delivery period",
+      row: without(AURORA, "delivery_period"),
+    },
+    {
+      // ADR-0002: the value crosses the boundary as a fixed-point *string*. As a JSON number it
+      // reaches `formatPercentString`, whose `.trim()` throws — but only once a project is
+      // selected, i.e. in a render triggered by a click, long after the list looked healthy.
+      what: "a scenario whose target margin arrives as a number instead of a decimal string",
+      row: {
+        ...AURORA,
+        scenarios: [{ ...AURORA.scenarios[2], target_margin_percent: 12.5 }],
+      },
+    },
+    {
+      // Gate-1 follow-up decision 4. Nothing throws on this one at all: the badge's fill is keyed
+      // by the label, so an unlisted status renders as an unrecognised word in an unstyled badge —
+      // the error that renders correctly, which no boundary can catch by construction.
+      what: "a row whose status is not one of the two the contract lists",
+      row: { ...AURORA, status: "Deleted" },
+    },
+  ];
+
+  for (const { what, row } of CONTRACT_VIOLATIONS) {
+    it(`renders a named failure state and no project rows when the API sends ${what}`, async () => {
+      // The valid row is in the same response on purpose: the whole response is rejected, never
+      // the offending row alone. A silently shortened list is indistinguishable from a complete
+      // one, which is worse than the blank page this criterion is about.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ projects: [row, HELIOS] }),
+        }),
+      );
+
+      render(<ProjectListScreen />);
+
+      expect(await screen.findByText("Projects could not be loaded.")).toBeInTheDocument();
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("row")).toHaveLength(0);
+      expect(screen.queryByText("Helios rollout")).toBeNull();
+      expect(screen.queryByText("No projects to show.")).toBeNull();
+      // Stopped at the network boundary, so the render boundary is never involved — the ordering
+      // ADR-0010 asks for, and the half that makes the two mechanisms two (K-01 vs K-02).
+      expect(screen.queryByText(SCREEN_CRASH_MESSAGE)).toBeNull();
+    });
+  }
+
+  it("renders the rows when the same response carries contract-valid rows", async () => {
+    // The contrast to the three runs above, on the response they were derived from: the check
+    // rejects a broken payload, not every payload. Without this, `isProjectListItemShape` could
+    // return `false` unconditionally and the three tests above would all still pass.
+    stubProjectListResponse([AURORA, HELIOS]);
+
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    expect(rows).toHaveLength(2);
+    expect(screen.queryByText("Projects could not be loaded.")).toBeNull();
+
+    // And the field each violation attacked arrives intact, through the same render path.
+    await selectProject("Aurora migration");
+    expect(rowFor(rows, "Aurora migration").getByText("2026-01-01 – 2026-12-31")).toBeVisible();
+    expect(rowFor(rows, "Aurora migration").getByText("Active")).toBeVisible();
+    expect(
+      within(scenarioCard("Signed plan")).getByText("Target margin: 12.50%"),
+    ).toBeInTheDocument();
+  });
+
+  // --- SC-1-09, K-05: leaving the screen ends the read, it does not merely ignore the answer ----
+
+  /** A backend that accepted the connection and has not answered — the state an in-flight read is
+   * actually in when somebody navigates away. */
+  function stubPendingProjectListRead() {
+    const fetchMock = vi.fn().mockReturnValue(new Promise<never>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** The signal `fetch` was actually handed, or a failure that says so. Not `init.signal ?? …`:
+   * a missing signal is the defect this criterion is about and must not read as "not aborted". */
+  function signalGivenToFetch(
+    fetchMock: { readonly mock: { readonly calls: readonly unknown[][] } },
+    call = 0,
+  ): AbortSignal {
+    const [, init] = (fetchMock.mock.calls[call] ?? []) as [string, RequestInit];
+    const signal = init?.signal;
+    if (!(signal instanceof AbortSignal)) {
+      throw new Error(`fetch call ${call} was made without an AbortSignal`);
+    }
+    return signal;
+  }
+
+  it("cancels the in-flight project list read when the screen is left", () => {
+    const fetchMock = stubPendingProjectListRead();
+
+    const { unmount } = render(<ProjectListScreen />);
+
+    const signal = signalGivenToFetch(fetchMock);
+    // Both halves matter. A signal that is already aborted here would make the assertion after the
+    // unmount true for the wrong reason, and the SC-2-04 defect this criterion exists against —
+    // a controller built and never aborted — is invisible without the "before" reading.
+    expect(signal.aborted).toBe(false);
+
+    unmount();
+
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("keeps the read running while the screen stays mounted", async () => {
+    // The contrast: cancellation is tied to leaving, not to time passing or to the effect running.
+    // Without it, `getProjects(AbortSignal.abort())` would satisfy the test above forever.
+    const fetchMock = stubProjectListResponse([AURORA, HELIOS]);
+
+    render(<ProjectListScreen />);
+
+    const signal = signalGivenToFetch(fetchMock);
+    expect(await projectRows()).toHaveLength(2);
+    expect(signal.aborted).toBe(false);
+  });
+
+  /**
+   * A backend that never answers, and a `fetch` that behaves like the platform's: it rejects with
+   * an `AbortError` when its signal is aborted, and otherwise hangs.
+   *
+   * `replaceWith`, when given, is the answer the *second* call gets — the one `StrictMode` issues
+   * after abandoning the first.
+   */
+  function stubAbortableProjectListRead(replaceWith?: { readonly projects: ProjectListItem[] }) {
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => {
+      return new Promise<unknown>((resolve, reject) => {
+        const answer = fetchMock.mock.calls.length === 2 ? replaceWith : undefined;
+        init.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+        if (answer !== undefined) {
+          queueMicrotask(() => resolve({ ok: true, status: 200, json: async () => answer }));
+        }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("never renders the project list failure message for a read its own screen abandoned", async () => {
+    // `StrictMode`, which is how this application actually runs in development (`src/main.tsx`):
+    // React mounts, cleans up and mounts again *on the same component*, so the first read is
+    // aborted while the screen is very much still there and its rejection lands on a live
+    // component. An abort is the application's own decision arriving dressed as an error; reporting
+    // it would state a failure of a read nobody was waiting for.
+    //
+    // The replacement read is left hanging on purpose. With it answering, a screen that *did*
+    // report the abort would flash the failure and then be overwritten by the rows — green suite,
+    // real defect. Measured: with a resolving second read, dropping the guard changed nothing any
+    // assertion could see (developer's own mutation run, 2026-09-22).
+    const fetchMock = stubAbortableProjectListRead();
+
+    render(
+      <StrictMode>
+        <ProjectListScreen />
+      </StrictMode>,
+    );
+
+    // The situation the assertions below are about actually happened: two reads, the first
+    // abandoned, the second still running. Without this the test would pass against a `StrictMode`
+    // that never double-mounted.
+    expect(fetchMock.mock.calls.length).toBe(2);
+    expect(signalGivenToFetch(fetchMock, 0).aborted).toBe(true);
+    expect(signalGivenToFetch(fetchMock, 1).aborted).toBe(false);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Still waiting for the read that replaced it — which is the truth — and saying nothing about
+    // permissions, deadlines or failures.
+    expect(screen.getByText("Loading projects…")).toBeVisible();
+    expect(screen.queryByText("Projects could not be loaded.")).toBeNull();
+    expect(screen.queryByText("Projects could not be loaded — request timed out.")).toBeNull();
+    expect(screen.queryByText("You do not have permission to view projects.")).toBeNull();
+  });
+
+  /**
+   * Two reads where the abandoned one answers *last*, and with a different list.
+   *
+   * An abort cannot un-deliver a response that already arrived: `controller.abort()` reaching a
+   * request whose body is already in hand changes nothing about the promise that is about to
+   * resolve. The first read can therefore still succeed after the screen walked away from it — and
+   * whether its answer is allowed to decide what is on screen is a question `signal.aborted` cannot
+   * answer.
+   */
+  function stubReadsWhereTheAbandonedOneAnswersLast() {
+    let releaseAbandoned: (() => void) | undefined;
+    const answer = (projects: ProjectListItem[]) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ projects }),
+    });
+    // Neither argument is read here: which read this is depends only on the order it arrived in,
+    // and the signal is inspected by the test through `fetchMock.mock.calls`.
+    const fetchMock = vi.fn(() => {
+      if (fetchMock.mock.calls.length === 1) {
+        // The read the screen abandons. Held, and released by the test after the other one landed.
+        return new Promise<unknown>((resolve) => {
+          releaseAbandoned = () => resolve(answer([AURORA]));
+        });
+      }
+      // The read that replaced it, answering straight away with the list that is actually current.
+      return Promise.resolve(answer([AURORA, HELIOS]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, releaseAbandoned: () => releaseAbandoned?.() };
+  }
+
+  it("never lets a read the screen abandoned decide what is on screen, not even when it succeeds", async () => {
+    // QA, SC-1-09 — the missing half of K-05's guard.
+    //
+    // `left` guards two callbacks and only the failure one was proven: dropping `if (!left)` from
+    // the success path left the whole suite green (QA mutation run, 2026-09-22, 143/143). What
+    // survives that mutation is a screen where an abandoned read's answer overwrites the answer of
+    // the read that replaced it — rows that were right, replaced by rows that are stale, with no
+    // failure message and nothing for anyone to notice. `signal.aborted` says nothing about this:
+    // the abort did happen, it simply arrived after the response had.
+    const { fetchMock, releaseAbandoned } = stubReadsWhereTheAbandonedOneAnswersLast();
+
+    render(
+      <StrictMode>
+        <ProjectListScreen />
+      </StrictMode>,
+    );
+
+    expect(fetchMock.mock.calls.length).toBe(2);
+    expect(signalGivenToFetch(fetchMock, 0).aborted).toBe(true);
+    // The current answer is on screen.
+    expect(await projectRows()).toHaveLength(2);
+
+    // ...and now the read nobody is waiting for finally answers, with a list of its own.
+    await act(async () => {
+      releaseAbandoned();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(await projectRows()).toHaveLength(2);
+    expect(screen.getByText("Helios rollout")).toBeVisible();
+  });
+
+  it("renders the rows the replacement read answered with, after the abandoned one", async () => {
+    // The contrast to the test above: the guard silences the read the screen walked away from, not
+    // every read. A guard written as `if (false)` would satisfy that test for ever and leave this
+    // screen loading until the tab is closed.
+    const fetchMock = stubAbortableProjectListRead({ projects: [AURORA, HELIOS] });
+
+    render(
+      <StrictMode>
+        <ProjectListScreen />
+      </StrictMode>,
+    );
+
+    expect(fetchMock.mock.calls.length).toBe(2);
+    expect(await projectRows()).toHaveLength(2);
+    await waitFor(() => expect(screen.queryByText("Loading projects…")).toBeNull());
+    expect(screen.queryByText("Projects could not be loaded.")).toBeNull();
   });
 });

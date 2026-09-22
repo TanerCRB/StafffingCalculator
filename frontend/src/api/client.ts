@@ -10,7 +10,13 @@ import type {
   DimensionEntryList,
 } from "./contracts/catalog";
 import type { HealthResponse } from "./contracts/health";
-import type { ProjectListResponse } from "./contracts/projects";
+import type {
+  ProjectListItem,
+  ProjectListResponse,
+  ProjectStatus,
+  ScenarioListItem,
+  ScenarioStatus,
+} from "./contracts/projects";
 
 const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -150,9 +156,17 @@ export async function getHealth(): Promise<HealthResponse> {
   });
 }
 
-/** The caller's project list (SC-1-05). Read only — the server decides which projects exist for
- * this caller; this function adds no filter, no sort and no default of its own (NF-04). */
-export async function getProjects(): Promise<ProjectListResponse> {
+/**
+ * The caller's project list (SC-1-05). Read only — the server decides which projects exist for
+ * this caller; this function adds no filter, no sort and no default of its own (NF-04).
+ *
+ * `signal`, when given, ends the read early — typically because the screen that asked for it has
+ * unmounted (SC-1-09, K-05). Without it a bounced-off screen leaves the request running to
+ * completion, holding one of the browser's six same-origin HTTP/1.1 sockets against the screen the
+ * user actually moved to; a `cancelled` flag that only blocks `setState` does nothing about that,
+ * and reads as cancellation in a review.
+ */
+export async function getProjects(signal?: AbortSignal): Promise<ProjectListResponse> {
   return requestWithDeadline(
     `${API_BASE_URL}/projects`,
     { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
@@ -161,16 +175,23 @@ export async function getProjects(): Promise<ProjectListResponse> {
         throw new ApiError(response.status, `GET /projects failed: ${response.status}`);
       }
       const payload = (await response.json()) as ProjectListResponse | null;
-      if (!Array.isArray(payload?.projects)) {
+      if (!Array.isArray(payload?.projects) || !payload.projects.every(isProjectListItemShape)) {
         // A payload that does not match the contract is an error, not an empty list: an empty
         // list is a statement ("you have no projects") and may only come from the server.
+        //
+        // `every`, so the *whole response* is rejected rather than the offending rows quietly
+        // dropped (SC-1-09, K-01). Per-row filtering would render a shorter list that looks exactly
+        // like a complete one — the error that renders correctly, and the one thing worse than the
+        // blank page this check exists to prevent.
         throw new ApiError(
           response.status,
-          "GET /projects returned a payload without a project list",
+          "GET /projects returned a payload without a valid project list",
         );
       }
       return payload;
     },
+    REQUEST_TIMEOUT_MS,
+    signal,
   );
 }
 
@@ -196,6 +217,90 @@ function isOptionalString(value: unknown): boolean {
  */
 function isRequiredNullableString(value: unknown): boolean {
   return value === null || typeof value === "string";
+}
+
+/**
+ * Whether a value is one of a closed set of string labels the contract names.
+ *
+ * One helper rather than a comparison per field: a status the contract does not list is not a
+ * "string that happens to be unfamiliar", it is a payload this client cannot read — and the
+ * alternative spelling (`typeof value === "string"`) is how `"Deleted"` would reach a badge whose
+ * fill is keyed by the label, rendering an unrecognised status as an unstyled word nobody planned
+ * (SC-1-09, gate-1 follow-up decision 4).
+ */
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
+/** Exactly what `contracts/projects.ts` declares — the two labels the backend emits, and no
+ * others. Kept beside the predicate that uses them so the closed set and the check cannot drift. */
+const PROJECT_STATUSES: readonly ProjectStatus[] = ["Active", "Archived"];
+const SCENARIO_STATUSES: readonly ScenarioStatus[] = ["Draft", "Approved"];
+
+function isDeliveryPeriodShape(value: unknown): boolean {
+  return isRecord(value) && typeof value.start === "string" && typeof value.end === "string";
+}
+
+/**
+ * Whether one scenario has the shape `ScenarioListItem` promises.
+ *
+ * `target_margin_percent` is the field this check exists for. It is optional and nullable by
+ * contract and a *fixed-point decimal string* when present (ADR-0002); a backend or proxy
+ * serialising it as a JSON number instead passes `Array.isArray`, reaches `formatPercentString`,
+ * and throws a `TypeError` from `.trim()` in the middle of a render. The type is checked here so
+ * that a broken contract ends in the screen's own named read failure instead of in the render-phase
+ * boundary — which is the ordering ADR-0010 asks for, and the reason the two mechanisms are two
+ * (SC-1-09, K-01).
+ *
+ * What it deliberately does NOT check is the *format* of that string: `"abc"` is a string and gets
+ * through. The formatter still throws on it (ADR-0002 — no try/catch softening, K-06) and the
+ * render boundary catches that. A shape check is not a value check, and pretending otherwise here
+ * would put the decimal grammar in two places.
+ */
+function isScenarioListItemShape(value: unknown): value is ScenarioListItem {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    isOneOf(value.status, SCENARIO_STATUSES) &&
+    Array.isArray(value.missing_inputs) &&
+    value.missing_inputs.every((input) => typeof input === "string") &&
+    typeof value.ready_for_approval === "boolean" &&
+    isOptionalString(value.target_margin_percent)
+  );
+}
+
+/**
+ * Whether one project row has the shape `ProjectListItem` promises, field by field — the project
+ * list's counterpart to `isCatalogRateShape`, and the first line of defence ADR-0010 puts *before*
+ * the render boundary (SC-1-09, K-01).
+ *
+ * A row missing `delivery_period` throws on `project.delivery_period.start` mid render; a row whose
+ * `status` is not one of the two labels renders a badge with no fill behind it. Both become a named
+ * `ApiError` here, which the screen's existing `toFailureState` already turns into "Projects could
+ * not be loaded." — an answer the screen already knows how to give.
+ *
+ * `owner` is absent on purpose and not checked: the backend removed it from this payload (B-02).
+ * Requiring it would be this layer demanding a field the contract says must not be sent.
+ */
+function isProjectListItemShape(value: unknown): value is ProjectListItem {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const requiredStrings: readonly (keyof ProjectListItem)[] = [
+    "id",
+    "name",
+    "client",
+    "reporting_currency",
+    "description",
+  ];
+  return (
+    requiredStrings.every((field) => typeof value[field] === "string") &&
+    isOneOf(value.status, PROJECT_STATUSES) &&
+    isDeliveryPeriodShape(value.delivery_period) &&
+    Array.isArray(value.scenarios) &&
+    value.scenarios.every(isScenarioListItemShape)
+  );
 }
 
 /**

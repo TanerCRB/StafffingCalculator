@@ -72,20 +72,36 @@ export function ProjectListScreen() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    getProjects()
+    // Leaving this screen ends the read, it does not merely stop listening to it (SC-1-09, K-05).
+    //
+    // The two halves do different jobs and both are needed. `controller.abort()` reaches `fetch`
+    // and ends the request itself: a bounce off this screen used to leave a `GET /projects` running
+    // to completion, holding one of the browser's six same-origin HTTP/1.1 sockets against whatever
+    // screen the user actually moved to (the catalogue reads ~19.7 MB — docs/PLAN.md). `left`
+    // guards the state updates, including the rejection the abort itself produces: an aborted read
+    // is the user's decision, not a failure, and must never render as "Projects could not be
+    // loaded." on a screen that is already gone. The flag is set in the same cleanup that aborts,
+    // so it is always true by the time that rejection arrives.
+    //
+    // The flag alone — which is what this effect had — is the defect this replaces, and it is not a
+    // hypothetical one: the same shape survived a green suite in `CatalogScreen` until Reviewer
+    // R-02 read it (SC-2-04). It looks like cancellation in a diff and cancels nothing.
+    const controller = new AbortController();
+    let left = false;
+    getProjects(controller.signal)
       .then((response) => {
-        if (!cancelled) {
+        if (!left) {
           setState({ kind: "ready", projects: response.projects });
         }
       })
       .catch((error: unknown) => {
-        if (!cancelled) {
+        if (!left) {
           setState(toFailureState(error));
         }
       });
     return () => {
-      cancelled = true;
+      left = true;
+      controller.abort();
     };
   }, []);
 

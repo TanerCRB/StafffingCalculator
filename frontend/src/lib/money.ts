@@ -59,19 +59,40 @@ function stripLeadingZeros(digits: string): string {
 }
 
 /**
+ * What this module says about a value it refuses to round. It names the rule that was broken and
+ * nothing about the value that broke it — see `roundDecimalString` for why the offending value is
+ * deliberately absent from it (SC-1-09, Reviewer R-01).
+ */
+export const NOT_A_DECIMAL_STRING = "Not a fixed-point decimal string";
+
+/**
  * Rounds a fixed-point decimal string to `fractionDigits` places, half away from zero — the same
  * rule as Python's `ROUND_HALF_UP` in `backend/app/core/money.py`.
  *
  * Throws on a value that is not a fixed-point decimal string: a malformed amount is a broken
  * contract, and a screen inventing a plausible number for it is exactly the kind of failure that
  * still renders correctly.
+ *
+ * **The message carries the rule, never the value** (NF-11, ADR-0010 point 4; Reviewer R-01,
+ * SC-1-09). The input here can be a `default_cost_rate` — a personnel cost, the one class of number
+ * ADR-0005 keeps from people who may not see it — and this exception is thrown mid render, where
+ * React's error-boundary machinery takes it over. React's *production* bundle calls
+ * `console.error(error)` for every error a class boundary catches (`logCapturedError` in
+ * `react-dom.production.min.js`), unconditionally and before the boundary component gets a say, so
+ * no amount of care inside `ScreenErrorBoundary` can keep an interpolated value off the console.
+ * The message used to read `Not a fixed-point decimal string: "…"` with the value inside it; the
+ * only fix that actually holds is for there to be nothing in the error worth leaking, whoever ends
+ * up logging it — React today, a devtools pane, a telemetry hook nobody has written yet.
+ *
+ * What is lost is a debugging convenience, and it is lost on purpose: the value is in the response
+ * body, which is in the network tab, which is behind the same authorisation the value itself is.
  */
 export function roundDecimalString(value: string, fractionDigits: number): string {
   const match = DECIMAL_PATTERN.exec(value.trim());
   const integerPart = match?.[2] ?? "";
   const fractionPart = match?.[3] ?? "";
   if (match === null || (integerPart === "" && fractionPart === "")) {
-    throw new Error(`Not a fixed-point decimal string: ${JSON.stringify(value)}`);
+    throw new Error(NOT_A_DECIMAL_STRING);
   }
 
   const kept = fractionPart.slice(0, fractionDigits).padEnd(fractionDigits, "0");

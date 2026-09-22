@@ -234,6 +234,75 @@ history / this file's own change log, not as tracked product work.
   nadawania flagi (ADR-0005 aneks pkt 4). Nie dowodzi AC-06 w całości: kolumny kosztów osobowych
   nadal nie istnieją. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-1-09** — Uodpornij ekran listy projektów na wadliwą odpowiedź `GET /projects` (obrona
+  przed wybuchem w renderze) i anuluj jego odczyt przy odejściu z ekranu. Wynik weryfikacji SC-2-02
+  (ustalenie R-07, „zaakceptowane, nienaprawione"). Kryteria (K-01..K-07) i pełny zapis decyzji
+  bramki 1 w Issue #43. Zadanie wyłącznie frontendowe — `backend/` bez zmian.
+  *Done when:* `frontend/src` (vitest) dowodzi K-01..K-07, każde z zarejestrowanym przebiegiem
+  mutacyjnym (rozstrzygnięcie Q-3 — nie „test, no mutation" jak precedens katalogu):
+  1. (K-01) Wiersz niezgodny z kontraktem zatrzymany na granicy sieci (predykat kształtu w
+     `getProjects`), nie na granicy renderu: brak `delivery_period`; `target_margin_percent` liczbą
+     zamiast stringiem dziesiętnym; `status` spoza enumu `"Active"|"Archived"`. Każdy przebieg →
+     istniejący nazwany stan `Projects could not be loaded.` i zero wierszy; odrzucana CAŁA
+     odpowiedź, nie pojedynczy wiersz (lista po cichu skrócona jest gorsza niż biała strona).
+     Kontrast w tym samym pliku: ta sama odpowiedź z poprawionym wierszem renderuje wiersze.
+     Mutacja: usunięty predykat wiersza (samo `Array.isArray`, stan dzisiejszy).
+  2. (K-02) Wyjątek w renderze, którego walidacja kształtu złapać nie mogła, zatrzymany w gnieździe
+     ekranu powłoki — chrome żyje (topbar, breadcrumb, rail z obydwoma wpisami, osiągalny z
+     klawiatury), fallback nazwany. Dowiedzione dla OBU wartości `activeScreen`: granica chroni
+     każdy ekran montowany przez powłokę, nie tylko listę projektów. Mutacje: granica usunięta z
+     `AppShell`; osobno: granica przeniesiona do `ProjectListScreen` zamiast do gniazda ekranu.
+  3. (K-03, NF-11) Fallback nie niesie żadnej wartości z payloadu — ani w tekście DOM, ani w
+     atrybucie DOM, ani w żadnym argumencie wywołania `console.*` wykonanego przez **aplikację**
+     (własne logowanie Reacta w trybie dev jest poza mechanizmem — nazwane ograniczenie dowodu,
+     rozstrzygnięcie bramki 1, luka 2). Kontrola pozytywna w tym samym teście dowodzi, że detektor
+     widzi podstawioną wartość. Mutacja: fallback renderuje `error.message`.
+  4. (K-04) Złapana awaria nie przeżywa ekranu: nawigacja railem na zdrowy ekran montuje go
+     naprawdę (jego własne odczyty ruszają), fallback znika. Kontrast: przycisk „spróbuj ponownie"
+     w fallbacku daje ten sam efekt z tego samego miejsca (rozstrzygnięcie bramki 1, luka 3).
+     Drugi kontrast: re-render, który nie jest nawigacją, nie kasuje fallbacku. Mutacja: usunięty
+     reset granicy przy zmianie ekranu.
+  5. (K-05) Odczyt w locie naprawdę anulowany przy odmontowaniu — `AbortSignal` przekazany do
+     `fetch` jest `aborted` po odejściu i NIE jest `aborted` przed nim, nie tylko zignorowany flagą
+     `cancelled`. Druga asercja: `getProjects` faktycznie przekazuje sygnał do `requestWithDeadline`
+     (nie przyjmuje-i-gubi). Trzecia: przerwany odczyt nigdy nie renderuje się jako nazwana awaria.
+     Mutacja (historycznie prawdziwa, SC-2-04 R-02): kontroler zbudowany, `.abort()` nigdy nie
+     wołane.
+  6. (K-06) `lib/money.ts` bez `try`/`catch` — błędna kwota nadal rzuca, ekran nie renderuje kwoty
+     zastępczej (`0.00%`, `NaN`, pusta komórka). Kontrast: `"1.005"` → `"1.01%"` nadal działa,
+     jawny `null` nadal renderuje `Not provided`. Mutacja: `throw` w `roundDecimalString`
+     opakowany w fallback.
+  7. (K-07) Zdanie awarii renderu różne od `denied`/`timed-out`/`failed` na obu ekranach, żadne nie
+     jest podciągiem innego w żadną stronę (precedens SC-2-02/SC-2-03, ADR-0009 pkt 5). Mutacja:
+     fallback jako nadciąg istniejącego zdania.
+
+  **Decyzje bramki 1 (2026-09-22, Issue #43):** Q-1 jedna granica błędu w powłoce (`AppShell`),
+  wokół gniazda ekranu — nie wokół całej powłoki (zabrałaby rail, czyli jedyne wyjście), nie tylko
+  wokół `ProjectListScreen` (ta sama klasa awarii żyje dziś w `CatalogScreen`); ADR-0010 przyjęty
+  jako `Draft — pending approval`; Q-2 walidacja kształtu **i** granica błędu jako dwa niezależnie
+  zabijalne mechanizmy, w tej kolejności (granica jest ostatnią instancją, nie zamiennikiem);
+  Q-3 mutation-checked dla obu mechanizmów; Q-4 osobny, nazwany komunikat awarii renderu. Cztery
+  domknięcia luk analityka: ADR-0010 nazywa wprost, czego granica NIE łapie (handlery zdarzeń,
+  callbacki async, efekty po commit); K-03 ograniczone do własnych wywołań aplikacji; fallback
+  dostaje przycisk „spróbuj ponownie" (szerzej niż rekomendacja analityka); predykat kształtu
+  waliduje też enum `status` (szerzej niż rekomendacja analityka).
+
+  **Out of scope (explicit):** audyt pozostałych ekranów i retrofit dowodu mutacyjnego dla katalogu
+  — wariant A z Q-1 domyka go dla każdego ekranu montowanego railem, ale nie dokłada dowodu dla
+  samego katalogu (warunek domknięcia: pierwsza kolejna Story frontendowa dotykająca tego ekranu);
+  zmiana walidacji backendu — obrona klienta zostaje niezależnie od niej (**trwałe**);
+  raportowanie złapanego błędu poza ekran (telemetria, log zdalny) — brak decyzji o odbiorniku
+  diagnostyki, NF-11 (warunek domknięcia: ADR o telemetrii frontendu); `AbortSignal` dla zapisów —
+  świadomie nie, przerwana mutacja ma nieznany wynik (ADR-0009/ADR-0007), i dla `getHealth`
+  (warunek domknięcia: pierwszy ekran czytający go na montażu); paginacja `GET /projects` —
+  warunki SC-1-05 bez zmian; walidacja *formatu* stringa dziesiętnego w predykacie kształtu —
+  gramatyka dziesiętna zostaje w jednym miejscu (`lib/money.ts`, ADR-0002), a jej naruszenie jest
+  właśnie tym, co dowodzi kolejności obu mechanizmów.
+
+  **Ryzyko dla bramki 3 (architekt):** uzasadnienie istniejących wpisów rejestru o
+  `isCatalogRateShape`/`isDimensionEntryShape` („apka nie ma error boundary") przestaje być
+  prawdziwe co do przesłanki — wymaga poprawki przy najbliższej bramce 3.
+
 - [x] **SC-2-01** — Wprowadź katalog wymiarów roli (rola/senioritet/lokalizacja/typ zaangażowania)
   jako dane, ze stawką domyślną kosztową i sprzedażową obowiązującą w rozłącznym przedziale dat.
   *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07 (analyst 2026-09-19):
