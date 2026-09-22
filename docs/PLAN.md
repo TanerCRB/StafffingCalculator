@@ -662,4 +662,73 @@ history / this file's own change log, not as tracked product work.
   zatwierdzenia-kontra-zapisu (K-06) — niewykonalny do przetestowania, nic dziś nie ustawia
   `approved`. Zob. `docs/architecture/capabilities.md`.
 
+- [x] **SC-3-02** — Utrwal kalendarze robocze (podstawa godzinowa, wzorzec tygodnia, dni
+  wyjątkowe), słownik typów nieobecności i instancje nieobecności pozycji obsady; wylicz pojemność
+  miesięczną z kalendarza lokalizacji i nieobecności; zbuduj endpoint zatwierdzenia scenariusza z
+  pierwszą migawką `approved_snapshot_*` (F-05, F-12; Issue #7).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-23 (analyst, 2026-09-22, runda 2 finalna):
+  (1) podstawa godzinowa pozycji pochodzi z kalendarza jej lokalizacji, wzorzec tygodnia i dni
+  wyjątkowe są danymi, nie stałą w Pythonie (NF-10); (2) jedna nieobecność zabiera jeden ekwiwalent
+  osoby za każdy dzień roboczy — nie `headcount ×`, nie dni kalendarzowe — nakładające się instancje
+  sumują się bez deduplikacji, wynik podłogowany zerem, `availability_hours` nigdy nie nadpisywane;
+  (3) słowniki kalendarza i typów nieobecności organizacyjne (`CATALOG_READ`/`CATALOG_WRITE`, zero
+  nowych uprawnień), instancje nieobecności projektowe (`STAFFING_READ`/`STAFFING_WRITE`, `404`
+  nigdy `403`); (4) każda z dwóch nowych ścieżek zapisu ma test odmowy i test wyścigu dwóch
+  połączeń — znacznik ADR-0007 i strażnik `approved` liczone przez bazę w instrukcji zapisu; (5)
+  nieobecności wchodzą do istniejącej kaskady kopiowania, tabele organizacyjne nie dostają wpisu w
+  `SCENARIO_CHILD_COPIERS`; (6) zatwierdzenie zapisuje `approved_snapshot_*` jako wartości (nigdy FK
+  do źródła), migawka przed przestawieniem statusu w jednej transakcji, powtórne zatwierdzenie nie
+  zapisuje niczego; (7) wyścig zatwierdzenia-kontra-zapisu-dziecka domknięty jednym mechanizmem
+  (`scenario_guard.py`) dla wszystkich czterech ścieżek zapisu naraz (pozycja, alokacja, instancja
+  nieobecności ×2); (8) `staffing_position_absence` nie ma kolumny na osobę ani na notatkę —
+  dowiedzione równością zbioru kolumn; (9) K-23 (rozstrzygnięcie G-2): pozycja bez kalendarza
+  lokalizacji zwraca nazwany stan "brak kalendarza", nigdy zero po cichu, nigdy błąd.
+  **Decyzje bramki 1 (2026-09-22):** absencja liczona w godzinach, nie dniach (przeciw
+  rekomendacji, przyjęte świadomie); pełne instancje nieobecności, nie tylko słownik typów (przeciw
+  rekomendacji); endpoint zatwierdzenia jako realna ścieżka zapisu, nie fixture (P-2, przeciw
+  rekomendacji, ryzyko przyjęte: brak kontroli roli, zamknięcie warunkowe na ADR
+  uwierzytelniania); kalendarz na poziomie lokalizacji (P-1); `calendar_id` nullowalne, nazwany
+  stan "brak kalendarza" (G-2); migawka jako pierwsza implementacja mechanizmu ADR-0004 (Q-1);
+  parametr długości dnia z kalendarza, nie z pola scenariusza (nowy).
+  **Out of scope (explicit):** formularze zapisu kalendarza/typów nieobecności/przypisania
+  kalendarza do lokalizacji (brak ścieżki HTTP — ADR-0007 aneks pkt 3, każdy kalendarz dziś
+  wymaga fixture/seeda); kontrola roli i audyt na endpoincie zatwierdzenia (ADR-0005 aneks pkt 9,
+  ADR-0004 aneks pkt 5); odczyt migawki w raporcie (blok 8); FTE, dzień częściowo roboczy,
+  kalendarz per poddostawca, próg przeciążenia; konwersja
+  `scenarios.working_calendar`/`full_time_hours_per_week` na kalendarz (G-1, nazwane, nieblokujące
+  — dwa źródła prawdy o tygodniu pracy współistnieją); zakres migawki ograniczony do kalendarzy
+  lokalizacji pozycji scenariusza i typów faktycznie użytych przez jego nieobecności, nie całego
+  katalogu (decyzja developera, uzasadniona w kodzie, niepodważona przy weryfikacji).
+  **Fundament nieudowodniony:** K-20 (wyścig zatwierdzenia-kontra-zapisu) był `NIEDOWIEDZIONY,
+  DOTĄD NIETESTOWALNY` na etapie analizy — domknięty przy implementacji, dowiedziony czterema
+  przebiegami + kontrastem, zweryfikowany niezależnie dwukrotnie (invariant-guardian, reviewer) na
+  żywym PostgreSQL włącznie z analizą planu zapytania. Nikt nie czyta migawki — dowiedzione
+  wyłącznie, że powstaje i się nie rusza. Podstawa: Issue #7,
+  `Wymagania/Requirements_EN.md` §4 F-05, F-12,
+  `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks),
+  `ADR-0005-model-dostepu.md` (aneks + 2 nazwane ryzyka danych osobowych),
+  `ADR-0001-trwalosc-danych.md` (aneks), `ADR-0007-wspolbiezna-edycja.md` (aneks),
+  `ADR-0008-przedzialy-obowiazywania.md` (aneks).
+  **Done 2026-09-22:** PR #55 (scalone `d6659f3`). Dowód: `backend/tests/test_working_calendar.py`,
+  `test_working_calendar_schema_constraints.py`, `test_staffing_absence_capacity.py`,
+  `test_catalog_access.py`, `test_staffing_absences.py`, `test_catalog_absence_types.py`,
+  `test_staffing_absence_guards.py`, `test_staffing_copy.py`, `test_project_copy.py`,
+  `test_scenario_approval_snapshot.py`, `test_scenario_approval.py`,
+  `test_staffing_approved_guards.py`, `test_staffing_schema_constraints.py` — 407 testów backendowe
+  zielono (było 331). Dwie rundy weryfikacji gate 2 (QA, Invariant Guardian, reviewer,
+  security-auditor) + poprawki: **S-01/R-01** (bug znaleziony niezależnie przez invariant-guardian
+  i reviewer — `DISTINCT` w zapisie migawki grupował po `gen_random_uuid()`, VOLATILE i liczony
+  przed węzłem `Unique`, więc nigdy nic nie deduplikował; scenariusz z ≥2 pozycjami w jednej
+  lokalizacji dawał migawkę zwielokrotnioną, nieodwracalnie — naprawione przeniesieniem `DISTINCT`
+  do podzapytania, 2 nowe testy); **R-02** (docstring `scenario_guard.draft_scenario` mylnie
+  sugerował redundancję blokady; zmierzone empirycznie na PostgreSQL: to jedyna blokada kontraktowa
+  transakcji zatwierdzenia, jej usunięcie zamienia legalne równoległe zatwierdzenie z `409` na
+  nieobsłużony `500` — naprawione poprawką docstringu + 2 nowe testy współbieżności); **R-03**
+  (martwy kod `_open_scenario` zbudowany na `uuid.UUID(int=0)`, mina na przyszłość — usunięty);
+  **R-05** (niska, dwa zdania w docstringu twierdziły własność silniejszą niż zmierzoną —
+  odnotowane, niekrytyczne). **Zaakceptowane, nie naprawiane:** B-01/B-02 security-auditor (nazwa
+  `absence_type` jako wolny tekst trafiający do niemodyfikowalnej migawki; `headcount=1`
+  reidentyfikuje osobę przez nieobecność) — zamknięte jako nazwane ryzyko z warunkiem ponownego
+  otwarcia, ADR-0005 aneks 2026-09-22 pkt 10-11. Zob. `docs/architecture/capabilities.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
