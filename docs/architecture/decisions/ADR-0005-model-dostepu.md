@@ -366,3 +366,56 @@ zamiast interpretacji.
    ładuje realnych stawek poddostawców; wyłącznie dane syntetyczne. **Warunek zamknięcia:** ADR
    uwierzytelniania zamyka placeholder identity — od tego momentu decyzja wymaga ponownego
    rozpatrzenia, nie wygasa automatycznie.
+
+### 2026-09-21 — zapis do katalogu z przeglądarki: pole zapisywane bez prawa odczytu (SC-2-04)
+
+Aneksy z 2026-09-19 i 2026-09-21 nazywały dotąd jeden kierunek rozbieżności: uprawnienie zapisu,
+które w praktyce daje odczyt (`PROJECT_EDIT`/`COPY`/`ARCHIVE`, potem `STAFFING_WRITE`). SC-2-04
+wystawia kierunek odwrotny, i to jako jedyny osiągalny stan działającego systemu:
+`create_catalog_rate`/`update_rate` przepuszczają odpowiedź przez tę samą bramkę co odczyt, więc
+wołający z `CATALOG_WRITE` i bez `PERSONNEL_COSTS_READ` **wpisuje stawkę kosztową i nie odczytuje
+jej z powrotem**. Dotąd dotyczyło to kogoś, kto sam wysyła żądanie HTTP; od SC-2-04 jest to jedno
+kliknięcie w przeglądarce, na dodawaniu i na edycji.
+
+1. **Rozstrzygnięcie (bramka 1, P-2: wariant A): przyjęte jako nazwana konsekwencja, zero zmian w
+   kodzie backendu poza tym, co wymaga Q-2.** Na edycji (Q-2: wariant A) `PATCH` jest częściowy —
+   pominięcie `default_cost_rate` w żądaniu znaczy „bez zmiany"; wołający bez
+   `PERSONNEL_COSTS_READ` edytuje pozostałe pola wiersza (okno, waluta, stawka sprzedaży) bez
+   dotykania kosztu, którego nigdy nie widział. Odrzucony wariant „żądanie niesie cały wiersz"
+   (semantyka `PUT`): albo blokowałby edycję takiemu wołającemu całkowicie, albo pozwoliłby mu
+   wpisać wymyśloną wartość kosztu i cicho nadpisać koszt, którego nigdy nie odczytał — utrata
+   danych wprowadzona przez formularz, nie przez wyścig. Dowiedzione:
+   `backend/tests/test_catalog_edit.py::test_q_2_an_omitted_cost_rate_leaves_the_stored_one_untouched`.
+2. **Granica obowiązująca niezależnie od ścieżki (dodawanie i edycja).** Ekran nie odtwarza
+   wybielonego pola z pamięci formularza. Wartość wpisana przez człowieka nie wraca do tabeli jako
+   stan katalogu; jedynym źródłem wiersza na ekranie jest odpowiedź serwera (ADR-0009, decyzja
+   pkt 3). Rekonstrukcja po stronie klienta byłaby tym samym, co „Filtrowanie kosztów osobowych w
+   warstwie UI" z „Rozważanych alternatyw" tej decyzji, tylko odwrócone — a skutek (ekran pokazuje
+   kwotę, której serwer nie wydał) jest ten sam: o widoczności kosztu decyduje klient.
+3. **Konsekwencja przyjęta razem z tym aneksem, nie odkryta później:** po SC-2-04 każda stawka
+   kosztowa dodana lub edytowana z UI renderuje się jej autorowi jako „Restricted" — gałąź
+   pozytywna bramki jest nieosiągalna, bo `PLACEHOLDER_PERMISSIONS` nie zawiera
+   `PERSONNEL_COSTS_READ` (aneks 2026-09-19 pkt 5 i 6, kanarek równości zbiorów). To nie jest
+   defekt ekranu i nie wolno go „naprawić" w UI.
+4. **Zestaw uprawnień placeholdera bez zmian; jego zasięg praktyczny rośnie po raz drugi.** SC-2-04
+   nie dodaje żadnego uprawnienia — `CATALOG_WRITE` jest w zestawie od aneksu 2026-09-19 pkt 6.
+   Zmienia się co innego i wymaga nazwania: zapis do katalogu przestaje wymagać ręcznie
+   zbudowanego żądania i staje się dostępny dla każdego, kto dotrze do portu środowiska
+   `development`/`test` — i od SC-2-04 obejmuje też **modyfikację** istniejących danych
+   organizacyjnych, nie tylko dodawanie nowych. Aneks 2026-09-21 pkt 6 (wyłącznie syntetyczne
+   cenniki poddostawców w bazach dev/test) obowiązuje bez zmian i po tym zadaniu jest ważniejszy,
+   nie mniej ważny. Granica bez zmian: `APP_ALLOW_PLACEHOLDER_IDENTITY`, środowiska
+   `development`/`test`.
+5. **Zakres słowników objętych formularzem (bramka 1, P-4: wariant A): wszystkie pięć słowników
+   (role/senioritety/lokalizacje/typy zaangażowania/poddostawcy) + stawki.** Punkt 2 aneksu z
+   2026-09-21 rozstrzygnął, że poddostawca jest „piątym słownikiem katalogu, nie piątym
+   mechanizmem" — formularz obejmujący cztery z pięciu przywróciłby asymetrię, którą tamten punkt
+   usunął, a formularz stawki i tak wymaga istniejących `id` wszystkich pięciu wymiarów.
+6. **Zasięg bez zmian — pod warunkiem, że nic nie zapisuje autora wpisu ani jego zmiany.** Katalog
+   nadal nie ma wiersza `project_access` i żaden endpoint nie zawęża go po tożsamości wołającego
+   (pkt 1 aneksu z 2026-09-19). Dopisanie kolumny „kto dodał wpis" (audyt, F-12) byłoby pierwszą
+   kolumną wiążącą wiersz katalogu z użytkownikiem, wygaszałoby wyjątek „dane organizacyjne bez
+   zasięgu" oraz zwolnienie z funkcji-strażnika (ADR-0001, aneks 2026-09-19 pkt 2) — i wymaga
+   własnego, datowanego wpisu tutaj oraz w ADR-0001. To samo dotyczy kolumny „kto zmienił"; znacznik
+   `updated_at` wprowadzany przez ADR-0007 aneks 2026-09-21 nią nie jest (jest znacznikiem czasu, nie
+   podmiotu) i wyjątku nie wygasza. Ten aneks żadnej kolumny podmiotowej **nie** wprowadza.

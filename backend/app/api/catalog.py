@@ -1,11 +1,20 @@
 """Catalogue endpoints — role dimensions, vendors and default rates (F-03, SC-2-01, SC-2-03).
 
-- `GET  /catalog/dimensions/{dimension}` — one dictionary's entries (`CATALOG_READ`)
-- `POST /catalog/dimensions/{dimension}` — add an entry (`CATALOG_WRITE`)
-- `GET  /catalog/rates` — a page of rates (default 2000, max 5000), optionally only those
+- `GET   /catalog/dimensions/{dimension}` — one dictionary's entries (`CATALOG_READ`)
+- `POST  /catalog/dimensions/{dimension}` — add an entry (`CATALOG_WRITE`)
+- `PATCH /catalog/dimensions/{dimension}/{entry_id}` — rename an entry (`CATALOG_WRITE`)
+- `GET   /catalog/rates` — a page of rates (default 2000, max 5000), optionally only those
 effective on a given day (`CATALOG_READ`)
-- `GET  /catalog/rates/effective` — the one rate for one dimension tuple on one day (`CATALOG_READ`)
-- `POST /catalog/rates` — add a rate window (`CATALOG_WRITE`)
+- `GET   /catalog/rates/effective` — the one rate for one dimension tuple on one day
+(`CATALOG_READ`)
+- `POST  /catalog/rates` — add a rate window (`CATALOG_WRITE`)
+- `PATCH /catalog/rates/{rate_id}` — edit a rate window's amounts, currency or dates
+(`CATALOG_WRITE`)
+
+The two `PATCH` endpoints are SC-2-04. Both carry ADR-0007's concurrency marker: every read of a
+catalogue row returns `updated_at`, every edit must send it back, and the comparison happens inside
+the `UPDATE` statement in `app.data.catalog` — never in Python against a row read a moment earlier.
+Both dictionaries and rates use one mechanism, one permission and one pair of refusals.
 
 Every endpoint declares its permission as a dependency, so the check cannot be reached around; none
 builds a query of its own (they go through `app.data.catalog`) and none builds a payload of its own
@@ -30,13 +39,20 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.response_shaping import shape_catalog_rate, shape_catalog_rate_list
+from app.api.response_shaping import (
+    shape_catalog_rate,
+    shape_catalog_rate_list,
+    shape_dimension_entry,
+    shape_dimension_entry_list,
+)
 from app.api.schemas.catalog import (
     CatalogRate,
     CatalogRateCreateRequest,
+    CatalogRateEditRequest,
     CatalogRateList,
     DimensionEntry,
     DimensionEntryCreateRequest,
+    DimensionEntryEditRequest,
     DimensionEntryList,
 )
 from app.core.identity import CallerIdentity, Permission
@@ -51,6 +67,8 @@ from app.data.catalog import (
     list_dimension_entries,
     list_rates,
     resolve_rate,
+    update_dimension_entry,
+    update_rate,
 )
 from app.db.session import get_session
 
@@ -115,10 +133,7 @@ def list_dimension(
     `caller` is injected although nothing below reads it: the parameter *is* the permission
     check (`require_permission` runs as its dependency). Removing it would remove the guard, not
     tidy up an unused argument."""
-    entries = list_dimension_entries(session, _dimension_model(dimension))
-    return DimensionEntryList(
-        entries=[DimensionEntry(id=entry.id, name=entry.name) for entry in entries]
-    )
+    return shape_dimension_entry_list(list_dimension_entries(session, _dimension_model(dimension)))
 
 
 @router.post(
@@ -161,7 +176,78 @@ def create_dimension(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"{_REFUSED_BY_THE_DATABASE} {refusal}",
         ) from None
-    return DimensionEntry(id=entry.id, name=entry.name)
+    return shape_dimension_entry(entry)
+
+
+_ENTRY_NOT_FOUND_DETAIL = "No such entry in this catalogue dimension."
+"""The `404` of the edit path — a statement about the catalogue, not about the caller.
+
+Spelled once and deliberately identical for "never existed" and "no longer exists": a catalogue row
+has no scope, so unlike the project endpoints there is nothing here to keep indistinguishable, and
+this is only about not inventing two messages for one fact. It takes precedence over the `409`
+(ADR-0007, "Konsekwencje"; SC-3-01 R-01) — reporting a conflict on a row that is not there would
+tell the caller the row exists."""
+
+
+@router.patch(
+    "/dimensions/{dimension}/{entry_id}",
+    response_model=DimensionEntry,
+    summary="Rename an entry of one dimension dictionary",
+    responses={
+        404: {"description": _ENTRY_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused by the state of the data: the entry changed since it was read "
+            "(concurrency marker), or another entry already carries that name. The message names "
+            "which — `condition=updated_at_marker` versus a SQLSTATE and a constraint name."
+        },
+    },
+)
+def edit_dimension(
+    dimension: DimensionSegment,
+    entry_id: uuid.UUID,
+    payload: DimensionEntryEditRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> DimensionEntry:
+    """Rename one role / seniority / location / engagement type / vendor.
+
+    The fifth endpoint of the table-driven pair, not five endpoints (SC-2-03, K-05): the dictionary
+    is still a path segment resolved through `DIMENSION_MODELS`, so the five dictionaries share this
+    edit path, this permission dependency and this pair of refusals — a sixth dictionary inherits
+    them by being added to that mapping and by nothing else.
+
+    `CATALOG_WRITE`, the same permission as adding: NF-10 puts maintaining the catalogue with an
+    organisation administrator, and editing is maintaining. A separate `CATALOG_EDIT` would be a
+    distinction nobody has decided (and nothing grants today).
+
+    Two refusals share the `409`, and they are two different answers (Issue #49):
+
+    - the marker moved — somebody committed an edit of this row after the caller read it. Re-read
+      and edit again, and it may well succeed.
+    - the name collides with another entry (`uq_<table>_name_normalized`, SQLSTATE `23505`). No
+      amount of retrying helps; the name has to change.
+
+    Neither message quotes a row value (NF-11), and neither is written here: both come from
+    `app.data.catalog`, which builds them from the shared mechanism in `app.data.write_errors`.
+    """
+    try:
+        entry = update_dimension_entry(
+            session,
+            _dimension_model(dimension),
+            entry_id,
+            expected_updated_at=payload.updated_at,
+            name=payload.name,
+        )
+    except CatalogWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{_REFUSED_BY_THE_DATABASE} {refusal}",
+        ) from None
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND_DETAIL
+        )
+    return shape_dimension_entry(entry)
 
 
 @router.get(
@@ -354,4 +440,79 @@ def create_catalog_rate(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"{_REFUSED_BY_THE_DATABASE} {refusal}",
         ) from None
+    return shape_catalog_rate(rate, caller)
+
+
+_RATE_NOT_FOUND_DETAIL = "No such rate in the catalogue."
+"""The `404` of the rate edit path. Same reading as `_ENTRY_NOT_FOUND_DETAIL`, and the same
+precedence over the `409`."""
+
+
+@router.patch(
+    "/rates/{rate_id}",
+    response_model=CatalogRate,
+    summary="Edit a default rate's amounts, currency or effective window",
+    responses={
+        404: {"description": _RATE_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused by the state of the data: the rate changed since it was read "
+            "(concurrency marker), or the edited window now overlaps another one for the same "
+            "dimension tuple, or a check constraint rejected a value. The message names which — "
+            "`condition=updated_at_marker` versus a SQLSTATE and a constraint name."
+        },
+    },
+)
+def edit_catalog_rate(
+    rate_id: uuid.UUID,
+    payload: CatalogRateEditRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> CatalogRate:
+    """Correct one rate window — the amounts, the currency, the dates. Never the tuple it prices.
+
+    **`PATCH`, and partial in the strict sense** (Issue #49, gate-1 decision Q-2): the body names
+    the fields that change, and an omitted field is not an edit of that field. The case that makes
+    this a requirement rather than a preference is `default_cost_rate`. A caller holding
+    `CATALOG_WRITE` without `PERSONNEL_COSTS_READ` never receives it on any read — the gate below
+    removes it from this very response — so their correction of a selling rate or an end date has to
+    be expressible without it, and it is: they omit the field and the stored cost rate is untouched.
+    A `PUT` would leave them inventing a number or unable to edit the row at all.
+
+    **What cannot be edited is as deliberate as what can**
+    (`app.data.catalog.EDITABLE_RATE_FIELDS`): the four dimension ids and `vendor_id` say *which*
+    rate this is, and moving an existing window onto another tuple or another vendor is a re-keying
+    nobody has decided. `extra="forbid"` on the request makes an attempt a `422` rather than a
+    silent no-op.
+
+    **The response goes through the same gate as every read** (`shape_catalog_rate`), which is the
+    point of the shaping layer having one entry per row shape: a write path answering with the cost
+    rate would be a way around the gate — the leak ADR-0005's addendum names for the project write
+    actions — and it would be a particularly quiet one here, because the caller just sent the value
+    back in the request and would recognise it in the answer.
+
+    `404` before `409`, decided in `update_rate` and not here: the row's existence is established
+    before its marker is compared, so a conflict is never the answer that confirms a rate exists.
+    """
+    try:
+        rate = update_rate(
+            session,
+            rate_id,
+            expected_updated_at=payload.updated_at,
+            changes=payload.changes(),
+        )
+    except CatalogWriteRefused as refusal:
+        # One `except`, two distinguishable bodies: `CatalogConcurrentEditConflict` (the marker
+        # moved, `condition=updated_at_marker`) is a subclass, so it cannot be the refusal somebody
+        # forgot to map — while its message still says which of the two causes fired. As on the
+        # create path, only a `CatalogWriteRefused` becomes a `409`: an unclassified
+        # `CatalogWriteFailed` propagates and is served as a `500`, because "something broke" is the
+        # true answer and a plausible false one is worse (R-01).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{_REFUSED_BY_THE_DATABASE} {refusal}",
+        ) from None
+    if rate is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_RATE_NOT_FOUND_DETAIL
+        )
     return shape_catalog_rate(rate, caller)

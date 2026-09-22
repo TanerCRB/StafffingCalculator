@@ -15,10 +15,10 @@ conversion to PostgreSQL's half-open form happens only inside the generated `val
 """
 
 import uuid
-from datetime import date
-from typing import Annotated, Self
+from datetime import date, datetime
+from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.api.schemas.common import DecimalString, Iso4217Code, NonEmptyName
 from app.models.catalog import RATE_PRECISION, RATE_SCALE, RATE_UNIT_HOUR
@@ -63,6 +63,16 @@ class DimensionEntry(BaseModel):
     id: uuid.UUID
     name: str
 
+    updated_at: datetime
+    """ADR-0007's concurrency marker, carried on **every** read of this row and required back on an
+    edit (SC-2-04).
+
+    On the list representation as well as on the single-entry one, unlike `ProjectDetail`, which
+    carries it while `ProjectListItem` does not: a dictionary has no detail endpoint to read one
+    entry from, so a marker absent here would be a marker no client could ever obtain — and the
+    only way left to edit would be to send one the client made up, which the database would refuse
+    every time."""
+
 
 class DimensionEntryList(BaseModel):
     """An object, not a bare array — room for filtering/pagination metadata later without breaking
@@ -82,6 +92,31 @@ class DimensionEntryCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: NonEmptyName
+
+
+class DimensionEntryEditRequest(BaseModel):
+    """The body of `PATCH /catalog/dimensions/{dimension}/{entry_id}` (SC-2-04).
+
+    `extra="forbid"`, as on every request model here: an unknown key is a `422` rather than a
+    silently dropped field, so a body trying to smuggle an `id`, a `created_at` or a different
+    dimension fails loudly instead of looking like it worked.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    updated_at: AwareDatetime
+    """The marker returned by the read this edit is based on (ADR-0007). **Required** — an edit
+    without one is not "an edit that skips the check", it is a malformed request, and accepting it
+    would make the protection opt-in for whoever forgets. Must carry an offset: a naive timestamp
+    compared against a `timestamptz` column is a guess about which clock the client meant."""
+
+    name: NonEmptyName
+    """The only editable field a dictionary entry has — it *is* its name.
+
+    Required here rather than optional-and-partial like the rate fields below: with one editable
+    field, "partial" and "complete" are the same request, and an optional field would only add the
+    case of a body that carries nothing but the marker — an edit that changes nothing while moving
+    the marker and invalidating every other client's copy of it."""
 
 
 class CatalogRate(BaseModel):
@@ -120,6 +155,13 @@ class CatalogRate(BaseModel):
     effective_to: date | None = None
     """Inclusive, and `None` for an open-ended window (ADR-0008, point 2) — not a `9999-12-31`
     sentinel a client would have to recognise."""
+
+    updated_at: datetime
+    """ADR-0007's concurrency marker (SC-2-04): carried on every read, required on every edit.
+
+    Never gated: it is a timestamp of the row, not a fact about a person or a cost, and a caller
+    without `PERSONNEL_COSTS_READ` needs it for exactly the same reason as anybody else — to edit
+    the fields they *can* see without overwriting somebody else's change."""
 
 
 class CatalogRateList(BaseModel):
@@ -221,3 +263,139 @@ class CatalogRateCreateRequest(BaseModel):
                 "an open-ended window is expressed by effective_to = null, not by a far-future date"
             )
         return self
+
+
+NULLABLE_RATE_EDIT_FIELDS: frozenset[str] = frozenset({"effective_to"})
+"""The one edit field whose explicit `null` is a value rather than a mistake.
+
+`effective_to: null` means "open-ended" — a named state of the window, the same one the response
+carries (ADR-0008, point 2) — so "close this window's end date" has to be expressible. Every other
+editable field is `NOT NULL` in the database, so a `null` there would reach the `UPDATE` as `NULL`
+and end as a `500` for what is a client mistake (the argument `ProjectEditRequest` makes for
+refusing all of them).
+
+That is also why **absent and `null` are two different requests here**, and why the partial
+semantics of this schema are read off `model_fields_set` rather than off "which fields are not
+null" (Issue #49, gate-1 decision Q-2)."""
+
+
+class CatalogRateEditRequest(BaseModel):
+    """The body of `PATCH /catalog/rates/{rate_id}` — the fields to change, plus the marker.
+
+    **Partial, and that is the load-bearing property** (Issue #49, gate-1 decision Q-2). A field
+    absent from the body is left alone; the fields that are present are the edit. The case it exists
+    for is `default_cost_rate`: a caller without `PERSONNEL_COSTS_READ` never receives that field on
+    any read (`app.api.response_shaping`), so their edit of a selling rate or a window must be able
+    to omit it entirely and leave the stored cost untouched. The alternatives were measured against
+    that case and rejected at gate 1 — whole-row `PUT` semantics would force such a caller either to
+    send a number they invented or to give up editing the row at all.
+
+    `extra="forbid"`, as on the create request, and for one reason specific to editing: `id`,
+    `vendor_id`, the four dimension ids and `valid_period` are not editable
+    (`app.data.catalog.EDITABLE_RATE_FIELDS`), and an ignored unknown key would make
+    `{"role_id": …}` look like a re-keying that quietly did nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    updated_at: AwareDatetime
+    """The marker returned by the read this edit is based on (ADR-0007) — required, and required
+    with an offset, for the reasons `DimensionEntryEditRequest.updated_at` gives."""
+
+    default_cost_rate: RateAmount | None = None
+    """Omitted = unchanged. Present = written, at the same precision the create path accepts
+    (`RateAmount`): more than four decimal places is a `422`, never a silent rounding of somebody's
+    cost rate (R-05).
+
+    The permission is **not** consulted here and must not be: a caller without
+    `PERSONNEL_COSTS_READ` may still write this field, which is the consequence of P-2 accepted
+    deliberately at gate 1 (ADR-0005 addendum — "you write a cost you cannot read back"). What is
+    gated is the response, in one place, by the shaping layer."""
+
+    default_selling_rate: RateAmount | None = None
+    currency: Iso4217Code | None = None
+
+    effective_from: date | None = None
+    effective_to: date | None = None
+    """Inclusive, as everywhere else, and the one field whose explicit `null` is meaningful: it
+    makes the window open-ended (`NULLABLE_RATE_EDIT_FIELDS`). Omitting it leaves the window's end
+    exactly as it was — the two are different requests."""
+
+    @model_validator(mode="after")
+    def _at_least_one_field_and_none_of_them_wrongly_null(self) -> Self:
+        """The two refusals of `ProjectEditRequest`, with one documented exception.
+
+        A body carrying only the marker asks for no change at all; accepted, it would move
+        `updated_at` and invalidate every other client's marker for nothing. A `null` on any field
+        but `effective_to` would reach the `UPDATE` as `NULL` against a `NOT NULL` column — a `500`
+        for a client mistake.
+        """
+        changed = self.__pydantic_fields_set__ - {"updated_at"}
+        if not changed:
+            raise ValueError("An edit must name at least one field to change.")
+        nulled = sorted(
+            field
+            for field in changed - NULLABLE_RATE_EDIT_FIELDS
+            if getattr(self, field) is None
+        )
+        if nulled:
+            raise ValueError(f"These fields cannot be set to null: {', '.join(nulled)}")
+        return self
+
+    @model_validator(mode="after")
+    def _effective_period_is_ordered_when_both_are_given(self) -> Self:
+        """Same division of labour as on create — and the same answer either way.
+
+        Both dates in one body are checked here, so the caller gets a `422` naming the field. One of
+        them alone cannot be checked here at all (the other end of the window lives in the row this
+        request never read), and it is not checked in Python anywhere else either: the database's
+        `ck_catalog_default_rates_effective_period_ordered` refuses it inside the `UPDATE` and the
+        endpoint answers `409`. A `SELECT` here to fetch the missing end and compare would be
+        check-then-act on a row another connection may be editing — the shape ADR-0008 rejects by
+        name.
+        """
+        if (
+            self.effective_from is not None
+            and self.effective_to is not None
+            and self.effective_to < self.effective_from
+        ):
+            raise ValueError("effective_to must not be earlier than effective_from")
+        return self
+
+    @model_validator(mode="after")
+    def _dates_are_inside_the_planning_horizon(self) -> Self:
+        """`LATEST_PLANNING_DATE`, applied to whichever of the two dates the body carries — the same
+        rule as on create, for the same two reasons (a sentinel date is not a plan, and
+        `effective_to + 1` past the driver's range is a `500` rather than an answer)."""
+        too_far = sorted(
+            name
+            for name, value in (
+                ("effective_from", self.effective_from),
+                ("effective_to", self.effective_to),
+            )
+            if value is not None and value > LATEST_PLANNING_DATE
+        )
+        if too_far:
+            raise ValueError(
+                f"{', '.join(too_far)} must not be later than {LATEST_PLANNING_DATE.isoformat()}; "
+                "an open-ended window is expressed by effective_to = null, not by a far-future date"
+            )
+        return self
+
+    def changes(self) -> dict[str, Any]:
+        """The requested changes as column names → values, in declaration order.
+
+        Read off `model_fields_set`, which is the whole of the partial semantics: a field the caller
+        did not send is absent from this mapping, so it is absent from the `UPDATE`'s `SET` clause
+        and the stored value is not touched. `default_cost_rate` is the field that makes this matter
+        (see the class docstring).
+
+        Declaration order rather than set iteration order, as in `ProjectEditRequest.changes`, so
+        the generated `UPDATE` is the same statement for the same request every time.
+        """
+        changed = self.__pydantic_fields_set__ - {"updated_at"}
+        return {
+            field: getattr(self, field)
+            for field in type(self).model_fields
+            if field in changed
+        }

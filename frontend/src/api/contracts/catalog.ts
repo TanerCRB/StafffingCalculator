@@ -24,10 +24,24 @@
  * never routed through `new Date(...)`. */
 export type CalendarDate = string;
 
+/**
+ * ADR-0007's concurrency marker, as it crosses the boundary: an ISO-8601 timestamp *with an
+ * offset*, carried on every read of a catalogue row and required back on every edit (SC-2-04).
+ *
+ * A string here and nowhere a `Date`: the client never reads it, never compares it and never
+ * formats it — it hands the server back the exact bytes the server sent. Parsing it would create a
+ * value the round trip could lose (a millisecond, a microsecond, an offset), and the comparison it
+ * feeds happens inside the backend's `UPDATE` statement, not here.
+ */
+export type ConcurrencyMarker = string;
+
 /** One entry of one dimension dictionary. No `kind` field: the kind is the endpoint's path. */
 export interface DimensionEntry {
   id: string;
   name: string;
+  /** Required on the list representation too — a dictionary has no detail endpoint, so a marker
+   * absent here would be a marker no client could obtain (see the backend schema's docstring). */
+  updated_at: ConcurrencyMarker;
 }
 
 /** An object, not a bare array — the backend reserves room for filtering/pagination metadata. */
@@ -62,6 +76,11 @@ export interface CatalogRate {
   effective_from: CalendarDate;
   /** Inclusive; null for an open-ended window. */
   effective_to?: CalendarDate | null;
+
+  /** ADR-0007's concurrency marker (SC-2-04). Never gated: it is a timestamp of the row, not a
+   * fact about a person or a cost, so a caller without `PERSONNEL_COSTS_READ` receives it too —
+   * they need it to edit the fields they *can* see without overwriting somebody else's change. */
+  updated_at: ConcurrencyMarker;
 }
 
 export interface CatalogRateList {
@@ -94,3 +113,100 @@ export const CATALOG_DIMENSIONS = [
 ] as const;
 
 export type CatalogDimension = (typeof CATALOG_DIMENSIONS)[number];
+
+// --- Request shapes (SC-2-04, ADR-0009) --------------------------------------------------------
+// Mirrors the four request models in backend/app/api/schemas/catalog.py. They live here, beside the
+// response shapes, for the reason the file header gives: one contracts layer. A form that assembled
+// its own object literal would be a second, undeclared description of the same endpoint — and the
+// two would diverge at the first backend change, silently, because `fetch` takes any body at all.
+//
+// Every request model on the backend is `extra="forbid"`, so a key this client invents is a `422`,
+// not a silently dropped field. That is the reason these are exact types rather than
+// `Record<string, unknown>`: the compiler is the first place the mistake is visible.
+
+/** The body of `POST /catalog/dimensions/{dimension}`. The dimension is the path, not a field. */
+export interface DimensionEntryCreateRequest {
+  name: string;
+}
+
+/** The body of `PATCH /catalog/dimensions/{dimension}/{entry_id}`.
+ *
+ * Both fields are required by the backend: a dictionary entry *is* its name, so "partial" and
+ * "complete" would be the same request, and an edit without a marker is a malformed request rather
+ * than an edit that skips the check. */
+export interface DimensionEntryEditRequest {
+  updated_at: ConcurrencyMarker;
+  name: string;
+}
+
+/**
+ * The body of `POST /catalog/rates`.
+ *
+ * `unit` is deliberately **not** a member. The database pins it to `hour` and the backend request
+ * model defaults to it, so a client field would offer a choice that does not exist (ADR-0002,
+ * addendum 2026-09-21, point 4). `RATE_UNIT_HOUR` below is for *saying* what the unit is, never for
+ * asking.
+ */
+export interface CatalogRateCreateRequest {
+  role_id: string;
+  seniority_id: string;
+  location_id: string;
+  engagement_type_id: string;
+
+  /** `null` is the named state "the organisation's own rate", never "any vendor" and never a nil
+   * UUID sentinel — the same convention the response uses (SC-2-03). */
+  vendor_id: string | null;
+
+  /** Fixed-point decimal strings, at the precision the human typed. Never a JS `number`, and never
+   * rounded on the way in: `NUMERIC(14,4)` is the column, a value the backend cannot keep is a
+   * `422`, and a client that rounded would silently change somebody's cost rate (ADR-0002,
+   * addendum 2026-09-21, points 1-2). */
+  default_cost_rate: string;
+  default_selling_rate: string;
+
+  /** ISO-4217, uppercase. Not normalised here: the backend rejects `eur` rather than upper-casing
+   * it (`Iso4217Code`), precisely so that two spellings of one currency cannot reach one column — a
+   * client that "helped" would hide the bug the boundary exists to surface (ADR-0002, addendum
+   * 2026-09-21, point 3; gate-1 decision P-5). */
+  currency: string;
+
+  effective_from: CalendarDate;
+  /** Inclusive, exactly as sent; `null` is the named state "open-ended". The `+ 1 day` conversion
+   * to PostgreSQL's half-open form lives in the generated column and nowhere else (ADR-0008,
+   * point 3) — nothing on this side reproduces it. */
+  effective_to: CalendarDate | null;
+}
+
+/**
+ * The body of `PATCH /catalog/rates/{rate_id}` — **partial, and that is the load-bearing property**
+ * (Issue #49, gate-1 decision Q-2).
+ *
+ * A field absent from the object is a field the edit does not touch. The case it exists for is
+ * `default_cost_rate`: a caller without `PERSONNEL_COSTS_READ` never receives it on any read, so
+ * their correction of a selling rate or a window has to be expressible without it. Whole-row
+ * semantics would leave them sending a number they invented.
+ *
+ * `effective_to` is the one field whose explicit `null` is a value rather than a mistake — it makes
+ * the window open-ended. Absent and `null` are therefore two different requests, and the backend
+ * reads the difference off `model_fields_set`. Every other field sent as `null` is a `422`.
+ */
+export interface CatalogRateEditRequest {
+  updated_at: ConcurrencyMarker;
+
+  default_cost_rate?: string;
+  default_selling_rate?: string;
+  currency?: string;
+
+  effective_from?: CalendarDate;
+  effective_to?: CalendarDate | null;
+}
+
+/**
+ * The unit every catalogue rate is priced in, as the database's CHECK constraint enforces it.
+ *
+ * Here so that a form can *state* the unit (NF-07: "forms shall explain input units") without
+ * offering it as a choice, and so that the word is written once. F-07 adds daily and monthly rates;
+ * when it does, the unit becomes a field of the request and this constant becomes a default — which
+ * is a decision, not a detail of a form.
+ */
+export const RATE_UNIT_HOUR = "hour";

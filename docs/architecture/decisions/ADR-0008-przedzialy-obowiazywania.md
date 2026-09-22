@@ -173,3 +173,52 @@ przyszły czytelnik nie odczytał tej kolumny jako realizacji pierwotnej litery 
 **Status decyzji podniesiony tym zadaniem z Draft do Accepted** (rozstrzygnięcie bramki 1, Issue
 #46) — mechanizm okien obowiązywania jest mutation-checked od SC-2-01, to drugie zadanie, które na
 nim stoi.
+
+### 2026-09-21 — okno obowiązywania wpisywane i edytowane przez człowieka (SC-2-04)
+
+Aneks z 2026-09-19 przewidział drugiego konsumenta zaokrąglenia (ekran pokazujący stawkę) i zamknął
+się zdaniem: „pierwsze zadanie z edycją stawki ładuje pełną precyzję z API, nigdy wartość widzianą na
+ekranie, i dowodzi tego własnym kryterium".
+
+1. **Uruchomiło się — SC-2-04 jest tym zadaniem.** Rozstrzygnięcie bramki 1 (2026-09-21, Issue #49)
+   przyjęło zakres szerszy niż rekomendowany: formularz obejmuje dodawanie **i** edycję istniejącego
+   wiersza. Warunek z pkt 2 aneksu z 2026-09-19 („pierwsze zadanie z edycją stawki ładuje pełną
+   precyzję z API, nigdy wartość widzianą na ekranie, i dowodzi tego własnym kryterium") przestaje
+   być odłożony i staje się obowiązkiem tego zadania. Źródłem wypełnienia formularza edycji jest
+   wyłącznie odpowiedź API (`NUMERIC(14,4)` jako string dziesiętny), nigdy tekst z komórki tabeli,
+   który `formatMoneyString` zaokrąglił do dwóch miejsc — inaczej edycja samej daty okna przepisałaby
+   stawkę 100,0049 na 100,00, czyli cicha zmiana danej wejściowej, ta sama, której zakazuje pkt 6
+   decyzji. Kryterium musi być obalalne: mutacja „prefill z wartości renderowanej zamiast z
+   odpowiedzi API" ma wywracać test; samo przejście ścieżki edycji niczego tu nie dowodzi, bo
+   wartość zaokrąglona i pełna są równe dla każdej stawki o dwóch miejscach. Granica tego kryterium,
+   nazwana od razu: dla wołającego bez `PERSONNEL_COSTS_READ` pole `default_cost_rate` nie wraca z
+   API wcale (ADR-0005, bramka kosztowa), więc dla tego jednego pola kryterium jest dowodliwe
+   wyłącznie w teście z uprawnieniem — dla pozostałych pól na obu gałęziach bramki. Dowiedzione
+   po stronie backendu (pełna precyzja przekracza granicę API niezmieniona):
+   `backend/tests/test_catalog_edit.py::test_q_2_a_cost_rate_that_is_sent_is_written_at_full_precision`;
+   dowód po stronie ekranu (formularz ładuje z API, nie z komórki) — zadanie frontendowe.
+2. **Każda afordancja prefillu uruchamia tamten warunek natychmiast.** „Duplikuj wiersz", „nowe okno
+   dla tej krotki", jakikolwiek przycisk kopiujący wartość z tabeli do formularza — przepisuje
+   wartość zaokrągloną do dwóch miejsc do pola, z którego powstanie nowy wiersz `NUMERIC(14,4)`.
+   Albo jest to jawnie poza zakresem zadania, albo dostaje kryterium dowodzące, że źródłem jest pełna
+   precyzja z API. Milczenie nie jest trzecią możliwością. SC-2-04 nie wprowadza żadnej afordancji
+   duplikowania — formularz dodawania startuje pusty, formularz edycji ładuje się z API (pkt 1).
+3. **Granica z pkt 3 decyzji bez zmian, teraz także na wejściu.** `effective_to` jest włączające w
+   formularzu, dokładnie tak jak w API; klient nie odtwarza konwersji `+ 1 dzień` ani przy zapisie,
+   ani przy wyświetleniu. Jedynym miejscem tej konwersji zostaje kolumna generowana `valid_period`.
+   Puste `effective_to` znaczy okno bezterminowe (pkt 2 decyzji), nie „brak danych". Dowiedzione:
+   `test_an_explicit_null_effective_to_opens_the_window_and_an_omitted_one_changes_nothing`.
+4. **Nakładanie okien rozstrzyga `EXCLUDE`, nie ekran.** Klient nie sprawdza kolizji przed wysłaniem —
+   byłoby to check-then-act (reguła 13, druga połowa) i dodatkowo sprawdzenie fałszywe: lista stawek
+   jest stronicowana, więc klient nie ma zbioru, na którym mógłby je wykonać. Odmowa `409` z bazy jest
+   jedynym orzeczeniem o nakładaniu; ekran ją pokazuje, nie uprzedza. Na ścieżce edycji ten `409`
+   musi być rozróżnialny od `409` nieaktualnego znacznika współbieżności — patrz ADR-0007, aneks
+   2026-09-21, pkt 4.
+5. **Ekran nadal nie rozstrzyga, która stawka obowiązuje** (pkt 4 decyzji) — także po dodaniu lub
+   edycji wiersza: żadnego scalania okien ani wybierania „najnowszego" po stronie klienta.
+6. **Konsekwencja stronicowania, przyjęta razem z tym aneksem:** nowo dodane okno o starej dacie
+   `effective_from` nie musi trafić na pierwszą stronę listy (porządek `effective_from DESC, id DESC`,
+   domyślny `limit`). „Dodano, a wiersza nie widać" jest stanem prawdziwym, nie awarią — to samo
+   dotyczy wiersza **edytowanego**: zmiana `effective_from` może przenieść go na inną stronę listy,
+   więc „zapisano, a wiersza nie widać" jest stanem prawdziwym także po edycji. Sukces zapisu musi
+   być zakomunikowany zdaniem, a nie pojawieniem się wiersza (ADR-0009, decyzja pkt 3, G-6).

@@ -31,15 +31,23 @@ narrowing of "which vendors' price lists this caller may see" would be the first
 predicate on this table and expires both exceptions."""
 
 import uuid
-from collections.abc import Sequence
-from datetime import date
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
-from app.data.write_errors import WriteFailed, WriteRefused, failure_for
+from app.data.write_errors import (
+    CONCURRENCY_MARKER_CONDITION,
+    CONCURRENCY_MARKER_REASON,
+    WriteFailed,
+    WriteRefused,
+    failure_for,
+    refusal_by_condition,
+)
 from app.models.catalog import (
     CatalogDefaultRate,
     CatalogEngagementType,
@@ -103,6 +111,23 @@ class CatalogWriteRefused(CatalogWriteFailed, WriteRefused):
     """
 
 
+class CatalogConcurrentEditConflict(CatalogWriteRefused):
+    """The row changed since the caller read it (ADR-0007, NF-05) — a `409`, and a different one.
+
+    A subclass rather than a second, unrelated exception: an endpoint keeps **one** `except
+    CatalogWriteRefused` branch, so a refusal cannot be the one somebody forgot to map. What makes
+    the two distinguishable is the message, which names `condition=updated_at_marker` where a
+    refusal the driver reported names `sqlstate=…, constraint=…` (`app.data.write_errors`).
+
+    The distinction is not cosmetic: an overlap or a duplicate name is refused for as long as the
+    other row exists, while a stale marker means "somebody else got there first, re-read and try
+    again". Collapsing them into one message tells a caller to retry a write that cannot succeed, or
+    not to retry one that would.
+
+    Carries nothing about the competing change (ADR-0007; NF-11).
+    """
+
+
 def _failure(error: SQLAlchemyError, *, subject: str) -> WriteFailed:
     """Classify one failed catalogue write by SQLSTATE, into this module's pair of exceptions.
 
@@ -146,6 +171,221 @@ def create_dimension_entry(
         # back into the traceback one line further down.
         raise _failure(error, subject="catalogue entry") from None
     return entry
+
+
+def _marker_conflict(*, subject: str) -> CatalogConcurrentEditConflict:
+    """The refusal a conditional `UPDATE` that matched no row means — built in one place.
+
+    Shaped by `app.data.write_errors.refusal_by_condition`, i.e. the same mechanism and the same
+    message format as the refusals the driver reports, so the two kinds of `409` on this path read
+    alike and identify themselves differently (`condition=updated_at_marker` versus
+    `sqlstate=…, constraint=…`).
+    """
+    return refusal_by_condition(
+        subject=subject,
+        condition=CONCURRENCY_MARKER_CONDITION,
+        reason=CONCURRENCY_MARKER_REASON,
+        refused=CatalogConcurrentEditConflict,
+    )
+
+
+def _apply_marked_update(
+    session: Session,
+    table: sa.Table,
+    row_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    changes: Mapping[str, Any],
+    subject: str,
+) -> bool:
+    """Run one `UPDATE … WHERE id = :id AND updated_at = :expected` and say whether it landed.
+
+    **The whole mechanism of ADR-0007 is the `WHERE` clause of this one statement.** The marker is
+    compared by the database, in the same statement and the same snapshot as the write — never in
+    Python against a row read a moment earlier. The Python variant passes every single-threaded test
+    (a marker nobody ever issued mismatches either way) and survived a full delivered suite in
+    SC-1-02 before a two-connection race test killed it; it is the one shape this function exists to
+    make unwritable here (`docs/architecture/capabilities.md`, mutation log 2026-09-19).
+
+    Returns `False` when the statement matched no row, which is the marker having moved; the caller
+    turns that into `CatalogConcurrentEditConflict` **after** it has established the row exists, so
+    a `404` keeps its precedence over a `409` (ADR-0007, "Konsekwencje").
+
+    `updated_at` is not in `changes` and must never be: the new value comes from the column's
+    `onupdate=func.now()`, a SQL expression evaluated by the database, so two application instances
+    cannot disagree about which write came last and no process's own clock enters the row.
+
+    The Core `UPDATE` against the `Table` rather than the ORM entity, exactly as
+    `app.data.project_writes.update_project` does it: the statement stays what is written here, with
+    no ORM-level synchronisation strategy deciding to re-fetch rows or to evaluate the criteria in
+    Python — which would be the mechanism this function refuses to have, one layer down.
+    """
+    statement = (
+        sa.update(table)
+        .where(
+            table.c.id == row_id,
+            table.c.updated_at == expected_updated_at,
+        )
+        .values(**dict(changes))
+        .returning(table.c.updated_at)
+    )
+    try:
+        applied = session.execute(statement).one_or_none()
+        if applied is None:
+            # No `session.rollback()`: the single statement above matched no row, so there is
+            # nothing written to undo, and a rollback would discard unrelated work the caller's
+            # transaction may hold. "Nothing was saved" is a property of the statement not matching.
+            return False
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        # `from None` at the raise site, for the reason `create_dimension_entry` gives: PostgreSQL's
+        # `DETAIL: Failing row contains (…)` carries the whole row, `default_cost_rate` included.
+        raise _failure(error, subject=subject) from None
+    return True
+
+
+def update_dimension_entry(
+    session: Session,
+    model: DimensionModel,
+    entry_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    name: str,
+) -> DimensionRow | None:
+    """Rename one dictionary entry — `None` if no such row, a refusal if the marker moved.
+
+    One function for the five dictionaries, like every other function in this module: the dictionary
+    arrives as a model, so the fifth one cannot be the one that got its own edit path (SC-2-03,
+    K-05).
+
+    **`None` means "no such entry", and it is established before the marker is looked at.** A
+    deleted or never-existing row therefore answers `404` and not `409`, the same precedence
+    ADR-0007 requires and SC-3-01's R-01 applied: a conflict reported for a row that is not there
+    tells the caller it exists. The existence read is *not* the guard and is not check-then-act:
+    the guard is the `WHERE` of the `UPDATE` below, which runs whatever this read saw.
+
+    A duplicate name is refused by the database (`uq_<table>_name_normalized`), never by a `SELECT`
+    here asking whether a similar name exists: that pre-check is the mutation that has already
+    survived delivered tests twice in this repository (SC-1-02, SC-1-04), and two callers renaming
+    two entries to "Senior" at once would both pass it.
+    """
+    entry = session.get(model, entry_id)
+    if entry is None:
+        return None
+    if not _apply_marked_update(
+        session,
+        model.__table__,
+        entry_id,
+        expected_updated_at=expected_updated_at,
+        changes={"name": name},
+        subject="catalogue entry",
+    ):
+        raise _marker_conflict(subject="catalogue entry")
+    # The in-memory row still holds the pre-update name, and `updated_at` was computed by the
+    # database, so it is reloaded before anyone shapes a response out of it.
+    session.refresh(entry)
+    return entry
+
+
+EDITABLE_RATE_FIELDS: frozenset[str] = frozenset(
+    {
+        "default_cost_rate",
+        "default_selling_rate",
+        "currency",
+        "effective_from",
+        "effective_to",
+    }
+)
+"""Every column `update_rate` will ever write — an allow-list, never "whatever was sent".
+
+What is deliberately absent, and why:
+
+- the five key columns (`role_id`, `seniority_id`, `location_id`, `engagement_type_id`,
+  `vendor_id`). They say *which* rate this row is; editing them turns a correction into a re-keying
+  of an existing window onto another tuple, which is a decision nobody has taken (Issue #49 scopes
+  this task to adding and editing, not re-keying). A caller who priced the wrong tuple adds the
+  right one — the row they meant to write is a different row.
+- `unit`: the database admits exactly `'hour'` today (`ck_catalog_default_rates_unit_is_hour`), so
+  an editable field would be one whose every value but the current one is refused.
+- `id`, `created_at`, `updated_at`, `valid_period`: not user input at all. `valid_period` in
+  particular is generated, and naming it here would be the second place a window's boundary is
+  decided (ADR-0008, point 3).
+
+An allow-list rather than a deny-list, for the reason `app.data.project_writes.EDITABLE_FIELDS`
+gives: a column added to this table later is unwritable until somebody decides it should be."""
+
+
+class CatalogFieldNotEditable(RuntimeError):
+    """A caller asked `update_rate` to write a column outside `EDITABLE_RATE_FIELDS`, or nothing.
+
+    A programming error, not a client error: the API request schema can express neither case, so
+    this guards the *next* call site (an import, a script, a future endpoint) rather than the one
+    that exists today — the same role as `app.data.project_writes.ProjectFieldNotEditable`.
+    """
+
+
+def update_rate(
+    session: Session,
+    rate_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    changes: Mapping[str, Any],
+) -> CatalogDefaultRate | None:
+    """Edit one rate window — `None` if no such rate, a refusal if the marker or the data says no.
+
+    **Partial by construction** (Issue #49, gate-1 decision Q-2). `changes` carries exactly the
+    fields the caller named; a field that is absent is not written, and that is what makes the row
+    editable at all by a caller who cannot *see* one of its fields: `default_cost_rate` is removed
+    from every response to a caller without `PERSONNEL_COSTS_READ`
+    (`app.api.response_shaping.shape_catalog_rate`), so their edit request cannot carry it back and
+    must not have to. An omitted cost rate leaves the stored one exactly as it was — never
+    coerced to null, never required, never replaced by a value the client invented.
+
+    Three refusals, and they stay three different answers:
+
+    - **`None`** — no such rate. Established before the marker, so `404` keeps precedence over
+      `409` (ADR-0007; SC-3-01 R-01).
+    - **`CatalogConcurrentEditConflict`** — the marker moved between the read and this write. The
+      comparison is the `WHERE` clause of the `UPDATE`, evaluated by the database.
+    - **`CatalogWriteRefused`** — the state of the data refuses the new values: the window now
+      overlaps another one for the same tuple (`EXCLUDE`, SQLSTATE `23P01`), or a CHECK constraint
+      rejects them. Not pre-checked here either (ADR-0008): the `EXCLUDE` is evaluated inside this
+      `UPDATE`, so an edit that moves a window onto a competitor's is refused even if the competitor
+      committed a moment ago.
+
+    Nothing here rounds an amount. The column's scale is deliberately larger than any currency's
+    minor unit (ADR-0008, point 6), rounding is the consumer's rule (`app.core.money.round_money`),
+    and an amount more precise than the column is refused at the API boundary rather than truncated
+    here (R-05) — on the edit path exactly as on the create path.
+    """
+    forbidden = sorted(set(changes) - EDITABLE_RATE_FIELDS)
+    if forbidden:
+        raise CatalogFieldNotEditable(
+            "These rate fields cannot be edited through this function: "
+            + ", ".join(forbidden)
+            + f". Editable: {', '.join(sorted(EDITABLE_RATE_FIELDS))}."
+        )
+    if not changes:
+        raise CatalogFieldNotEditable("An edit must name at least one field to change.")
+
+    rate = session.get(CatalogDefaultRate, rate_id)
+    if rate is None:
+        return None
+    if not _apply_marked_update(
+        session,
+        CatalogDefaultRate.__table__,
+        rate_id,
+        expected_updated_at=expected_updated_at,
+        changes=changes,
+        subject="catalogue rate",
+    ):
+        raise _marker_conflict(subject="catalogue rate")
+    # Re-read after the commit, for the reason `create_rate` gives: the columns are `NUMERIC(14,4)`
+    # and `valid_period` is generated, so the row the response describes must be the row the
+    # database holds rather than the values Python passed in.
+    session.refresh(rate)
+    return rate
 
 
 def covering(on_date: date) -> sa.ColumnElement[bool]:

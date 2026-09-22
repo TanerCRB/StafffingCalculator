@@ -1,8 +1,12 @@
 import type {
   CatalogDimension,
   CatalogRate,
+  CatalogRateCreateRequest,
+  CatalogRateEditRequest,
   CatalogRateList,
   DimensionEntry,
+  DimensionEntryCreateRequest,
+  DimensionEntryEditRequest,
   DimensionEntryList,
 } from "./contracts/catalog";
 import type { HealthResponse } from "./contracts/health";
@@ -19,19 +23,50 @@ export const CALLER_ID_HEADER = "X-Caller-User-Id";
 
 const CALLER_USER_ID: string = import.meta.env.VITE_CALLER_USER_ID ?? "";
 
-/** How long a read may take before the screen stops waiting. A hung backend must end in a stated
- * failure, not in a loading state that never resolves. */
+/** How long a request may take before the screen stops waiting. A hung backend must end in a stated
+ * failure, not in a loading state that never resolves.
+ *
+ * One budget for reads and writes alike (ADR-0009, point 1): a write without a deadline is the same
+ * class of defect as a read without one, with a worse consequence — a "Save" button that never
+ * settles invites a second click, and this contract has no idempotency key. */
 export const REQUEST_TIMEOUT_MS = 12_000;
 
+/**
+ * What a refused write said about itself, taken from the response body and from nothing else.
+ *
+ * `detail` is the backend's own sentence — built from identifiers only, never from row values
+ * (NF-11, `app.data.write_errors.describe_without_values`). It is carried so that a screen can tell
+ * the catalogue's two different `409`s apart (a stale ADR-0007 marker versus an overlap or a
+ * duplicate name) without inventing a cause; `contracts/writeRefusals.ts` is where that reading
+ * happens.
+ *
+ * `fields` is the other shape a FastAPI error body takes: a `422` answers with a list of locations,
+ * not a sentence, and the last segment of each location is the field the request got wrong (NF-07).
+ */
+export interface ApiErrorReport {
+  readonly detail?: string;
+  readonly fields?: readonly string[];
+}
+
 /** A failed HTTP call, carrying the status so a screen can tell "denied" from "broken" without
- * parsing a message string. */
+ * parsing a message string — and, for a write, what the body said refused it. */
 export class ApiError extends Error {
   readonly status: number;
 
-  constructor(status: number, message: string) {
+  /** The refusal's own words, when the body carried a sentence. `undefined` for a body that was not
+   * JSON, or carried no `detail` — which is a state a screen has to be able to render, because
+   * "refused, and the answer did not say why" is a true thing to say and a guess is not. */
+  readonly detail?: string;
+
+  /** The fields a `422` named, in the request's own vocabulary (`default_cost_rate`, `currency`). */
+  readonly fields?: readonly string[];
+
+  constructor(status: number, message: string, report: ApiErrorReport = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = report.detail;
+    this.fields = report.fields;
   }
 }
 
@@ -45,8 +80,13 @@ export class RequestTimeoutError extends Error {
 }
 
 /**
- * Runs one read — request *and* body — under a single deadline. Every fetch wrapper in this file
- * goes through it; a read that does not, has no deadline at all.
+ * Runs one request — the call *and* its body — under a single deadline. Every fetch wrapper in this
+ * file goes through it; a request that does not, has no deadline at all.
+ *
+ * Reads and writes alike (ADR-0009, point 1): the mutating wrappers at the bottom of this file are
+ * the same primitive with a method and a body, so there is one place where a deadline, an abort and
+ * the `ApiError`/`RequestTimeoutError` distinction are decided. A second, write-only primitive is
+ * how the two budgets start to differ without anybody deciding that they should.
  *
  * The deadline deliberately covers `handle`, which is where the body is consumed. Arriving
  * headers are not an answer: a backend or proxy can send `200`, then stall mid-stream (truncated
@@ -59,7 +99,7 @@ export class RequestTimeoutError extends Error {
  * to completion anyway, competing for one of the browser's six same-origin HTTP/1.1 sockets with
  * the reads the screen the user is actually on is waiting for (Reviewer R-01).
  */
-async function readWithDeadline<T>(
+async function requestWithDeadline<T>(
   url: string,
   init: RequestInit,
   handle: (response: Response) => Promise<T>,
@@ -102,7 +142,7 @@ async function readWithDeadline<T>(
 }
 
 export async function getHealth(): Promise<HealthResponse> {
-  return readWithDeadline(`${API_BASE_URL}/health`, {}, async (response) => {
+  return requestWithDeadline(`${API_BASE_URL}/health`, {}, async (response) => {
     if (!response.ok) {
       throw new Error(`GET /health failed: ${response.status}`);
     }
@@ -113,7 +153,7 @@ export async function getHealth(): Promise<HealthResponse> {
 /** The caller's project list (SC-1-05). Read only — the server decides which projects exist for
  * this caller; this function adds no filter, no sort and no default of its own (NF-04). */
 export async function getProjects(): Promise<ProjectListResponse> {
-  return readWithDeadline(
+  return requestWithDeadline(
     `${API_BASE_URL}/projects`,
     { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
     async (response) => {
@@ -186,12 +226,33 @@ function isCatalogRateShape(value: unknown): value is CatalogRate {
     requiredStrings.every((field) => typeof value[field] === "string") &&
     isRequiredNullableString(value.vendor_id) &&
     isOptionalString(value.default_cost_rate) &&
-    isOptionalString(value.effective_to)
+    isOptionalString(value.effective_to) &&
+    isConcurrencyMarker(value.updated_at)
   );
 }
 
+/**
+ * Whether a row carried the ADR-0007 concurrency marker it is contractually required to carry
+ * (SC-2-04).
+ *
+ * Required, like `vendor_id` and unlike `default_cost_rate`: the marker is never gated, so a row
+ * without one is a payload this client cannot read rather than a permission being exercised. The
+ * consequence of folding it into `undefined` instead is specific and bad — the edit form would
+ * offer to save a row with no marker, which is either a request the backend answers `422` (the
+ * field is required) or, if a client ever "helped" by inventing one, a lost update: the marker is
+ * the only thing standing between two people editing one row and the second one silently winning.
+ */
+function isConcurrencyMarker(value: unknown): boolean {
+  return typeof value === "string" && value !== "";
+}
+
 function isDimensionEntryShape(value: unknown): value is DimensionEntry {
-  return isRecord(value) && typeof value.id === "string" && typeof value.name === "string";
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    isConcurrencyMarker(value.updated_at)
+  );
 }
 
 /**
@@ -206,7 +267,7 @@ function isDimensionEntryShape(value: unknown): value is DimensionEntry {
  * unmounted (Reviewer R-01).
  */
 export async function getCatalogRates(signal?: AbortSignal): Promise<CatalogRateList> {
-  return readWithDeadline(
+  return requestWithDeadline(
     `${API_BASE_URL}/catalog/rates`,
     { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
     async (response) => {
@@ -251,7 +312,7 @@ export async function getCatalogDimension(
   signal?: AbortSignal,
 ): Promise<DimensionEntryList> {
   const path = `/catalog/dimensions/${dimension}`;
-  return readWithDeadline(
+  return requestWithDeadline(
     `${API_BASE_URL}${path}`,
     { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
     async (response) => {
@@ -270,4 +331,144 @@ export async function getCatalogDimension(
     REQUEST_TIMEOUT_MS,
     signal,
   );
+}
+
+// --- Writing (SC-2-04, ADR-0009) ---------------------------------------------------------------
+// Four wrappers, one primitive, no retry. ADR-0009 decides the three things they have in common:
+//
+//   1. They go through `requestWithDeadline`, so a write carries the same explicit time budget as a
+//      read and ends in `RequestTimeoutError` rather than in a button that never settles (point 1).
+//   2. Nothing here retries. The contract has no idempotency key, so a client cannot tell "it never
+//      arrived" from "it committed and the answer was lost", and a silent second attempt would be
+//      the one place where silence risks a duplicated row rather than an awkward screen (point 2).
+//   3. Nothing here validates a business rule before sending. Overlapping windows, duplicate names
+//      and a stale concurrency marker are decided by the database inside the write, and the screen
+//      renders the refusal rather than anticipating it (point 4).
+//
+// None of them returns anything a screen is allowed to put in a table: the row on screen after a
+// save comes from a fresh read, never from the write's answer (point 3, gate-1 decision P-3a). They
+// return the parsed body so that a caller can `await` a real answer — not so that it can be
+// rendered.
+
+const JSON_REQUEST_HEADERS: Readonly<Record<string, string>> = {
+  [CALLER_ID_HEADER]: CALLER_USER_ID,
+  "Content-Type": "application/json",
+};
+
+/**
+ * Builds the `ApiError` for a refused write, from the response body and from nothing else.
+ *
+ * FastAPI answers with `detail` in two different shapes, and both are read here because both carry
+ * something a person needs: a string for the refusals this application raises itself (`403`, `404`,
+ * `409` — the sentence naming the mechanism that refused), and a list of locations for a `422`
+ * produced by request validation, where the last segment of each location is the field.
+ *
+ * A body that is not JSON, or that carries neither, leaves both fields `undefined` — and that is an
+ * answer the screen renders as "refused, and the response did not say which rule refused it". The
+ * alternative is a screen that picks the most plausible cause, which is the defect R-01 measured on
+ * the backend a level down: a refusal with a confident face on it and nothing behind it.
+ */
+async function refusalOf(response: Response, what: string): Promise<ApiError> {
+  let detail: string | undefined;
+  let fields: string[] | undefined;
+  try {
+    const body: unknown = await response.json();
+    const reported = isRecord(body) ? body.detail : undefined;
+    if (typeof reported === "string") {
+      detail = reported;
+    } else if (Array.isArray(reported)) {
+      fields = reported.flatMap((item) => {
+        const location = isRecord(item) ? item.loc : undefined;
+        if (!Array.isArray(location) || location.length === 0) {
+          return [];
+        }
+        return [String(location[location.length - 1])];
+      });
+    }
+  } catch {
+    // A refusal whose body could not be read is still a refusal, and the status still says what
+    // kind. Swallowing the parse error here is what keeps that true; rethrowing would turn a
+    // stated `403` into an unstated failure.
+  }
+  return new ApiError(response.status, `${what} failed: ${response.status}`, { detail, fields });
+}
+
+async function write<T>(
+  path: string,
+  method: "POST" | "PATCH",
+  body: unknown,
+  isShape: (value: unknown) => boolean,
+): Promise<T> {
+  const what = `${method} ${path}`;
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { method, headers: JSON_REQUEST_HEADERS, body: JSON.stringify(body) },
+    async (response) => {
+      if (!response.ok) {
+        throw await refusalOf(response, what);
+      }
+      const payload: unknown = await response.json();
+      if (!isShape(payload)) {
+        // The same rule as on the reads: a body that does not match the contract is an error. It
+        // matters more here, not less — "the save worked" is the one claim a screen must not make
+        // on faith, and a `201` carrying something this client cannot read is not evidence that a
+        // row exists.
+        throw new ApiError(response.status, `${what} returned a payload of the wrong shape`);
+      }
+      return payload as T;
+    },
+  );
+}
+
+/** Add one entry to one dimension dictionary (`POST /catalog/dimensions/{dimension}`).
+ *
+ * One function for all five dictionaries, mirroring the one endpoint that serves them: `vendors` is
+ * the fifth dictionary, not a fifth mechanism (SC-2-03, K-05). */
+export async function createDimensionEntry(
+  dimension: CatalogDimension,
+  body: DimensionEntryCreateRequest,
+): Promise<DimensionEntry> {
+  return write(`/catalog/dimensions/${dimension}`, "POST", body, isDimensionEntryShape);
+}
+
+/** Rename one entry of one dimension dictionary
+ * (`PATCH /catalog/dimensions/{dimension}/{entry_id}`).
+ *
+ * `body.updated_at` is the marker that came back with the read this edit is based on, handed back
+ * untouched. Nothing here compares it to anything: the comparison happens inside the backend's
+ * `UPDATE` statement (ADR-0007, addendum 2026-09-21, point 3), and a client-side check would be the
+ * check-then-act shape that survived a full delivered test suite once already. */
+export async function editDimensionEntry(
+  dimension: CatalogDimension,
+  entryId: string,
+  body: DimensionEntryEditRequest,
+): Promise<DimensionEntry> {
+  return write(
+    `/catalog/dimensions/${dimension}/${entryId}`,
+    "PATCH",
+    body,
+    isDimensionEntryShape,
+  );
+}
+
+/** Add one default rate window (`POST /catalog/rates`). */
+export async function createCatalogRate(body: CatalogRateCreateRequest): Promise<CatalogRate> {
+  return write("/catalog/rates", "POST", body, isCatalogRateShape);
+}
+
+/**
+ * Correct one default rate window (`PATCH /catalog/rates/{rate_id}`).
+ *
+ * `body` is partial by contract: a field it does not carry is a field the edit does not touch. That
+ * is what lets a caller without `PERSONNEL_COSTS_READ` edit a selling rate or a window at all — they
+ * omit `default_cost_rate`, which they were never sent, and the stored cost is left alone (Issue
+ * #49, gate-1 decision Q-2). `JSON.stringify` drops `undefined` properties, so "absent from the
+ * object" and "absent from the body" are the same thing; `effective_to: null`, the one meaningful
+ * null, survives it.
+ */
+export async function editCatalogRate(
+  rateId: string,
+  body: CatalogRateEditRequest,
+): Promise<CatalogRate> {
+  return write(`/catalog/rates/${rateId}`, "PATCH", body, isCatalogRateShape);
 }
