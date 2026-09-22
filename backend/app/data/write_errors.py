@@ -91,6 +91,53 @@ def sqlstate_of(error: SQLAlchemyError) -> str | None:
     return getattr(diagnostics, "sqlstate", None)
 
 
+CONCURRENCY_MARKER_CONDITION = "updated_at_marker"
+"""The name of the refusal that has no SQLSTATE: the ADR-0007 marker in the `UPDATE`'s `WHERE`.
+
+A conditional `UPDATE` that matches no row raises nothing — it is a refusal the database *performed*
+(the comparison ran inside the statement) but did not *report*, so `describe_without_values` above
+has no `diag` to read and the message would otherwise have to be written free-hand at each call
+site. This constant plays the part the constraint name plays for the other refusals: the one
+identifier a `409` body carries to say which mechanism refused.
+
+It matters because two unrelated causes share the status code on the catalogue's edit path (Issue
+#49): an overlap or a duplicate name (SQLSTATE `23P01`/`23505`, a constraint name) and a stale
+marker (no SQLSTATE, this condition). A client that cannot tell them apart cannot tell "re-read and
+try again" from "this edit will never succeed as written"."""
+
+CONCURRENCY_MARKER_REASON = (
+    "The row changed since it was read (concurrency marker). Re-read it and edit again."
+)
+"""What a marker mismatch means, in the vocabulary of `REFUSAL_BY_SQLSTATE`'s entries.
+
+Carries nothing about the competing change — not the field, not the value, not who made it. This is
+a refusal, not a merge, and the other writer's value may well be data this caller is not entitled to
+see (ADR-0007: "bez informacji o treści cudzej zmiany"; NF-11)."""
+
+
+def refusal_by_condition[RefusedT: WriteRefused](
+    *,
+    subject: str,
+    condition: str,
+    reason: str,
+    refused: type[RefusedT],
+) -> RefusedT:
+    """Build the refusal for a check the database evaluated but reported no SQLSTATE for.
+
+    The message is deliberately the *same shape* as `describe_without_values`' — "Writing the
+    {subject} failed: {class}, {identifier}. {reason}" — with `condition=…` where the
+    driver-reported refusals carry `sqlstate=…, constraint=…`. Same shape so both are readable by
+    one client, and a different identifier so the two are never the same string: that
+    distinguishability is the point (see `CONCURRENCY_MARKER_CONDITION`).
+
+    Values are absent here by construction rather than by filtering: nothing about the row is passed
+    in, so there is nothing to leak (NF-11).
+    """
+    return refused(
+        f"Writing the {subject} failed: {refused.__name__}, condition={condition}. {reason}"
+    )
+
+
 def failure_for(
     error: SQLAlchemyError,
     *,

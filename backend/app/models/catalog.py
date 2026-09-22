@@ -68,8 +68,18 @@ change 12.345 into 12.35 at write time. Rounding to the currency unit stays the 
 (`app.core.money.round_money`), applied where the rate enters a calculation."""
 
 
+CONCURRENCY_MARKER_COLUMN = "updated_at"
+"""The name of ADR-0007's concurrency marker, spelled once for the six catalogue tables.
+
+Referenced by `app.data.catalog` (which builds the `WHERE … AND updated_at = :expected` clause) and
+by the migration that adds the column, so a rename is one edit rather than a search. It is a
+*timestamp*, and deliberately not accompanied by a "who changed this" column: such a column would
+tie a catalogue row to a user and immediately expire the structural exception this module's
+docstring rests on (ADR-0001/ADR-0005, addenda 2026-09-19 — Issue #49, gate-1 decision Q-1)."""
+
+
 class _CatalogDimension(Base):
-    """One row of one dimension dictionary: an id and a name, nothing else.
+    """One row of one dimension dictionary: an id, a name and the two timestamps, nothing else.
 
     Abstract on purpose — the five dictionaries are five tables rather than one table with a `kind`
     discriminator, because the rate row references each of them separately as a foreign key, and a
@@ -85,6 +95,24 @@ class _CatalogDimension(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    """ADR-0007's concurrency marker, declared once here for all five dictionaries (SC-2-04).
+
+    One column on the shared abstract base rather than five copies: SC-2-03 decided that a vendor is
+    "the fifth dictionary, not a fifth mechanism", and a marker declared per table is exactly the
+    shape in which the fifth one is the one that does not get it.
+
+    `onupdate=func.now()` is a **SQL** expression, so the new value is the database's clock and not
+    this process's — two application instances cannot disagree about which write came last, and
+    nothing here reads the system clock. The comparison that makes it a guard is not in Python
+    either: it is the `WHERE … AND updated_at = :expected` that
+    `app.data.catalog.update_dimension_entry` builds, evaluated by the database in the same
+    statement as the write."""
 
 
 DIMENSION_NAME_KEY_EXPRESSION = r"lower(btrim(regexp_replace(name, '\s+', ' ', 'g')))"
@@ -405,6 +433,25 @@ class CatalogDefaultRate(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    """ADR-0007's concurrency marker for a rate window (SC-2-04, Issue #49, decision Q-1).
+
+    The `EXCLUDE` constraint above does **not** cover an edit: changing only the amount or the
+    currency of an existing row touches no element of that key, so two people editing one rate from
+    one read would both succeed and the last one would win silently. That is what this column is
+    for, and it is the same mechanism as `Project.updated_at`/`StaffingPosition.updated_at` rather
+    than a third one (ADR-0007, "Konsekwencje": reuse, do not invent per entity).
+
+    Not an audit column and not to be grown into one: it says *when* the row last changed, never by
+    whom. A "who" column would tie a catalogue row to a user and expire the structural exception
+    that keeps these six tables outside the `project_access` scope filter — see
+    `CONCURRENCY_MARKER_COLUMN`."""
 
     # Integrity in the database, not in application code (ADR-0001, invariant-guardian rule 13).
     #

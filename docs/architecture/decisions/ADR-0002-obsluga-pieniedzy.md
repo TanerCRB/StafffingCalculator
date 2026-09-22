@@ -69,3 +69,33 @@ wyświetlenia.
 4. **Warunek zamknięcia:** pierwsza waluta w katalogu, której jednostka minor nie ma 2 miejsc (np.
    JPY = 0, BHD = 3) — wtedy „2 miejsca dla każdej waluty" przestaje być dopuszczalne i wraca tu jako
    nowy, datowany wpis wymagający zmiany `round_money` (parametr waluty) i frontendu razem.
+
+### 2026-09-21 — kwota wpisana przez człowieka: kierunek wejścia (SC-2-04)
+
+Aneks z 2026-09-19 rozstrzygnął wyłącznie kierunek wyjścia. SC-2-04 jest pierwszym zadaniem, w
+którym kwota idzie w drugą stronę: z formularza do API, na dodawaniu i na edycji.
+
+1. **Kwota opuszcza przeglądarkę jako string dziesiętny, nigdy jako `number`.** Ta sama zasada co
+   dla odczytu i z tego samego powodu: `number` w JS jest binarnym floatem, a NF-01 wymaga arytmetyki
+   dziesiętnej. Żadnego `parseFloat`/`Number()` na ścieżce wejścia.
+2. **Front nie zaokrągla na ścieżce wejścia.** Katalog przechowuje stawkę jako `NUMERIC(14,4)`, a
+   `round_money`/`TWO_PLACES` jest regułą prezentacji (aneks 2026-09-19 pkt 1). Zaokrąglenie
+   wartości wpisanej cicho zmieniłoby daną wejściową — dokładnie to, czego zakazuje ADR-0008 pkt 6.
+   Precyzja powyżej czterech miejsc jest odmawiana przez serwer jako `422` (dowiedzione, R-05
+   SC-2-01, potwierdzone na ścieżce edycji:
+   `backend/tests/test_catalog_edit.py::test_q_2_an_amount_more_precise_than_the_column_is_refused_not_rounded`);
+   klient może tę granicę zapowiedzieć w walidacji kształtu (NF-07), ale nie wolno mu wartości uciąć.
+   Ten sam punkt pokrywa ścieżkę powrotną przy edycji — patrz ADR-0008, aneks 2026-09-21 pkt 1:
+   formularz edycji ładuje pełną precyzję z odpowiedzi API, nigdy z zaokrąglonej komórki tabeli.
+3. **Waluta jest podawana jawnie, jako kod ISO-4217, i nie pochodzi z reguły znanej tylko frontowi.**
+   Punkt 2 aneksu z 2026-09-19 obowiązuje bez zmian: „Front nie wprowadza reguły waluty, której
+   backend nie zna". **Rozstrzygnięcie (bramka 1, P-5: wariant A):** pole tekstowe na kod ISO-4217;
+   jedynym autorytetem pozostaje `CHECK` w bazie (`currency = upper(currency)`, ISO-4217) —
+   odrzucony wariant stałej listy walut we froncie, bo byłby to dokładnie zakazany kierunek: reguła
+   waluty znana tylko klientowi. Jeśli lista walut ma kiedyś powstać, jej miejscem jest backend
+   (ADR-0006), osobnym zadaniem.
+4. **Jednostka nie jest wyborem.** Baza wymusza `unit = 'hour'`; kontrolka oferująca wybór obiecywałaby
+   możliwość, której nie ma. NF-07 („forms shall explain input units") jest spełnione przez nazwanie
+   jednostki, nie przez udawany wybór.
+5. **Warunek zamknięcia z aneksu 2026-09-19 pkt 4 bez zmian:** pierwsza waluta, której jednostka minor
+   nie ma dwóch miejsc, wymaga zmiany `round_money` i frontu razem i wraca tu nowym wpisem.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, RequestTimeoutError, getCatalogDimension, getCatalogRates } from "../../api/client";
 import {
@@ -9,67 +9,76 @@ import {
 } from "../../api/contracts/catalog";
 import { formatEffectivePeriod } from "../../lib/dates";
 import { formatRatePerUnit } from "../../lib/money";
-import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
-import { DIMENSION_LABELS, emptyDictionaryLabel, unknownEntryLabel } from "./dimensionLabels";
+import { DimensionEntryForm } from "./DimensionEntryForm";
+import { RateForm } from "./RateForm";
+import {
+  INTERNAL_RATE,
+  RESTRICTED_COST_RATE,
+  type Dictionaries,
+  dimensionNameOf,
+  nameLookups,
+} from "./catalogRows";
+import { DIMENSION_LABELS, emptyDictionaryLabel } from "./dimensionLabels";
+import { RE_READING_AFTER_SAVE, SAVED_AND_REREAD, SAVED_BUT_NOT_REREAD } from "./writeOutcome";
 import "./CatalogScreen.css";
 
 /**
  * SC-2-02 — the catalogue of roles, seniorities, locations, engagement types, vendors (SC-2-03) and
- * default rates. Read only: no write, no filter, no date resolution of its own.
+ * default rates. SC-2-04 added writing: adding and correcting an entry of any of the five
+ * dictionaries, and adding and correcting a default rate window.
  *
- * It is a pure function of six responses (NF-04, ADR-0005): `GET /catalog/rates` and
- * `GET /catalog/dimensions/{dimension}` for the five dictionaries. Four consequences are the point
- * of the screen rather than details of it:
+ * It is still a function of what the server answered (NF-04, ADR-0005). Six consequences are the
+ * point of the screen rather than details of it:
  *
  *   * **It takes no cost-visibility decision.** A row whose `default_cost_rate` the server removed
  *     renders a named refusal in that cell; a row that carries one renders the amount. The only
  *     input to that difference is the response body — there is no client-side permission check, no
  *     preflight, and no configuration flag (AC-06, K-04). The column header stays in place either
  *     way, because hiding it would make "you may not see this cost" and "the catalogue has no
- *     costs" the same screen (gate-1 decision 2).
+ *     costs" the same screen (gate-1 decision 2). The same holds on the way in: the edit form shows
+ *     the same refusal where the response carried no cost, and sends nothing back (K-21).
+ *   * **It takes no decision about who may write, either** (K-18). Every form and every control is
+ *     offered to everyone; the refusal, when there is one, is the server's `403`. Nothing here asks
+ *     who the caller is — not before rendering a control, not before sending a request — which is
+ *     the read-only screen's proven behaviour carried across to writing (AC-06, NF-04).
  *   * **The five dictionaries are read because a rate row carries UUIDs only.** The id → name join
- *     happens here (gate-1 decision 8), and an id that no dictionary entry matches gets a named
- *     absence rather than a blank cell or a dropped row — six requests are not one transaction.
+ *     happens in `catalogRows.ts` (gate-1 decision 8), and an id that no dictionary entry matches
+ *     gets a named absence rather than a blank cell or a dropped row — six requests are not one
+ *     transaction.
  *   * **It takes no vendor-visibility decision either** (SC-2-03, K-10). The vendor dictionary is
- *     read on every mount, unconditionally, and the vendor column is rendered on every row: nothing
- *     here asks who the caller is, and nothing here decides that a vendor's price list is or is not
- *     for them. `CATALOG_READ` covers every vendor (ADR-0005, addendum 2026-09-21, point 2) — a
- *     screen that narrowed that would be inventing a permission the server does not have.
+ *     read on every mount, unconditionally, and the vendor column is rendered on every row.
  *   * **Any one of the six reads failing collapses the whole screen into one failure state, with
  *     zero rate rows** (gate-1 decision 9). A table of rates with a silently unnamed dimension
  *     column would look like data.
+ *   * **After a save, what is on screen is a fresh read's answer** (gate-1 decision P-3a,
+ *     ADR-0009, point 3) — never the write's own response body, and never anything assembled from
+ *     what was typed. When that read fails, the screen says *that*, in its own words, instead of
+ *     reporting a successful save as a catalogue that could not be loaded (G-6, K-19).
  *
- * Out of scope and deliberately absent: every write (the "Add default rate" control is rendered,
- * announced and wired to nothing), the `on_date` filter, `GET /catalog/rates/effective`, pagination,
- * and any currency conversion. See Issue #39.
+ * Out of scope and deliberately absent: deleting anything, the `on_date` filter,
+ * `GET /catalog/rates/effective`, pagination controls, and any currency conversion. See Issue #49.
  */
 
-/** Rendered in a cost-rate cell the response did not carry. The decided literal (gate-1 decision
- * 2) — not a dash, not a zero, and not a symbol shared with any other kind of absence. */
-export const RESTRICTED_COST_RATE = "Restricted";
+/** Which form, if any, is open. At most one at a time: two open forms are two sets of unsaved
+ * values and two ways to lose one of them, and there is no draft state in this repository to hold
+ * the loser. */
+type OpenForm =
+  | { kind: "add-entry"; dimension: CatalogDimension }
+  | { kind: "edit-entry"; dimension: CatalogDimension; entry: DimensionEntry }
+  | { kind: "add-rate" }
+  | { kind: "edit-rate"; rate: CatalogRate };
 
 /**
- * Rendered in the vendor cell of a rate the response carried with `vendor_id: null` (SC-2-03,
- * K-09).
+ * What the screen says about the last save that went through.
  *
- * A *state*, not an absence: `null` on that field means "this is the organisation's own rate", it
- * is the same answer for every caller, and the backend says so in the same words (see the
- * `vendor_id` docstring in backend/app/api/schemas/catalog.py). It is therefore a fourth literal,
- * deliberately sharing nothing with the three kinds of *missing* this screen already renders —
- * `RESTRICTED_COST_RATE` ("removed for you"), `OPEN_ENDED_PERIOD` ("no end date") and
- * `unknownEntryLabel` ("this id matched no dictionary entry"). A dash, a blank, or any placeholder
- * borrowed from one of those would say "we do not know whose price this is" about a row where the
- * server knows exactly.
+ * Two states, not one, and neither is a failure state (K-19): the write succeeded in both. They
+ * differ in whether the read that followed it did, which is the difference between "the rows below
+ * include your change" and "the rows below predate it". Collapsing them into the screen's existing
+ * `failed` state would turn a save that worked into a screen saying the catalogue could not be
+ * loaded — and would invite a second save of a change already stored, which the database answers
+ * with a conflict about the row this very person just wrote.
  */
-export const INTERNAL_RATE = "Internal";
-
-const ADD_RATE_HINT = notImplementedHint(
-  "adding a default rate is a separate task (Issue #39, out of scope 1)",
-);
-
-/** All five dictionaries, always. The record is exhaustive over `CatalogDimension`, so a sixth
- * dimension added to the contract fails the build here instead of quietly going unread. */
-type Dictionaries = Readonly<Record<CatalogDimension, DimensionEntry[]>>;
+type SaveNotice = { kind: "re-read" } | { kind: "not-re-read" };
 
 interface CatalogSnapshot {
   readonly rates: CatalogRate[];
@@ -143,33 +152,139 @@ async function readCatalogue(controller: AbortController): Promise<CatalogSnapsh
 
 export function CatalogScreen() {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
+  const [openForm, setOpenForm] = useState<OpenForm | null>(null);
+  const [notice, setNotice] = useState<SaveNotice | null>(null);
+  /** A post-save re-read is in flight: the rows on screen are known to be superseded and are about
+   * to be replaced wholesale (P-3a). See `afterSave` and `open`. */
+  const [rereading, setRereading] = useState(false);
+
+  /**
+   * Every read this screen has started and not finished, and whether the screen is still here.
+   *
+   * One mechanism for both reads — the six on mount and the six after a save — rather than one per
+   * call site (Reviewer R-02, 2026-09-22). The mount effect had this discipline and the post-save
+   * re-read did not: it built an `AbortController` only because `readCatalogue` takes one, never
+   * aborted it, and was wired into no cleanup. A bounce off this screen mid-re-read therefore left
+   * six `GET`s running and called `setState` on a component that no longer exists — invisible in a
+   * browser, and exactly the shape the mount effect's own comment was written against.
+   *
+   * Refs rather than state: they are read by promises that settle *after* the render that would
+   * have updated state, which is the only moment either of them matters.
+   */
+  const inFlight = useRef<Set<AbortController>>(new Set());
+  const left = useRef(false);
+
+  /** One catalogue read, registered for the lifetime of this screen. */
+  const readIntoScreen = useCallback(async (): Promise<CatalogSnapshot> => {
+    const controller = new AbortController();
+    inFlight.current.add(controller);
+    try {
+      return await readCatalogue(controller);
+    } finally {
+      inFlight.current.delete(controller);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
     // Bouncing off this screen before the six reads finish must not leave them running: each one
     // holds one of the browser's six same-origin HTTP/1.1 sockets, contended with whatever screen
     // the user bounced to (Reviewer R-01, docs/PLAN.md:281-285 — a real catalogue read is ~19.7MB).
-    const controller = new AbortController();
-    readCatalogue(controller)
+    //
+    // The set is read into a local for the cleanup rather than through `inFlight.current` there:
+    // this ref holds one set for the component's whole life and is never reassigned, so the two are
+    // the same object — and `react-hooks/exhaustive-deps` is right in general that a cleanup
+    // reading `.current` is reading whatever the ref points at *then*, which is why it says so out
+    // loud rather than being silenced.
+    const running = inFlight.current;
+    left.current = false;
+    readIntoScreen()
       .then((snapshot) => {
-        if (!cancelled) {
+        if (!left.current) {
           setState({ kind: "ready", ...snapshot });
         }
       })
       .catch((error: unknown) => {
-        // `cancelled` is already true whenever this rejection is the abort below firing — the
-        // cleanup that aborts is the same cleanup that sets the flag — so an aborted read never
-        // reaches `toFailureState` and never renders as a stated failure of a screen the user has
-        // already left.
-        if (!cancelled) {
+        // `left` is already true whenever this rejection is the abort below firing — the cleanup
+        // that aborts is the same cleanup that sets the flag — so an aborted read never reaches
+        // `toFailureState` and never renders as a stated failure of a screen the user has already
+        // left.
+        if (!left.current) {
           setState(toFailureState(error));
         }
       });
     return () => {
-      cancelled = true;
-      controller.abort();
+      left.current = true;
+      for (const controller of running) {
+        controller.abort();
+      }
+      running.clear();
     };
+  }, [readIntoScreen]);
+
+  /**
+   * What happens after the server accepted a write, and the only thing that does (P-3a).
+   *
+   * The whole catalogue is read again and the answer replaces the screen's data. Nothing from the
+   * form and nothing from the write's own response reaches the table — which is what makes
+   * `default_cost_rate` behave the same after a save as before one: the gate that removed it from
+   * a read removes it from the write's answer too, and this screen never had another copy.
+   *
+   * The `catch` is the G-6 decision in code (K-19). A failed read here is *not* routed through
+   * `toFailureState`: the previous snapshot stays in `state`, so the rows and the dictionary
+   * sections a person was looking at are still there, and the notice says the save went through and
+   * the list did not refresh. Routing it through the blanket failure state would blank the screen
+   * and report a stored change as a catalogue that could not be loaded.
+   *
+   * The window while that read is in flight is a state of its own, and a short one that is easy to
+   * mistake for instantaneous (Reviewer R-02). Two things hold inside it: the six reads are
+   * registered for cancellation like any others, so leaving the screen mid-re-read ends them and
+   * updates nothing afterwards; and no new form can be opened, because the rows a form would be
+   * seeded from are the rows this read is replacing. Without the second, opening *Edit* during the
+   * window seeds a form from a row already known to be superseded — ADR-0007's marker included, so
+   * the next save is refused as a stale marker by this screen's own doing — and the notice that
+   * lands when the read settles appears above a form it is not about.
+   */
+  const afterSave = useCallback(async () => {
+    setOpenForm(null);
+    // The previous outcome goes now rather than when this one arrives: a notice standing above a
+    // re-read in progress states the result of a read that is still running.
+    setNotice(null);
+    setRereading(true);
+    try {
+      const snapshot = await readIntoScreen();
+      if (left.current) {
+        return;
+      }
+      setState({ kind: "ready", ...snapshot });
+      setNotice({ kind: "re-read" });
+    } catch {
+      if (left.current) {
+        return;
+      }
+      setNotice({ kind: "not-re-read" });
+    } finally {
+      if (!left.current) {
+        setRereading(false);
+      }
+    }
+  }, [readIntoScreen]);
+
+  const open = useCallback((form: OpenForm) => {
+    // No re-read guard here, deliberately. The one mechanism that blocks a form-open during the
+    // post-save re-read is `rereading` reaching the controls as `disabled` (Reviewer R-02), and
+    // they are the only callers of this function: React has already re-rendered them disabled by
+    // the time any click could be dispatched, because `setRereading(true)` runs in the same task as
+    // the save that started the read. A second copy of the rule here would be a rule no test can
+    // reach — a disabled control swallows the click before this ever runs — and an unreachable
+    // guard reads as a proof that something is prevented twice.
+    //
+    // A new attempt clears the last one's outcome: a notice left standing above a fresh form reads
+    // as this form's result before it has one.
+    setNotice(null);
+    setOpenForm(form);
   }, []);
+
+  const closeForm = useCallback(() => setOpenForm(null), []);
 
   return (
     <section className="catalog" aria-labelledby="catalog-heading">
@@ -207,14 +322,70 @@ export function CatalogScreen() {
         </p>
       )}
 
+      {/* The window between "the server accepted the write" and "the fresh read answered". Named
+          rather than silent (NF-05, Reviewer R-02): the controls that open a form are disabled
+          throughout it, and a control that is disabled for a reason nobody stated reads as broken.
+          It says nothing about what the catalogue now holds — that is what the read is for. */}
+      {rereading && (
+        <p role="status" className="catalog__message catalog__notice">
+          {RE_READING_AFTER_SAVE}
+        </p>
+      )}
+
+      {/* The outcome of a save that went through, in its own region, above the data it is about.
+          Never inside a form: the form that produced it is gone by the time this appears, and a
+          success announced where a refusal is announced would make the two one control's state. */}
+      {notice !== null && (
+        <p
+          role="status"
+          className={
+            notice.kind === "re-read"
+              ? "catalog__message catalog__notice"
+              : "catalog__message catalog__message--attention catalog__notice"
+          }
+        >
+          {notice.kind === "re-read" ? SAVED_AND_REREAD : SAVED_BUT_NOT_REREAD}
+        </p>
+      )}
+
       {state.kind === "ready" && (
         <>
-          <RatesPanel rates={state.rates} total={state.total} dictionaries={state.dictionaries} />
-          <DictionaryPanels dictionaries={state.dictionaries} />
+          <RatesPanel
+            rates={state.rates}
+            total={state.total}
+            dictionaries={state.dictionaries}
+            openForm={openForm}
+            rereading={rereading}
+            onOpen={open}
+            onSaved={afterSave}
+            onCancel={closeForm}
+          />
+          <DictionaryPanels
+            dictionaries={state.dictionaries}
+            openForm={openForm}
+            rereading={rereading}
+            onOpen={open}
+            onSaved={afterSave}
+            onCancel={closeForm}
+          />
         </>
       )}
     </section>
   );
+}
+
+/** The props every panel needs to host at most one form. Passed down rather than held in a context:
+ * one screen, one level of nesting, and a context would hide which panel can open what. */
+interface FormHosting {
+  readonly openForm: OpenForm | null;
+  /** A post-save re-read is in flight (Reviewer R-02). Every control that would open a form is
+   * disabled while it is: the rows those controls would seed a form from are the rows the read is
+   * about to replace. `disabled`, not `aria-disabled` — the convention `CatalogFormShell` states
+   * for a control that is built and momentarily unavailable, as against one that is not built. */
+  readonly rereading: boolean;
+  readonly onOpen: (form: OpenForm) => void;
+  readonly onSaved: () => Promise<void> | void;
+  readonly onCancel: () => void;
 }
 
 /**
@@ -285,30 +456,48 @@ function RatesPanel({
   rates,
   total,
   dictionaries,
+  openForm,
+  rereading,
+  onOpen,
+  onSaved,
+  onCancel,
 }: {
   rates: CatalogRate[];
   total: number;
   dictionaries: Dictionaries;
-}) {
+} & FormHosting) {
   return (
     <section className="card catalog__panel" aria-labelledby="catalog-rates-heading">
       <div className="catalog__panel-header">
         <h3 id="catalog-rates-heading" className="catalog__panel-title">
           Default rates
         </h3>
-        {/* Rendered, focusable, announced, wired to nothing: `POST /catalog/rates` exists, and
-            mixing a write into the first read-only screen is what Issue #39 (out of scope 1)
-            refuses. */}
+        {/* Offered unconditionally. Whether this caller may write is the server's answer to the
+            request, not this screen's answer to a question it never asks (K-18). */}
         <button
           type="button"
           className="button button--primary"
-          aria-disabled="true"
-          title={ADD_RATE_HINT}
-          onClick={handleNotYetImplemented}
+          disabled={rereading}
+          onClick={() => onOpen({ kind: "add-rate" })}
         >
           Add default rate
         </button>
       </div>
+
+      {openForm?.kind === "add-rate" && (
+        <RateForm dictionaries={dictionaries} onSaved={onSaved} onCancel={onCancel} />
+      )}
+      {openForm?.kind === "edit-rate" && (
+        <RateForm
+          // Keyed by the row: opening the form on another rate must build a new component with that
+          // row's values, not re-use the first row's state under a new label.
+          key={openForm.rate.id}
+          rate={openForm.rate}
+          dictionaries={dictionaries}
+          onSaved={onSaved}
+          onCancel={onCancel}
+        />
+      )}
 
       {rates.length === 0 ? (
         <NoRatesMessage total={total} />
@@ -325,14 +514,29 @@ function RatesPanel({
           >
             {total > rates.length ? truncatedRateCountLabel(rates.length, total) : rateCountLabel(rates.length)}
           </p>
-          <RatesTable rates={rates} dictionaries={dictionaries} />
+          <RatesTable
+            rates={rates}
+            dictionaries={dictionaries}
+            rereading={rereading}
+            onOpen={onOpen}
+          />
         </>
       )}
     </section>
   );
 }
 
-function RatesTable({ rates, dictionaries }: { rates: CatalogRate[]; dictionaries: Dictionaries }) {
+function RatesTable({
+  rates,
+  dictionaries,
+  rereading,
+  onOpen,
+}: {
+  rates: CatalogRate[];
+  dictionaries: Dictionaries;
+  rereading: boolean;
+  onOpen: (form: OpenForm) => void;
+}) {
   const names = nameLookups(dictionaries);
 
   return (
@@ -351,6 +555,8 @@ function RatesTable({ rates, dictionaries }: { rates: CatalogRate[]; dictionarie
           {/* Always rendered, including when every row's cost rate was removed for this caller.
               A column that disappeared would say "the catalogue has no costs" (gate-1 decision 2). */}
           <th scope="col">Default cost rate</th>
+          {/* SC-2-04. Last, so every existing column keeps its position. */}
+          <th scope="col">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -358,7 +564,11 @@ function RatesTable({ rates, dictionaries }: { rates: CatalogRate[]; dictionarie
           <tr key={rate.id} className="catalog__row">
             {CATALOG_DIMENSIONS.map((dimension) => (
               <td key={dimension} className="catalog__cell-name">
-                <DimensionCell rate={rate} dimension={dimension} names={names} />
+                {dimension === "vendors" && rate.vendor_id === null ? (
+                  <span className="catalog__internal">{INTERNAL_RATE}</span>
+                ) : (
+                  dimensionNameOf(rate, dimension, names)
+                )}
               </td>
             ))}
             {/* The dates are the API's calendar strings, printed as they arrived (see lib/dates.ts):
@@ -378,6 +588,23 @@ function RatesTable({ rates, dictionaries }: { rates: CatalogRate[]; dictionarie
                 formatRatePerUnit(rate.default_cost_rate, rate.currency, rate.unit)
               )}
             </td>
+            <td className="catalog__cell-actions">
+              {/* The accessible name says which row, out of the words already in it — a column of
+                  identical "Edit" buttons is a list of unlabelled controls to anybody not reading
+                  the table visually. It carries no identifier: the join is the only thing that
+                  turns a rate row into words (K-01). */}
+              <button
+                type="button"
+                className="button button--quiet"
+                aria-label={`Edit the default rate for ${CATALOG_DIMENSIONS.map((dimension) =>
+                  dimensionNameOf(rate, dimension, names),
+                ).join(", ")}, ${formatEffectivePeriod(rate.effective_from, rate.effective_to)}`}
+                disabled={rereading}
+                onClick={() => onOpen({ kind: "edit-rate", rate })}
+              >
+                Edit
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -385,17 +612,49 @@ function RatesTable({ rates, dictionaries }: { rates: CatalogRate[]; dictionarie
   );
 }
 
-function DictionaryPanels({ dictionaries }: { dictionaries: Dictionaries }) {
+function DictionaryPanels({
+  dictionaries,
+  openForm,
+  rereading,
+  onOpen,
+  onSaved,
+  onCancel,
+}: { dictionaries: Dictionaries } & FormHosting) {
   return (
     <div className="catalog__dictionaries">
       {CATALOG_DIMENSIONS.map((dimension) => {
         const entries = dictionaries[dimension];
         const headingId = `catalog-dimension-${dimension}`;
+        const labels = DIMENSION_LABELS[dimension];
         return (
           <section key={dimension} className="card catalog__panel" aria-labelledby={headingId}>
-            <h3 id={headingId} className="catalog__panel-title">
-              {DIMENSION_LABELS[dimension].section}
-            </h3>
+            <div className="catalog__panel-header">
+              <h3 id={headingId} className="catalog__panel-title">
+                {labels.section}
+              </h3>
+              <button
+                type="button"
+                className="button button--quiet"
+                disabled={rereading}
+                onClick={() => onOpen({ kind: "add-entry", dimension })}
+              >
+                {`Add ${labels.column.toLowerCase()}`}
+              </button>
+            </div>
+
+            {openForm?.kind === "add-entry" && openForm.dimension === dimension && (
+              <DimensionEntryForm dimension={dimension} onSaved={onSaved} onCancel={onCancel} />
+            )}
+            {openForm?.kind === "edit-entry" && openForm.dimension === dimension && (
+              <DimensionEntryForm
+                key={openForm.entry.id}
+                dimension={dimension}
+                entry={openForm.entry}
+                onSaved={onSaved}
+                onCancel={onCancel}
+              />
+            )}
+
             {/* A dictionary the API returned empty is named as empty. The section stays: a
                 vanishing section would be indistinguishable from a dimension that does not
                 exist (K-06). */}
@@ -407,7 +666,16 @@ function DictionaryPanels({ dictionaries }: { dictionaries: Dictionaries }) {
               <ul className="catalog__entries">
                 {entries.map((entry) => (
                   <li key={entry.id} className="catalog__entry">
-                    {entry.name}
+                    <span className="catalog__entry-name">{entry.name}</span>
+                    <button
+                      type="button"
+                      className="button button--quiet catalog__entry-action"
+                      aria-label={`Rename ${entry.name} in the ${labels.inSentence} dictionary`}
+                      disabled={rereading}
+                      onClick={() => onOpen({ kind: "edit-entry", dimension, entry })}
+                    >
+                      Rename
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -417,74 +685,4 @@ function DictionaryPanels({ dictionaries }: { dictionaries: Dictionaries }) {
       })}
     </div>
   );
-}
-
-/** The four dimensions a rate row must name. `vendors` is not among them: it is the one dimension
- * whose id is allowed to be absent, and "absent" there is a state with its own word. */
-type RequiredDimension = Exclude<CatalogDimension, "vendors">;
-
-/** Which id on a rate row addresses which dictionary. An exhaustive `switch`, so a new dimension
- * cannot be forgotten silently. */
-function dimensionIdOf(rate: CatalogRate, dimension: RequiredDimension): string {
-  switch (dimension) {
-    case "roles":
-      return rate.role_id;
-    case "seniorities":
-      return rate.seniority_id;
-    case "locations":
-      return rate.location_id;
-    case "engagement-types":
-      return rate.engagement_type_id;
-  }
-}
-
-/**
- * One dimension cell of one rate row.
- *
- * The vendor column is the only one that can read two different ways for reasons that are not a
- * failure of the join (SC-2-03, K-09):
- *
- *   * `vendor_id: null` — the row *is* an internal rate. A named state, `INTERNAL_RATE`.
- *   * `vendor_id` naming a vendor no entry of the dictionary matched — the same gap between two
- *     reads the other four columns already have, and it keeps their wording.
- *
- * Conflating the two is the mutation this cell exists to make impossible: `?? ""`, a dash, or
- * reusing `unknownEntryLabel` for the null case would all turn "this is our own rate" into "we do
- * not know whose rate this is".
- */
-function DimensionCell({
-  rate,
-  dimension,
-  names,
-}: {
-  rate: CatalogRate;
-  dimension: CatalogDimension;
-  names: Readonly<Record<CatalogDimension, ReadonlyMap<string, string>>>;
-}) {
-  if (dimension === "vendors") {
-    if (rate.vendor_id === null) {
-      return <span className="catalog__internal">{INTERNAL_RATE}</span>;
-    }
-    return <>{names.vendors.get(rate.vendor_id) ?? unknownEntryLabel("vendors")}</>;
-  }
-  return (
-    <>{names[dimension].get(dimensionIdOf(rate, dimension)) ?? unknownEntryLabel(dimension)}</>
-  );
-}
-
-function namesById(entries: DimensionEntry[]): ReadonlyMap<string, string> {
-  return new Map(entries.map((entry) => [entry.id, entry.name]));
-}
-
-/** One id → name map per dictionary, built once per render rather than a linear scan per cell. */
-function nameLookups(dictionaries: Dictionaries): Readonly<
-  Record<CatalogDimension, ReadonlyMap<string, string>>
-> {
-  return {
-    roles: namesById(dictionaries.roles),
-    seniorities: namesById(dictionaries.seniorities),
-    locations: namesById(dictionaries.locations),
-    "engagement-types": namesById(dictionaries["engagement-types"]),
-    vendors: namesById(dictionaries.vendors),
-  };
 }

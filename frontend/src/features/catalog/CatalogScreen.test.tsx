@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CALLER_ID_HEADER, REQUEST_TIMEOUT_MS } from "../../api/client";
@@ -10,7 +10,8 @@ import {
 } from "../../api/contracts/catalog";
 import { OPEN_ENDED_PERIOD } from "../../lib/dates";
 import { NOT_APPLICABLE } from "../../lib/money";
-import { CatalogScreen, INTERNAL_RATE, RESTRICTED_COST_RATE } from "./CatalogScreen";
+import { CatalogScreen } from "./CatalogScreen";
+import { INTERNAL_RATE, RESTRICTED_COST_RATE } from "./catalogRows";
 import { DIMENSION_LABELS, emptyDictionaryLabel, unknownEntryLabel } from "./dimensionLabels";
 
 /**
@@ -22,6 +23,22 @@ import { DIMENSION_LABELS, emptyDictionaryLabel, unknownEntryLabel } from "./dim
  *
  * Every test here stubs the six reads. That is the only input the screen has — which is itself
  * the subject of K-04 and of K-10 — so a fixture is a complete description of what the user sees.
+ *
+ * **SC-2-04 changed three things here and nothing else.** They are named so that a reader can tell
+ * a fixture update from a weakened claim:
+ *
+ *   1. Every fixture carries `updated_at`. It is a required field of both response shapes now
+ *      (ADR-0007's concurrency marker, carried on every read), and `client.ts` refuses a payload
+ *      without one for the same reason it refuses a rate row without `vendor_id`. No assertion
+ *      changed; the responses did.
+ *   2. `COLUMN_COUNT` is 9, not 8: the rates table gained an "Actions" column at the **end**, so
+ *      every column SC-2-02 and SC-2-03 placed keeps its index, and the claim the K-03 test makes —
+ *      the cost-rate column does not disappear — is asserted unchanged.
+ *   3. The test "renders the add-default-rate control as reachable and wired to nothing" is gone.
+ *      It encoded SC-2-03's explicit out-of-scope statement, which SC-2-04 reverses by design
+ *      (Issue #49, gate-1 decision G-3: accepted as intended, replaced rather than weakened). Its
+ *      replacement is `CatalogWrite.test.tsx`, "the add-default-rate control opens a form that
+ *      writes", which asserts the opposite and the reason for it.
  */
 
 // --- Fixtures ----------------------------------------------------------------------------------
@@ -29,26 +46,31 @@ import { DIMENSION_LABELS, emptyDictionaryLabel, unknownEntryLabel } from "./dim
 // can pass by accident: two rows differ in exactly one dimension, one row references an id that is
 // in no dictionary, and the amounts are values a JS float cannot hold.
 
+/** SC-2-04. ADR-0007's concurrency marker, as every read now carries it. Its value is never read by
+ * this screen — it is handed back to the server on an edit and compared there — so one value for
+ * every fixture is enough here; `CatalogWrite.test.tsx` is where it has to be per-row. */
+const MARKER = "2026-09-20T09:00:00+00:00";
+
 const ROLES: DimensionEntry[] = [
-  { id: "a0000000-0000-0000-0000-000000000001", name: "Backend engineer" },
-  { id: "a0000000-0000-0000-0000-000000000002", name: "Project manager" },
+  { id: "a0000000-0000-0000-0000-000000000001", name: "Backend engineer", updated_at: MARKER },
+  { id: "a0000000-0000-0000-0000-000000000002", name: "Project manager", updated_at: MARKER },
 ];
 const SENIORITIES: DimensionEntry[] = [
-  { id: "b0000000-0000-0000-0000-000000000001", name: "Senior" },
-  { id: "b0000000-0000-0000-0000-000000000002", name: "Junior" },
+  { id: "b0000000-0000-0000-0000-000000000001", name: "Senior", updated_at: MARKER },
+  { id: "b0000000-0000-0000-0000-000000000002", name: "Junior", updated_at: MARKER },
 ];
 const LOCATIONS: DimensionEntry[] = [
-  { id: "c0000000-0000-0000-0000-000000000001", name: "Poland" },
-  { id: "c0000000-0000-0000-0000-000000000002", name: "Germany" },
+  { id: "c0000000-0000-0000-0000-000000000001", name: "Poland", updated_at: MARKER },
+  { id: "c0000000-0000-0000-0000-000000000002", name: "Germany", updated_at: MARKER },
 ];
 const ENGAGEMENT_TYPES: DimensionEntry[] = [
-  { id: "d0000000-0000-0000-0000-000000000001", name: "Time & materials" },
-  { id: "d0000000-0000-0000-0000-000000000002", name: "Fixed price" },
+  { id: "d0000000-0000-0000-0000-000000000001", name: "Time & materials", updated_at: MARKER },
+  { id: "d0000000-0000-0000-0000-000000000002", name: "Fixed price", updated_at: MARKER },
 ];
 /** SC-2-03. The fifth dictionary, read like the other four. */
 const VENDORS: DimensionEntry[] = [
-  { id: "f0000000-0000-0000-0000-000000000001", name: "Contoso Sp. z o.o." },
-  { id: "f0000000-0000-0000-0000-000000000002", name: "Northwind GmbH" },
+  { id: "f0000000-0000-0000-0000-000000000001", name: "Contoso Sp. z o.o.", updated_at: MARKER },
+  { id: "f0000000-0000-0000-0000-000000000002", name: "Northwind GmbH", updated_at: MARKER },
 ];
 
 const FULL_DICTIONARIES: Readonly<Record<CatalogDimension, DimensionEntry[]>> = {
@@ -82,6 +104,7 @@ const RATE_SENIOR: CatalogRate = {
   unit: "hour",
   effective_from: "2026-01-01",
   effective_to: "2026-06-30",
+  updated_at: MARKER,
 };
 
 /** The same rate in every respect but one: the seniority. Two rows that differ by exactly one
@@ -113,6 +136,7 @@ const RATE_OPEN_ENDED: CatalogRate = {
   unit: "day",
   effective_from: "2025-07-01",
   effective_to: null,
+  updated_at: MARKER,
 };
 
 /**
@@ -235,8 +259,10 @@ const VENDOR_CELL = 4;
 const PERIOD_CELL = 5;
 const SELLING_CELL = 6;
 const COST_CELL = 7;
-/** Four dimensions, the vendor, the period and the two rates. */
-const COLUMN_COUNT = 8;
+/** SC-2-04: the row's own actions, appended after the cost rate so no existing index moved. */
+const ACTIONS_CELL = 8;
+/** Four dimensions, the vendor, the period, the two rates and the actions. */
+const COLUMN_COUNT = 9;
 
 function cellsOf(row: HTMLElement): HTMLElement[] {
   return within(row).getAllByRole("cell");
@@ -471,8 +497,10 @@ describe("CatalogScreen", () => {
 
     const header = screen.getByRole("columnheader", { name: "Default cost rate" });
     expect(header).toBeVisible();
-    // Eight columns, not seven: the four dimensions, the vendor (SC-2-03), the period, and both
-    // rates.
+    // Nine columns, not eight: the four dimensions, the vendor (SC-2-03), the period, both rates,
+    // and the row's actions (SC-2-04). The claim is unchanged — the cost-rate column is still there
+    // when every row's cost was withheld — and the count is still exact, so a column quietly
+    // dropped still fails here.
     expect(screen.getAllByRole("columnheader")).toHaveLength(COLUMN_COUNT);
 
     for (const row of rows) {
@@ -481,6 +509,10 @@ describe("CatalogScreen", () => {
       // The selling rate is not behind the personnel-cost gate and is still there — so "no cost
       // column" could not be excused as "no amounts at all".
       expect(textOf(row, SELLING_CELL)).not.toBe(RESTRICTED_COST_RATE);
+      // SC-2-04: the actions column is the last one, and the withheld cost is still the one before
+      // it. A control appended in the middle would move the cost rate under another header while
+      // every assertion about its *content* kept passing.
+      expect(textOf(row, ACTIONS_CELL)).toBe("Edit");
     }
   });
 
@@ -975,25 +1007,11 @@ describe("CatalogScreen", () => {
 
   // --- Supporting tests (not acceptance criteria) ----------------------------------------------
 
-  it("renders the add-default-rate control as reachable and wired to nothing", async () => {
-    // Out of scope 1: `POST /catalog/rates` exists, and this screen does not write. The control is
-    // visible so the shape of the product is readable (F-13), and pressing it issues no request.
-    const fetchMock = stubCatalog();
-
-    render(<CatalogScreen />);
-    await rateRows();
-
-    const control = screen.getByRole("button", { name: "Add default rate" });
-    expect(control).toBeVisible();
-    expect(control.tabIndex).toBe(0);
-    control.focus();
-    expect(control).toHaveFocus();
-    expect(control).toHaveAttribute("aria-disabled", "true");
-    expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
-
-    fireEvent.click(control);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-  });
+  // The SC-2-02 test "renders the add-default-rate control as reachable and wired to nothing" stood
+  // here. It asserted `aria-disabled="true"` and a "Not implemented yet" tooltip — the explicit
+  // out-of-scope statement of Issue #39, which SC-2-04 reverses by construction. Gate 1 of Issue #49
+  // accepted that as intended (decision G-3) and required a replacement rather than a deletion: see
+  // CatalogWrite.test.tsx, "the add-default-rate control opens a form that writes to the catalogue".
 
   it("sends the placeholder caller identity header with every catalogue read", async () => {
     const fetchMock = stubCatalog();

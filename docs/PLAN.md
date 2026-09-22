@@ -406,6 +406,49 @@ history / this file's own change log, not as tracked product work.
   świadomie jako nieszkodliwe przy dzisiejszej skali poddostawców, zmienia się jeśli liczba
   poddostawców urośnie do dziesiątek tysięcy. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-2-04** — Dodaj zapis z ekranu katalogu: dodawanie **i edycja** wpisu słownika oraz okna
+  stawki domyślnej (backend: znacznik współbieżności + dwa `PATCH`-e; frontend: dwa formularze).
+  Blocked by SC-2-01, SC-2-02, SC-2-03. Kryteria (K-13..K-23, dwie rundy analityka) i pełny zapis
+  decyzji bramki 1 w Issue #49.
+  *Done when:* `frontend/src` (vitest) dowodzi K-13..K-22, a `backend/tests` dowodzą K-23 i decyzji
+  Q-1/Q-2 bramki 1:
+  1. (K-23, backend) Dwa zapisy tego samego wiersza z jednego odczytu: jeden wygrywa, drugi
+     odmówiony — nigdy dwa „sukcesy”, nigdy ciche nadpisanie. Dowiedzione sekwencyjnie **i w
+     wyścigu dwóch połączeń** (konkurent zatwierdza zmianę między odczytem a `UPDATE`-em).
+     Mutacja: porównanie znacznika w Pythonie zamiast w `WHERE` instrukcji `UPDATE`.
+  2. (Q-1) Znacznik `updated_at` na **wszystkich sześciu** tabelach katalogu w zmigrowanej bazie,
+     `NOT NULL` z `server_default` (migracja wstecznie zgodna, bez drugiego kroku). Mutacja:
+     znacznik tylko na `catalog_default_rates` (odrzucony wariant C).
+  3. (Q-2) `PATCH` częściowy: pominięty `default_cost_rate` zostawia zapisany koszt nietknięty —
+     to jest to, co w ogóle pozwala edytować wiersz wołającemu bez `PERSONNEL_COSTS_READ`.
+     Mutacja: `UPDATE` budowany ze wszystkich pól modelu zamiast z `model_fields_set`.
+  4. Dwa `409` na jednej ścieżce zapisu są rozróżnialne (nieaktualny znacznik vs. nakładanie okien
+     /duplikat nazwy) i żaden nie cytuje wartości wiersza (NF-11). Mutacja: obie gałęzie zlane w
+     jeden komunikat.
+  5. `404` ma pierwszeństwo przed `409` dla wiersza, którego nie ma (precedens SC-3-01 R-01).
+  6. Odpowiedź `PATCH` przechodzi przez tę samą bramkę kosztową co odczyt — wołający bez
+     `PERSONNEL_COSTS_READ` nie dostaje `default_cost_rate` także po własnym zapisie.
+
+  **Decyzje bramki 1 (2026-09-21, Issue #49):** P-1 zakres = dodawanie + edycja; P-2 „zapisujesz
+  koszt, nie odczytasz go” przyjęte świadomie; P-3 ADR-0009 (zapis z UI) zakładany teraz; P-3a stan
+  po zapisie = ponowny odczyt listy; P-4 wszystkie pięć słowników + stawki; P-5 waluta jako pole
+  tekstowe ISO-4217 walidowane wyłącznie przez backend; G-3 (konflikt testu SC-2-02) zaakceptowany
+  jako zamierzony; G-6 „zapisano, ale odświeżenie listy się nie udało” jako osobny nazwany stan
+  (K-19); Q-1 znacznik `updated_at` na sześciu tabelach, wzorzec ADR-0007 reużyty, warunek liczony
+  przez bazę w tej samej instrukcji `UPDATE`; Q-2 `PATCH` częściowy (pominięte pole = bez zmian).
+
+  **Out of scope (explicit):** usuwanie wpisu słownika i okna stawki (bez zmian wobec SC-2-03);
+  przekluczowanie istniejącego okna na inną krotkę wymiarów albo innego poddostawcę
+  (`EDITABLE_RATE_FIELDS` to lista dozwolonych, nie „cały wiersz”); kolumna audytu „kto zmienił”
+  — wygasiłaby wyjątek ADR-0001/ADR-0005 dla katalogu, wymaga własnej datowanej decyzji; autosave
+  (NF-05, druga połowa) — odłożone po raz trzeci; `unit` jako pole edytowalne (baza wymusza
+  `hour`).
+
+  **Fundament nieudowodniony:** `PERSONNEL_COSTS_READ` nadal przez nic nie nadawane, więc dodatnia
+  gałąź bramki kosztowej na ścieżce `PATCH` dowodliwa wyłącznie testem; migracja niedowiedziona na
+  jakimkolwiek trwałym środowisku (open decision #5); zapis z przeglądarki nadal bez ani jednego
+  wiersza w rejestrze możliwości do czasu części frontendowej.
+
 - [x] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
   z alokacją miesięczną w godzinach, trzema niezależnymi wartościami (dostępność / planowana
   alokacja / czas rozliczalny) i rejestracją w kaskadzie kopiowania.

@@ -309,6 +309,18 @@ describe("colour contrast", () => {
       // an empty vendor cell is exactly the reading K-09 forbids.
       { where: "internal rate in the vendor cell of a rate row", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
       { where: "catalogue failure message", foreground: "--sc-color-attention-text", background: "--sc-color-attention-bg" },
+      // SC-2-04, the catalogue write forms. Every one of these sits on the form's own muted
+      // surface, which is a *different* background from the white the rows above sit on — the same
+      // token pair can pass on one and fail on the other, so they are listed separately rather than
+      // assumed to be covered by the rows above.
+      { where: "field label inside a catalogue form", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
+      { where: "field hint inside a catalogue form", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
+      { where: "stated (not editable) value inside a catalogue form", foreground: "--sc-color-text", background: "--sc-color-surface-muted" },
+      // The withheld cost rate again, this time in the edit form rather than in the table: the
+      // `.catalog__restricted` rule is reused there on the form's surface, and "Restricted" is the
+      // whole content of that field, so an unreadable colour empties it exactly as it would a cell.
+      { where: "withheld cost rate inside a catalogue form", foreground: "--sc-color-attention-text", background: "--sc-color-surface-muted" },
+      { where: "refused save inside a catalogue form", foreground: "--sc-color-attention-text", background: "--sc-color-attention-bg" },
     ];
 
     const failures = declaredPairs
@@ -349,6 +361,13 @@ describe("colour contrast", () => {
       ".catalog__restricted": "--sc-color-surface",
       // SC-2-03: the vendor cell of an internal rate, also on `.catalog__row > td`.
       ".catalog__internal": "--sc-color-surface",
+      // SC-2-04: the three colour-only rules of the write forms. They sit on `.catalog__form`,
+      // which sets `--sc-color-surface-muted` and no colour of its own — the one background in this
+      // stylesheet that is not white, which is why naming it here rather than inheriting the
+      // default matters.
+      ".catalog__field-label": "--sc-color-surface-muted",
+      ".catalog__field-hint": "--sc-color-surface-muted",
+      ".catalog__field-stated": "--sc-color-surface-muted",
     };
 
     const colourOnly = rules.filter(

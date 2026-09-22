@@ -26,3 +26,4 @@ the same file — never a silent edit of the original text.
 | [ADR-0006](ADR-0006-waluty-i-kursy.md) | Waluty i kursy wymiany | Accepted |
 | [ADR-0007](ADR-0007-wspolbiezna-edycja.md) | Współbieżna edycja i ochrona przed zgubioną aktualizacją | Accepted |
 | [ADR-0008](ADR-0008-przedzialy-obowiazywania.md) | Przedziały obowiązywania i ich egzekwowanie w bazie | Accepted |
+| [ADR-0009](ADR-0009-zapis-z-interfejsu.md) | Zapis z interfejsu przeglądarki | Draft — pending approval |

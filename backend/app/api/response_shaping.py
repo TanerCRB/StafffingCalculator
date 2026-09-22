@@ -33,7 +33,12 @@ frontend (AC-06, NF-04), so the F-11 export inherits them.
 from collections.abc import Sequence
 from typing import Any
 
-from app.api.schemas.catalog import CatalogRate, CatalogRateList
+from app.api.schemas.catalog import (
+    CatalogRate,
+    CatalogRateList,
+    DimensionEntry,
+    DimensionEntryList,
+)
 from app.api.schemas.project import (
     DeliveryPeriod,
     ProjectDetail,
@@ -47,6 +52,7 @@ from app.api.schemas.staffing import (
     StaffingPositionRead,
 )
 from app.core.identity import CallerIdentity, Permission
+from app.data.catalog import DimensionRow
 from app.data.project_reads import CallerProjectView
 from app.domain.scenario_readiness import assess
 from app.models.catalog import CatalogDefaultRate
@@ -228,6 +234,28 @@ def _without_catalog_personnel_costs(item: CatalogRate, caller: CallerIdentity) 
     return item.model_copy(update=dict.fromkeys(CATALOG_PERSONNEL_COST_FIELDS))
 
 
+def shape_dimension_entry(entry: DimensionRow) -> DimensionEntry:
+    """One dictionary entry as the API returns it — from the list, the create and the edit paths.
+
+    **No `caller` argument, and that absence is the statement**, exactly as on
+    `shape_staffing_position`: a dictionary entry is an id, a name and a concurrency marker, and not
+    one of the three is gated on a permission (ADR-0005, addendum 2026-09-19, point 1 — a catalogue
+    row belongs to no project and no user). A caller parameter here would suggest a gate that is not
+    there, which is the dangerous direction to be wrong in.
+
+    One function rather than three inline constructions (SC-2-04): the marker is a field a client
+    cannot edit without, so the path that forgot to carry it would be the path from which editing is
+    impossible — and with three copies, adding the next field is three edits and one of them is the
+    one somebody misses.
+    """
+    return DimensionEntry(id=entry.id, name=entry.name, updated_at=entry.updated_at)
+
+
+def shape_dimension_entry_list(entries: Sequence[DimensionRow]) -> DimensionEntryList:
+    """A whole dictionary — every row through the function above, no second construction path."""
+    return DimensionEntryList(entries=[shape_dimension_entry(entry) for entry in entries])
+
+
 def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> CatalogRate:
     """One catalogue rate row as this caller may see it.
 
@@ -254,6 +282,11 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
             unit=rate.unit,
             effective_from=rate.effective_from,
             effective_to=rate.effective_to,
+            # ADR-0007's concurrency marker (SC-2-04), on every representation of the row and for
+            # every caller. Not gated: it is a timestamp of the row, and a caller who cannot see the
+            # cost rate still needs it to edit the fields they can see without overwriting somebody
+            # else's change.
+            updated_at=rate.updated_at,
         ),
         caller,
     )

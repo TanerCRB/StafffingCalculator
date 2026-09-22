@@ -65,6 +65,105 @@
   color: var(--sc-color-attention-text);
 }
 
+/*
+ * The outcome of a save that went through (SC-2-04, K-19). It borrows `.catalog__message` — and, for
+ * the "saved but not re-read" state, `--attention` — so that the two endings sit in the same place
+ * and look like the same kind of statement, differing in the colour that flags one of them as worth
+ * a second look. The wording is what carries the meaning either way (NF-08).
+ */
+.catalog__notice {
+  margin-top: 0;
+}
+
+/* --- Forms (SC-2-04) --------------------------------------------------------------------------- */
+
+/* A form opens inside the panel it belongs to, above the data it changes: a modal would take the
+   rows out of view at the moment a person is deciding what to type into a row that looks like
+   them. */
+.catalog__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-4);
+  margin-bottom: var(--sc-space-4);
+  padding: var(--sc-space-5);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background-color: var(--sc-color-surface-muted);
+}
+
+.catalog__form-title {
+  font-size: var(--sc-font-size-md);
+  font-weight: var(--sc-font-weight-bold);
+  line-height: var(--sc-line-height-tight);
+  overflow-wrap: anywhere;
+}
+
+/* The fields wrap instead of scrolling: the rate form has nine of them, and a row of controls
+   pushed past the viewport is a row nobody fills in. */
+.catalog__form-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sc-space-4);
+}
+
+.catalog__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-1);
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.catalog__field-label {
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-xs);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.catalog__field-control {
+  width: 100%;
+  font-family: var(--sc-font-family);
+}
+
+/* The hint is permanent, not a placeholder: a placeholder disappears exactly when the unit or the
+   format it explained is being typed (NF-07). */
+.catalog__field-hint {
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-xs);
+  line-height: var(--sc-line-height-body);
+  overflow-wrap: anywhere;
+}
+
+/* A value the form states rather than collects. Same rhythm as an input so the two read as one
+   column of fields, and deliberately not styled as a disabled control: a disabled input implies a
+   value that is being held and could be submitted, and this one is not. */
+.catalog__field-stated {
+  min-height: 2.375rem;
+  display: flex;
+  align-items: center;
+  color: var(--sc-color-text);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+/* A refused save. Announced (`role="alert"` in the component) and coloured, in that order of
+   importance — the colour is the second channel, never the only one (NF-08). */
+.catalog__form-failure {
+  padding: var(--sc-space-3) var(--sc-space-4);
+  border-radius: var(--sc-radius-sm);
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.catalog__form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sc-space-3);
+}
+
 /* --- Rates table ------------------------------------------------------------------------------ */
 
 /* Separated borders: each row is its own white card with rounded ends, as on the project list. */
@@ -133,6 +232,13 @@
   white-space: nowrap;
 }
 
+/* The row's own actions (SC-2-04). Last column, so every column SC-2-02 and SC-2-03 placed keeps
+   its position — and a reader who learned where the cost rate sits still finds it there. */
+.catalog__cell-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
 /*
  * A cost rate the response did not carry. Set apart from an amount by weight and colour *in
  * addition to* the word (NF-08) — the word is what carries the meaning, and there is no shared
@@ -178,10 +284,25 @@
 }
 
 .catalog__entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sc-space-3);
   padding: var(--sc-space-2) var(--sc-space-3);
   border-radius: var(--sc-radius-sm);
   background-color: var(--sc-color-surface-muted);
   color: var(--sc-color-text);
   font-size: var(--sc-font-size-sm);
   overflow-wrap: anywhere;
+}
+
+.catalog__entry-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The rename control never shrinks below its label: a chip whose name is one long unbroken word
+   must push the control down, not squeeze it away. */
+.catalog__entry-action {
+  flex: 0 0 auto;
 }

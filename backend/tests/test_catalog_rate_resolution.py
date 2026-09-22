@@ -23,7 +23,7 @@ value whose default serialisation would differ.
 """
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -494,6 +494,7 @@ def test_k_07_an_amount_crosses_the_api_boundary_as_a_fixed_point_string(
         unit="hour",
         effective_from=date(2026, 1, 1),
         effective_to=None,
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
     ).model_dump(mode="json")
 
     assert exponent_form["default_selling_rate"] == "1850"
