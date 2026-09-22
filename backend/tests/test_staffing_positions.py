@@ -617,10 +617,14 @@ def test_an_allocation_mapping_cannot_carry_a_position_id_of_its_own(
     )
 
     assert created is not None
+    # `create_position` answers with a `StaffingPositionView` since SC-3-02 (the derived
+    # capacity is not on the row); the row itself is `view.position`. Accessor only — the
+    # claim below is unchanged.
+    created_id = created.position.id
     owners = (
         db_session.execute(sa.select(StaffingPositionAllocation.position_id)).scalars().all()
     )
-    assert owners == [created.id], (
+    assert owners == [created_id], (
         "the month row was attached to the position named in the caller's own mapping instead of "
         "the one this call created and guarded"
     )

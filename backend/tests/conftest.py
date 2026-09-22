@@ -10,6 +10,7 @@ create/edit/archive endpoint yet, and these tests must not pretend otherwise.
 """
 
 import os
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -38,6 +39,10 @@ from app.core.identity import CallerIdentity, Permission  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
+    AbsenceType,
+    ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotWorkingCalendar,
+    ApprovedSnapshotWorkingCalendarDay,
     CatalogDefaultRate,
     CatalogEngagementType,
     CatalogLocation,
@@ -50,7 +55,11 @@ from app.models import (  # noqa: E402
     Scenario,
     ScenarioStatus,
     StaffingPosition,
+    StaffingPositionAbsence,
     StaffingPositionAllocation,
+    WorkingCalendar,
+    WorkingCalendarDay,
+    WorkingCalendarDayKind,
 )
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -200,8 +209,16 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             # `scenarios` while a position does. That refusal is the intended behaviour (deleting a
             # position is out of scope for SC-3-01), which makes this order part of the fixture
             # rather than a detail. The same reasoning as for rates before dimension entries below.
+            #
+            # The absence rows join the grandchildren (SC-3-02), and the snapshot rows have to go
+            # before `scenarios` for the same reason a position does: their only foreign key points
+            # there and carries no `ON DELETE` action, deliberately.
+            connection.execute(sa.delete(StaffingPositionAbsence))
             connection.execute(sa.delete(StaffingPositionAllocation))
             connection.execute(sa.delete(StaffingPosition))
+            connection.execute(sa.delete(ApprovedSnapshotWorkingCalendarDay))
+            connection.execute(sa.delete(ApprovedSnapshotWorkingCalendar))
+            connection.execute(sa.delete(ApprovedSnapshotAbsenceType))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -210,6 +227,10 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             # refusal is the intended behaviour (deleting a dimension entry in use is out of scope
             # for SC-2-01), which makes the order here part of the fixture, not a detail.
             connection.execute(sa.delete(CatalogDefaultRate))
+            # An absence type is referenced by an absence row, which is already gone above; a
+            # calendar is referenced by `catalog_locations.calendar_id`, which is why the locations
+            # have to be emptied before the calendars and its days before it.
+            connection.execute(sa.delete(AbsenceType))
             for dimension in (
                 CatalogRole,
                 CatalogSeniority,
@@ -221,6 +242,8 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
                 CatalogVendor,
             ):
                 connection.execute(sa.delete(dimension))
+            connection.execute(sa.delete(WorkingCalendarDay))
+            connection.execute(sa.delete(WorkingCalendar))
 
 
 def as_caller(user_id: str) -> dict[str, str]:
@@ -370,15 +393,27 @@ class DimensionTuple:
         }
 
 
-def make_dimension_tuple(session: Session, *, suffix: str = "") -> DimensionTuple:
+def make_dimension_tuple(
+    session: Session, *, suffix: str = "", calendar: "WorkingCalendar | None" = None
+) -> DimensionTuple:
     """Insert one entry in each of the four dictionaries and return their ids. Direct write.
 
     `suffix` keeps the names unique when a test needs a second, differing entry of every dimension
     (`uq_<table>_name` refuses a repeat).
+
+    `calendar` points the *location* at a working calendar (SC-3-02). **Its default is `None`, and
+    that is deliberate**: a location with no calendar is the named `no_calendar` state (criterion
+    K-23), it is the state every row created before this task is in, and a fixture that quietly
+    attached a calendar to every location would make that state unreachable from most tests — which
+    is the state the mutation "treat a missing calendar as 8 hours a day" hides in.
     """
     role = CatalogRole(id=uuid.uuid4(), name=f"Backend Engineer{suffix}")
     seniority = CatalogSeniority(id=uuid.uuid4(), name=f"Senior{suffix}")
-    location = CatalogLocation(id=uuid.uuid4(), name=f"Poland{suffix}")
+    location = CatalogLocation(
+        id=uuid.uuid4(),
+        name=f"Poland{suffix}",
+        calendar_id=None if calendar is None else calendar.id,
+    )
     engagement = CatalogEngagementType(id=uuid.uuid4(), name=f"Full-time{suffix}")
     session.add_all([role, seniority, location, engagement])
     session.flush()
@@ -388,6 +423,209 @@ def make_dimension_tuple(session: Session, *, suffix: str = "") -> DimensionTupl
         location_id=location.id,
         engagement_type_id=engagement.id,
     )
+
+
+# --- working calendars, absence types and absences (F-05, SC-3-02) ------------------------------
+
+MONDAY_TO_FRIDAY = "1111100"
+MONDAY_TO_SATURDAY = "1111110"
+"""Week patterns as data, Monday first (`app.models.catalog.WEEK_PATTERN_EXPRESSION`).
+
+`MONDAY_TO_SATURDAY` exists because criterion K-02 requires at least one test calendar whose week
+is not Monday-to-Friday: without it, an implementation that read `day.weekday() < 5` instead of the
+stored pattern would pass every test in this suite."""
+
+FORBIDDEN_FIXTURE_HOURS = Decimal("8.00")
+"""The one value no calendar fixture may carry — criterion K-01's mutation, made unreachable.
+
+The mutation K-01 names is "the calendar read is replaced by a module constant, e.g. 8". If any
+fixture calendar had a standard day of exactly eight hours, that mutation would keep some tests
+green by coincidence. `make_working_calendar` refuses this value, so the coincidence cannot be
+introduced by a future fixture either."""
+
+
+def make_working_calendar(
+    session: Session,
+    *,
+    name: str = "Poland 2026",
+    standard_hours_per_day: Decimal = Decimal("7.50"),
+    week_pattern: str = MONDAY_TO_FRIDAY,
+) -> "WorkingCalendar":
+    """Insert one working calendar directly — no endpoint, no request schema.
+
+    Deliberately bypasses the API: SC-3-02 ships **no** write endpoint for a calendar (ADR-0007,
+    addendum 2026-09-22, point 3 — no form), so this fixture is the only way to reach the rows these
+    criteria are about, exactly as `make_scenario(status=APPROVED)` was for SC-3-01. That is a limit
+    of the proof, named here so it is not mistaken for an equivalence.
+
+    The default standard day is 7.50 hours and never 8.00 — see `FORBIDDEN_FIXTURE_HOURS`.
+    """
+    if standard_hours_per_day == FORBIDDEN_FIXTURE_HOURS:
+        raise ValueError(
+            "No calendar fixture may have a standard day of 8.00 hours: it is the value criterion "
+            "K-01's mutation (a hard-coded constant instead of the calendar) would use, and a "
+            "fixture carrying it would make that mutation survive."
+        )
+    calendar = WorkingCalendar(
+        id=uuid.uuid4(),
+        name=name,
+        standard_hours_per_day=standard_hours_per_day,
+        week_pattern=week_pattern,
+    )
+    session.add(calendar)
+    session.flush()
+    return calendar
+
+
+def make_calendar_day(
+    session: Session,
+    calendar: "WorkingCalendar",
+    *,
+    day: date,
+    kind: WorkingCalendarDayKind,
+) -> WorkingCalendarDay:
+    """Insert one exceptional day of one calendar. A holiday or an extra working day (K-02)."""
+    row = WorkingCalendarDay(
+        id=uuid.uuid4(), calendar_id=calendar.id, day=day, kind=kind
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def make_absence_type(
+    session: Session,
+    *,
+    name: str = "Paid holiday",
+    generates_cost: bool = True,
+    generates_revenue: bool = False,
+) -> AbsenceType:
+    """Insert one absence type directly, with both flags set independently (K-11).
+
+    The defaults are the realistic asymmetric case — paid holiday costs money and earns none — so a
+    test that does not care about the flags still exercises two *different* values, and an
+    implementation aliasing one to the other would be visible rather than hidden behind two equal
+    defaults.
+    """
+    entry = AbsenceType(
+        id=uuid.uuid4(),
+        name=name,
+        generates_cost=generates_cost,
+        generates_revenue=generates_revenue,
+    )
+    session.add(entry)
+    session.flush()
+    return entry
+
+
+def make_absence(
+    session: Session,
+    position: StaffingPosition,
+    absence_type: AbsenceType,
+    *,
+    start_date: date,
+    end_date: date,
+) -> StaffingPositionAbsence:
+    """Insert one absence directly — no endpoint, no request schema.
+
+    Bypasses `StaffingAbsenceCreateRequest` for the reason `make_allocation` does: the constraints
+    under test (the ordered period, the foreign keys, the *absence* of a person column) are claims
+    about the database, and a path through Pydantic would prove only that Pydantic refused first.
+    """
+    absence = StaffingPositionAbsence(
+        id=uuid.uuid4(),
+        position_id=position.id,
+        absence_type_id=absence_type.id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    session.add(absence)
+    session.flush()
+    return absence
+
+
+def absences_path(
+    project_id: uuid.UUID, scenario_id: uuid.UUID, position_id: uuid.UUID
+) -> str:
+    """The nested address of one position's absences — the project id is what carries the scope."""
+    return f"{staffing_path(project_id, scenario_id)}/{position_id}/absences"
+
+
+def absence_path(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    absence_id: uuid.UUID,
+) -> str:
+    return f"{absences_path(project_id, scenario_id, position_id)}/{absence_id}"
+
+
+def approve_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    """The address of the approval action (ADR-0004, SC-3-02)."""
+    return f"/projects/{project_id}/scenarios/{scenario_id}/approve"
+
+
+def count_absences(session: Session) -> int:
+    """Absence rows visible in the test transaction — used to prove a refused write wrote nothing,
+    not merely that the response said no."""
+    return session.execute(
+        sa.select(sa.func.count()).select_from(StaffingPositionAbsence)
+    ).scalar_one()
+
+
+SNAPSHOT_MODELS = (
+    ApprovedSnapshotWorkingCalendar,
+    ApprovedSnapshotWorkingCalendarDay,
+    ApprovedSnapshotAbsenceType,
+)
+"""The three snapshot tables, as models — so a test counting "every snapshot row" cannot count two
+of the three and look green (criteria K-17, K-18, K-19)."""
+
+
+def count_snapshot_rows(connection: sa.Connection | Session, scenario_id: uuid.UUID) -> int:
+    """Every `approved_snapshot_*` row belonging to one scenario, across all three tables.
+
+    Takes a `Connection` **or** a `Session`, because the criteria that use it read the state from a
+    *separate* connection on purpose: "the transaction under test says it wrote nothing" and
+    "nothing was committed" are two different claims, and only the second one is the one K-18 and
+    K-19 make.
+    """
+    return sum(
+        connection.execute(
+            sa.select(sa.func.count())
+            .select_from(model)
+            .where(model.scenario_id == scenario_id)
+        ).scalar_one()
+        for model in SNAPSHOT_MODELS
+    )
+
+
+def wait_until_a_lock_request_is_pending(engine: Engine, *, timeout: float = 5.0) -> bool:
+    """Block until PostgreSQL reports an ungranted lock request, or give up.
+
+    Asked of `pg_locks` rather than guessed at with a `sleep`: "the other transaction is waiting for
+    the scenario row" is a fact the server knows, and a fixed sleep would make the test either slow
+    or flaky depending on the machine.
+
+    Returns whether anything was ever observed waiting, so the caller can assert it — a run in which
+    nothing blocked proves nothing about serialisation and must not be mistaken for a pass.
+
+    Lives here rather than in one test module because two files now race on the same seam
+    (`app.data.scenario_guard`): a child write against an approval
+    (`tests/test_staffing_approved_guards.py`, K-20) and an approval against a second approval
+    (`tests/test_scenario_approval.py`, R-02). One waiting rule, so a run that silently observed
+    nothing cannot be a pass in one file and a failure in the other.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with engine.connect() as observer:
+            pending = observer.execute(
+                sa.text("SELECT count(*) FROM pg_locks WHERE NOT granted")
+            ).scalar_one()
+        if pending:
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def make_vendor(session: Session, *, name: str = "Contoso Sp. z o.o.") -> CatalogVendor:

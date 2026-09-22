@@ -222,3 +222,40 @@ ekranie, i dowodzi tego własnym kryterium".
    dotyczy wiersza **edytowanego**: zmiana `effective_from` może przenieść go na inną stronę listy,
    więc „zapisano, a wiersza nie widać" jest stanem prawdziwym także po edycji. Sukces zapisu musi
    być zakomunikowany zdaniem, a nie pojawieniem się wiersza (ADR-0009, decyzja pkt 3, G-6).
+
+### 2026-09-22 — podstawa godzinowa kalendarza bez okna obowiązywania (SC-3-02)
+
+„Konsekwencje" nazywają trzy tabele dzielące jeden wzorzec przedziału obowiązywania i czynią zmianę
+jego kształtu migracją dotykającą wszystkich naraz. SC-3-02 wprowadza
+`working_calendar.standard_hours_per_day` — wartość organizacyjną, która w realnej organizacji
+zmienia się w czasie, a mimo to wzorca tego **nie** dostaje. Zapisane tutaj z tego samego powodu, z
+którego ADR-0004 zapisał brak ograniczenia `EXCLUDE` na okresie pozycji obsady: brak mechanizmu
+musi być rozstrzygnięciem, nie przeoczeniem odkrytym przez następne zadanie.
+
+1. **Jednostką wersjonowania jest kalendarz, nie kolumna.** Zmiana standardowej długości dnia pracy
+   to nowy kalendarz, do którego scenariusze są przepinane świadomie.
+2. **Podstawa odmowy: okno na tej kolumnie byłoby drugim mechanizmem rozstrzygania w czasie** obok
+   samego zbioru dni kalendarza. Dla daty D trzeba by odpowiedzieć, czy podstawa godzinowa pochodzi
+   z wiersza, którego `valid_period` obejmuje D, czy z kalendarza, który scenariusz wskazał. Reguła
+   13 Strażnika broni dokładnie przed istnieniem dwóch takich mechanizmów naraz.
+3. **Odtwarzalność zatwierdzonej kalkulacji nie opiera się tu na oknie, tylko na migawce**
+   (ADR-0004, aneks z tą samą datą). Jedyny wymóg, któremu okno by tu służyło — AC-04/AC-10 — jest
+   już spełniony mechanizmem strukturalnym, i to mocniejszym: brakujący wiersz migawki jest widoczny.
+4. **Koszt przyjęty świadomie.** Organizacja zmieniająca standardowy dzień pracy w połowie roku
+   zakłada nowy kalendarz, a każdy scenariusz `draft` wskazujący stary zachowuje starą podstawę,
+   dopóki ktoś go nie przepnie — nic o tym nie przypomina. Wymóg wynikający z tego wprost:
+   rozwiązana pojemność musi nazwać, z którego kalendarza i z jakiej podstawy powstała (F-02,
+   "identify the source of each inherited or overridden value").
+5. **Warunek wygaśnięcia, datowany.** Pierwsze żądanie dwóch różnych długości dnia pracy pod JEDNĄ
+   nazwą kalendarza wygasza ten aneks i wymaga tabeli-dziecka na wzorcu z punktu 2 decyzji
+   (`effective_from`/`effective_to` + kolumna generowana `valid_period` + `EXCLUDE` kluczowane na
+   `calendar_id`) oraz funkcji rozwiązującej po dacie. Nie wolno wprowadzić tego jako skutku
+   ubocznego zadania o czymś innym.
+6. **Czego ten aneks nie obejmuje: dzień częściowo roboczy** (np. 24 grudnia do 13:00). Kolumna
+   godzin na wierszu dnia byłaby nadpisaniem podstawy kalendarzowej, czyli trzecim mechanizmem —
+   jawnie poza zakresem, wymaga własnego, datowanego wpisu. Milczenie nie jest trzecią możliwością.
+7. **Rozstrzygnięcie bramki 1 (2026-09-22, G-2): `catalog_locations.calendar_id` jest nullowalne.**
+   Pominięcie nie znaczy "domyślne 8 godzin" ani żaden inny cichy fallback — pozycja w lokalizacji
+   bez kalendarza dostaje nazwany stan "brak kalendarza" w wyliczonej pojemności, nigdy `0` i nigdy
+   wyjątek. Ta sama zasada co dla `vendor_id`/`vendor` w SC-2-03: pominięcie jest stanem, nie luką
+   do wypełnienia domysłem.

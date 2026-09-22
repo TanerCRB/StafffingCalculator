@@ -419,3 +419,78 @@ kliknięcie w przeglądarce, na dodawaniu i na edycji.
    własnego, datowanego wpisu tutaj oraz w ADR-0001. To samo dotyczy kolumny „kto zmienił"; znacznik
    `updated_at` wprowadzany przez ADR-0007 aneks 2026-09-21 nią nie jest (jest znacznikiem czasu, nie
    podmiotu) i wyjątku nie wygasza. Ten aneks żadnej kolumny podmiotowej **nie** wprowadza.
+
+### 2026-09-22 — kalendarze i typy nieobecności bez zasięgu; instancja nieobecności z zasięgiem dziedziczonym (SC-3-02)
+
+Aneks z 2026-09-19 (SC-2-01) pkt 1 domyka się zdaniem: "Pierwsza tabela, której wiersz da się
+przypisać do projektu, jednostki biznesowej albo najemcy, przestaje być objęta tym punktem i wymaga
+własnego wpisu tutaj." SC-3-02 tworzy tabele po **obu** stronach tego kryterium naraz i dlatego
+wymaga wpisu dwukierunkowego.
+
+1. **Kalendarz roboczy, jego dni i słownik typów nieobecności są danymi organizacyjnymi** — wyjątek
+   "dane organizacyjne bez zasięgu" je obejmuje. Kryterium strukturalne spełnione: żadna kolumna nie
+   wiąże wiersza z projektem, użytkownikiem, jednostką biznesową ani najemcą, i żaden endpoint nie
+   zawęża ich po tożsamości wołającego.
+2. **`catalog_locations.calendar_id` nie jest kolumną zasięgu.** Wskazuje inny wiersz organizacyjny,
+   nie podmiot, w imieniu którego działa wołający — ta sama podstawa, którą aneks z 2026-09-21 pkt 1
+   dał kolumnie `vendor_id`. Wyjątek obowiązuje dalej, także zwolnienie z funkcji-strażnika
+   (ADR-0001, aneks z tą samą datą).
+3. **Uprawnienia kalendarza i słownika typów: `CATALOG_READ`/`CATALOG_WRITE`, bez nowych.** Są to
+   szósty i siódmy słownik katalogu, nie szósty mechanizm — precedens dosłowny z aneksu 2026-09-21
+   pkt 2 ("poddostawca jest piątym słownikiem katalogu, nie piątym mechanizmem").
+   **`PLACEHOLDER_PERMISSIONS` nie rośnie w tym zadaniu**; kanarek równości zbiorów zostaje bez
+   przezbrajania.
+4. **Instancja nieobecności NIE jest daną organizacyjną i wyjątku z pkt 1 nie wolno na nią
+   rozciągać.** Wiersz należy do projektu przez `staffing_position_absence.position_id →
+   staffing_position.scenario_id → scenarios.project_id` — drugi stopień pośredniości po alokacji
+   miesięcznej, ten sam mechanizm. Obowiązuje filtr `project_access` z "Decyzji", adres zagnieżdżony,
+   zasięg wyłącznie z `project_for_caller` (ADR-0001, aneks 2026-09-19), `404` nigdy `403`, także dla
+   zapisu, i żaden kod odmowy specyficzny dla zapisu nie może stać się ubocznym potwierdzeniem
+   istnienia pozycji ani scenariusza.
+5. **Uprawnienia instancji: `STAFFING_READ`/`STAFFING_WRITE`, bez nowych.** Argument ziarnistości z
+   aneksu 2026-09-19 pkt 2 ("planowanie obsady jest rutynowo prawem innej osoby niż edycja nagłówka
+   projektu") nie oddziela planowania nieobecności od planowania obsady — to ta sama czynność.
+   Osobne `ABSENCE_*` byłoby ziarnistością bez podmiotu, który miałby ją wykonywać.
+6. **Granica danych osobowych, postawiona przy tworzeniu tabeli, nie po pierwszym incydencie.**
+   Nieobecność wisi na **anonimowej pozycji obsady**, nigdy na osobie, a wiersz **nie ma kolumny na
+   notatkę ani uzasadnienie**; typ pochodzi wyłącznie ze słownika. Bez tej granicy tabela
+   nieobecności jest rejestrem, który w części przypadków niesie dane o zdrowiu — to ten sam
+   argument, którym `staffing_position` odmawia kolumny na osobę (Issue #31, ADR uwierzytelniania), i
+   nie wolno go osłabić dopisaniem "opcjonalnego" pola tekstowego.
+7. **Bramka kosztów osobowych nieaktywowana przez to zadanie.** Żadna odpowiedź SC-3-02 nie niesie
+   stawki; flagi kosztowe i przychodowe typu nieobecności są konfiguracją, nie kwotą. Kierunek
+   wyjątku z aneksu 2026-09-19 pkt 3 pozostaje nieudowodniony — pierwsze zadanie pokazujące koszt
+   nieobecności (F-07) musi odtworzyć koniunkcję i dowieść jej własnym kryterium.
+8. **Migawka dziedziczy zasięg scenariusza.** Wiersze `approved_snapshot_*` należą do scenariusza, a
+   więc do projektu, i są czytane wyłącznie tą samą ścieżką zasięgu — mimo że ich treść pochodzi z
+   tabeli organizacyjnej bez zasięgu. Pochodzenie treści nie przenosi zwolnienia.
+9. **Rozstrzygnięcie bramki 1 (2026-09-22, P-2): endpoint zatwierdzenia scenariusza jest zwykłą
+   ścieżką zapisu projektową** — `404` nigdy `403` dla scenariusza spoza zasięgu, precedencja `404`
+   nad `409` dla scenariusza spoza zasięgu już zatwierdzonego (żeby odpowiedź nie potwierdzała ani
+   istnienia, ani stanu). **Kontrola roli na tym endpoincie nie istnieje** — placeholder identity nie
+   niesie wymiaru roli, a `PERSONNEL_COSTS_READ`/pozostałe uprawnienia nie rozróżniają "może
+   planować" od "może zatwierdzać". To nie jest przeoczenie tego aneksu — jest zamknięciem
+   warunkowym na ADR uwierzytelniania, nazwanym w ADR-0004 aneks z tą samą datą, pkt 5.
+10. **Nazwa typu nieobecności jest wolnym tekstem, a migawka czyni jej treść trwałą i nieusuwalną
+    (security-auditor, weryfikacja SC-3-02, 2026-09-22).** Punkt 6 zamyka granicę danych osobowych
+    na wierszu instancji (brak kolumny na osobę/notatkę); nie zamyka jej na `absence_type.name` —
+    jedyna reguła treści tej kolumny to niepusty ciąg, a `approved_snapshot_absence_type` kopiuje ją
+    wprost, bez ścieżki UPDATE/DELETE (ADR-0004, ten sam aneks, pkt 3). Dziś nieszkodliwe: SC-3-02
+    nie daje żadnej ścieżki zapisu dla `absence_type` (żaden HTTP endpoint go nie tworzy), więc
+    ryzyko ogranicza się do dostępu do bazy/seeda. **Warunek ponownego otwarcia:** pierwsze zadanie
+    wystawiające zapis `absence_type` (formularz/endpoint) musi rozstrzygnąć wprost — ograniczenie
+    treści nazwy (np. zakaz danych osobowych, walidacja wzorca) albo zasadę
+    erasure/rectification dla wierszy `approved_snapshot_*`, które tę nazwę już skopiowały — jako
+    warunek wstępny tamtego zadania, nie do odkrycia po fakcie.
+11. **"Anonimowa pozycja obsady" (pkt 6) jest pseudonimizacją, nie anonimizacją — przy
+    `headcount = 1` degraduje się do identyfikacji (security-auditor, weryfikacja SC-3-02,
+    2026-09-22).** Wołający z `STAFFING_READ` + `CATALOG_READ` + wierszem `project_access` widzi
+    listę nieobecności pozycji (daty + typ przez `absence_type_id`→nazwa); przy `headcount = 1`
+    krotka wymiarów katalogu (rola/senioritet/lokalizacja/typ zaangażowania) w organizacji typowej
+    wielkości jednoznacznie wskazuje osobę. To nie jest przekroczenie granicy zasięgu (`project_access`
+    działa poprawnie) — to ujawnienie nowe wewnątrz istniejącej granicy, którego przed SC-3-02 nie
+    było. **Warunek ponownego otwarcia:** przeniesienie nieobecności na osobę (Issue #31, ADR
+    uwierzytelniania) albo pierwsze zadanie zależne od rozróżnienia `headcount = 1` od `headcount > 1`
+    w odpowiedzi API musi tę degradację nazwać wprost i rozstrzygnąć, czy wymaga countermeasure
+    (np. agregacja przy `headcount = 1`) — do tego czasu przyjęte jako nazwane, nieaktywnie
+    zamknięte ryzyko, nie jako defekt do naprawy w SC-3-02.

@@ -1,6 +1,7 @@
-"""The organisational catalogue: role dimensions, vendors and default rates (F-03, SC-2-01/SC-2-03).
+"""The organisational catalogue: role dimensions, vendors, rates, calendars and absence types
+(F-03, F-05; SC-2-01/SC-2-03/SC-3-02).
 
-Six tables, and one thing they all have in common: **no column ties a row to a project, a user, a
+Nine tables, and one thing they all have in common: **no column ties a row to a project, a user, a
 business unit or a tenant.** That is what puts them outside the `project_access` scope filter
 (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu", point 1) and outside
 the single-guarded-read-path requirement (ADR-0001, addendum 2026-09-19 — a guard function exists so
@@ -14,6 +15,14 @@ addendum 2026-09-21, point 1; ADR-0005, addendum 2026-09-21, point 1). A subcont
 the caller's relationship to a vendor, and `CATALOG_READ` shows every vendor's price list to
 everybody who holds it. That consequence was taken deliberately at gate 1 (Issue #46), not
 discovered afterwards. The exception expires the day any read is narrowed per vendor.
+
+**SC-3-02 adds the sixth and seventh dictionaries and one child table** (ADR-0005, addendum
+2026-09-22, points 1-3): `working_calendar`, `absence_type` and `working_calendar.days`. They are
+dictionaries of the same family — same exemption from scope, same `CATALOG_READ`/`CATALOG_WRITE`
+pair, no new permission — and `catalog_locations.calendar_id` does **not** end the exemption: it
+points at another organisational row, not at a subject the caller acts for, exactly as `vendor_id`
+does (ADR-0001, addendum 2026-09-22, point 2). What is *not* here is the absence **instance**: that
+row belongs to a scenario and lives in `app.models.staffing`, behind the `project_access` filter.
 
 The five dictionaries are **data, not code** (NF-10): no `StrEnum` anywhere restricts which roles,
 seniorities, locations, engagement types or vendors may exist, so adding "Site Reliability Engineer"
@@ -32,22 +41,26 @@ Not a child of a scenario: `SCENARIO_CHILD_COPIERS` deliberately gains no entry 
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Computed,
     Date,
     DateTime,
+    Enum,
     ForeignKey,
     Index,
     Numeric,
     String,
+    UniqueConstraint,
     func,
     text,
 )
 from sqlalchemy.dialects.postgresql import DATERANGE, ExcludeConstraint, Range
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -188,6 +201,29 @@ class CatalogSeniority(_CatalogDimension):
 class CatalogLocation(_CatalogDimension):
     __tablename__ = "catalog_locations"
     __table_args__ = _dimension_table_args("catalog_locations")
+
+    calendar_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("working_calendar.id", name="fk_catalog_locations_calendar_id"),
+        nullable=True,
+    )
+    """Which working calendar the people in this location follow (F-05, SC-3-02).
+
+    **Nullable, and `NULL` is a named state rather than a gap to fill with a guess** (ADR-0008,
+    addendum 2026-09-22, point 7, gate-1 decision G-2). A position in a location with no calendar
+    gets `derived_capacity_state = "no_calendar"` and `derived_capacity_hours = "n/a"` — never a
+    silent `0` hours per day, never an unhandled exception (criterion K-23). The same reading
+    `vendor_id` carries one table over: an omission is a state, not a hole.
+
+    **Not a scope column** (ADR-0005, addendum 2026-09-22, point 2; ADR-0001, same date, point 2).
+    It points at another organisational row, not at a subject the caller acts on behalf of, so the
+    exemption this module rests on survives it — and, with it, the absence of a guard function for
+    the calendar tables. The expiry condition is unchanged: the first *per-caller* predicate on any
+    of these tables ends the exemption.
+
+    No `ondelete` — i.e. `NO ACTION`: the database refuses to delete a calendar a location still
+    points at. Deleting a calendar is out of scope (there is no delete path in this task at all),
+    and refusing pre-empts no later decision about referential history."""
 
 
 class CatalogEngagementType(_CatalogDimension):
@@ -501,3 +537,187 @@ class CatalogDefaultRate(Base):
         # know a query may depend on. See `RATE_PAGE_INDEX`.
         Index(RATE_PAGE_INDEX, "effective_from", "id"),
     )
+
+
+# --- working calendars and absence types (F-05, SC-3-02) -----------------------------------------
+
+
+STANDARD_HOURS_PRECISION = 4
+STANDARD_HOURS_SCALE = 2
+"""`NUMERIC(4,2)` for the length of a standard working day — `Decimal`, never `float`.
+
+The same rule as for the hours of an allocation row (`app.models.staffing.HOURS_PRECISION`), and
+for the same reason: this figure is multiplied by a number of days and then by a rate, so a binary
+rounding error here reaches every cost and revenue figure derived from a calendar (NF-01,
+ADR-0002). Precision 4 because a working day is a one- or two-digit number of hours; scale 2
+because 7.5 and 8.25 are what a real calendar is written in."""
+
+WEEK_PATTERN_LENGTH = 7
+
+WEEK_PATTERN_EXPRESSION = "week_pattern ~ '^[01]{7}$'"
+"""What makes `week_pattern` a week, as SQL — seven characters, each `0` or `1`.
+
+Monday first (index 0 is `date.weekday() == 0`), so the string reads the way a European calendar is
+printed. A pattern is **data, not code** (NF-10): a calendar working Monday to Saturday is
+`'1111110'`, an insert rather than a migration, and there is no `weekday() < 5` anywhere in this
+codebase to disagree with it (criterion K-02, mutation b).
+
+Spelled once here and once in the migration that creates the table, and asserted identical to that
+copy by `tests/test_working_calendar_schema_constraints.py` — the drift guard R-02 introduced for
+the catalogue's generated column."""
+
+
+class WorkingCalendarDayKind(StrEnum):
+    """What an exceptional day *does* to the week pattern — the two directions F-05 names.
+
+    `NON_WORKING` removes a working day the pattern would have given (a public holiday);
+    `WORKING` adds one the pattern would not have (a working Saturday). Two values rather than a
+    boolean `is_holiday`, because the second direction is a requirement and not a negation: a
+    calendar without it cannot express a working Saturday at all (criterion K-02).
+
+    Deliberately **not** a third value for "partially working": a column of hours on this row would
+    be a second mechanism overriding the calendar's own basis, and ADR-0008's addendum of 2026-09-22
+    (point 6) puts it explicitly out of scope, needing its own dated entry.
+    """
+
+    NON_WORKING = "non_working"
+    WORKING = "working"
+
+
+class WorkingCalendar(_CatalogDimension):
+    """One working calendar: a name, a standard working day and a week pattern (F-05, SC-3-02).
+
+    The sixth dictionary of the catalogue, not a sixth mechanism (ADR-0005, addendum 2026-09-22,
+    point 3): same id/name/timestamps base, same normalised-name uniqueness, same
+    `CATALOG_READ`/`CATALOG_WRITE` pair, no new permission.
+
+    **`standard_hours_per_day` carries no effective-date window, and that is a decision** (ADR-0008,
+    addendum 2026-09-22). The unit of versioning is the calendar, not the column: an organisation
+    that changes the length of its working day creates a new calendar and repoints locations at it.
+    A window on this column would be a *second* mechanism resolving by date, next to the set of days
+    the calendar already holds, and rule 13 of the Invariant Guardian exists to keep exactly one.
+    The reproducibility a window would have served is served by the approval snapshot instead
+    (`app.models.approved_snapshot`), structurally and more strongly. The expiry condition is dated:
+    the first request for two different day lengths under **one** calendar name ends this and needs
+    the `effective_from`/`effective_to` + `EXCLUDE` pattern on a child table.
+    """
+
+    __tablename__ = "working_calendar"
+
+    standard_hours_per_day: Mapped[Decimal] = mapped_column(
+        Numeric(STANDARD_HOURS_PRECISION, STANDARD_HOURS_SCALE), nullable=False
+    )
+    """How many hours one working day of this calendar is. `NOT NULL`: a calendar without it cannot
+    answer the question it exists for, and defaulting it to 8 in the column would be the silent
+    constant criterion K-01's mutation is about."""
+
+    week_pattern: Mapped[str] = mapped_column(String(WEEK_PATTERN_LENGTH), nullable=False)
+    """Which days of the week are working days, Monday first — see `WEEK_PATTERN_EXPRESSION`."""
+
+    days: Mapped[list["WorkingCalendarDay"]] = relationship(
+        back_populates="calendar",
+        order_by="WorkingCalendarDay.day",
+        cascade="all, delete-orphan",
+        passive_deletes=False,
+    )
+    """The exceptional days, ordered — so a calendar read twice comes back the same way."""
+
+    __table_args__ = (
+        *_dimension_table_args("working_calendar"),
+        # In the database, not only in a request schema: a zero-hour working day is a calendar that
+        # silently makes every capacity zero, which is the failure K-23 refuses to let happen by
+        # accident even when it is spelled as data.
+        CheckConstraint("standard_hours_per_day > 0", name="standard_hours_per_day_positive"),
+        CheckConstraint(WEEK_PATTERN_EXPRESSION, name="week_pattern_is_seven_flags"),
+    )
+
+
+class WorkingCalendarDay(Base):
+    """One exceptional day of one calendar: a holiday removed or a working day added (F-05).
+
+    **Data, not code** (NF-10): which days are holidays is a set of rows, not a Python list and not
+    a library of national calendars. That is the whole of criterion K-02's first half — a holiday is
+    an `INSERT`, and removing this table from the reading path changes an answer.
+    """
+
+    __tablename__ = "working_calendar_day"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    calendar_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("working_calendar.id", name="fk_working_calendar_day_calendar_id"),
+        nullable=False,
+    )
+    """No `index=True`: `UNIQUE (calendar_id, day)` below already creates a btree whose leading
+    column is this one, and "the days of one calendar" is the only lookup this table has (the R-05
+    argument the allocation row carries)."""
+
+    # A calendar date, not a point in time (invariant-guardian rule 15): "25 December is a holiday"
+    # has no timezone and no clock.
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+
+    kind: Mapped[WorkingCalendarDayKind] = mapped_column(
+        Enum(
+            WorkingCalendarDayKind,
+            name="working_calendar_day_kind",
+            values_callable=lambda enum: [member.value for member in enum],
+        ),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    """ADR-0007's marker, present from the table's creation although SC-3-02 ships no form for it
+    (addendum 2026-09-22, point 3): the addendum of 2026-09-21 rejected "which tables have a marker"
+    as a second rule to remember at every later form, so every organisational table gets one."""
+
+    calendar: Mapped["WorkingCalendar"] = relationship(back_populates="days")
+
+    __table_args__ = (
+        # One row per (calendar, day) — in the database, because two rows naming one day are two
+        # answers to "is this a working day?" and nothing downstream could choose between them. A
+        # `SELECT` before the `INSERT` would be check-then-act and two connections would both pass
+        # it (criterion K-03; the mutation that has survived delivered tests three times here).
+        UniqueConstraint("calendar_id", "day"),
+    )
+
+
+class AbsenceType(_CatalogDimension):
+    """A kind of absence — holiday, sick leave, training — with its two commercial flags (F-05).
+
+    The seventh dictionary of the catalogue (ADR-0005, addendum 2026-09-22, point 3). Two booleans,
+    and they are **independent of each other**: paid holiday generates cost and no revenue, billable
+    training may generate both, unpaid leave neither. Deriving one from the other (or storing one
+    flag and a sign) is the mutation criterion K-11 exists to kill.
+
+    **Nothing in SC-3-02 reads these flags.** They are persisted and returned, and no cost or
+    revenue calculation consults them, because there is no cost or revenue calculation yet (F-07 /
+    F-08, plan block 5). K-11 therefore proves persistence and independence and *not* that an
+    absence costs anything — the task that first prices an absence has to prove that itself.
+
+    **No column about a person.** The type is a dictionary entry; who is absent is a question this
+    table and `staffing_position_absence` both refuse to carry (ADR-0005, addendum 2026-09-22,
+    point 6).
+    """
+
+    __tablename__ = "absence_type"
+
+    generates_cost: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """Whether time booked against this type still costs the organisation money (paid leave does).
+    `NOT NULL` with a default of false: an unanswered flag must not read as "yes"."""
+
+    generates_revenue: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """Whether time booked against this type is still billable to the client. Independent of
+    `generates_cost` above — see the class docstring."""
+
+    __table_args__ = _dimension_table_args("absence_type")

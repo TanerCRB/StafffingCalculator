@@ -193,6 +193,10 @@ def test_s_02_an_allocation_mapping_cannot_carry_an_id_of_its_own(db_session: Se
     )
 
     assert created is not None
+    # `create_position` answers with a `StaffingPositionView` since SC-3-02 (the derived
+    # capacity is not on the row); the row itself is `view.position`. Accessor only — the
+    # claim below is unchanged.
+    created_id = created.position.id
     written = (
         db_session.execute(
             sa.select(
@@ -200,7 +204,7 @@ def test_s_02_an_allocation_mapping_cannot_carry_an_id_of_its_own(db_session: Se
                 StaffingPositionAllocation.position_id,
                 StaffingPositionAllocation.period_month,
             )
-            .where(StaffingPositionAllocation.position_id == created.id)
+            .where(StaffingPositionAllocation.position_id == created_id)
             .order_by(StaffingPositionAllocation.period_month)
         )
         .all()
@@ -209,7 +213,7 @@ def test_s_02_an_allocation_mapping_cannot_carry_an_id_of_its_own(db_session: Se
     assert [row.period_month for row in written] == [MARCH, APRIL], (
         "the two month rows of this call are not both under the position it created"
     )
-    assert {row.position_id for row in written} == {created.id}
+    assert {row.position_id for row in written} == {created_id}
     assert {row.id for row in written}.isdisjoint({victim_month.id, chosen_id}), (
         "a month row took the primary key its caller's mapping named instead of a generated one"
     )

@@ -142,3 +142,28 @@ którym dwa założenia decyzji nie przenoszą się wprost.
 7. **Czego ten aneks nie rozstrzyga.** Autosave (druga połowa NF-05) zostaje odłożony po raz trzeci
    — zapis jest jawny, z przycisku. Usuwanie wiersza katalogu pozostaje poza zakresem (SC-2-03,
    „Out of scope" pkt 9; FK bez `ON DELETE`), więc `409` nie zyskuje trzeciego znaczenia.
+
+### 2026-09-22 — agregat pozycji rośnie o trzecią tabelę; znacznik się nie mnoży (SC-3-02)
+
+Aneks z 2026-09-19 umieścił znacznik współbieżności na pozycji obsady i uzasadnił ziarnistość
+pośrednią. Nieobecność pozycji (F-05, SC-3-02) jest trzecią tabelą tego samego agregatu.
+
+1. **Nieobecność nie dostaje własnego `updated_at`.** Token zostaje `staffing_position.updated_at`.
+   Każda ścieżka zapisu nieobecności przechodzi przez ten sam kształt
+   `WITH guarded_position AS (UPDATE staffing_position SET updated_at = now() WHERE … AND
+   updated_at = :expected AND NOT EXISTS (… approved …) …)`, który dowiodło K-07. Powód jest ten
+   sam, który `backend/app/models/staffing.py` zapisał dla wiersza miesiąca: dwa tokeny na jednej
+   ścieżce edycji to pytanie, na które ten ADR nie odpowiada.
+2. **Fałszywa kolizja przyjęta świadomie:** dopisanie nieobecności unieważnia token edytora siatki
+   miesięcy tej samej pozycji. Ta sama podstawa co dla kolizji miesiąc-kontra-miesiąc — jednostką
+   edycji jest pozycja, nie pojedynczy wiersz.
+3. **Nowe tabele organizacyjne dostają znacznik od chwili powstania.** `working_calendar`,
+   `working_calendar_day` i `absence_type` mają `updated_at` z `onupdate` już w migracji tworzącej,
+   nawet jeśli SC-3-02 nie daje im formularza: aneks 2026-09-21 pkt 2 odrzucił asymetrię "które
+   tabele mają znacznik" jako drugą regułę do zapamiętania przy każdym następnym formularzu. Zdanie
+   "każda z sześciu tabel katalogu" czytane jest od teraz jako "każda tabela organizacyjna".
+4. **`updated_at` pozostaje znacznikiem czasu, nie kolumną podmiotową** (pkt 6 aneksu 2026-09-21) —
+   wyjątki ADR-0001 i ADR-0005 dla danych organizacyjnych bez zasięgu obowiązują bez zmian.
+5. **Czego ten aneks nie wprowadza: tabele `approved_snapshot_*` nie dostają znacznika
+   współbieżności.** Są zapisywalne jednokrotnie, przy zatwierdzeniu — nie ma dwóch edytorów, przed
+   którymi token miałby bronić (ADR-0004, aneks z tą samą datą, pkt 2).

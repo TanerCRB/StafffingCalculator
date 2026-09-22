@@ -275,6 +275,15 @@ def test_cors_preflight_allows_the_patch_method_the_edit_endpoint_needs(
     `PATCH /projects/{id}` is unreachable from the SPA while every server-side test still passes.
     The `POST` case is asserted alongside so a middleware that allowed everything, or none of it,
     cannot satisfy this on its own.
+
+    **The negative witness changed in SC-3-02, and only the witness.** This test's contrast asks the
+    preflight about a method the API does not have, and it used to ask about `DELETE`. SC-3-02 gives
+    the API its first real `DELETE` (removing a planned absence, F-05), so `DELETE` had to join
+    `allow_methods` in `app.main` — and a contrast asking about a method the API *does* have proves
+    nothing. `PUT` replaces it: this API has no `PUT` anywhere (every edit is a `PATCH`, by the
+    partial-semantics decision of Issue #49), so the assertion keeps exactly the force it had — a
+    middleware configured with `allow_methods=["*"]`, or with no restriction at all, still fails
+    here. Nothing about the `PATCH`/`POST` half of the test is weakened or removed.
     """
     allowed_origin = settings.cors_allowed_origins[0]
     preflight = {
@@ -293,7 +302,7 @@ def test_cors_preflight_allows_the_patch_method_the_edit_endpoint_needs(
 
     refused = client.options(
         f"/projects/{uuid.uuid4()}",
-        headers={**preflight, "Access-Control-Request-Method": "DELETE"},
+        headers={**preflight, "Access-Control-Request-Method": "PUT"},
     )
     assert refused.status_code == 400, (
         "every method is allowed through the preflight — the assertions above prove nothing"

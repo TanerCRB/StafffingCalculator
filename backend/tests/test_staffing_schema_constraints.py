@@ -47,6 +47,8 @@ from app.models.staffing import (
 from tests.conftest import (
     IN_SCOPE_USER,
     count_allocations,
+    make_absence,
+    make_absence_type,
     make_allocation,
     make_dimension_tuple,
     make_project,
@@ -471,6 +473,167 @@ def test_no_foreign_key_of_either_staffing_table_cascades_a_delete(db_session: S
         f"a staffing foreign key no longer refuses to orphan a row: {cascading}. A cascade towards "
         "the scenario deletes the staffing of an approved scenario without passing the write guard "
         "of K-06/K-07 (ADR-0004)."
+    )
+
+
+# --- SC-3-02: the shape of the absence row -------------------------------------------------------
+
+
+ABSENCE_COLUMNS = {
+    "id",
+    "position_id",
+    "absence_type_id",
+    "start_date",
+    "end_date",
+    "created_at",
+}
+"""Every column `staffing_position_absence` is allowed to have — the whole row, spelled out.
+
+Written here, in the test, and deliberately **not** imported from the model: importing it would mean
+that adding a column to the model also updates the expectation, and the assertion would pass for
+every schema. This set is the claim; the table is what is measured against it."""
+
+
+def test_k_22_the_absence_row_has_no_column_for_a_person_or_a_note(db_session: Session) -> None:
+    """K-22 — the personal-data boundary, asserted as an **equality** of the column set.
+
+    ADR-0005's addendum of 2026-09-22 (point 6) draws this boundary at the moment the table is
+    created rather than after an incident: an absence hangs on an *anonymous* staffing position,
+    its kind comes only from the dictionary, and there is no column for a note or a justification.
+    Without that, a table recording who is away and why is, in some fraction of its rows, a register
+    of health data — and it would be one without the decision that governs one.
+
+    **Why equality and not `"person_name" not in columns`.** A negative assertion naming one
+    spelling survives every other spelling: `employee`, `comment`, `justification`, `reason`,
+    `notes`, `replacement`. Each of them is exactly as much personal data as `person_name`, and each
+    of them is a plausible name for somebody to add "just as an optional field". An equality fails
+    for all of them, including the ones nobody has thought of yet.
+
+    The expected set is non-empty and is asserted to be so, because `set() == set()` is the way this
+    test passes against a table that does not exist.
+    """
+    assert ABSENCE_COLUMNS, "the expected column set is empty — this test would prove nothing"
+
+    columns = set(
+        db_session.execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_name = 'staffing_position_absence'"
+            )
+        ).scalars()
+    )
+
+    assert columns == ABSENCE_COLUMNS, (
+        "the absence row's columns changed. ADR-0005's addendum of 2026-09-22 (point 6) forbids a "
+        "column for a person, a note, a justification or a comment on this table — an absence "
+        "hangs on an anonymous position and names its kind only through the dictionary. "
+        f"Unexpected: {sorted(columns - ABSENCE_COLUMNS)}; missing: "
+        f"{sorted(ABSENCE_COLUMNS - columns)}."
+    )
+
+
+def test_the_absence_row_has_no_concurrency_token_of_its_own(db_session: Session) -> None:
+    """K-12's structural half: the token is the position's, and only the position's.
+
+    ADR-0007's addendum of 2026-09-22 (point 1) decides it, and this asserts it against the migrated
+    database because it is a *negative* decision: an `updated_at` added to the absence row later
+    would make one request carry N tokens and would need a rule for partial refusal that ADR-0007
+    does not have. The position's own token is checked in the same breath, so the assertion cannot
+    pass by there being no token anywhere.
+
+    It is also what keeps K-12 honest. Every behavioural test in
+    `tests/test_staffing_absence_guards.py` sends the *position's* token; with a token on the
+    absence row as well, those tests would still pass while a second, unchecked concurrency
+    granularity existed beside the one ADR-0007 decided.
+    """
+    assert "updated_at" not in ABSENCE_COLUMNS
+    absence_columns = set(
+        db_session.execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_name = 'staffing_position_absence'"
+            )
+        ).scalars()
+    )
+    position_columns = set(
+        db_session.execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_name = 'staffing_position'"
+            )
+        ).scalars()
+    )
+
+    assert "updated_at" not in absence_columns
+    assert "updated_at" in position_columns
+
+
+def test_the_database_refuses_an_absence_whose_period_ends_before_it_starts(
+    db_session: Session,
+) -> None:
+    """An inverted range is refused by a CHECK, as on every other period in this schema.
+
+    Load-bearing rather than tidy: an inverted range intersects no calendar day at all
+    (`app.domain.capacity.absence_day_equivalents_in_month` counts the intersection), so without the
+    refusal it would be an absence that silently consumes nothing — a planner's day off that the
+    capacity figure quietly ignores.
+
+    The contrast comes **first**, and that order is forced rather than chosen: rolling back after
+    the refusal discards the savepoint the fixture rows live in. A one-day absence (`start == end`)
+    is the contrast, so the constraint is shown to refuse an inverted period rather than a
+    zero-length one.
+    """
+    project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Baseline")
+    position = make_staffing_position(db_session, scenario, make_dimension_tuple(db_session))
+    absence_type = make_absence_type(db_session)
+
+    one_day = make_absence(
+        db_session, position, absence_type, start_date=MARCH, end_date=MARCH
+    )
+    assert one_day.start_date == one_day.end_date
+
+    with pytest.raises(IntegrityError) as error:
+        make_absence(
+            db_session, position, absence_type, start_date=APRIL, end_date=MARCH
+        )
+    assert "absence_period_ordered" in str(error.value)
+    db_session.rollback()
+
+
+def test_two_absences_of_one_position_over_the_same_days_are_legal(db_session: Session) -> None:
+    """ADR-0008's `EXCLUDE` pattern is deliberately **not** applied here (criterion K-06).
+
+    Not an acceptance criterion — the contrast that keeps the decision from drifting into its
+    opposite. A position with `headcount = 3` is three people, and two of them may be away over the
+    same days; two absences with the same range are one plan, not a conflict. An `EXCLUDE USING
+    gist` copied over from `catalog_default_rates` "for symmetry" would refuse the row that makes
+    K-06's arithmetic meaningful, and the failure would look like a data problem rather than a
+    schema decision.
+    """
+    project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Baseline")
+    position = make_staffing_position(
+        db_session, scenario, make_dimension_tuple(db_session), headcount=3
+    )
+    absence_type = make_absence_type(db_session)
+
+    first = make_absence(
+        db_session, position, absence_type, start_date=MARCH, end_date=APRIL
+    )
+    second = make_absence(
+        db_session, position, absence_type, start_date=MARCH, end_date=APRIL
+    )
+
+    assert first.id != second.id
+    assert (
+        db_session.execute(
+            sa.text(
+                "SELECT count(*) FROM staffing_position_absence WHERE position_id = :id"
+            ),
+            {"id": position.id},
+        ).scalar_one()
+        == 2
     )
 
 
