@@ -234,7 +234,7 @@ history / this file's own change log, not as tracked product work.
   nadawania flagi (ADR-0005 aneks pkt 4). Nie dowodzi AC-06 w całości: kolumny kosztów osobowych
   nadal nie istnieją. Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-1-09** — Uodpornij ekran listy projektów na wadliwą odpowiedź `GET /projects` (obrona
+- [x] **SC-1-09** — Uodpornij ekran listy projektów na wadliwą odpowiedź `GET /projects` (obrona
   przed wybuchem w renderze) i anuluj jego odczyt przy odejściu z ekranu. Wynik weryfikacji SC-2-02
   (ustalenie R-07, „zaakceptowane, nienaprawione"). Kryteria (K-01..K-07) i pełny zapis decyzji
   bramki 1 w Issue #43. Zadanie wyłącznie frontendowe — `backend/` bez zmian.
@@ -302,6 +302,46 @@ history / this file's own change log, not as tracked product work.
   **Ryzyko dla bramki 3 (architekt):** uzasadnienie istniejących wpisów rejestru o
   `isCatalogRateShape`/`isDimensionEntryShape` („apka nie ma error boundary") przestaje być
   prawdziwe co do przesłanki — wymaga poprawki przy najbliższej bramce 3.
+
+  **Done 2026-09-22:** PR #52 (scalone `36df400`). Dowód: `frontend/src/shell/
+  ScreenErrorBoundary.test.tsx` (12 testów: K-02, K-04, K-07), `frontend/src/shell/
+  screenCrashContainment.test.tsx` (7, na działającym `<App/>`: K-02, K-03, K-06),
+  `frontend/src/features/projects/ProjectListScreen.test.tsx` (28: K-01, K-05),
+  `frontend/src/api/client.test.ts` (4: K-05, przekazanie sygnału), `frontend/src/lib/
+  money.test.ts` (+6: K-06) — 153 testy frontendowe zielono (było 114), lint i build czyste.
+  Runda weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawki: QA domknęło
+  dwie luki dowodu — detektor wycieku NF-11 (K-03) był oparty na argumencie (`instanceof Error`)
+  i wybaczał każde wywołanie konsoli niosące błąd (przeżył `componentDidCatch` logujący złapany
+  błąd, 142/142 zielono); przepisany na klasyfikację po miejscu wywołania (stos). Strażnik
+  porzuconego odczytu (K-05) dowiedziony tylko na ścieżce błędu — ścieżka sukcesu (wyścig
+  StrictMode double-mount, spóźniona odpowiedź porzuconego odczytu nadpisująca świeższe wiersze
+  bez żadnego komunikatu) przeżyła 143/143, domknięta osobnym testem. Invariant Guardian: PASS.
+  Reviewer: STOP, jedno High i trzy Medium/Low — **R-01 (High, potwierdzone bezpośrednio w
+  zainstalowanym `react-dom`)**: produkcyjny build Reacta 18.3.1 zawiera `console.error(b.value)`
+  wołane bezwarunkowo dla każdej granicy błędu klasowej (`logCapturedError`), wbrew komentarzowi w
+  kodzie i pierwotnej treści ADR-0010 twierdzącym, że produkcja tego nie robi — wyjątek formattera
+  niósł surową, źle sformatowaną stawkę w treści komunikatu, więc trafiała na konsolę produkcyjną
+  mimo że sama granica błędu nic nie loguje; naprawione u źródła (`lib/money.ts` rzuca stałą bez
+  interpolacji wartości — jedyne egzekwowalne miejsce, bo tego co loguje sam framework żaden
+  komponent nie stłumi), ADR-0010 skorygowana. R-02 (Medium): fokus po „spróbuj ponownie" gubiony
+  na `document.body` — naprawione (fokus na nagłówek przemontowanego ekranu, ten sam mechanizm co
+  fokus po nawigacji railem; przy ponownej awarii wraca na przycisk). R-03 (Medium, poza
+  pierwotnym zakresem Issue #43): `CatalogScreen.afterSave` łamał ADR-0010 pkt 7 — zapis w locie
+  + odejście z ekranu zostawiało 6 nieanulowanych odczytów katalogu (~19.7 MB) — naprawione
+  (strażnik przed startem re-readu, nie tylko po). R-04 (Low): brak limitu powtórzeń „spróbuj
+  ponownie" przy awarii reprodukowalnej od razu — naprawione (licznik, zmiana treści po dwóch
+  kolejnych nieudanych próbach, zerowany po udanym renderze i po nawigacji). Security-auditor:
+  PASS, zero znalezisk (audyt poprzedzał odkrycie R-01 przez reviewera — traktował ryzyko
+  produkcyjnego logowania Reacta jako przyszłe, wersjo-specyficzne dla React 19; reviewer
+  zweryfikował bezpośrednio w zainstalowanym pakiecie i pokazał że dotyczy już React 18.3.1).
+  **Zaakceptowane, nienaprawione:** brak realnego dowodu granicy błędu na payloadzie katalogu
+  (tylko syntetyczny throwing child dla `CatalogScreen` — różnica między „objęty mechanizmem" a
+  „dowiedziony”, warunek zamknięcia: pierwsza kolejna Story dotykająca tego ekranu); fokus po
+  nawigacji na już-złapaną awarię (osobne od naprawionego R-02, nazwane w ADR-0010 jako otwarte
+  ryzyko dostępności); zachowanie pod przyszłym majorem Reacta (React 19 zmienia domyślne
+  logowanie na `onCaughtError` — odnotowane jako trigger do ponownej weryfikacji przy upgrade,
+  nie zamknięte teraz, bo naprawa R-01 usuwa wartość u źródła niezależnie od wersji Reacta).
+  Zob. `docs/architecture/capabilities.md`.
 
 - [x] **SC-2-01** — Wprowadź katalog wymiarów roli (rola/senioritet/lokalizacja/typ zaangażowania)
   jako dane, ze stawką domyślną kosztową i sprzedażową obowiązującą w rozłącznym przedziale dat.
