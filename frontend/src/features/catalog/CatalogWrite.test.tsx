@@ -159,6 +159,17 @@ interface StubOptions {
    * abort would be a stub politely doing what no browser does.
    */
   readonly holdReadsAfterWrite?: PromiseLike<void>;
+  /**
+   * Awaited before the write itself answers, so the window in which a save is *in flight* can be
+   * held open (Reviewer R-03, 2026-09-22). That window is where a screen can be left: `afterSave`,
+   * the continuation that decides whether to re-read, resumes after it — on a component React has
+   * already unmounted, whose cleanup has already run.
+   *
+   * Deliberately not abortable: a write carries no `AbortSignal` by decision (ADR-0009 — a
+   * cancelled mutation has an unknown outcome), which is exactly why the continuation, rather than
+   * the request, is what has to notice.
+   */
+  readonly holdWrite?: PromiseLike<void>;
 }
 
 /** A promise with its resolution in the test's hands. */
@@ -207,6 +218,9 @@ function stubCatalog(options: StubOptions = {}) {
 
     if (method !== "GET") {
       written = true;
+      if (options.holdWrite !== undefined) {
+        await options.holdWrite;
+      }
       const answer = options.answerWrite?.(call) ?? {
         status: 201,
         payload: path === RATES_PATH || path.startsWith(`${RATES_PATH}/`) ? WRITE_ECHO : ENTRY_ECHO,
@@ -1321,6 +1335,75 @@ describe("writing to the catalogue", () => {
     expect(reads(calls)).toHaveLength(12);
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+
+  // --- Reviewer R-03 (2026-09-22): the save's continuation outliving the screen ------------------
+
+  it("starts no re-read at all when the screen is left while the save it follows is still in flight", async () => {
+    // One layer further out than the finding above. There, the six re-reads existed and nothing
+    // aborted them; here they must never be issued. `afterSave` is an async function that outlives
+    // the component: it resumes after `await createCatalogRate(…)`, by which time a rail click (or
+    // the error boundary unmounting this screen) has already run the mount effect's cleanup —
+    // `left` set, `inFlight` drained. It checked `left` only in the branches that follow the
+    // re-read, never before starting it, so a save that landed after the user walked away opened
+    // six fresh `GET`s registered in a set nothing will drain again: orphaned reads that no cleanup
+    // can now abort, holding all six of the browser's same-origin sockets against whatever screen
+    // the user is actually on (ADR-0010 point 7, ~19.7 MB per catalogue read).
+    const gate = deferred();
+    const calls = stubCatalog({ rates: [EXISTING_RATE], holdWrite: gate.promise });
+    const { unmount } = render(<CatalogScreen />);
+    await mounted();
+
+    const form = await openAddRateForm();
+    fillNewRate(form);
+    // Not `press`: the write must still be unanswered when the screen goes, which is the whole
+    // situation. Awaiting the click to completion would close the window first.
+    fireEvent.click(within(form).getByRole("button", { name: "Save new rate" }));
+    await waitFor(() => {
+      expect(writes(calls)).toHaveLength(1);
+    });
+    const readsBeforeLeaving = reads(calls).length;
+    expect(readsBeforeLeaving).toBe(6);
+
+    unmount();
+
+    // Now the server answers, and the save succeeds — on a screen that is gone.
+    await act(async () => {
+      gate.release();
+      await gate.promise;
+    });
+    await act(async () => {});
+
+    // Counted, not inspected: the failure this is about is a *number of requests*, and a signal
+    // assertion cannot see it — the reads in question would be born after the only cleanup that
+    // could abort them has run, so they would all report `aborted: false` quite honestly.
+    expect(writes(calls)).toHaveLength(1);
+    expect(reads(calls)).toHaveLength(readsBeforeLeaving);
+
+    // The contrast, through the identical sequence with the screen still mounted: the re-read is
+    // skipped because the screen was left, not because it stopped happening (P-3a, K-13).
+    cleanup();
+    vi.unstubAllGlobals();
+
+    const secondGate = deferred();
+    const stillMounted = stubCatalog({ rates: [EXISTING_RATE], holdWrite: secondGate.promise });
+    render(<CatalogScreen />);
+    await mounted();
+    const secondForm = await openAddRateForm();
+    fillNewRate(secondForm);
+    fireEvent.click(within(secondForm).getByRole("button", { name: "Save new rate" }));
+    await waitFor(() => {
+      expect(writes(stillMounted)).toHaveLength(1);
+    });
+    expect(reads(stillMounted)).toHaveLength(6);
+
+    await act(async () => {
+      secondGate.release();
+      await secondGate.promise;
+    });
+    await waitFor(() => {
+      expect(reads(stillMounted)).toHaveLength(12);
+    });
   });
 
   it("opens no form while a post-save re-read is in flight, and states why the controls are unavailable", async () => {

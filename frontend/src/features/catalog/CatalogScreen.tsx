@@ -245,6 +245,23 @@ export function CatalogScreen() {
    * lands when the read settles appears above a form it is not about.
    */
   const afterSave = useCallback(async () => {
+    // The screen may already be gone by the time this runs (Reviewer R-03, 2026-09-22). This
+    // function is the continuation of a save: it resumes after `await createCatalogRate(…)` in a
+    // form, which is long enough for a rail click — or for the error boundary unmounting this
+    // screen — to have run the mount effect's cleanup, setting `left` and draining `inFlight`.
+    // Without this line the save's success would then start six fresh `GET`s through
+    // `readIntoScreen`, registering them in a set nothing will ever drain again: reads for a screen
+    // nobody is on, which no cleanup can now abort, each holding one of the browser's six
+    // same-origin sockets against the screen the user actually moved to (~19.7 MB of catalogue,
+    // docs/PLAN.md:281-285).
+    //
+    // Checked *before* the read rather than after it, which is the whole finding: the `left` guards
+    // below only decide whether to call `setState` once the re-read has already been issued, and a
+    // read nobody wants is the thing ADR-0010 point 7 is about — not the `setState` it would have
+    // fed.
+    if (left.current) {
+      return;
+    }
     setOpenForm(null);
     // The previous outcome goes now rather than when this one arrives: a notice standing above a
     // re-read in progress states the result of a read that is still running.

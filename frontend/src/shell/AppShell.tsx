@@ -1,5 +1,6 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 
+import { ScreenErrorBoundary } from "./ScreenErrorBoundary";
 import "./AppShell.css";
 
 /**
@@ -14,8 +15,14 @@ import "./AppShell.css";
  * planner" and "Calculation details" are product-naming questions, settled elsewhere (gate-1
  * decision 5, Issue #3), not something a visual pass may change.
  *
- * One behaviour lives here rather than in a screen: after a rail activation, focus moves to the
- * heading of the screen that activation just mounted (Reviewer R-03, SC-2-02). The active rail
+ * Two behaviours live here rather than in a screen. The second one (SC-1-09, ADR-0010) is the
+ * render-error boundary around the screen slot: it belongs to the shell because the hole it covers
+ * is the application's, not one screen's — see `ScreenErrorBoundary.tsx`.
+ *
+ * The other lives here rather than in a screen: after a rail activation, focus moves to the
+ * heading of the screen that activation just mounted (Reviewer R-03, SC-2-02) — and, since
+ * Reviewer R-02 of SC-1-09, after the error boundary's "Try again" too, which re-mounts a screen
+ * without the active one changing. The active rail
  * entry renders as a `<span>`, not a `<button>` (see `RAIL_ORDER` below) — the element holding
  * keyboard focus at the moment of activation is removed from the DOM by that same click, and the
  * browser has nowhere else to put focus but `document.body`. The shell is the one thing that knows
@@ -57,6 +64,26 @@ const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
  */
 const RAIL_ORDER: readonly ScreenKey[] = ["projects", "roles-and-rates"];
 
+/**
+ * Where focus goes when the content frame has just been given a different screen — after a rail
+ * activation (Reviewer R-03, SC-2-02) and after the error boundary's "Try again" re-mounts the
+ * screen that crashed (Reviewer R-02, SC-1-09).
+ *
+ * One function, called from both, rather than two conventions: both moments end the same way — the
+ * control that held keyboard focus is removed from the DOM by the very action it performed, and the
+ * browser has nowhere to put focus but `document.body`. Found generically (`h1, h2`) so that a
+ * screen added later needs nothing but a heading to participate.
+ *
+ * Silent when there is no heading to take it — the fallback of a crashed screen has none. Navigating
+ * *to* a screen that is already showing the fallback therefore still leaves focus nowhere, which is
+ * the open accessibility risk ADR-0010 names in its Konsekwencje and does not close. The one case
+ * that is closed is a retry that crashes again, and it is closed inside `ScreenErrorBoundary`, which
+ * owns the only element there is to focus at that moment.
+ */
+function focusScreenHeading(container: HTMLElement | null): void {
+  container?.querySelector<HTMLElement>("h1, h2")?.focus();
+}
+
 interface AppShellProps {
   readonly backendStatus: BackendStatus;
   /** Which screen is mounted in the frame — the shell reads it, it never decides it. */
@@ -85,9 +112,18 @@ export function AppShell({ backendStatus, activeScreen, onNavigate, children }: 
     // element every screen has, whichever screen `children` turns out to be, found generically so
     // that a screen added later needs nothing beyond a heading to participate. `main` renders new
     // `children` before this effect runs, so the heading being focused is always the new screen's.
-    const heading = mainRef.current?.querySelector<HTMLElement>("h1, h2");
-    heading?.focus();
+    focusScreenHeading(mainRef.current);
   }, [activeScreen]);
+
+  /**
+   * The same landing place, for the other way a screen gets re-mounted inside this frame: the error
+   * boundary's "Try again" (Reviewer R-02, SC-1-09). It is not a navigation — `activeScreen` does
+   * not change — so the effect above never fires for it, and until this existed a retry dropped
+   * focus to `document.body` exactly as a rail activation used to.
+   */
+  const focusRemountedScreen = useCallback(() => {
+    focusScreenHeading(mainRef.current);
+  }, []);
 
   return (
     <div className="app-shell">
@@ -169,7 +205,17 @@ export function AppShell({ backendStatus, activeScreen, onNavigate, children }: 
         </nav>
 
         <main className="app-shell__main" id="app-shell-content" ref={mainRef}>
-          <div className="app-shell__content">{children}</div>
+          {/* The boundary wraps the screen slot, not the shell (SC-1-09, ADR-0010, point 1).
+              Around the whole shell it would take the rail down with the screen — turning the one
+              remaining way out into a page reload. Here, every screen the shell mounts is covered
+              by the one mechanism, including the ones added later, and none of them carries a copy
+              of it. `resetKey` is the active screen, so a crash does not follow the user to the
+              next one (K-04). */}
+          <div className="app-shell__content">
+            <ScreenErrorBoundary resetKey={activeScreen} onRetry={focusRemountedScreen}>
+              {children}
+            </ScreenErrorBoundary>
+          </div>
         </main>
       </div>
     </div>
