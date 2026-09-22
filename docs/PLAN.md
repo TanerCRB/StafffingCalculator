@@ -406,7 +406,7 @@ history / this file's own change log, not as tracked product work.
   świadomie jako nieszkodliwe przy dzisiejszej skali poddostawców, zmienia się jeśli liczba
   poddostawców urośnie do dziesiątek tysięcy. Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-2-04** — Dodaj zapis z ekranu katalogu: dodawanie **i edycja** wpisu słownika oraz okna
+- [x] **SC-2-04** — Dodaj zapis z ekranu katalogu: dodawanie **i edycja** wpisu słownika oraz okna
   stawki domyślnej (backend: znacznik współbieżności + dwa `PATCH`-e; frontend: dwa formularze).
   Blocked by SC-2-01, SC-2-02, SC-2-03. Kryteria (K-13..K-23, dwie rundy analityka) i pełny zapis
   decyzji bramki 1 w Issue #49.
@@ -448,6 +448,34 @@ history / this file's own change log, not as tracked product work.
   gałąź bramki kosztowej na ścieżce `PATCH` dowodliwa wyłącznie testem; migracja niedowiedziona na
   jakimkolwiek trwałym środowisku (open decision #5); zapis z przeglądarki nadal bez ani jednego
   wiersza w rejestrze możliwości do czasu części frontendowej.
+
+  **Done 2026-09-22:** PR #50 (scalone `4699072`). Dowód: `backend/tests/test_catalog_edit.py`
+  (18 testów: K-23, Q-1, Q-2, rozróżnialność 409, 404>409),
+  `backend/tests/test_catalog_migration_lock_timeout.py` (R-06),
+  `frontend/src/features/catalog/CatalogWrite.test.tsx` (27 testów: K-13..K-23),
+  `frontend/src/api/contracts/writeRefusals.test.ts` (spięcie warunku odmowy backend↔frontend) —
+  331 testów backendowych zielono (było 307 przed tym zadaniem), 114 frontendowych (było 84).
+  Runda weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawki: QA domknęło
+  dwie luki w dowodzie — znacznik pięciu słowników nie był dowiedziony jako ruchomy przy zmianie
+  nazwy (`onupdate` przeżył cały pierwotny zestaw), string warunku odmowy nie był spięty między
+  backendem a frontendem (rename backendu nie zostałby wykryty przez żaden test). Invariant
+  Guardian: PASS, jedna uwaga poza listą reguł — ryzyko AC-04 (edycja stawki jako zdarzenie
+  zmieniające domyślną organizacji) zgubione przy rozszerzeniu zakresu z dodawania na
+  dodawanie+edycję, dopisane do ADR-0009. Reviewer: STOP, 3 medium + 3 low — naprawione R-01
+  (komunikat o nieaktualnym znaczniku fałszywie wskazywał „kogoś innego" na ścieżce samo-konfliktu
+  z własnym wcześniejszym zapisem), R-02 (ponowny odczyt po zapisie bez anulowania przy opuszczeniu
+  ekranu, brak blokady otwarcia formularza w oknie odczytu — mogło seedować formularz z nieaktualną
+  wartością), R-03 (udany zapis 2xx o nieczytelnym ciele — np. przy rolling deploy — raportowany
+  jako awaria serwera zamiast stanu nierozstrzygniętego, zachęcając do powtórki i duplikatu),
+  R-06 (migracja bez `lock_timeout` — ryzyko zablokowania całego katalogu przez konkurencyjną
+  transakcję). Security-auditor: PASS, zero znalezisk; dwa nazwane, nienaprawione ryzyka (poniżej).
+  **Zaakceptowane, nienaprawione:** R-04/R-05 (martwa rada „reload katalogu" w komunikatach zapisu
+  bez kontrolki odświeżenia; ostrzeżenie o paginacji w komunikacie sukcesu obecne nawet gdy
+  nieadekwatne) — kosmetyka UX, świadomie odłożona; `updated_at` jako niebramkowany kanał
+  czasowy dla bramkowanego pola kosztowego (ujawnia *kiedy* zmieniono koszt, nie wartość — bez
+  populacji dziś, bo nikt nie ma `PERSONNEL_COSTS_READ`); nieodwracalność edycji — katalog był
+  dotąd insert-only, teraz pojedynczy `PATCH` może nadpisać wrażliwą stawkę bez cofnięcia i bez
+  audytu „kto zmienił" (F-12 nadal odłożone, świadomie). Zob. `docs/architecture/capabilities.md`.
 
 - [x] **SC-3-01** — Utrwal pozycje obsady scenariusza (krotka wymiarów katalogu, headcount, okres)
   z alokacją miesięczną w godzinach, trzema niezależnymi wartościami (dostępność / planowana
