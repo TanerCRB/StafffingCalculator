@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.data.project_writes import SCENARIO_CHILD_COPIERS
 from app.data.staffing import (
+    ABSENCE_COLUMNS_NOT_COPIED,
     ALLOCATION_COLUMNS_NOT_COPIED,
     POSITION_COLUMNS_NOT_COPIED,
     copy_staffing_positions,
@@ -45,12 +46,15 @@ from app.models import (
     Scenario,
     ScenarioStatus,
     StaffingPosition,
+    StaffingPositionAbsence,
     StaffingPositionAllocation,
 )
 from tests.conftest import (
     IN_SCOPE_USER,
     allocation_path,
     as_caller,
+    make_absence,
+    make_absence_type,
     make_allocation,
     make_dimension_tuple,
     make_project,
@@ -389,3 +393,190 @@ def test_every_allocation_column_is_either_copied_or_explicitly_excluded() -> No
     mapped = {attribute.key for attribute in sa.inspect(StaffingPositionAllocation).column_attrs}
 
     assert mapped == set(COPIED_ALLOCATION_FIELDS) | ALLOCATION_COLUMNS_NOT_COPIED
+
+
+# --- SC-3-02, K-14: the third pass of the cascade ------------------------------------------------
+
+
+COPIED_ABSENCE_FIELDS: tuple[str, ...] = ("absence_type_id", "start_date", "end_date")
+"""Absence attributes the copy must carry over, written out by hand for the reason
+`COPIED_POSITION_FIELDS` gives: reflecting here would compare the mechanism with itself.
+
+`absence_type_id` *is* copied — the type is an organisational dictionary entry shared by both
+scenarios, and re-pointing the copy at a different type would change what the copy says."""
+
+
+def _absences(session: Session, scenario_id: uuid.UUID) -> dict[date, list[tuple]]:
+    """One scenario's absences as plain values, keyed by the owning position's start date.
+
+    Keyed by values rather than by identifier, like `_grid`: the source and the copy must compare
+    equal in this shape while sharing no identifier of their own.
+    """
+    session.expire_all()
+    positions = (
+        session.execute(
+            sa.select(StaffingPosition)
+            .where(StaffingPosition.scenario_id == scenario_id)
+            .order_by(StaffingPosition.start_date)
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        position.start_date: sorted(
+            (absence.absence_type_id, absence.start_date, absence.end_date)
+            for absence in position.absences
+        )
+        for position in positions
+    }
+
+
+def _source_with_absences(session: Session, *, status: ScenarioStatus = ScenarioStatus.DRAFT):
+    """The two-position fixture above, plus three absences with pairwise different ranges.
+
+    Three and not two: the first position carries **two overlapping** absences (which is legal —
+    criterion K-06) and the second carries one. A copier that de-duplicated, or that attached every
+    absence to the first position it copied, is visible in the counts as well as in the values.
+    """
+    project, scenario, (first, second) = _source_with_two_positions_and_two_months(
+        session, status=status
+    )
+    holiday = make_absence_type(session, name="Paid holiday")
+    training = make_absence_type(
+        session, name="Billable training", generates_cost=True, generates_revenue=True
+    )
+    make_absence(
+        session, first, holiday, start_date=date(2026, 3, 2), end_date=date(2026, 3, 6)
+    )
+    make_absence(
+        session, first, training, start_date=date(2026, 3, 4), end_date=date(2026, 3, 10)
+    )
+    make_absence(
+        session, second, holiday, start_date=date(2026, 4, 13), end_date=date(2026, 4, 17)
+    )
+    return project, scenario, (first, second)
+
+
+def test_k_14_copying_a_scenario_copies_the_absences_onto_the_copied_positions(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-14 — the third pass of the cascade, with the absences on the **copied** positions.
+
+    Four claims in one test, because each is one of the criterion's contrasts and they are all
+    about one copy:
+
+    1. **the rows are there** — three absences on the copy, the same values, grouped under the same
+       positions. The mutation "the third pass deleted from `copy_staffing_positions`" leaves zero
+       and fails here;
+    2. **`position_id` is the id of the COPY** — asserted directly, not inferred from the grouping.
+       The mutation "mapped through the source `position_id`" leaves the copy's absences hanging off
+       the *source's* positions, where the grouping by start date would still look right from the
+       copy's side while the source silently grew three extra rows;
+    3. **the source is untouched** — its own three absences, unchanged, and no identifier shared
+       with the copy. This is the AC-02 sentence for the third table;
+    4. **deleting on the copy does not touch the source** — the operational form of (3), and the one
+       a shared reference would break.
+    """
+    project, scenario, (first, second) = _source_with_absences(db_session)
+    source_absence_ids = {
+        absence.id for position in (first, second) for absence in position.absences
+    }
+    before = _absences(db_session, scenario.id)
+    assert sum(len(rows) for rows in before.values()) == 3
+
+    response = client.post(f"/projects/{project.id}/copy", headers=as_caller(IN_SCOPE_USER))
+    assert response.status_code == 201, response.text
+    copy_scenario_id = _copied_scenario_id(db_session, uuid.UUID(response.json()["id"]))
+
+    # (1) same values, same grouping.
+    assert _absences(db_session, copy_scenario_id) == before
+
+    # (2) the copy's absences belong to the copy's positions, and to no row of the source.
+    copied_positions = {
+        position.id
+        for position in db_session.execute(
+            sa.select(StaffingPosition).where(StaffingPosition.scenario_id == copy_scenario_id)
+        ).scalars()
+    }
+    copied_absences = (
+        db_session.execute(
+            sa.select(StaffingPositionAbsence).where(
+                StaffingPositionAbsence.position_id.in_(copied_positions)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(copied_absences) == 3
+    assert {absence.id for absence in copied_absences}.isdisjoint(source_absence_ids), (
+        "the copy shares absence identifiers with its source"
+    )
+    assert {absence.position_id for absence in copied_absences} <= copied_positions
+
+    # (3) the source still holds exactly its own three rows.
+    assert _absences(db_session, scenario.id) == before
+    assert (
+        db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(StaffingPositionAbsence)
+            .where(StaffingPositionAbsence.id.in_(source_absence_ids))
+        ).scalar_one()
+        == 3
+    )
+
+    # (4) a change on the copy leaves the source alone.
+    db_session.delete(copied_absences[0])
+    db_session.flush()
+    assert _absences(db_session, scenario.id) == before, (
+        "deleting an absence on the copy changed the source — the copy shares its rows"
+    )
+    assert sum(len(rows) for rows in _absences(db_session, copy_scenario_id).values()) == 2
+
+
+def test_k_14_an_approved_source_still_yields_a_copy_with_the_full_set_of_absences(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-14's third contrast — an `approved` source is copied in full, and stays approved.
+
+    This is the pair of properties ADR-0004 needs and that a guard written one line too wide would
+    break: an approved calculation is frozen, *and* copying it is the legal way to keep changing it.
+    `copy_staffing_positions` writes only into the copy (always a `draft`), so no guard applies to
+    it — and if one did, the freeze would become a dead end and F-12's "further changes require a
+    new version" would be unsatisfiable.
+
+    Asserted on the absences specifically, because the third pass is the one added last and is the
+    one a guard added "for symmetry with the other write paths" would catch.
+    """
+    project, scenario, _ = _source_with_absences(db_session, status=ScenarioStatus.APPROVED)
+    before = _absences(db_session, scenario.id)
+
+    response = client.post(f"/projects/{project.id}/copy", headers=as_caller(IN_SCOPE_USER))
+    assert response.status_code == 201, response.text
+    copy_scenario_id = _copied_scenario_id(db_session, uuid.UUID(response.json()["id"]))
+
+    assert _absences(db_session, copy_scenario_id) == before
+    reread = db_session.get(Scenario, scenario.id)
+    assert reread is not None
+    assert reread.status is ScenarioStatus.APPROVED, "copying spent the source's approval"
+    copy = db_session.get(Scenario, copy_scenario_id)
+    assert copy is not None
+    assert copy.status is ScenarioStatus.DRAFT
+
+
+def test_k_14_every_mapped_absence_attribute_is_either_copied_or_named_as_not_copied() -> None:
+    """K-14's drift guard — the third table joins the obligation the other two already carry.
+
+    ADR-0004's addendum of 2026-09-18 (point 4) names the failure: a column that quietly stays
+    behind when a scenario is copied. The copier reflects over the mapper, so a column added later
+    is carried over automatically and silently either way; this makes the decision visible. A new
+    column fails here until it is either added to `COPIED_ABSENCE_FIELDS` (and therefore compared
+    value by value above) or named in `ABSENCE_COLUMNS_NOT_COPIED` with a reason.
+
+    Sharper here than for the other two tables, for a reason worth writing down: which columns this
+    table may have at all is fixed by criterion K-22 (no person, no note), so a column reaching this
+    guard has already failed a different test — and if it somehow has not, this is the second place
+    it is refused.
+    """
+    mapped = {attribute.key for attribute in sa.inspect(StaffingPositionAbsence).column_attrs}
+
+    assert mapped == set(COPIED_ABSENCE_FIELDS) | ABSENCE_COLUMNS_NOT_COPIED

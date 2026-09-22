@@ -142,3 +142,20 @@ dokładnie tym dryfem, przed którym broni zasada aneksów. Stąd ten wpis.
 5. **Czego ten aneks nie zmienia.** Bramka stawki kosztowej zostaje w warstwie kształtowania
    odpowiedzi i nie przenosi się do warstwy odczytu (punkt 3 aneksu z 2026-09-19) — także dla
    wiersza z poddostawcą.
+
+### 2026-09-22 — kalendarz bez funkcji-strażnika, nieobecność z zasięgiem dziedziczonym (SC-3-02)
+
+1. **Kalendarz roboczy, jego dni i słownik typów nieobecności nie dostają modułu-strażnika.**
+   Kryterium strukturalne z aneksu 2026-09-19 spełnione (ADR-0005, aneks z tą samą datą pkt 1) —
+   odczyt i zapis to zwykły `select()`/`insert()` w warstwie danych.
+2. **`catalog_locations.calendar_id` nie wygasza wyjątku.** Wskazuje inny wiersz organizacyjny, nie
+   podmiot wołający — ten sam wzorzec co `vendor_id` (aneks 2026-09-21 pkt 1). Warunek wygaśnięcia
+   (pierwszy predykat per wołający) pozostaje niespełniony.
+3. **Instancja nieobecności dostaje zasięg wyłącznie przez ponowne użycie `project_for_caller`,
+   bez własnej funkcji.** Ten sam wzorzec co pozycja obsady (aneks 2026-09-19 "pierwsza tabela z
+   zasięgiem dziedziczonym przez rodzica"): adres niesie `project_id`/`scenario_id`, przynależność
+   `position_id → staffing_position.scenario_id` sprawdzana względem już wczytanej kolekcji, `404`
+   dla pozycji spoza zasięgu tożsame ze `404` dla pozycji nieistniejącej.
+4. **Tabele migawkowe (`approved_snapshot_*`) dziedziczą zasięg scenariusza** i nie dostają własnej
+   funkcji odczytu — czytane wyłącznie przez tę samą ścieżkę co reszta danych scenariusza, mimo że
+   treść pochodzi z tabeli bez zasięgu (kalendarz, słownik typów).

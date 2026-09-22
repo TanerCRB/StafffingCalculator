@@ -27,7 +27,9 @@ The interleaving is produced by a `before_cursor_execute` hook that commits the 
 which the window exists; a second thread would make the test timing-dependent instead.
 """
 
+import threading
 import uuid
+from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -41,16 +43,24 @@ from app.api.staffing import STAFFING_NOT_FOUND_DETAIL
 from app.models import ScenarioStatus, StaffingPosition
 from tests.conftest import (
     IN_SCOPE_USER,
+    absence_path,
+    absences_path,
     allocation_path,
+    approve_path,
     as_caller,
     count_positions,
+    count_snapshot_rows,
+    make_absence,
+    make_absence_type,
     make_allocation,
     make_dimension_tuple,
     make_project,
     make_scenario,
     make_staffing_position,
+    make_working_calendar,
     staffing_path,
     staffing_position_payload,
+    wait_until_a_lock_request_is_pending,
 )
 
 MARCH = date(2026, 3, 1)
@@ -624,6 +634,461 @@ def test_a_position_addressed_through_a_scenario_it_does_not_belong_to_is_not_fo
 
     assert response.status_code == 404, response.text
     assert _hours_of(engine, state["approved_position_id"]) == Decimal("120.00")
+
+
+# --- SC-3-02, K-20: an approval running concurrently with a child write --------------------------
+#
+# **The window this module's docstring named as not closed, closed.** Until SC-3-02 the `approved`
+# predicate excluded an approval that had *already* committed and not one committing alongside the
+# child write — under `READ COMMITTED` the statement's read of the parent takes no lock — and
+# nothing in the running system could set `approved`, so the race could not even be provoked.
+# ADR-0004's addendum of 2026-09-22 (point 5) makes closing it a condition of the approval endpoint
+# existing, **for every child table of `scenarios` at once**.
+#
+# The mechanism is `app.data.scenario_guard`: the parent row is selected `FOR UPDATE` inside each
+# guarded statement, and the approval transaction holds that same row from its first statement until
+# it commits. The two transactions therefore serialise on it.
+#
+# **These tests need real concurrency and say so.** Every other race in this suite is produced by a
+# `before_cursor_execute` hook committing a competitor on another connection, which works precisely
+# because the session under test holds no lock at that moment. Here the point *is* the lock, so a
+# hook-driven competitor would block inside the hook and hang the test. Instead: the approval runs
+# in the main thread and is paused (by a hook) just before its status update, i.e. while it holds
+# the lock; the child write runs in a background thread and blocks on that lock; the test waits
+# until PostgreSQL itself reports a waiting lock request, then lets the approval finish.
+#
+# The waiting is bounded and its absence is not fatal: with the seam removed the child write does
+# not block at all, `_wait_until_a_lock_request_is_pending` times out, and the assertions below fail
+# on the outcome rather than the suite hanging.
+
+
+def _race_a_child_write_against_the_approval(
+    committing_client: TestClient,
+    engine: Engine,
+    state: dict[str, Any],
+    write: Callable[[], Any],
+) -> dict[str, Any]:
+    """Run `write` in a background thread while the approval holds the scenario's row lock.
+
+    The approval is the **real endpoint**, not a hand-rolled `UPDATE`: that is what makes the
+    serialising half of the seam (`scenario_guard.draft_scenario`, taken as the approval's first
+    statement) part of what is under test rather than part of the test.
+
+    The hook fires once, just before the approval's status update — after its snapshot rows, and
+    while it still holds the lock it took at the start. Inside the hook the writer thread is started
+    and waited for, so the child write is provably in flight and provably blocked before the
+    approval is allowed to commit.
+    """
+    outcome: dict[str, Any] = {}
+    fired: list[str] = []
+
+    def run_the_writer_and_wait_for_it_to_block(
+        connection: Any,
+        cursor: Any,
+        statement: str,
+        parameters: Any,
+        context: Any,
+        executemany: bool,
+    ) -> None:
+        if fired or "update scenarios set status" not in statement.lower():
+            return
+        fired.append(statement)
+
+        def writer() -> None:
+            try:
+                outcome["response"] = write()
+            except BaseException as error:  # noqa: BLE001 — reported, never swallowed
+                outcome["error"] = error
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        outcome["thread"] = thread
+        outcome["blocked"] = wait_until_a_lock_request_is_pending(engine)
+
+    event.listen(Engine, "before_cursor_execute", run_the_writer_and_wait_for_it_to_block)
+    try:
+        outcome["approval"] = committing_client.post(
+            approve_path(state["project_id"], state["draft_id"]),
+            headers=as_caller(IN_SCOPE_USER),
+        )
+    finally:
+        event.remove(Engine, "before_cursor_execute", run_the_writer_and_wait_for_it_to_block)
+
+    assert fired, "the approval never reached its status update"
+    thread = outcome.get("thread")
+    assert thread is not None
+    thread.join(timeout=30)
+    assert not thread.is_alive(), "the child write never finished — it is still holding a lock"
+    assert "error" not in outcome, outcome.get("error")
+    return outcome
+
+
+def _scenario_is_approved(engine: Engine, scenario_id: uuid.UUID) -> bool:
+    with engine.connect() as connection:
+        return (
+            connection.execute(
+                sa.text("SELECT status FROM scenarios WHERE id = :id"), {"id": scenario_id}
+            ).scalar_one()
+            == "approved"
+        )
+
+
+def _absence_count(engine: Engine, position_id: uuid.UUID) -> int:
+    with engine.connect() as connection:
+        return connection.execute(
+            sa.text("SELECT count(*) FROM staffing_position_absence WHERE position_id = :id"),
+            {"id": position_id},
+        ).scalar_one()
+
+
+def _position_count(engine: Engine, scenario_id: uuid.UUID, start_date: str) -> int:
+    with engine.connect() as connection:
+        return connection.execute(
+            sa.text(
+                "SELECT count(*) FROM staffing_position"
+                " WHERE scenario_id = :id AND start_date = :start"
+            ),
+            {"id": scenario_id, "start": start_date},
+        ).scalar_one()
+
+
+def _k20_state(engine: Engine) -> dict[str, Any]:
+    """A committed draft scenario with a position, a month and an absence — plus an absence type.
+
+    Everything the three raced write paths need, so one fixture serves all three and the only thing
+    that differs between the runs is which statement is racing.
+    """
+    with Session(bind=engine, expire_on_commit=False, future=True) as setup:
+        calendar = make_working_calendar(
+            setup, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
+        )
+        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+        draft = make_scenario(setup, project, name="Baseline")
+        dimensions = make_dimension_tuple(setup, calendar=calendar)
+        position = make_staffing_position(
+            setup, draft, dimensions, headcount=1, start_date=MARCH
+        )
+        make_allocation(setup, position, period_month=MARCH)
+        absence_type = make_absence_type(setup)
+        absence = make_absence(
+            setup,
+            position,
+            absence_type,
+            start_date=date(2026, 3, 2),
+            end_date=date(2026, 3, 6),
+        )
+        state = {
+            "project_id": project.id,
+            "draft_id": draft.id,
+            "dimensions": dimensions,
+            "position_id": position.id,
+            "absence_id": absence.id,
+            "absence_type_id": absence_type.id,
+        }
+        setup.commit()
+    return state
+
+
+def _token(committing_client: TestClient, state: dict[str, Any]) -> str:
+    response = committing_client.get(
+        staffing_path(state["project_id"], state["draft_id"]), headers=as_caller(IN_SCOPE_USER)
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["positions"][0]["updated_at"]
+
+
+def test_k_20_an_approval_committing_concurrently_with_an_insert_leaves_no_row_under_an_approved_scenario(  # noqa: E501 — the criterion names this test; the name is the contract, not a style choice
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-20, path 1 of 3 — inserting a **staffing position** while the approval is in flight.
+
+    The postcondition is checked **as a pair**, and that is the whole shape of the criterion: it is
+    not "the write was refused" and not "the scenario is approved" — it is that the two facts
+    *"the scenario is approved"* and *"the row exists"* never hold together for a row written after
+    the approval began.
+
+    The mutation the criterion names is removing whatever serialises the two transactions. Here that
+    is the `FOR UPDATE` in `app.data.scenario_guard.unapproved_scenario` (and its counterpart in
+    `draft_scenario`, which is what the approval holds). Without it the insert does not block at
+    all — `blocked` is `False`, which is asserted — reads the still-`draft` status, and commits a
+    position into a calculation that is approved a moment later. That is the AC-10 regression
+    ADR-0004 protects behaviourally-guarded tables against, and it is the one this repository could
+    not test until an approval path existed.
+    """
+    state = _k20_state(engine)
+
+    def insert_a_position() -> Any:
+        return committing_client.post(
+            staffing_path(state["project_id"], state["draft_id"]),
+            json=staffing_position_payload(
+                state["dimensions"], start_date="2026-07-01", end_date=None
+            ),
+            headers=as_caller(IN_SCOPE_USER),
+        )
+
+    outcome = _race_a_child_write_against_the_approval(
+        committing_client, engine, state, insert_a_position
+    )
+
+    assert outcome["approval"].status_code == 200, outcome["approval"].text
+    assert outcome["blocked"], (
+        "the insert never waited for a lock — nothing serialises it against the approval, and this "
+        "run says nothing about the race"
+    )
+    approved = _scenario_is_approved(engine, state["draft_id"])
+    written = _position_count(engine, state["draft_id"], "2026-07-01")
+    assert not (approved and written), (
+        f"approved={approved} and {written} position(s) written: a row landed in a calculation "
+        "that was already being approved"
+    )
+    assert approved, "the approval itself failed — the pair above is satisfied vacuously"
+    assert outcome["response"].status_code == 409, outcome["response"].text
+    assert "approved" in outcome["response"].json()["detail"]
+
+
+def test_k_20_an_approval_committing_concurrently_with_an_absence_insert_leaves_no_row_under_an_approved_scenario(  # noqa: E501 — the criterion names this test; the name is the contract, not a style choice
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-20, path 2 of 3 — inserting an **absence** while the approval is in flight.
+
+    A separate run because it is a separate statement, built by a separate function
+    (`create_absence`), and the seam could be present in one and absent in the other. ADR-0004's
+    addendum of 2026-09-22 (point 5) requires the window closed for *all* child tables at once
+    rather than for the table of whichever task is running, which is exactly the claim three runs
+    make and one does not.
+    """
+    state = _k20_state(engine)
+    token = _token(committing_client, state)
+    before = _absence_count(engine, state["position_id"])
+
+    def insert_an_absence() -> Any:
+        return committing_client.post(
+            absences_path(state["project_id"], state["draft_id"], state["position_id"]),
+            json={
+                "updated_at": token,
+                "absence_type_id": str(state["absence_type_id"]),
+                "start_date": "2026-03-16",
+                "end_date": "2026-03-20",
+            },
+            headers=as_caller(IN_SCOPE_USER),
+        )
+
+    outcome = _race_a_child_write_against_the_approval(
+        committing_client, engine, state, insert_an_absence
+    )
+
+    assert outcome["approval"].status_code == 200, outcome["approval"].text
+    assert outcome["blocked"], "the absence insert never waited for a lock"
+    approved = _scenario_is_approved(engine, state["draft_id"])
+    after = _absence_count(engine, state["position_id"])
+    assert not (approved and after > before), (
+        f"approved={approved} and the absence count went {before} → {after}: a row landed in a "
+        "calculation that was already being approved"
+    )
+    assert approved, "the approval itself failed — the pair above is satisfied vacuously"
+    assert outcome["response"].status_code == 409, outcome["response"].text
+
+
+def test_k_20_an_approval_committing_concurrently_with_an_absence_delete_leaves_the_row_in_place(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-20, path 3 of 3 — **deleting** an absence while the approval is in flight.
+
+    The pair reads the other way round on a delete, and it is the sharper case: the forbidden
+    outcome is "the scenario is approved **and** the row is gone". A row that should not have been
+    inserted is visible afterwards; a row that should not have been deleted is not — the evidence
+    goes with it, and the approved calculation is quietly missing an absence it was approved with.
+    """
+    state = _k20_state(engine)
+    token = _token(committing_client, state)
+    before = _absence_count(engine, state["position_id"])
+    assert before == 1
+
+    def delete_the_absence() -> Any:
+        return committing_client.request(
+            "DELETE",
+            absence_path(
+                state["project_id"],
+                state["draft_id"],
+                state["position_id"],
+                state["absence_id"],
+            ),
+            json={"updated_at": token},
+            headers=as_caller(IN_SCOPE_USER),
+        )
+
+    outcome = _race_a_child_write_against_the_approval(
+        committing_client, engine, state, delete_the_absence
+    )
+
+    assert outcome["approval"].status_code == 200, outcome["approval"].text
+    assert outcome["blocked"], "the absence delete never waited for a lock"
+    approved = _scenario_is_approved(engine, state["draft_id"])
+    after = _absence_count(engine, state["position_id"])
+    assert not (approved and after < before), (
+        f"approved={approved} and the absence count went {before} → {after}: a row was removed "
+        "from a calculation that was already being approved"
+    )
+    assert approved, "the approval itself failed — the pair above is satisfied vacuously"
+    assert outcome["response"].status_code == 409, outcome["response"].text
+
+
+def test_k_20_an_approval_committing_concurrently_with_an_allocation_edit_changes_nothing(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-20, the fourth path — the month grid, raced for the same reason as the other three.
+
+    Not named among the criterion's three runs, and run anyway: ADR-0004's addendum of 2026-09-22
+    (point 5) requires the window closed for **every** child table of `scenarios`, and
+    `staffing_position_allocation` is one. Leaving it out would make "all of them at once" a claim
+    proven for three quarters of the tables it is about.
+    """
+    state = _k20_state(engine)
+    token = _token(committing_client, state)
+
+    def edit_the_month() -> Any:
+        return committing_client.patch(
+            allocation_path(
+                state["project_id"], state["draft_id"], state["position_id"], MARCH
+            ),
+            json={"updated_at": token, "planned_allocation_hours": "999.00"},
+            headers=as_caller(IN_SCOPE_USER),
+        )
+
+    outcome = _race_a_child_write_against_the_approval(
+        committing_client, engine, state, edit_the_month
+    )
+
+    assert outcome["approval"].status_code == 200, outcome["approval"].text
+    assert outcome["blocked"], "the allocation edit never waited for a lock"
+    approved = _scenario_is_approved(engine, state["draft_id"])
+    hours = _hours_of(engine, state["position_id"])
+    assert not (approved and hours == Decimal("999.00")), (
+        "a month of a calculation that was already being approved was changed anyway"
+    )
+    assert approved
+    assert outcome["response"].status_code == 409, outcome["response"].text
+
+
+def _k20_empty_state(engine: Engine) -> dict[str, Any]:
+    """A committed draft scenario with **no positions**, plus a dimension tuple to insert one.
+
+    The one shape `_k20_state` cannot produce and the four runs above therefore never exercise: an
+    approval whose three snapshot inserts write nothing at all, so the row being inserted is the
+    scenario's *first* child rather than its second.
+    """
+    with Session(bind=engine, expire_on_commit=False, future=True) as setup:
+        calendar = make_working_calendar(
+            setup, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
+        )
+        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+        draft = make_scenario(setup, project, name="Empty")
+        state = {
+            "project_id": project.id,
+            "draft_id": draft.id,
+            "dimensions": make_dimension_tuple(setup, calendar=calendar),
+        }
+        setup.commit()
+    return state
+
+
+def test_k_20_an_approval_of_a_scenario_with_no_positions_still_refuses_a_concurrent_first_insert(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-20 for the data shape the four runs above cannot produce (R-02, reviewer 2026-09-22).
+
+    All four start from a scenario that already has a position, so each of them races the insert of
+    a *second* child against an approval that has just written a non-empty snapshot. Here the draft
+    is empty: the approval writes **zero** snapshot rows — asserted below, not assumed — and the
+    racing insert is the scenario's first child. The postcondition is K-20's own pair, unchanged:
+    never "the scenario is approved" **and** "the row exists" for a row written after the approval
+    began, i.e. after the calculation it is approving was fixed.
+
+    **What this run does not isolate, measured rather than assumed.** It was added on the
+    expectation that an empty scenario makes `scenario_guard.draft_scenario`'s lock the only one in
+    play, because the snapshot inserts would match no row and lock nothing. That is not what
+    PostgreSQL 16 does: their `LockRows` node sits above the `scenarios` scan and below the join, so
+    the parent row is locked even when the join matches nothing. Removing `.with_for_update()` from
+    `draft_scenario` therefore leaves this run green. The mutation that *is* killed by it is the one
+    every K-20 run kills — removing the `FOR UPDATE` from `unapproved_scenario`, i.e. from the
+    insert's own statement; the mutation on `draft_scenario` is killed in
+    `tests/test_scenario_approval.py` instead. Said here because a reader looking for "the test that
+    protects the approval's own lock" must not stop at this one.
+    """
+    state = _k20_empty_state(engine)
+
+    def insert_the_first_position() -> Any:
+        return committing_client.post(
+            staffing_path(state["project_id"], state["draft_id"]),
+            json=staffing_position_payload(
+                state["dimensions"], start_date="2026-07-01", end_date=None
+            ),
+            headers=as_caller(IN_SCOPE_USER),
+        )
+
+    outcome = _race_a_child_write_against_the_approval(
+        committing_client, engine, state, insert_the_first_position
+    )
+
+    assert outcome["approval"].status_code == 200, outcome["approval"].text
+    with engine.connect() as connection:
+        assert count_snapshot_rows(connection, state["draft_id"]) == 0, (
+            "the approval wrote snapshot rows: this scenario is not the empty one this run is "
+            "about, and it repeats the four above instead of adding a shape"
+        )
+    assert outcome["blocked"], (
+        "the insert never waited for a lock — nothing serialises it against the approval of an "
+        "empty draft, and this run says nothing about the race"
+    )
+    approved = _scenario_is_approved(engine, state["draft_id"])
+    written = _position_count(engine, state["draft_id"], "2026-07-01")
+    assert not (approved and written), (
+        f"approved={approved} and {written} position(s) written: a row landed in a calculation "
+        "that was already being approved"
+    )
+    assert approved, "the approval itself failed — the pair above is satisfied vacuously"
+    assert outcome["response"].status_code == 409, outcome["response"].text
+
+
+def test_k_20_the_contrast_an_approval_committing_after_the_write_leaves_the_row_and_approves_it(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-20's contrast — a write that commits **before** the approval is legal, and stays.
+
+    This is what stops the three runs above from being satisfied by an implementation that refuses
+    every child write once an approval has ever been attempted, or that refuses them all
+    unconditionally. The sequence here is the ordinary one: plan, then approve. The row exists
+    afterwards *and* the scenario is approved — the same pair the runs above forbid, arrived at in
+    the order that makes it correct.
+
+    It is also the reason the criterion's postcondition is a pair rather than either half: "the
+    scenario is approved and the row exists" is not by itself a defect, and a test asserting only
+    that would fail on this perfectly ordinary sequence.
+    """
+    state = _k20_state(engine)
+    token = _token(committing_client, state)
+
+    written = committing_client.post(
+        absences_path(state["project_id"], state["draft_id"], state["position_id"]),
+        json={
+            "updated_at": token,
+            "absence_type_id": str(state["absence_type_id"]),
+            "start_date": "2026-03-16",
+            "end_date": "2026-03-20",
+        },
+        headers=as_caller(IN_SCOPE_USER),
+    )
+    assert written.status_code == 201, written.text
+
+    approval = committing_client.post(
+        approve_path(state["project_id"], state["draft_id"]), headers=as_caller(IN_SCOPE_USER)
+    )
+
+    assert approval.status_code == 200, approval.text
+    assert _scenario_is_approved(engine, state["draft_id"])
+    assert _absence_count(engine, state["position_id"]) == 2, (
+        "the absence written before the approval is gone — a legal write was undone"
+    )
 
 
 def test_a_refused_insert_leaves_the_transaction_usable_for_the_next_request(

@@ -34,10 +34,15 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.api.schemas.catalog import (
+    AbsenceTypeEntry,
+    AbsenceTypeList,
     CatalogRate,
     CatalogRateList,
     DimensionEntry,
     DimensionEntryList,
+    WorkingCalendarDayEntry,
+    WorkingCalendarEntry,
+    WorkingCalendarList,
 )
 from app.api.schemas.project import (
     DeliveryPeriod,
@@ -47,6 +52,9 @@ from app.api.schemas.project import (
     ScenarioListItem,
 )
 from app.api.schemas.staffing import (
+    DerivedCapacitySource,
+    StaffingAbsence,
+    StaffingAbsenceList,
     StaffingAllocation,
     StaffingPositionList,
     StaffingPositionRead,
@@ -54,11 +62,13 @@ from app.api.schemas.staffing import (
 from app.core.identity import CallerIdentity, Permission
 from app.data.catalog import DimensionRow
 from app.data.project_reads import CallerProjectView
+from app.data.staffing import StaffingPositionView
+from app.domain.capacity import NO_CALENDAR, MonthCapacity
 from app.domain.scenario_readiness import assess
-from app.models.catalog import CatalogDefaultRate
+from app.models.catalog import AbsenceType, CatalogDefaultRate, WorkingCalendar
 from app.models.project import Project, ProjectStatus
 from app.models.scenario import Scenario, ScenarioStatus
-from app.models.staffing import StaffingPosition
+from app.models.staffing import StaffingPositionAbsence
 
 PERSONNEL_COST_FIELDS: frozenset[str] = frozenset()
 """Response fields carrying individual personnel costs. Empty until plan block 5 adds them."""
@@ -256,6 +266,62 @@ def shape_dimension_entry_list(entries: Sequence[DimensionRow]) -> DimensionEntr
     return DimensionEntryList(entries=[shape_dimension_entry(entry) for entry in entries])
 
 
+def shape_working_calendar(calendar: WorkingCalendar) -> WorkingCalendarEntry:
+    """One working calendar with its exceptional days (F-05, SC-3-02).
+
+    **No `caller` argument**, for the reason `shape_dimension_entry` gives: a calendar belongs to no
+    project and no user, and not one of its fields is gated on a permission (ADR-0005, addendum
+    2026-09-22, points 1 and 7). `standard_hours_per_day` in particular is *not* a personnel cost —
+    it is how long a working day is, the same figure for everyone in that location — so the SC-1-08
+    conjunction is not activated by this payload and none is applied.
+
+    The days are passed through in the order the relationship loaded them (by date), so a calendar
+    read twice is comparable with itself.
+    """
+    return WorkingCalendarEntry(
+        id=calendar.id,
+        name=calendar.name,
+        standard_hours_per_day=calendar.standard_hours_per_day,
+        week_pattern=calendar.week_pattern,
+        days=[
+            WorkingCalendarDayEntry(day=row.day, kind=row.kind.value) for row in calendar.days
+        ],
+        updated_at=calendar.updated_at,
+    )
+
+
+def shape_working_calendar_list(
+    calendars: Sequence[WorkingCalendar],
+) -> WorkingCalendarList:
+    """Every calendar through the function above — no second construction path."""
+    return WorkingCalendarList(
+        calendars=[shape_working_calendar(calendar) for calendar in calendars]
+    )
+
+
+def shape_absence_type(absence_type: AbsenceType) -> AbsenceTypeEntry:
+    """One absence type with both of its flags, independently (F-05, SC-3-02).
+
+    The two flags are read off the row and neither is derived from the other: `generates_revenue`
+    is not `not generates_cost`, and an implementation that aliased one to the other would be the
+    mutation criterion K-11 names. No `caller` argument — see `shape_working_calendar`.
+    """
+    return AbsenceTypeEntry(
+        id=absence_type.id,
+        name=absence_type.name,
+        generates_cost=absence_type.generates_cost,
+        generates_revenue=absence_type.generates_revenue,
+        updated_at=absence_type.updated_at,
+    )
+
+
+def shape_absence_type_list(absence_types: Sequence[AbsenceType]) -> AbsenceTypeList:
+    """Every absence type through the function above — no second construction path."""
+    return AbsenceTypeList(
+        absence_types=[shape_absence_type(entry) for entry in absence_types]
+    )
+
+
 def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> CatalogRate:
     """One catalogue rate row as this caller may see it.
 
@@ -292,15 +358,47 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
     )
 
 
-def shape_staffing_position(position: StaffingPosition) -> StaffingPositionRead:
-    """One staffing position with its month rows, as the API returns it (SC-3-01).
+def _shape_derived_capacity(capacity: MonthCapacity) -> dict[str, Any]:
+    """The derived capacity of one month as the three fields the allocation payload carries.
+
+    Returned as a mapping spread into `StaffingAllocation` rather than as a nested object, because
+    the criterion these fields exist for is "the derived figure travels **beside** the typed one"
+    (K-08) — and a nested object would put it one level away from `availability_hours`, where a
+    client could plausibly render one without the other.
+
+    The `no_calendar` branch produces `"n/a"` and no source, never `0.00` and never an exception
+    (K-23). Nothing here decides *which* branch it is: `app.domain.capacity` did, and repeating the
+    condition would be a second place answering one question.
+    """
+    if capacity.state == NO_CALENDAR:
+        return {
+            "derived_capacity_hours": capacity.hours,
+            "derived_capacity_state": capacity.state,
+            "derived_capacity_source": None,
+        }
+    return {
+        "derived_capacity_hours": capacity.hours,
+        "derived_capacity_state": capacity.state,
+        "derived_capacity_source": DerivedCapacitySource(
+            calendar_id=capacity.calendar_id,
+            calendar_name=capacity.calendar_name,
+            standard_hours_per_day=capacity.standard_hours_per_day,
+            working_days=capacity.working_days,
+            absence_day_equivalents=capacity.absence_day_equivalents,
+        ),
+    }
+
+
+def shape_staffing_position(view: StaffingPositionView) -> StaffingPositionRead:
+    """One staffing position with its month rows and absences, as the API returns it (SC-3-01/02).
 
     **No `caller` argument, and that absence is the statement.** Every other function in this module
     takes one because it gates a field on a permission; a staffing position has no gated field to
-    remove — it carries a dimension tuple, a headcount, a period and hours, and not one figure a
-    currency could be attached to (ADR-0005, addendum 2026-09-19, point 5). A caller parameter here
-    would suggest a gate that is not there, which is the dangerous direction to be wrong in (the
-    argument `app.data.catalog` makes for having no guard function).
+    remove — it carries a dimension tuple, a headcount, a period, hours and now a derived capacity,
+    and not one figure a currency could be attached to (ADR-0005, addendum 2026-09-19, point 5; the
+    absence type's flags are configuration, not a cost — addendum 2026-09-22, point 7). A caller
+    parameter here would suggest a gate that is not there, which is the dangerous direction to be
+    wrong in (the argument `app.data.catalog` makes for having no guard function).
 
     What that means for the day a resolved rate does appear on a position (F-07, plan block 5): this
     function grows a `caller` argument *and* the SC-1-08 conjunction — the caller's
@@ -310,9 +408,16 @@ def shape_staffing_position(position: StaffingPosition) -> StaffingPositionRead:
     staffing grid" must not become a way around the assignment flag.
 
     Hours are passed through as stored and nothing here rounds them: `NUMERIC(10,2)` is the input's
-    own precision, and rounding is the consumer's rule (`app.core.money.round_money`), applied where
-    hours meet a rate.
+    own precision, and the one rounding of the *derived* figure already happened in
+    `app.domain.capacity`, through `app.core.money.round_money` — the project's single rounding
+    point (invariant-guardian rule 2). There is no second `quantize` on this path.
+
+    It takes a `StaffingPositionView` rather than a `StaffingPosition` because the derived capacity
+    is not on the row: this layer never receives a `Session` and must never grow a query of its own,
+    so the figure arrives from the read that produced it, exactly as the personnel-cost flag does
+    for a project.
     """
+    position = view.position
     return StaffingPositionRead(
         id=position.id,
         role_id=position.role_id,
@@ -330,14 +435,41 @@ def shape_staffing_position(position: StaffingPosition) -> StaffingPositionRead:
                 availability_hours=allocation.availability_hours,
                 planned_allocation_hours=allocation.planned_allocation_hours,
                 billable_hours=allocation.billable_hours,
+                **_shape_derived_capacity(view.capacity[allocation.period_month]),
             )
             for allocation in position.allocations
         ],
+        absences=[shape_staffing_absence(absence) for absence in position.absences],
+    )
+
+
+def shape_staffing_absence(absence: StaffingPositionAbsence) -> StaffingAbsence:
+    """One absence as the API returns it — from the list path and from both write paths.
+
+    Four fields, and the ones that are missing are the point: there is no person and no note to
+    shape, because there is no column for one (ADR-0005, addendum 2026-09-22, point 6). One function
+    rather than three inline constructions, so a fifth field could not be added on one path and
+    forgotten on another.
+    """
+    return StaffingAbsence(
+        id=absence.id,
+        absence_type_id=absence.absence_type_id,
+        start_date=absence.start_date,
+        end_date=absence.end_date,
+    )
+
+
+def shape_staffing_absence_list(
+    absences: Sequence[StaffingPositionAbsence],
+) -> StaffingAbsenceList:
+    """An already scope-filtered sequence of absences — every row through the function above."""
+    return StaffingAbsenceList(
+        absences=[shape_staffing_absence(absence) for absence in absences]
     )
 
 
 def shape_staffing_position_list(
-    positions: Sequence[StaffingPosition],
+    views: Sequence[StaffingPositionView],
 ) -> StaffingPositionList:
     """Shape an already scope-filtered sequence of positions — every row through the function above.
 
@@ -345,9 +477,7 @@ def shape_staffing_position_list(
     (`app.data.staffing`, which inherits it from `project_for_caller`), so a position of a scenario
     the caller may not see is never in this sequence in the first place.
     """
-    return StaffingPositionList(
-        positions=[shape_staffing_position(position) for position in positions]
-    )
+    return StaffingPositionList(positions=[shape_staffing_position(view) for view in views])
 
 
 def shape_catalog_rate_list(

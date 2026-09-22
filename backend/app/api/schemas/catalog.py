@@ -265,6 +265,83 @@ class CatalogRateCreateRequest(BaseModel):
         return self
 
 
+# --- working calendars and absence types (F-05, SC-3-02) -----------------------------------------
+#
+# Two read-only payloads, and they are **not** `DimensionEntry` (ADR-0005, addendum 2026-09-22,
+# point 3). The permission pair is the same one — `CATALOG_READ`/`CATALOG_WRITE`, no new permission,
+# "the sixth and seventh dictionary, not a sixth mechanism". What is not the same is the *shape*: a
+# calendar carries a standard working day, a week pattern and a set of days, and an absence type
+# carries two flags. SC-2-03's gate-1 decision about vendors named exactly this condition — "the
+# first attribute beyond `name` takes a dictionary out of the shared endpoints" — so these two have
+# their own payloads and their own routes rather than being squeezed through
+# `app.data.catalog.DIMENSION_MODELS`, where every column past `name` would be silently dropped on
+# read and silently unset on write.
+
+
+class WorkingCalendarDayEntry(BaseModel):
+    """One exceptional day of one calendar: the date and what the calendar says about it."""
+
+    day: date
+    kind: str
+    """`"non_working"` (a holiday the week pattern would have made a working day) or `"working"`
+    (an extra working day the pattern would not have). A plain string validated by the database's
+    enum type, not a `Literal` here, for the reason `RateUnit` gives: the request schema is not
+    where the list of values belongs, and a `Literal` invites treating the schema as the
+    guarantee."""
+
+
+class WorkingCalendarEntry(BaseModel):
+    """One working calendar with its basis and its exceptional days (F-05, SC-3-02).
+
+    `standard_hours_per_day` crosses the boundary as a fixed-point string like every other decimal
+    in this API (ADR-0002): hours are one multiplication away from money, and a JSON float would
+    lose precisely the precision the `NUMERIC(4,2)` column keeps.
+
+    **No effective-date window on the basis**, and the payload has no place for one on purpose
+    (ADR-0008, addendum 2026-09-22): the unit of versioning is the calendar. A client showing "valid
+    from" next to this figure would be showing a field nothing decides.
+    """
+
+    id: uuid.UUID
+    name: str
+    standard_hours_per_day: DecimalString
+    week_pattern: str
+    """Seven characters, Monday first, `'1'` for a working day — `'1111100'` is a Monday-to-Friday
+    week, `'1111110'` includes Saturday. A string rather than a list of booleans because it is one
+    value of the row, and because it is legible in a log line."""
+
+    days: list[WorkingCalendarDayEntry]
+    updated_at: datetime
+    """ADR-0007's marker, carried although SC-3-02 ships no edit form for a calendar (addendum
+    2026-09-22, point 3): the marker is on the table from its creation, and a read that dropped it
+    would be the read from which a later form could not be built."""
+
+
+class WorkingCalendarList(BaseModel):
+    calendars: list[WorkingCalendarEntry]
+
+
+class AbsenceTypeEntry(BaseModel):
+    """One absence type: a name and its two independent flags (F-05, SC-3-02).
+
+    **Neither flag is gated and neither is a cost.** They say whether time booked against this type
+    still costs the organisation money and whether it is still billable — configuration, not an
+    amount — so the personnel-cost gate of SC-1-08 is not activated by this payload and none is
+    applied (ADR-0005, addendum 2026-09-22, point 7). The first response that carries the *cost of
+    an absence* (F-07) has to reinstate the conjunction and prove it with a criterion of its own.
+    """
+
+    id: uuid.UUID
+    name: str
+    generates_cost: bool
+    generates_revenue: bool
+    updated_at: datetime
+
+
+class AbsenceTypeList(BaseModel):
+    absence_types: list[AbsenceTypeEntry]
+
+
 NULLABLE_RATE_EDIT_FIELDS: frozenset[str] = frozenset({"effective_to"})
 """The one edit field whose explicit `null` is a value rather than a mistake.
 

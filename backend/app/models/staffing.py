@@ -1,8 +1,9 @@
-"""Scenario staffing: one anonymous position per role tuple, with a monthly grid of hours (F-04).
+"""Scenario staffing: one anonymous position per role tuple, a monthly grid of hours, and the
+absences planned against it (F-04, F-05).
 
-Two tables, one aggregate. `staffing_position` is a child of `scenarios`; its monthly allocation
-rows are grandchildren, reachable only through a position. That shape decides four things, each of
-them written down in an accepted decision rather than chosen here:
+Three tables, one aggregate. `staffing_position` is a child of `scenarios`; its monthly allocation
+rows and its absences (SC-3-02) are grandchildren, reachable only through a position. That shape
+decides four things, each of them written down in an accepted decision rather than chosen here:
 
 1. **Own data of the scenario, not an inherited value** (ADR-0004, addendum 2026-09-19 "pozycja
    obsady i alokacja nie wchodzą do migawki"). Nothing outside the scenario can change these rows,
@@ -214,6 +215,19 @@ class StaffingPosition(Base):
     allocation with no position is not a row that means anything), not a database cascade — the
     foreign key stays `NO ACTION`, so nothing deletes a position that still has months."""
 
+    absences: Mapped[list["StaffingPositionAbsence"]] = relationship(
+        back_populates="position",
+        order_by="StaffingPositionAbsence.start_date, StaffingPositionAbsence.id",
+        cascade="all, delete-orphan",
+        passive_deletes=False,
+    )
+    """The planned absences of this position (F-05, SC-3-02), ordered by start date and then by id.
+
+    Ordered by *both*, unlike the month grid: two absences may legitimately start on the same day
+    (criterion K-06), so the start date alone is not a total order and a list read twice could come
+    back differently. `delete-orphan` is an ORM statement about the aggregate, not a database
+    cascade — the foreign key stays `NO ACTION`."""
+
     scenario: Mapped["Scenario"] = relationship()
 
     __table_args__ = (
@@ -301,4 +315,92 @@ class StaffingPositionAllocation(Base):
             CheckConstraint(f"{column} >= 0", name=constraint)
             for column, constraint in HOURS_NON_NEGATIVE_CONSTRAINTS.items()
         ),
+    )
+
+
+class StaffingPositionAbsence(Base):
+    """One planned absence of one staffing position: a type from the dictionary and a date range.
+
+    The third table of the position aggregate (F-05, SC-3-02) and, like the month row, a
+    *grandchild* of the scenario. Four decisions, each of them already taken in an accepted
+    decision rather than here:
+
+    1. **Own data of the scenario → write guard, not snapshot** (ADR-0004, addendum 2026-09-22,
+       point 1). Nothing outside the scenario can change these rows, so there is nothing for the
+       approval snapshot to freeze; what protects them after approval is the refusal of a write
+       (`app.data.staffing`). The absence *type* is the other way round — organisational, therefore
+       snapshotted (`app.models.approved_snapshot`). Reconsider the day an absence moves to a person
+       or an organisational register (Issue #31): it changes group and the snapshot has to grow.
+    2. **Scope inherited through the position** (ADR-0005, addendum 2026-09-22, point 4):
+       `position_id → staffing_position.scenario_id → scenarios.project_id`, the second degree of
+       indirection after the month row, through the same `project_for_caller` and with no scope
+       function of its own.
+    3. **No concurrency token of its own** (ADR-0007, addendum 2026-09-22, point 1). The token is
+       `staffing_position.updated_at`, for the whole aggregate, and adding one here would make one
+       request carry N tokens with no rule for partial refusal.
+    4. **A personal-data boundary drawn at creation, not after an incident** (ADR-0005, addendum
+       2026-09-22, point 6). The columns below are the whole row: there is **no column for a person,
+       a note, a justification or a comment**, and a type that in some cases implies health data may
+       only be named through the dictionary. An "optional" free-text field added later turns this
+       table into a health register without the decision that governs one — criterion K-22 asserts
+       the column set by *equality* for that reason, so `employee`, `comment` or `justification`
+       fail it just as `person_name` does.
+
+    **Whole days only.** A half-day absence is the same open question as a partially working day
+    (ADR-0008, addendum 2026-09-22, point 6) and is out of scope with it.
+    """
+
+    __tablename__ = "staffing_position_absence"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    position_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("staffing_position.id", name="fk_staffing_position_absence_position_id"),
+        nullable=False,
+        index=True,
+    )
+    """Indexed, unlike the allocation row's `position_id`: this table has no unique constraint whose
+    leading column it could ride on (two absences of one position over the same days are legal and
+    are counted twice — criterion K-06), so "the absences of one position" has nothing else to use.
+
+    No `ondelete`, like every other foreign key in this module: a cascade towards the scenario or
+    the position would be a second, unguarded way for the rows of an `approved` scenario to
+    disappear, since the write guard covers `INSERT`/`DELETE` and a cascade is neither."""
+
+    absence_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("absence_type.id", name="fk_staffing_position_absence_absence_type_id"),
+        nullable=False,
+    )
+    """Which kind of absence — **only** from the dictionary. `NOT NULL` and a foreign key, so there
+    is no free-text way to say what this absence is (ADR-0005, addendum 2026-09-22, point 6)."""
+
+    # Calendar dates, not points in time (invariant-guardian rule 15). Both `NOT NULL`: an absence
+    # is a closed range of days, and an open-ended one would be a person absent for ever.
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    """Inclusive at both ends, and the inclusiveness is never converted anywhere: the consumer
+    intersects the range with the calendar's working days (`app.domain.capacity`), so there is no
+    second spelling of the boundary to disagree with this one."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # No `updated_at`: the token is the position's (ADR-0007, addendum 2026-09-22, point 1), and
+    # `tests/test_staffing_schema_constraints.py` asserts its absence against the migrated database.
+
+    position: Mapped["StaffingPosition"] = relationship(back_populates="absences")
+
+    __table_args__ = (
+        # The same ordering rule as every other period in this schema, and load-bearing rather than
+        # tidy: an inverted range intersects no calendar day at all, so it would be an absence that
+        # silently consumes nothing instead of being refused.
+        CheckConstraint("end_date >= start_date", name="absence_period_ordered"),
+        # **No `EXCLUDE USING gist`, and the absence is the decision.** Two absences of one position
+        # over the same days are two people, not one counted twice (criterion K-06) — a position
+        # with `headcount = 3` legitimately has three overlapping absences. An overlap constraint
+        # copied from `catalog_default_rates` "for symmetry" would refuse the plan it exists to
+        # express.
     )

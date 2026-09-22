@@ -20,13 +20,14 @@ permissions, no third one — and because the two tests above already cover vend
 edited, deriving their paths from that mapping."""
 
 from datetime import date
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.identity import Permission
 from app.data.catalog import DIMENSION_MODELS
-from app.models import CatalogRole
+from app.models import CatalogRole, WorkingCalendarDayKind
 from tests.conftest import (
     IN_SCOPE_USER,
     UNKNOWN_USER,
@@ -35,10 +36,13 @@ from tests.conftest import (
     caller_holding,
     count_dimension_entries,
     count_rates,
+    make_absence_type,
+    make_calendar_day,
     make_dimension_tuple,
     make_project,
     make_rate,
     make_vendor,
+    make_working_calendar,
     rate_payload,
 )
 
@@ -394,6 +398,119 @@ def test_k_05_the_vendor_dictionary_is_the_fifth_dictionary_not_a_fifth_mechanis
     assert "Contoso" not in denied_read.text
     assert denied_write.status_code == 403, denied_write.text
     assert count_dimension_entries(db_session, CatalogVendor) == 1, "the refused write was saved"
+
+
+SC_3_02_CATALOGUE_PATHS = ("/catalog/working-calendars", "/catalog/absence-types")
+"""The two SC-3-02 catalogue endpoints, spelled once for the K-09 assertions below."""
+
+
+def test_k_09_the_calendar_and_absence_type_dictionaries_are_the_sixth_and_seventh_dictionaries_not_a_new_mechanism(  # noqa: E501 — the criterion names this test; the name is the contract, not a style choice
+    client: TestClient, db_session: Session
+) -> None:
+    """K-09 (SC-3-02) — same exemption from scope, same permission pair, **no new permission**.
+
+    The claim has three halves and each is one of the criterion's contrasts.
+
+    **(a) No subject predicate.** `UNKNOWN_USER` holds no `project_access` row at all and receives
+    both dictionaries in full — byte for byte the payload `IN_SCOPE_USER` receives, while that same
+    caller's project list is empty. The mutation "a join to `project_access` added to the calendar
+    read" empties one of the two payloads and makes them differ.
+
+    **(b) Deny by default.** The denied caller holds *every project permission* and is still
+    refused, so the mutation "`require_permission(CATALOG_READ)` swapped for `PROJECT_READ`" lets
+    them through and fails here. A caller holding nothing at all would prove much less.
+
+    **(c) The canary: `Permission` still has exactly ten members.** ADR-0005's addendum of
+    2026-09-22 (point 3) says in so many words that these are the sixth and seventh dictionaries and
+    that `PLACEHOLDER_PERMISSIONS` does not grow. A `CALENDAR_READ` or an `ABSENCE_READ` added "for
+    clarity" fails this assertion the day it is written, which is the only moment at which undoing
+    it is cheap. Asserted by set *equality*, not by length: a permission renamed or swapped keeps
+    the count and changes the meaning.
+
+    The named rows are what stop (a) from being satisfied by two endpoints that both return nothing.
+    """
+    calendar = make_working_calendar(
+        db_session, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
+    )
+    make_calendar_day(
+        db_session, calendar, day=date(2026, 12, 25), kind=WorkingCalendarDayKind.NON_WORKING
+    )
+    make_absence_type(db_session, name="Paid holiday")
+    make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+
+    with_projects = {
+        path: client.get(path, headers=as_caller(IN_SCOPE_USER))
+        for path in SC_3_02_CATALOGUE_PATHS
+    }
+    without_projects = {
+        path: client.get(path, headers=as_caller(UNKNOWN_USER))
+        for path in SC_3_02_CATALOGUE_PATHS
+    }
+
+    # (a) the contrast, first: the project boundary is real and it is a different mechanism.
+    assert client.get("/projects", headers=as_caller(UNKNOWN_USER)).json()["projects"] == []
+    for path, response in without_projects.items():
+        assert response.status_code == 200, f"{path}: {response.text}"
+        assert response.json() == with_projects[path].json(), (
+            f"{path} answers differently for a caller with no project access"
+        )
+
+    # Named rows, so a pair of endpoints returning constant empty lists cannot satisfy the above.
+    calendars = without_projects["/catalog/working-calendars"].json()["calendars"]
+    assert [entry["name"] for entry in calendars] == ["Poland 7.5h"]
+    assert calendars[0]["standard_hours_per_day"] == "7.50"
+    assert [day["day"] for day in calendars[0]["days"]] == ["2026-12-25"]
+    types = without_projects["/catalog/absence-types"].json()["absence_types"]
+    assert [entry["name"] for entry in types] == ["Paid holiday"]
+
+    # (b) every project permission, and still refused.
+    with caller_holding(*EVERY_PROJECT_PERMISSION):
+        denied = {
+            path: client.get(path, headers=as_caller(IN_SCOPE_USER))
+            for path in SC_3_02_CATALOGUE_PATHS
+        }
+    for path, response in denied.items():
+        assert response.status_code == 403, f"{path}: {response.text}"
+        assert "Poland 7.5h" not in response.text
+        assert "Paid holiday" not in response.text
+
+    # (c) the canary.
+    assert set(Permission) == {
+        Permission.PROJECT_READ,
+        Permission.PROJECT_CREATE,
+        Permission.PROJECT_EDIT,
+        Permission.PROJECT_COPY,
+        Permission.PROJECT_ARCHIVE,
+        Permission.PERSONNEL_COSTS_READ,
+        Permission.CATALOG_READ,
+        Permission.CATALOG_WRITE,
+        Permission.STAFFING_READ,
+        Permission.STAFFING_WRITE,
+    }, (
+        "the permission vocabulary changed in SC-3-02. ADR-0005's addendum of 2026-09-22 (point 3) "
+        "decides that calendars and absence types are the sixth and seventh dictionaries of the "
+        "catalogue and take no permission of their own."
+    )
+    assert len(Permission) == 10
+
+
+def test_k_09_the_two_new_dictionaries_hold_a_caller_with_no_identity_out_as_well(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-09's deny-by-default half, one step further out: no identity header at all.
+
+    A `401` and not a `200` with an empty body: the catalogue has no scope, but "no scope" is not
+    "no authentication", and an endpoint reachable without a caller would be the one place where
+    that distinction is quietly lost. The same claim
+    `test_k_02_reading_the_catalogue_is_denied_without_any_identity` makes for the first five
+    dictionaries.
+    """
+    make_working_calendar(db_session, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50"))
+
+    for path in SC_3_02_CATALOGUE_PATHS:
+        response = client.get(path)
+        assert response.status_code == 401, f"{path}: {response.text}"
+        assert "Poland 7.5h" not in response.text
 
 
 def test_an_unknown_dimension_segment_is_a_404_naming_the_known_ones(

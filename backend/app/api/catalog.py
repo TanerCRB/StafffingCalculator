@@ -1,5 +1,7 @@
 """Catalogue endpoints — role dimensions, vendors and default rates (F-03, SC-2-01, SC-2-03).
 
+- `GET   /catalog/working-calendars` — the calendars with their days (`CATALOG_READ`, SC-3-02)
+- `GET   /catalog/absence-types` — the absence types with their two flags (`CATALOG_READ`)
 - `GET   /catalog/dimensions/{dimension}` — one dictionary's entries (`CATALOG_READ`)
 - `POST  /catalog/dimensions/{dimension}` — add an entry (`CATALOG_WRITE`)
 - `PATCH /catalog/dimensions/{dimension}/{entry_id}` — rename an entry (`CATALOG_WRITE`)
@@ -10,6 +12,13 @@ effective on a given day (`CATALOG_READ`)
 - `POST  /catalog/rates` — add a rate window (`CATALOG_WRITE`)
 - `PATCH /catalog/rates/{rate_id}` — edit a rate window's amounts, currency or dates
 (`CATALOG_WRITE`)
+
+The two SC-3-02 endpoints are **read-only, and that is a named limit of this task**: ADR-0007's
+addendum of 2026-09-22 (point 3) says in so many words that SC-3-02 gives these two dictionaries no
+form. Both tables carry `updated_at` from the migration that creates them, so the edit path of
+SC-2-04 can be extended to them without a schema change — until then, a calendar, its days and an
+absence type are created by a migration, a seed script or an import, and `catalog_locations
+.calendar_id` has no endpoint that sets it at all.
 
 The two `PATCH` endpoints are SC-2-04. Both carry ADR-0007's concurrency marker: every read of a
 catalogue row returns `updated_at`, every edit must send it back, and the comparison happens inside
@@ -40,12 +49,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.response_shaping import (
+    shape_absence_type_list,
     shape_catalog_rate,
     shape_catalog_rate_list,
     shape_dimension_entry,
     shape_dimension_entry_list,
+    shape_working_calendar_list,
 )
 from app.api.schemas.catalog import (
+    AbsenceTypeList,
     CatalogRate,
     CatalogRateCreateRequest,
     CatalogRateEditRequest,
@@ -54,6 +66,7 @@ from app.api.schemas.catalog import (
     DimensionEntryCreateRequest,
     DimensionEntryEditRequest,
     DimensionEntryList,
+    WorkingCalendarList,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.catalog import (
@@ -70,6 +83,7 @@ from app.data.catalog import (
     update_dimension_entry,
     update_rate,
 )
+from app.data.working_calendar import list_absence_types, list_calendars
 from app.db.session import get_session
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -248,6 +262,58 @@ def edit_dimension(
             status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND_DETAIL
         )
     return shape_dimension_entry(entry)
+
+
+@router.get(
+    "/working-calendars",
+    response_model=WorkingCalendarList,
+    summary="List the working calendars with their standard day, week pattern and exceptional days",
+)
+def list_working_calendars(
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> WorkingCalendarList:
+    """Every working calendar — the same rows for every caller who may read the catalogue (F-05).
+
+    **`CATALOG_READ`, and no new permission** (ADR-0005, addendum 2026-09-22, point 3). A calendar
+    is the sixth dictionary of the catalogue, not a sixth mechanism: it belongs to no project, so
+    there is no `project_access` filter here and a caller holding this permission with zero project
+    access sees exactly these rows (criterion K-09). The `Permission` enum is unchanged by SC-3-02
+    and a canary asserts its size.
+
+    **A route of its own rather than `/catalog/dimensions/working-calendars`**, and that is the
+    condition SC-2-03 attached to the shared route when it added vendors: the first attribute beyond
+    `name` takes a dictionary out of it. A calendar has three, plus a child table — squeezed through
+    `DimensionEntry` it would answer with an id and a name, and a client could not compute a single
+    capacity from that.
+
+    `caller` is injected although nothing below reads it: the parameter *is* the permission check.
+    Removing it would remove the guard, not tidy up an unused argument.
+    """
+    return shape_working_calendar_list(list_calendars(session))
+
+
+@router.get(
+    "/absence-types",
+    response_model=AbsenceTypeList,
+    summary="List the absence types with their cost and revenue flags",
+)
+def list_catalog_absence_types(
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> AbsenceTypeList:
+    """Every absence type, with both flags (F-05) — the seventh dictionary, same permission.
+
+    **Neither flag is a cost, so no gate applies** (ADR-0005, addendum 2026-09-22, point 7):
+    "absence of this kind still costs the organisation money" is configuration, not an amount, and
+    the SC-1-08 conjunction is about amounts. The first response that carries *the cost of an
+    absence* (F-07) reinstates that conjunction and has to prove it with a criterion of its own —
+    nothing here may be read as that gate already being in place.
+
+    **Nothing in this repository reads these flags into a calculation yet.** They round-trip, and
+    that is the whole of criterion K-11.
+    """
+    return shape_absence_type_list(list_absence_types(session))
 
 
 @router.get(

@@ -22,11 +22,12 @@ status code, not the rule.
 
 import uuid
 from datetime import date, datetime
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.api.schemas.common import DecimalString
+from app.core.money import NOT_APPLICABLE
 from app.models.staffing import HOURS_COLUMNS, HOURS_PRECISION, HOURS_SCALE
 
 HoursAmount = Annotated[
@@ -242,6 +243,44 @@ class StaffingAllocationEditRequest(BaseModel):
         return {field: getattr(self, field) for field in HOURS_COLUMNS if field in changed}
 
 
+NotApplicable = Literal[NOT_APPLICABLE]
+"""`"n/a"` as a type — the project's one sentinel for a figure that cannot be computed.
+
+Taken from `app.core.money`, not spelled again here: this repository already answers a margin with a
+zero denominator that way (invariant-guardian rule 3, F-10, AC-05), and a second string meaning the
+same thing would make a client need two branches for one idea. What is new in SC-3-02 is only the
+*reason* — no calendar rather than no denominator."""
+
+CapacityState = Literal["resolved", "no_calendar"]
+"""The named states of a derived capacity, spelled as a closed set at the boundary.
+
+The values come from `app.domain.capacity`, and the pair is what stops `derived_capacity_hours:
+"n/a"` from being an ambiguous answer: `"no_calendar"` says *why*. Criterion K-23's two mutations
+are exactly the two ways this field could be avoided — a silent `0.00` (no state at all) and a
+`500` (no answer at all)."""
+
+
+class DerivedCapacitySource(BaseModel):
+    """Which calendar a derived capacity came from, and on what basis it was computed.
+
+    Required by ADR-0008's addendum of 2026-09-22 (point 4) rather than added for convenience: the
+    calendar carries no effective-date window, so a scenario pointing at a *stale* calendar and one
+    pointing at the right calendar produce the same shape of answer and nothing would tell them
+    apart. F-02 ("identify the source of each inherited or overridden value") is the requirement;
+    this object is the answer.
+
+    `working_days` and `absence_day_equivalents` are the two counts the figure is made of, so a
+    reader can see *why* a capacity is what it is without re-deriving it — and so a test can tell a
+    capacity that is low because of absences from one that is low because of a holiday.
+    """
+
+    calendar_id: uuid.UUID
+    calendar_name: str
+    standard_hours_per_day: DecimalString
+    working_days: int
+    absence_day_equivalents: int
+
+
 class StaffingAllocation(BaseModel):
     """One month of a position's grid, on the way **out**.
 
@@ -255,13 +294,111 @@ class StaffingAllocation(BaseModel):
     planned_allocation_hours: DecimalString
     billable_hours: DecimalString
 
+    derived_capacity_hours: DecimalString | NotApplicable
+    """What the calendar and the absences say this month's capacity is (F-05, SC-3-02).
+
+    **Beside `availability_hours`, never instead of it** (criterion K-08). The typed figure above is
+    an input a planner asserted; this one is derived, and the two are allowed to disagree — that
+    disagreement is the information F-05 exists to surface. Nothing on the write path ever copies
+    this value into the `availability_hours` column, and no `UPDATE` against
+    `staffing_position_allocation` is issued by a read.
+
+    `"n/a"` when the position's location names no calendar, together with
+    `derived_capacity_state = "no_calendar"` below. Never `0.00` for that case: a zero is a number
+    every later sum would add up, and this one would be wrong."""
+
+    derived_capacity_state: CapacityState
+    derived_capacity_source: DerivedCapacitySource | None = None
+    """`None` exactly when the state is `"no_calendar"`, and never otherwise. Two fields rather than
+    one nullable number, because "could not be computed" and "came out as zero" are two different
+    answers and one field would make them one."""
+
+
+class StaffingAbsence(BaseModel):
+    """One planned absence of one position, on the way **out** (F-05, SC-3-02).
+
+    **Four fields, and the ones that are missing are the decision.** There is no person, no note, no
+    justification and no comment — not "removed for callers without a permission", but absent from
+    the schema because absent from the table (ADR-0005, addendum 2026-09-22, point 6). An absence
+    hangs on an anonymous position and names its kind only through the dictionary.
+
+    No `updated_at`: the token is the position's (ADR-0007, addendum 2026-09-22, point 1), and it is
+    carried once, on `StaffingPositionRead` below. A token here would advertise a concurrency
+    granularity that does not exist.
+    """
+
+    id: uuid.UUID
+    absence_type_id: uuid.UUID
+    start_date: date
+    end_date: date
+    """Inclusive at both ends, as stored. Nothing on this path adds or subtracts a day — the
+    intersection with the calendar's working days happens in `app.domain.capacity`, once."""
+
+
+class StaffingAbsenceList(BaseModel):
+    """An object, not a bare array — the same contract room `StaffingPositionList` keeps."""
+
+    absences: list[StaffingAbsence]
+
+
+class StaffingAbsenceCreateRequest(BaseModel):
+    """The body of `POST …/staffing-positions/{position_id}/absences`.
+
+    `extra="forbid"`, and here it is doing real work rather than tidying up: a body carrying
+    `person`, `employee`, `note` or `justification` is refused with a `422` naming the field instead
+    of being silently dropped. The personal-data boundary of ADR-0005's addendum (point 6) is
+    structural in the table; this is the boundary saying so out loud to whoever tries.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    updated_at: AwareDatetime
+    """The **position's** token, as returned by the read this write is based on (ADR-0007, addendum
+    2026-09-22, point 1 — the aggregate's token, not the absence's). Required, and required with an
+    offset, for the reasons `StaffingAllocationEditRequest.updated_at` gives: a write without a
+    token is a malformed request, not a write that skips the check."""
+
+    absence_type_id: uuid.UUID
+    """From the dictionary, and validated as an *identifier* only: that it names an existing type is
+    decided by the foreign key in the database, which is the path a client cannot go around."""
+
+    start_date: date
+    end_date: date
+
+    @model_validator(mode="after")
+    def _period_is_ordered(self) -> Self:
+        """Same division of labour as everywhere else: a `422` naming the field here, and
+        `ck_staffing_position_absence_absence_period_ordered` in the database as the guarantee.
+
+        An inverted range is not merely invalid — it intersects no calendar day at all, so without
+        the refusal it would be an absence that silently consumes nothing.
+        """
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must not be earlier than start_date")
+        return self
+
+
+class StaffingAbsenceDeleteRequest(BaseModel):
+    """The body of `DELETE …/absences/{absence_id}`: the position's concurrency token.
+
+    **A `DELETE` with a body**, deliberately. The alternative spellings were an `If-Match` header
+    (a second place where this API would carry a concurrency token, when every other write carries
+    it in the body) and no token at all (a delete that cannot lose a race it is in — ADR-0007
+    applies to removing a row exactly as it applies to changing one). One vocabulary, in one place,
+    for all three writes of this aggregate.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    updated_at: AwareDatetime
+
 
 class StaffingPositionRead(BaseModel):
-    """One staffing position with its whole monthly grid.
+    """One staffing position with its whole monthly grid and its absences.
 
-    The same shape from `GET`, from `POST` and from `PATCH`: a screen showing a grid has no second
-    schema for "the grid after a write", and the token a client needs for its next edit is in the
-    same place every time.
+    The same shape from `GET`, from `POST`, from `PATCH` and from `DELETE`: a screen showing a grid
+    has no second schema for "the grid after a write", and the token a client needs for its next
+    edit is in the same place every time.
     """
 
     id: uuid.UUID
@@ -277,10 +414,15 @@ class StaffingPositionRead(BaseModel):
 
     updated_at: datetime
     """ADR-0007's concurrency token for this position *and its months* (addendum 2026-09-19). It
-    moves when any month of the grid is edited — a false collision between two months of one
-    position, accepted by name in that addendum, because the position is the unit of editing."""
+    moves when any month of the grid is edited — and, since SC-3-02, when an absence is added or
+    removed (ADR-0007, addendum 2026-09-22, point 2). Both are false collisions accepted by name in
+    those addenda, because the position is the unit of editing."""
 
     allocations: list[StaffingAllocation]
+    absences: list[StaffingAbsence]
+    """The position's planned absences (F-05), on every representation of the position. On the list
+    as well as on the single-position payload, for the reason `DimensionEntry.updated_at` gives: a
+    field absent from the only read a client performs is a field no client can use."""
 
 
 class StaffingPositionList(BaseModel):

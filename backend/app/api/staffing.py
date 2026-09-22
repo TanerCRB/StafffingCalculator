@@ -1,11 +1,21 @@
-"""Scenario staffing endpoints (F-04, SC-3-01).
+"""Scenario staffing endpoints (F-04, SC-3-01; F-05, SC-3-02).
 
 Under `/projects/{project_id}/scenarios/{scenario_id}/staffing-positions`:
 
-- `GET    ""` — the whole grid of one scenario (`STAFFING_READ`)
+- `GET    ""` — the whole grid of one scenario, with each month's derived capacity
+  (`STAFFING_READ`)
 - `POST   ""` — one position with the months it plans for (`STAFFING_WRITE`)
 - `PATCH  "/{position_id}/allocations/{period_month}"` — one month of one position
   (`STAFFING_WRITE`)
+- `GET    "/{position_id}/absences"` — the absences of one position (`STAFFING_READ`)
+- `POST   "/{position_id}/absences"` — add one absence (`STAFFING_WRITE`)
+- `DELETE "/{position_id}/absences/{absence_id}"` — remove one absence (`STAFFING_WRITE`)
+
+**The absence endpoints declare `STAFFING_READ`/`STAFFING_WRITE` and no new permission**
+(ADR-0005, addendum 2026-09-22, point 5). The granularity argument that split staffing from the
+project header — "planning staffing is routinely a different person's right" — does not separate
+planning absences from planning staffing: it is the same activity. A separate `ABSENCE_*` would be
+granularity with no subject to exercise it.
 
 **The address carries both identifiers** (ADR-0001, addendum 2026-09-19). Not because a staffing
 position needs the project id to be found — `scenario_id` is unique on its own — but because the
@@ -36,8 +46,15 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.response_shaping import shape_staffing_position, shape_staffing_position_list
+from app.api.response_shaping import (
+    shape_staffing_absence_list,
+    shape_staffing_position,
+    shape_staffing_position_list,
+)
 from app.api.schemas.staffing import (
+    StaffingAbsenceCreateRequest,
+    StaffingAbsenceDeleteRequest,
+    StaffingAbsenceList,
     StaffingAllocationEditRequest,
     StaffingPositionCreateRequest,
     StaffingPositionList,
@@ -45,10 +62,14 @@ from app.api.schemas.staffing import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.staffing import (
+    AbsenceNotFound,
     AllocationMonthNotFound,
     StaffingWriteRefused,
     StaffingWriteRejected,
+    create_absence,
     create_position,
+    delete_absence,
+    list_absences,
     list_positions,
     update_allocation,
 )
@@ -242,3 +263,170 @@ def edit_staffing_allocation(
     if edited is None:
         raise _not_found()
     return shape_staffing_position(edited)
+
+
+# --- absences (F-05, SC-3-02) -------------------------------------------------------------------
+#
+# Three endpoints, one body for every absence (`STAFFING_NOT_FOUND_DETAIL`) and not one new
+# mechanism. Everything they report is decided one layer down, in `app.data.staffing`: the scope,
+# the `approved` refusal, the ADR-0007 token and the lock that serialises them against an approval.
+
+
+@router.get(
+    "/{position_id}/absences",
+    response_model=StaffingAbsenceList,
+    summary="List the planned absences of one staffing position",
+    responses={404: {"description": STAFFING_NOT_FOUND_DETAIL}},
+)
+def list_staffing_absences(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> StaffingAbsenceList:
+    """The absences of one position, or a `404` that says nothing about whether it exists.
+
+    **There is no `403` branch here and nothing to build one from** (criterion K-10). The scope
+    filter is inside the query that fetches the rows (`list_absences` → `scenario_in_scope` →
+    `project_for_caller`), so an absence of a project outside the caller's scope never reaches this
+    function, and the answer is identical — status, body and length — to the answer for a position
+    id nobody ever created.
+
+    **An empty list and a `404` are two different answers**: a position with no absences planned is
+    `200 {"absences": []}`, and only a position that is not there (or not the caller's) is a `404`.
+    Collapsing the two would make "nothing planned" indistinguishable from "mistyped id".
+    """
+    absences = list_absences(session, caller, project_id, scenario_id, position_id)
+    if absences is None:
+        raise _not_found()
+    return shape_staffing_absence_list(absences)
+
+
+@router.post(
+    "/{position_id}/absences",
+    response_model=StaffingPositionRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a planned absence to one staffing position",
+    responses={
+        404: {"description": STAFFING_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the scenario is approved (its staffing is part of an approved "
+            "calculation), the position changed since it was read (ADR-0007 concurrency token), or "
+            "the state of the data refused the write — an absence type id that names no dictionary "
+            "row. The message says which."
+        },
+    },
+)
+def create_staffing_absence(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    payload: StaffingAbsenceCreateRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> StaffingPositionRead:
+    """Plan one absence against one position — or refuse.
+
+    Answers with the **whole position**, not with the absence alone, for the reason the allocation
+    edit does: the caller needs the position's *new* token for its next write, and a screen showing
+    a grid has no second schema for "the grid after a write". The response therefore also carries
+    the recomputed `derived_capacity_hours` of every month, which is the point of adding an absence
+    in the first place.
+
+    The three refusals, all decided inside the one statement that writes (`create_absence`):
+
+    - **404** — the scenario or the position is not the caller's, does not exist, or belongs
+      somewhere else. Indistinguishable by construction.
+    - **409, "approved"** — the scenario is frozen (ADR-0004). Permanent; the way forward is a copy.
+    - **409, "changed since it was read"** — the ADR-0007 token moved. Resolved by re-reading.
+    - **409, refused by the database** — an `absence_type_id` naming no dictionary row is rejected
+      by the foreign key, not by this schema.
+    - **403** — the permission dependency, before any of the above and before the database.
+
+    A body carrying a person's name, a note or a justification is a `422` (`extra="forbid"`), and
+    there is no column it could have reached anyway (ADR-0005, addendum 2026-09-22, point 6).
+    """
+    try:
+        created = create_absence(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            position_id,
+            expected_updated_at=payload.updated_at,
+            absence_type_id=payload.absence_type_id,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
+    except AbsenceNotFound:
+        raise _not_found() from None
+    except StaffingWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except StaffingWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if created is None:
+        raise _not_found()
+    return shape_staffing_position(created)
+
+
+@router.delete(
+    "/{position_id}/absences/{absence_id}",
+    response_model=StaffingPositionRead,
+    summary="Remove a planned absence from one staffing position",
+    responses={
+        404: {"description": STAFFING_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the scenario is approved, or the position changed since it "
+            "was read (ADR-0007 concurrency token)."
+        },
+    },
+)
+def delete_staffing_absence(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    absence_id: uuid.UUID,
+    payload: StaffingAbsenceDeleteRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> StaffingPositionRead:
+    """Remove one absence, and answer with the position and its new token.
+
+    **The first `DELETE` in this API, and it is guarded exactly like every other write** — because
+    ADR-0004 does not distinguish changing an approved calculation from removing a row of it. The
+    `approved` predicate, the ADR-0007 token and the lock against a concurrent approval are all in
+    the `WHERE` of the statement that deletes (criteria K-13, K-12, K-20).
+
+    **The `404`-before-`409` precedence is structural**, twice over: the scenario is resolved
+    through the scope-filtered read path first, and the existence of the absence row is a condition
+    of the guarded statement itself, so deleting an id that is not there under an `approved`
+    scenario is a `404` and not a `409` advising a copy against which the same request would be a
+    `404` as well (the R-01 correction).
+
+    **A body on a `DELETE`**, carrying the token — see `StaffingAbsenceDeleteRequest` for why that
+    rather than an `If-Match` header or no token at all.
+    """
+    try:
+        remaining = delete_absence(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            position_id,
+            absence_id,
+            expected_updated_at=payload.updated_at,
+        )
+    except AbsenceNotFound:
+        raise _not_found() from None
+    except StaffingWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except StaffingWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if remaining is None:
+        raise _not_found()
+    return shape_staffing_position(remaining)

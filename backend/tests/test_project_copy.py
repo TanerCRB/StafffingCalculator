@@ -39,14 +39,28 @@ from app.core.identity import CallerIdentity, Permission
 from app.data import project_writes
 from app.data.project_writes import PROJECT_COLUMNS_NOT_COPIED, SCENARIO_COLUMNS_NOT_COPIED
 from app.main import app
-from app.models import Project, ProjectAccess, ProjectStatus, Scenario, ScenarioStatus
+from app.models import (
+    Project,
+    ProjectAccess,
+    ProjectStatus,
+    Scenario,
+    ScenarioStatus,
+    WorkingCalendarDayKind,
+)
 from tests.conftest import (
     IN_SCOPE_USER,
     OUT_OF_SCOPE_USER,
     as_caller,
     count_projects,
+    make_absence,
+    make_absence_type,
+    make_allocation,
+    make_calendar_day,
+    make_dimension_tuple,
     make_project,
     make_scenario,
+    make_staffing_position,
+    make_working_calendar,
     project_payload,
 )
 
@@ -494,3 +508,160 @@ def test_every_project_column_is_either_copied_or_explicitly_excluded() -> None:
     mapped = {attribute.key for attribute in sa.inspect(Project).column_attrs}
 
     assert mapped == set(COPIED_PROJECT_FIELDS) | PROJECT_COLUMNS_NOT_COPIED
+
+
+# --- SC-3-02, K-15: what the cascade must NOT copy -----------------------------------------------
+
+
+ORGANISATIONAL_TABLES = ("working_calendar", "working_calendar_day", "absence_type")
+"""The three SC-3-02 tables whose rows belong to the organisation, not to a scenario.
+
+Their absence from `SCENARIO_CHILD_COPIERS` is **correctness, not an omission** (ADR-0004, addendum
+2026-09-22, point 1; the precedent is the catalogue, addendum 2026-09-19). A registry is silent
+about what it does not contain, which is why this has to be asserted from the outside."""
+
+
+def _row_counts(session: Session) -> dict[str, int]:
+    """How many rows each of the three organisational tables holds, plus the three copied ones."""
+    tables = (
+        *ORGANISATIONAL_TABLES,
+        "staffing_position",
+        "staffing_position_allocation",
+        "staffing_position_absence",
+    )
+    session.expire_all()
+    return {
+        table: session.execute(sa.text(f"SELECT count(*) FROM {table}")).scalar_one()
+        for table in tables
+    }
+
+
+def test_k_15_copying_a_project_copies_no_organisational_calendar_row(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-15 — copying a project duplicates the plan, never the company's calendars.
+
+    A calendar, its exceptional days and an absence type belong to the organisation; a copy of a
+    project that duplicated them would give the copy a private calendar that drifts from the
+    company's the first time a holiday is added, and would make "how many calendars do we have?"
+    a function of how often somebody clicked *copy*.
+
+    Three assertions, and the contrast is the middle one:
+
+    1. **the three organisational tables hold exactly the same number of rows** before and after
+       the copy. The mutation the criterion names — a calendar copier appended to the registry —
+       makes these counts grow and fails here;
+    2. **the three scenario-owned tables grow**, by the same numbers as the source held, so this
+       test cannot be satisfied by a copy that copied nothing at all. Without it, deleting
+       `copy_staffing_positions` from the registry would leave K-15 green;
+    3. **`len(SCENARIO_CHILD_COPIERS)` is unchanged** — one entry, for one aggregate. The registry
+       says nothing about what it omits, so the count is asserted directly, together with the
+       identity check `test_the_staffing_copier_is_the_registered_entry_of_the_scenario_cascade`
+       already makes one file over.
+    """
+    calendar = make_working_calendar(
+        db_session, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
+    )
+    make_calendar_day(
+        db_session,
+        calendar,
+        day=date(2026, 12, 25),
+        kind=WorkingCalendarDayKind.NON_WORKING,
+    )
+    absence_type = make_absence_type(db_session)
+    project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Baseline")
+    position = make_staffing_position(
+        db_session,
+        scenario,
+        make_dimension_tuple(db_session, calendar=calendar),
+        start_date=date(2026, 3, 1),
+    )
+    make_allocation(db_session, position, period_month=date(2026, 3, 1))
+    make_absence(
+        db_session,
+        position,
+        absence_type,
+        start_date=date(2026, 3, 2),
+        end_date=date(2026, 3, 6),
+    )
+
+    before = _row_counts(db_session)
+    copiers_before = len(project_writes.SCENARIO_CHILD_COPIERS)
+
+    response = client.post(f"/projects/{project.id}/copy", headers=as_caller(IN_SCOPE_USER))
+    assert response.status_code == 201, response.text
+
+    after = _row_counts(db_session)
+
+    # (1) nothing organisational was duplicated.
+    for table in ORGANISATIONAL_TABLES:
+        assert after[table] == before[table], (
+            f"copying a project duplicated rows of {table}, which belongs to the organisation and "
+            "not to a scenario (ADR-0004, addendum 2026-09-22, point 1)"
+        )
+
+    # (2) the contrast: the scenario's own tables did grow, by exactly what the source held.
+    for table in (
+        "staffing_position",
+        "staffing_position_allocation",
+        "staffing_position_absence",
+    ):
+        assert after[table] == 2 * before[table] > 0, (
+            f"{table} was not copied — the contrast of this test is void and K-15 would be "
+            "satisfied by a copy that copies nothing"
+        )
+
+    # (3) the registry is unchanged.
+    assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 1
+
+
+def test_k_15_the_copied_positions_still_point_at_the_one_shared_calendar(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-15's other half — the copy uses the *same* calendar, through the same location.
+
+    Not the same claim as "no calendar row was copied": a copier could leave the calendar tables
+    alone and still re-point the copy at nothing (a `NULL` `calendar_id` on a copied location, if
+    locations were ever copied), which would make every capacity of the copy read `"n/a"`. Here the
+    copied position carries the *source's* `location_id`, so it resolves the same calendar and
+    produces the same figures.
+
+    That shared reference is correct and is the point: a calendar is organisational, so two
+    scenarios reading one calendar is the intended state, unlike the absence rows of criterion K-14
+    which must not be shared.
+    """
+    calendar = make_working_calendar(
+        db_session, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
+    )
+    project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Baseline")
+    dimensions = make_dimension_tuple(db_session, calendar=calendar)
+    position = make_staffing_position(
+        db_session, scenario, dimensions, headcount=1, start_date=date(2026, 3, 1)
+    )
+    make_allocation(db_session, position, period_month=date(2026, 3, 1))
+
+    response = client.post(f"/projects/{project.id}/copy", headers=as_caller(IN_SCOPE_USER))
+    assert response.status_code == 201, response.text
+    copy_id = uuid.UUID(response.json()["id"])
+    db_session.expire_all()
+    copy_scenario_id = db_session.execute(
+        sa.select(Scenario.id).where(Scenario.project_id == copy_id)
+    ).scalar_one()
+
+    source_grid = client.get(
+        f"/projects/{project.id}/scenarios/{scenario.id}/staffing-positions",
+        headers=as_caller(IN_SCOPE_USER),
+    ).json()["positions"][0]["allocations"][0]
+    copy_grid = client.get(
+        f"/projects/{copy_id}/scenarios/{copy_scenario_id}/staffing-positions",
+        headers=as_caller(IN_SCOPE_USER),
+    ).json()["positions"][0]["allocations"][0]
+
+    assert copy_grid["derived_capacity_hours"] == source_grid["derived_capacity_hours"] == "165.00"
+    assert (
+        copy_grid["derived_capacity_source"]["calendar_id"]
+        == source_grid["derived_capacity_source"]["calendar_id"]
+        == str(calendar.id)
+    )

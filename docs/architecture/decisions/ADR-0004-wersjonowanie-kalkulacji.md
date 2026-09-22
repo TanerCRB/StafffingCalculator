@@ -273,3 +273,68 @@ alokacji nie miałby skąd wziąć tego mapowania.
    tylko dla tej, która akurat wtedy powstaje. Do tego czasu ryzyko jest przyjęte świadomie i
    niewykonalne do przetestowania (nic nie umie dziś wywołać zatwierdzenia, więc nie ma czym
    wywołać wyścigu) — nazwane, nie zamilczane.
+
+### 2026-09-22 — pierwsza tabela migawkowa; trzecia grupa tabel-dzieci scenariusza (SC-3-02)
+
+Sekcja "Decyzja" wylicza "kalendarze robocze" wśród treści migawki, a aneks z 2026-09-19 (SC-3-01)
+ustala kryterium przynależności ("kierunek dziedziczenia, nie udział w wyliczeniu"). SC-3-02 jest
+pierwszym zadaniem, które faktycznie buduje tabelę `approved_snapshot_*` — do dziś nazwa ta pada w
+całym backendzie dokładnie raz, w docstringu `copy_scenario`. Wzorzec ustanawiany tu obowiązuje
+kursy walut (ADR-0006), rozwiązane stawki i wersje reguł komercyjnych (ADR-0003), nie tylko to
+zadanie.
+
+1. **Przypisanie grup dla tabel SC-3-02** (obowiązek z aneksu 2026-09-19, pkt 4):
+   - `working_calendar`, `working_calendar_day`, `absence_type` — wartości dziedziczone spoza
+     scenariusza, **grupa 1: migawka**. Nie są dziećmi scenariusza, więc brak wpisu w
+     `SCENARIO_CHILD_COPIERS` jest tu poprawnością, nie pominięciem (precedens: katalog, aneks
+     2026-09-19).
+   - `staffing_position_absence` — dane własne scenariusza, wnuczka przez `staffing_position`,
+     **grupa 2: strażnik zapisu**. Wchodzi do kaskady kopiowania przez rozszerzenie istniejącego
+     kopiującego agregatu, nie przez nowy wpis w rejestrze (pkt 1 aneksu 2026-09-19: "jeden wpis na
+     agregat, którego korzeń jest dzieckiem scenariusza") — kontrakt rejestru nie niesie mapowania
+     starych na nowe identyfikatory pozycji, a wiersz nieobecności go potrzebuje.
+   - **Instancje nieobecności nie wchodzą do migawki**, i jest to zastosowanie kryterium z
+     2026-09-19, nie wyjątek od niego: nic spoza scenariusza nie może ich zmienić. Do migawki
+     wchodzi **słownik typów** nieobecności (nazwa i flagi kosztowe/przychodowe są organizacyjne i
+     mogą się zmienić po zatwierdzeniu), nie instancje. *Warunek ponownego rozpatrzenia:* gdyby
+     nieobecność przeniosła się kiedyś na poziom osoby albo rejestru organizacyjnego (Issue #31),
+     zmienia grupę z 2 na 1 i migawka musi o nią urosnąć.
+
+2. **Trzecia grupa, której taksonomia dwugrupowa nie miała.** Tabela `approved_snapshot_*` sama
+   jest dzieckiem scenariusza, a nie należy ani do grupy 1, ani do 2: jest **zapisywalna
+   jednokrotnie, przy zatwierdzeniu, i nigdy nie kopiowana** (aneks 2026-09-18, pkt 3). Brak wpisu
+   w `SCENARIO_CHILD_COPIERS` jest tu **wymagany**, nie dozwolony — a ponieważ rejestr milczy o
+   pominięciach, wymaga testu-kanarka: kopia zatwierdzonego scenariusza ma zero wierszy migawkowych.
+
+3. **Kształt tabeli migawkowej — wzorzec, nie szczegół tego zadania:**
+   a. **Jedna tabela migawkowa na jedną tabelę źródłową**, nazwana `approved_snapshot_<tabela>` —
+      nie jedna generyczna tabela z kolumną `jsonb`. Podstawa: ADR-0001 (integralność egzekwowana
+      w bazie) i ADR-0002/NF-01 — liczba w JSON jest typem zmiennoprzecinkowym, a migawka niesie
+      godziny, czyli wartości o jedno mnożenie od pieniędzy. Zapisane wprost, bo generyczny blob
+      jest skrótem, po który sięgnie następny implementator.
+   b. **Kluczowana przez `scenario_id`; identyfikator wiersza źródłowego przechowywany jako
+      wartość** (zwykła kolumna `uuid`), nigdy jako klucz obcy. "Migawka jest osobnym zestawem
+      wierszy (nie referencją do »aktualnych« wartości organizacji)" — klucz obcy jest referencją i
+      pozwoliłby źródłu zablokować albo kaskadowo ruszyć zamrożoną kopię.
+   c. **Kopiowane są wartości, nie nazwy do rozwiązania później:** nazwa kalendarza, podstawa
+      godzinowa, wzorzec tygodnia, komplet wierszy dni, nazwa i flagi typu nieobecności.
+   d. **Kryterium obowiązkowe, wprost z AC-04/AC-10:** edycja kalendarza źródłowego po zatwierdzeniu
+      nie zmienia ani jednej wartości w migawce. Mutacja "zapisz identyfikator jako klucz obcy i
+      czytaj przez złączenie" ma wywracać test.
+
+4. **Moment zapisu i kolejność w transakcji zatwierdzenia.** Zatwierdzenie jest jedną transakcją, w
+   kolejności: najpierw wiersze migawki, **na końcu** `UPDATE scenarios SET status = 'approved'
+   WHERE id = :id AND status = 'draft'` (odmowa = zero wierszy = ktoś zatwierdził wcześniej). Ta
+   kolejność jest konieczna: strażniki tabel-dzieci (`status <> 'approved'`) odrzuciłyby zapis
+   samej migawki, gdyby status szedł pierwszy. Żaden nowy kształt strażnika nie jest potrzebny.
+
+5. **Rozstrzygnięcie bramki 1 (2026-09-22, P-2): SC-3-02 buduje realny endpoint zatwierdzenia,
+   nie tylko funkcję warstwy danych.** Wariant szerszy niż rekomendacja architekta, przyjęty
+   świadomie. Wyścig z pkt 269 wyżej ("Warunek zamknięcia, datowany") przestaje być
+   niewykonalny do przetestowania od tego zadania — musi zostać rozstrzygnięty i dowiedziony dla
+   WSZYSTKICH tabel-dzieci naraz (pozycji, alokacji, nieobecności), nie tylko dla tabel tego
+   zadania. **Ryzyko przyjęte świadomie, nie przemilczane:** w środowisku `development`/`test`
+   (placeholder identity, brak ADR uwierzytelniania) każdy wołający dotrze do tego endpointu i
+   nieodwracalnie zamrozi kalkulację — bez roli, bez audytu (blok 8 odłożony, `audit_log`
+   nieistniejący). Zamknięcie: osobny ADR uwierzytelniania (dla roli) + blok 8 planu (dla
+   `audit_log`).
