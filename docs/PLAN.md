@@ -1046,7 +1046,7 @@ history / this file's own change log, not as tracked product work.
   dużych projektach; strażnik `mounted` przy zapisie jest nieobserwowalny w React 18 (dekoracyjny,
   udokumentowane w teście).
 
-- [ ] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
+- [x] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
   worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
   predykatem lustrzanym do ADR-0003/R-01), koszt jawnie bazowy (nie w pełni obciążony), bramka
   koniunkcji kosztowej (`STAFFING_READ` na endpoincie, `PERSONNEL_COSTS_READ` ∧
@@ -1062,7 +1062,8 @@ history / this file's own change log, not as tracked product work.
      sprzedażowego. Zmiana stawki kosztowej w trakcie miesiąca → "brak stawki kosztowej"; zmiana
      wyłącznie sprzedażowej nie blokuje kosztu (ADR-0013 pkt 1).
   3. (K-03) Wynik ma dokładnie dwa kształty: koszt bazowy albo stan nazwany (`no_cost_rate` /
-     `currency_mismatch`) — nigdy `0`, nigdy suma częściowa (ADR-0013 pkt 2).
+     `currency_mismatch` / `no_cost_currency`) — nigdy `0`, nigdy suma częściowa (ADR-0013 pkt 2,
+     doprecyzowane aneksem 2026-09-23 bramka 2).
   4. (K-04) Pole kosztu (kwota i stawki w `assumptions_used`) obecne tylko przy koniunkcji
      `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` dla projektu tego scenariusza; odmowa =
      `200` bez pola, nie `403`. Sześć niezależnych mutacji, w tym: flaga z dowolnego przypisania
@@ -1117,5 +1118,30 @@ history / this file's own change log, not as tracked product work.
   `ADR-0004-wersjonowanie-kalkulacji.md` (aneksy SC-4-01, 2026-09-23 SC-5-01),
   `ADR-0005-model-dostepu.md` (aneksy SC-1-08, SC-3-01, SC-3-02, SC-3-03, SC-4-01, 2026-09-23
   SC-5-01), `ADR-0008-przedzialy-obowiazywania.md`, `ADR-0013-koszt-osobowy.md` (nowa, Draft).
+  **Done 2026-09-23:** PR #74 (scalone `31f0ac1`). Dowód: `backend/tests/test_personnel_cost.py`
+  (K-01, K-02, K-03, K-07, test strukturalny C-5), `backend/tests/test_personnel_cost_access.py`
+  (K-04, K-05, K-06) — 610 testów backendowych zielono (było 581). Runda weryfikacji (architect,
+  QA, Invariant Guardian, reviewer, security-auditor) + poprawki: architect rozstrzygnął 4 pytania
+  z implementacji — test strukturalny C-5 pilnujący separacji `app.data.rate_windows` od obu ścieżek
+  (dodany), doprecyzowanie stanów walutowych ADR-0013 (nowy stan `no_cost_currency`, rozróżnienie
+  `no_cost_rate`/`currency_mismatch`), doprecyzowanie ADR-0005 pkt 7 (co odmowa bramki zostawia
+  widoczne: `state`/`cost_basis`/`currency`, nigdy kwotę). QA domknęła realną lukę dowodu: filtr
+  `frozen.scenario_id == position.scenario_id` na ścieżce kosztowej migawki (wspólny moduł geometrii
+  z przychodem) przeżył pierwszą mutację — żaden test kosztowy nie miał dwóch zatwierdzonych
+  scenariuszy tej samej krotki naraz; zabity nowym testem kontrastowym, zero błędów w kodzie
+  produkcyjnym. Invariant Guardian: PASS, reguła 10 (koszt niezależny od przychodu) zweryfikowana
+  empirycznie przez graf importów. Reviewer: PASS, zero wad High/Medium. Security-auditor: PASS WITH
+  RESERVATIONS — **B-01** (Medium, uśpione): koniunkcja `PERSONNEL_COSTS_READ` ∧
+  `can_view_personnel_costs` da się dziś teoretycznie obejść przeliczeniem z osobnych odczytów
+  katalogu (`CATALOG_READ`, bramka jednoczynnikowa) i obsady (`STAFFING_READ`) dla wołającego z
+  `PERSONNEL_COSTS_READ` globalnie, ale bez flagi na projekcie; nieaktywne, bo `PLACEHOLDER_PERMISSIONS`
+  nie zawiera `PERSONNEL_COSTS_READ` — udokumentowane w ADR-0005 aneks pkt 5, warunek ponownego
+  otwarcia: ADR uwierzytelniania musi rozstrzygnąć to złożenie uprawnień, zanim ktokolwiek dostanie
+  `PERSONNEL_COSTS_READ`. **Zaakceptowane, nienaprawione:** gałąź pozytywna bramki kosztowej
+  nieosiągalna w produkcji (dowód wyłącznie przez `dependency_overrides` w teście, jak SC-1-08);
+  wyścig edycji katalogu z zatwierdzeniem dziedziczy status "no evidence" ze SC-2-03 (ta sama szósta
+  CTE, rozszerzony zakres); scenariusze zatwierdzone przed tą zmianą nie odzyskują kosztu miesięcy ze
+  zmienną stawką sprzedażową (migawka bez ścieżki UPDATE, nazwane w aneksie ADR-0004 pkt 7). Zob.
+  `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
