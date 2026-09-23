@@ -798,4 +798,54 @@ history / this file's own change log, not as tracked product work.
   75-podziałowy zadeklarowany w komentarzu testu zamiast w logu mutacji, uzupełniony teraz w
   `docs/architecture/capabilities.md`). Zob. `docs/architecture/capabilities.md`.
 
+- [x] **SC-2-05** — Dostosuj wygląd ekranu Roles & rates (katalog) do makiety UI-15 i rozbuduj rail
+  nawigacji `AppShell` do pełnej listy 11 wpisów z tej samej makiety, bez zmiany zachowania ani
+  kontraktów API (Issue #59).
+  *Done when:* `frontend/src` (vitest) zielono, liczba testów ≥ punkt odgałęzienia, żaden `it`/
+  `describe` usunięty, każda zmieniona asercja niesie to samo lub silniejsze twierdzenie (analyst,
+  2026-09-23): (1) powierzchnia zmiany ograniczona do `features/catalog/` i arkuszy stylów, zero
+  dotknięcia `backend/`, `api/`, `lib/`, `features/projects/`; (2) drzewo dostępności i kolejność
+  czytania ekranu katalogu identyczne ze stanem sprzed zmiany, poza dwoma nazwanymi wyjątkami; (3)
+  słowa stanu ("Restricted", "Internal", liczniki, komunikaty) identyczne co do znaku; (4) kontrast
+  koloru ≥4.5:1 domknięty dla KAŻDEGO arkusza dotkniętego zmianą, nie tylko ekranu katalogu, oraz
+  dla koloru ikon; (5) siedem właściwości wizualnych z makiety (siatka, wyrównanie, tło etykiety,
+  przyciski/ikony, hierarchia rozmiarów, linie, kolejność akcji formularza) sprawdzone na
+  elementach DOM po roli i nazwie; (6) rail nawigacji pokazuje 11 wpisów z makiety, 9 nieistniejących
+  ekranów jako `aria-disabled` (konwencja F-13) bez cichego zamontowania złego ekranu — `ScreenKey`
+  zamknięty do realnie zbudowanych ekranów.
+  **Decyzje bramki 1 (2026-09-23):** zakres rozszerzony w trakcie z samego restyle'u katalogu na
+  rozbudowę `AppShell` (na polecenie właściciela produktu); cały katalog `Wymagania/` (bez zip)
+  dołączony do repozytorium jako referencja, nie specyfikacja; ikony przez `@tabler/icons-react`
+  (ADR-0011), bez literału koloru; kolor przycisków primary zostaje pomarańczowy z produktu, nie
+  niebieski z makiety (różnica świadomie zaakceptowana); kolejność Cancel/Save w DOM zmieniona na
+  zgodną z makietą (jedyny nazwany wyjątek od "zero zmiany zachowania" poza nową zależnością);
+  nagłówek grupy railu "Project" — NIE "Commerce platform" z makiety (to nazwa przykładowego
+  projektu w prototypie, nie nazwa sekcji — kopiowanie dosłowne byłoby fałszywymi danymi w UI);
+  topbar bez awatara/roli/waluty z makiety (brak pokrycia w danych — placeholder identity, brak
+  przewalutowania); 3 istniejące testy przypinające dokładną listę railu przepisane za zgodą
+  (twierdzenie wzmocnione, nie osłabione).
+  **Out of scope (explicit):** router i URL dla ekranów sekcji "Project" z railu; kontekst
+  wybranego projektu/scenariusza w topbarze/grupie railu; zgodność co do piksela z makietą i wygląd
+  mobile (`@media` świadomie zablokowane testem-strażnikiem, precedens SC-2-02); kontrast stanów
+  `:hover`/`:focus` poza regułami z samym tłem; reguła marki "pomarańczowy nigdy na light steel"
+  (naruszenie przedistniejące, niepogorszone tym zadaniem); kolor ikony przekazany przez nazwaną
+  stałą JS zamiast literału (resztkowa luka w skanie strażnika, ADR-0011).
+  **Fundament:** restyle stoi na fundamencie SC-2-01..04 (katalog, w pełni scalonym i
+  zarejestrowanym) i SC-1-09 (granica błędu, obejmuje też rozbudowany rail bez zmian). Podstawa:
+  Issue #59, `Wymagania/prototyp/screens/15-catalog*.png`,
+  `docs/architecture/decisions/ADR-0011-zasoby-wizualne-frontendu.md`.
+  **Done 2026-09-23:** PR #60 (scalone `0b32a6a`). Dowód: `frontend/src/features/catalog/
+  CatalogScreenStructure.test.tsx`, `CatalogScreenAppearance.test.tsx`, `frontend/src/styles/
+  tokens.test.ts`, `frontend/src/shell/AppShell.test.tsx`, `ScreenErrorBoundary.test.tsx`,
+  `screenCrashContainment.test.tsx` — 173 testy frontendowe zielono (było 153), lint i build
+  czyste. Dwie rundy weryfikacji (Invariant Guardian, reviewer) + poprawki przed commitem: ADR-0011
+  sprzeczny sam ze sobą (naprawiony), brak w indeksie ADR (dodany), 3 martwe wpisy kontrastu w
+  `declaredPairs` (usunięte). **Zaakceptowane, nie naprawiane:** R-01 reviewera (Niska — silnik
+  dopasowania CSS w teście K-30 nie widzi skrótów CSS/dziedziczenia/`!important`, potencjalna
+  luka, dziś żaden arkusz tych konstrukcji nie używa); S-02 invariant-guardiana (Niska — skan koloru
+  ikon nie łapie koloru przez nazwaną stałą JS, nazwany otwarty dług w ADR-0011); S-04
+  invariant-guardiana (Niska — ~200 linii szumu w `pnpm-lock.yaml`, dryf metadanych rejestru npm,
+  zweryfikowany jako nieszkodliwy — `--frozen-lockfile` przechodzi). Zob.
+  `docs/architecture/capabilities.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
