@@ -30,3 +30,4 @@ the same file — never a silent edit of the original text.
 | [ADR-0010](ADR-0010-awaria-renderu-frontendu.md) | Awaria renderu frontendu: granica błędu i kształt odpowiedzi | Draft — pending approval |
 | [ADR-0011](ADR-0011-zasoby-wizualne-frontendu.md) | Zasoby graficzne frontendu: ikony i referencje wizualne | Accepted |
 | [ADR-0012](ADR-0012-zalozenia-lancuch-nadpisan.md) | Założenia konfigurowalne: łańcuch organizacja → projekt → scenariusz i źródło wartości | Accepted |
+| [ADR-0013](ADR-0013-koszt-osobowy.md) | Koszt osobowy (F-07): predykat rozstrzygania stawki kosztowej, kształt wyniku, podstawa "bazowy" | Draft — pending approval |
