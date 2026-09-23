@@ -65,6 +65,29 @@ function stripLeadingZeros(digits: string): string {
  */
 export const NOT_A_DECIMAL_STRING = "Not a fixed-point decimal string";
 
+/** The one reading of the decimal grammar: the match when `value` is a fixed-point decimal string
+ * (at least one digit, on either side of the point), `null` otherwise. */
+function parseDecimalString(value: string): RegExpExecArray | null {
+  const match = DECIMAL_PATTERN.exec(value.trim());
+  if (match === null || ((match[2] ?? "") === "" && (match[3] ?? "") === "")) {
+    return null;
+  }
+  return match;
+}
+
+/**
+ * Whether `value` is a string `roundDecimalString` accepts — exactly the strings it does not throw
+ * on, because both read the grammar through `parseDecimalString` (ADR-0002: one place for it).
+ *
+ * This is the predicate a shape check at the network boundary uses when a payload that fails it must
+ * end in the screen's named read failure rather than in the render boundary (ADR-0010, point 2;
+ * SC-4-06, Reviewer R-01). It does not soften the formatter (ADR-0010, point 6): whatever reaches
+ * `roundDecimalString` without having been checked still throws.
+ */
+export function isDecimalString(value: unknown): value is string {
+  return typeof value === "string" && parseDecimalString(value) !== null;
+}
+
 /**
  * Rounds a fixed-point decimal string to `fractionDigits` places, half away from zero — the same
  * rule as Python's `ROUND_HALF_UP` in `backend/app/core/money.py`.
@@ -88,12 +111,12 @@ export const NOT_A_DECIMAL_STRING = "Not a fixed-point decimal string";
  * body, which is in the network tab, which is behind the same authorisation the value itself is.
  */
 export function roundDecimalString(value: string, fractionDigits: number): string {
-  const match = DECIMAL_PATTERN.exec(value.trim());
-  const integerPart = match?.[2] ?? "";
-  const fractionPart = match?.[3] ?? "";
-  if (match === null || (integerPart === "" && fractionPart === "")) {
+  const match = parseDecimalString(value);
+  if (match === null) {
     throw new Error(NOT_A_DECIMAL_STRING);
   }
+  const integerPart = match[2] ?? "";
+  const fractionPart = match[3] ?? "";
 
   const kept = fractionPart.slice(0, fractionDigits).padEnd(fractionDigits, "0");
   const dropped = fractionPart.slice(fractionDigits);

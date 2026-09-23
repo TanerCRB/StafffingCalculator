@@ -9,6 +9,14 @@ import type {
   DimensionEntryEditRequest,
   DimensionEntryList,
 } from "./contracts/catalog";
+import {
+  RATE_SOURCES,
+  REVENUE_NOT_APPLICABLE,
+  REVENUE_STATES,
+  type CommercialTermsCreateRequest,
+  type ScenarioCommercialTerms,
+} from "./contracts/commercialTerms";
+import { isDecimalString } from "../lib/money";
 import type { HealthResponse } from "./contracts/health";
 import type {
   ProjectListItem,
@@ -453,7 +461,9 @@ export async function getCatalogDimension(
 // None of them returns anything a screen is allowed to put in a table: the row on screen after a
 // save comes from a fresh read, never from the write's answer (point 3, gate-1 decision P-3a). They
 // return the parsed body so that a caller can `await` a real answer — not so that it can be
-// rendered.
+// rendered. One dated exception, and only one: `createScenarioCommercialTerms` below, whose `201`
+// is the server-computed rule and revenue rather than an echo of the form (ADR-0009, addendum
+// 2026-09-23, narrowing point 3 — see that function).
 
 const JSON_REQUEST_HEADERS: Readonly<Record<string, string>> = {
   [CALLER_ID_HEADER]: CALLER_USER_ID,
@@ -553,6 +563,194 @@ export async function editDimensionEntry(
     "PATCH",
     body,
     isDimensionEntryShape,
+  );
+}
+
+// --- A scenario's commercial rule and revenue (SC-4-06, consuming SC-4-01) ----------------------
+
+function isRateWindowShape(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.source_rate_id === "string" &&
+    typeof value.effective_from === "string" &&
+    isRequiredNullableString(value.effective_to) &&
+    // The grammar, not only the type: the section renders this rate through `formatRatePerUnit`,
+    // and a rate that is a string but not a decimal would throw there mid render (R-01, SC-4-06).
+    isDecimalString(value.default_selling_rate) &&
+    typeof value.currency === "string"
+  );
+}
+
+function isUnresolvedMonthShape(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.position_id === "string" &&
+    typeof value.period_month === "string"
+  );
+}
+
+function isRevenueAssumptionsShape(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isRequiredNullableString(value.model_type) &&
+    value.hours_source === "billable_hours" &&
+    value.vendor_axis === "internal" &&
+    isOneOf(value.rate_source, RATE_SOURCES) &&
+    Array.isArray(value.rate_windows) &&
+    value.rate_windows.every(isRateWindowShape) &&
+    Array.isArray(value.unresolved_months) &&
+    value.unresolved_months.every(isUnresolvedMonthShape) &&
+    Array.isArray(value.currencies) &&
+    value.currencies.every((currency) => typeof currency === "string")
+  );
+}
+
+/**
+ * Whether a revenue has the shape `RevenueRead` promises — including the two pairings the schema
+ * states in prose, because each of them is a render that would otherwise lie without throwing:
+ *
+ *   * `state` is one of the **seven** labels the backend's `RevenueState` lists. An unlisted one —
+ *     a later backend's eighth state, a typo — is not "an unfamiliar withheld state" to be shown as
+ *     some generic message: it is a payload this client cannot read, and ends in the named read
+ *     failure (ADR-0010, point 2; SC-4-06 K-01).
+ *   * `"calculated"` carries a currency and an amount that is not the `"n/a"` sentinel; every other
+ *     state carries `"n/a"`. A calculated revenue with `"n/a"` would reach `formatMoneyString` and
+ *     throw mid render; a withheld state carrying a number is a revenue the server says it does not
+ *     have, and the screen must not be the one to decide which half to believe.
+ *
+ *   * a calculated amount — and every window's `default_selling_rate` — is a fixed-point decimal
+ *     string by the grammar `lib/money.ts` rounds with (`isDecimalString`), not merely a string.
+ *
+ * The grammar is checked here, unlike `isScenarioListItemShape`'s `target_margin_percent`, because
+ * of where a violation would otherwise land (Reviewer R-01, SC-4-06). `"abc"` or `"1,00"` passing as
+ * a calculated amount reaches `formatMoneyString` and throws mid render; the render boundary then
+ * takes down the whole `ProjectListScreen` — every card of every scenario, and after a `201` a save
+ * the server has already committed. ADR-0010 point 2 puts a payload that breaks the contract on
+ * the network boundary, as this section's named `unreadable` state (and, for the `201`, as the
+ * unresolved save), not on the render boundary. The grammar itself still lives in one place
+ * (ADR-0002): `isDecimalString` and `roundDecimalString` read it through the same function, and the
+ * formatter is not softened (ADR-0010, point 6).
+ */
+function isRevenueShape(value: unknown): boolean {
+  if (!isRecord(value) || !isOneOf(value.state, REVENUE_STATES)) {
+    return false;
+  }
+  if (typeof value.amount !== "string" || !isRevenueAssumptionsShape(value.assumptions_used)) {
+    return false;
+  }
+  if (value.state === "calculated") {
+    return (
+      value.amount !== REVENUE_NOT_APPLICABLE &&
+      isDecimalString(value.amount) &&
+      typeof value.currency === "string"
+    );
+  }
+  return value.amount === REVENUE_NOT_APPLICABLE && isRequiredNullableString(value.currency);
+}
+
+function isCommercialTermsShape(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    // Any string: the response side of `model_type` is open (`StoredModelType`, R-02 of SC-4-01).
+    // A model this version cannot price is the named `unsupported_model_type` state, not a
+    // payload this client cannot read (SC-4-06, K-03).
+    typeof value.model_type === "string" &&
+    isConcurrencyMarker(value.updated_at)
+  );
+}
+
+/**
+ * Whether a response is the `ScenarioCommercialTerms` *of the scenario that was asked about*.
+ *
+ * `scenario_id` is compared, not only typed: this fragment renders one answer per scenario card, and
+ * an answer about another scenario is not an answer to this request, however well-formed it is
+ * (SC-4-06, K-07). And `commercial_terms` must be `null` exactly when the revenue says there is no
+ * rule — otherwise the card would offer "Set Time & Material" beside an amount, or name a model
+ * beside "no rule is set".
+ *
+ * One predicate for the `GET` and for the `201` alike (ADR-0009, addendum 2026-09-23, narrowing
+ * point 3): the body of a successful save is rendered as it stands, so it passes the very same check
+ * a read does before anything on screen changes.
+ */
+function isScenarioCommercialTermsShape(
+  value: unknown,
+  scenarioId: string,
+): value is ScenarioCommercialTerms {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const revenue = value.revenue;
+  const terms = value.commercial_terms;
+  if (
+    value.scenario_id !== scenarioId ||
+    !isOneOf(value.scenario_status, SCENARIO_STATUSES) ||
+    !isRevenueShape(revenue) ||
+    !(terms === null || isCommercialTermsShape(terms))
+  ) {
+    return false;
+  }
+  const saysNoRule = isRecord(revenue) && revenue.state === "no_commercial_terms";
+  return (terms === null) === saysNoRule;
+}
+
+function commercialTermsPath(projectId: string, scenarioId: string): string {
+  return `/projects/${projectId}/scenarios/${scenarioId}/commercial-terms`;
+}
+
+/**
+ * A scenario's commercial rule and the revenue derived from it
+ * (`GET /projects/{project_id}/scenarios/{scenario_id}/commercial-terms`, SC-4-01). Read only.
+ *
+ * `403` and `404` stay distinguishable statuses on the `ApiError`: the backend answers every "this
+ * scenario is not yours" with one `404`, and a screen that mapped it onto "no rule yet" would offer a
+ * write on a scenario that is not the caller's (SC-4-06, K-04). A scenario that simply has no rule is
+ * a `200` with `commercial_terms: null`, never an error.
+ *
+ * `signal`, when given, ends the read early — the card that asked for it has unmounted, or asked
+ * again (ADR-0010, point 7).
+ */
+export async function getScenarioCommercialTerms(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+): Promise<ScenarioCommercialTerms> {
+  const path = commercialTermsPath(projectId, scenarioId);
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isScenarioCommercialTermsShape(payload, scenarioId)) {
+        throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
+/**
+ * Set a scenario's commercial rule (`POST …/commercial-terms`, SC-4-01) — today only Time & Material.
+ *
+ * Unlike the catalogue's writes, the answer **is** what the screen renders afterwards (ADR-0009,
+ * addendum 2026-09-23, narrowing point 3): the `201` carries the full, server-computed
+ * `ScenarioCommercialTerms` — rule and revenue — not an echo of the form, and this payload has no
+ * cost gate a client could undo. The body goes through the same shape check as the `GET`
+ * (`isScenarioCommercialTermsShape`) inside `write`, so a `2xx` this client cannot read ends in an
+ * `ApiError` with its real `2xx` status — an unresolved outcome, never a rendered guess.
+ */
+export async function createScenarioCommercialTerms(
+  projectId: string,
+  scenarioId: string,
+  body: CommercialTermsCreateRequest,
+): Promise<ScenarioCommercialTerms> {
+  return write(commercialTermsPath(projectId, scenarioId), "POST", body, (value) =>
+    isScenarioCommercialTermsShape(value, scenarioId),
   );
 }
 

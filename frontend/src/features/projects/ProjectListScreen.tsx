@@ -5,11 +5,16 @@ import type { ProjectListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
 import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
+import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
 import { missingInputLabel } from "./scenarioInputLabels";
 import "./ProjectListScreen.css";
 
 /**
- * SC-1-06 — the project list with the scenarios of the selected project. Read only.
+ * SC-1-06 — the project list with the scenarios of the selected project.
+ *
+ * Read only, with one exception added by SC-4-06 (gate 1, D-2 = option A): every scenario card
+ * carries a `ScenarioCommercialTermsSection`, which reads that scenario's commercial rule and revenue
+ * itself and can set a Time & Material rule. Everything else on this screen still writes nothing.
  *
  * The screen takes no access or visibility decision of its own (NF-04, ADR-0005): every row it
  * shows came from the API in that shape, including an archived project. There is no client-side
@@ -327,6 +332,13 @@ function ScenarioDetails({ project }: { project: ProjectListItem }) {
                 ? "Not provided"
                 : formatPercentString(scenario.target_margin_percent)}
             </p>
+            {/* SC-4-06: its own read, its own failure states, its own write. Keyed by the card, so
+                switching projects unmounts it and aborts its read (ADR-0010, point 7). */}
+            <ScenarioCommercialTermsSection
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioName={scenario.name}
+            />
           </li>
         ))}
       </ul>

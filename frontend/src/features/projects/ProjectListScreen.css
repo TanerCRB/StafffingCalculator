@@ -304,3 +304,29 @@
   font-size: var(--sc-font-size-sm);
   color: var(--sc-color-text-muted);
 }
+
+/* SC-4-06 — the commercial-terms section of a scenario card. Layout only: every line inside it
+   takes its colour from `.scenario-card__metric` / `.scenario-card__gaps` above, so the contrast
+   pairs `tokens.test.ts` already proves for a card are the ones this section renders. */
+.commercial-terms {
+  margin-top: var(--sc-space-3);
+  padding-top: var(--sc-space-3);
+  border-top: 1px solid var(--sc-color-border);
+}
+
+.commercial-terms__title {
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.commercial-terms__list {
+  margin: 0;
+  padding-left: var(--sc-space-4);
+}
+
+.commercial-terms__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sc-space-2);
+  margin-top: var(--sc-space-2);
+}
