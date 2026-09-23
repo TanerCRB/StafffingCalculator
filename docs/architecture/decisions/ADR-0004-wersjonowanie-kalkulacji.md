@@ -522,3 +522,59 @@ T&M) jest pierwszym zadaniem, które buduje którąkolwiek z nich.
 
 3. **Czego ten aneks nie obejmuje:** migawki kursów walut (ADR-0006, brak tabeli źródłowej) i
    wartości domyślnych organizacji dla reguł komercyjnych (nie istnieją).
+
+### 2026-09-23 — zakres migawki: okna miesięcy wycenionych stawką sprzedażową LUB kosztową (SC-5-01)
+
+Drugi aneks tej daty w tym pliku, osobny wpis. Odwołanie "ADR-0004, aneks 2026-09-23" musi nazywać
+zadanie (SC-4-01 albo SC-5-01) — ta sama konwencja co przy aneksach SC-3-02/SC-3-03.
+
+Pkt 2c aneksu SC-4-01 wiąże zakres zamrożenia z predykatem przychodu (ADR-0003 pkt 5, aneks R-01:
+okna miesiąca pokrywają każdy jego dzień i mają jedną parę (`default_selling_rate`, `currency`)).
+Pkt 2b zamroził `default_cost_rate` z uzasadnieniem: "koszt niezamrożony teraz jest kosztem, którego
+zatwierdzony scenariusz nigdy nie odzyska". SC-5-01 (F-07) jest pierwszym czytelnikiem kosztu i
+ujawnia klasę miesięcy, dla której pkt 2c tej obietnicy nie dotrzymuje: okna pokrywają cały miesiąc
+i mają jedną parę (`default_cost_rate`, `currency`), ale zmienia się w nim `default_selling_rate`.
+Taki miesiąc ma koszt na ścieżce żywej i nie zamraża żadnego okna. Przypadek odwrotny — zmiana samej
+stawki kosztowej — jest zamrażany w całości od aneksu R-01 ADR-0003 i luką nie jest.
+
+1. **Zakres: okna, które czyta którakolwiek kalkulacja scenariusza.** Dla każdej pary (pozycja
+   obsady, miesiąc alokacji) zamrażane są wszystkie wewnętrzne okna jej krotki nachodzące na
+   miesiąc (`vendor_id IS NULL`, ADR-0003 pkt 4), gdy miesiąc jest wyceniony predykatem
+   sprzedażowym **lub** predykatem kosztowym. Predykat kosztowy: okna razem pokrywają każdy dzień
+   miesiąca i mają jedną parę (`default_cost_rate`, `currency`).
+2. **Zasada pkt 2c bez zmian, zmienia się zbiór czytelników.** Nadal nie cały katalog, nie okna
+   poddostawców, nie okna, do których nie sięga żaden wyceniony miesiąc. Miesiąc niewyceniony żadnym
+   predykatem nie zamraża nic i zostaje "brakiem stawki" w obu wyliczeniach na zawsze. Każdy przyszły
+   konsument stawki z tej tabeli rozszerza tę alternatywę własnym aneksem w zadaniu, w którym
+   powstaje — nie po pierwszym zatwierdzeniu.
+3. **Koszt niezależny od przychodu (F-06, reguła 10 Strażnika).** O zamrożeniu kosztu miesiąca nie
+   decyduje predykat przychodu. Predykat kosztowy nie jest budowany z kodu ścieżki przychodu
+   (`app.data.commercial_terms`) ani odwrotnie; kopiarka migawki jest jedynym miejscem znającym oba,
+   jako alternatywę dwóch niezależnych predykatów.
+4. **Jeden predykat na rodzaj stawki, trzy miejsca.** Predykat kosztowy stosowany identycznie na
+   żywej ścieżce kosztu, w kopiarce i w czytelniku migawki kosztu (analogicznie do pkt 2e; warunek
+   pkt 7c aneksu SC-3-03 — czytelnik dowodzi rozstrzygania per miesiąc własnym kryterium).
+5. **Przychód zatwierdzonego scenariusza bez zmian.** Okna miesięcy wycenionych wyłącznie kosztowo
+   są w migawce, ale czytelnik przychodu ponownie stawia predykat sprzedażowy (pkt 2e) i odpowiada
+   "brak stawki", jak przed zatwierdzeniem.
+6. **Zapis bez zmian wobec pkt 2d:** ta sama szósta CTE `_snapshot_statement`, jedna instrukcja, ta
+   sama tabela, ten sam licznik `catalog_default_rates` (liczy teraz okna miesięcy wycenionych
+   którymkolwiek predykatem), ta sama deduplikacja nad kopiowanymi wartościami.
+7. **Bez działania wstecz.** Scenariusze zatwierdzone przed tym aneksem mają migawkę w zakresie
+   pierwotnego pkt 2c; migawka nie ma ścieżki UPDATE, a dopisanie okien z żywego katalogu łamałoby
+   AC-04. Miesiące opisanej klasy zostają w nich "brakiem stawki kosztowej" — nazwane, nie naprawiane.
+8. **Rozważane i odrzucone:** (B) zakres bez zmian — koszt zatwierdzonego scenariusza zależałby od
+   predykatu przychodu; (C) koszt zatwierdzonego scenariusza zawsze niedostępny do osobnego zadania
+   — to wariant B z opóźnieniem, bo scenariusze zatwierdzone w międzyczasie tracą koszt na zawsze;
+   (A′) zamrażanie wszystkich okien nachodzących na planowane miesiące bez predykatu — przeczy
+   pkt 2c i istniejącemu kryterium K-08 SC-4-01.
+
+Relacja do ADR-0003, aneks R-01: zdanie "migawka zamraża wszystkie okna wycenionego miesiąca"
+pozostaje prawdziwe dla przychodu; ten aneks rozszerza zbiór zamrażanych okien, nie zmienia go.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| C-1 | Miesiąc z pełnym pokryciem, jedną stawką kosztową i dwiema sprzedażowymi: zatwierdzenie zamraża wszystkie jego okna; koszt zatwierdzonego scenariusza równa się kosztowi szkicu sprzed zatwierdzenia i nie zmienia się po edycji katalogu. |
+| C-2 | Ten sam miesiąc po zatwierdzeniu: przychód nadal `no_rate` (kontrast do C-1). |
+| C-3 | Miesiąc bez pełnego pokrycia albo ze zmianą waluty nie zamraża żadnego okna (istniejące K-08 SC-4-01 pozostają zielone bez zmian). |
+| C-4 | Kopiarka pozostaje jedną CTE `_snapshot_statement`; rozbicie na osobną instrukcję wywraca test S-01. |

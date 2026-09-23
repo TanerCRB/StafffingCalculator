@@ -651,3 +651,53 @@ przez scenariusz — ten sam przypadek co pozycja obsady (aneks 2026-09-19 SC-3-
 7. **Migawka stawek niesie koszt** (ADR-0004, aneks 2026-09-23 SC-4-01 pkt 2b), a SC-4-01 nie
    wystawia jej wierszy. Pierwsza ścieżka, która je zwraca, podlega koniunkcji — nie wyjątkowi
    katalogowemu, bo wiersz migawki należy do scenariusza.
+
+### 2026-09-23 — koszt osobowy scenariusza: `STAFFING_READ`, trzecia funkcja kształtująca, bramka na sumie (SC-5-01)
+
+Pierwsza ścieżka, która faktycznie wystawia wiersze `approved_snapshot_catalog_default_rate.default_cost_rate`
+(zapowiedziana w pkt 7 wyżej) i pierwsza realna aktywacja koniunkcji z aneksu 2026-09-19 (SC-1-08)
+na polu, które nie jest zastępcze.
+
+1. **Uprawnienie odczytu: `STAFFING_READ`, bez zmian placeholdera.** Koszt scenariusza to wyliczenie
+   z pozycji obsady (ADR-0005 aneks SC-3-01 pkt 2 — bramkuje tę samą ścieżkę). `PERSONNEL_COSTS_READ`
+   pozostaje wyłącznie drugim koniunktem bramki polowej (pkt 2 poniżej), nigdy wymogiem endpointu —
+   odmowa jest odmową **pola**, nie zasobu (precedens SC-2-01 pkt 5): wołający z `STAFFING_READ` bez
+   `PERSONNEL_COSTS_READ` dostaje `200` bez kwoty kosztu, nie `403` na cały odczyt.
+2. **Koniunkcja bez zmian, trzecia funkcja kształtująca.** Pole kosztu (kwota i stawki kosztowe w
+   `assumptions_used`) podlega tej samej koniunkcji `caller.has(PERSONNEL_COSTS_READ)` ∧
+   `project_access.can_view_personnel_costs` (aneks 2026-09-19), rozstrzyganej dla projektu
+   scenariusza z tego samego odczytu zasięgu (pkt 6 aneksu 2026-09-19 — bez osobnego zapytania w
+   warstwie kształtowania). Odpowiedź kosztu scenariusza dostaje **własną** funkcję usuwającą pole,
+   trzecią obok `_without_personnel_costs` (projekt) i `_without_catalog_personnel_costs` (katalog,
+   aneks SC-2-01 pkt 4) — nie rozszerzenie żadnej z nich, bo odpowiedź kosztu nie jest ani payloadem
+   projektu, ani wierszem katalogu.
+3. **`PERSONNEL_COST_FIELDS` (projektu) bez zmian — nowy zbiór `SCENARIO_COST_FIELDS`.** Pole kosztu
+   scenariusza żyje w nowym, osobnym zbiorze polu-po-polu, dowiedzionym anty-pustością przez kontrast
+   K-04(a)/(b)/(c) SC-5-01 (wzorem K-06 SC-1-08, na nowej odpowiedzi — nie przez przepisanie testu
+   `test_project_personnel_cost_visibility.py::test_k_06_the_gate_is_inert_while_the_production_cost_field_set_is_empty`,
+   który zostaje zielony bez zmian, bo dalej dotyczy WYŁĄCZNIE payloadu projektu). Konsekwencja
+   nazwana: obietnica z `docs/PLAN.md` (SC-1-08 Out of scope — "blok 5 dopisuje realne pola kosztowe
+   w tym samym zadaniu, w którym tworzy kolumny") dotyczy `PERSONNEL_COST_FIELDS` projektu i
+   **pozostaje niedotrzymana przez SC-5-01** — ścieżki projektu nadal nie mają realnego pola
+   kosztowego i nadal potrzebują pola zastępczego w testach. Warunek zamknięcia: pierwsze zadanie
+   dokładające koszt do payloadu projektu (nie scenariusza).
+4. **Odczyt kosztu scenariusza — trzeci wpis "jedno miejsce kształtowania, wiele funkcji"** (obok
+   projektu i katalogu). Decyzja bazowa mówiła o warstwie kształtowania jako jedynym miejscu bramki,
+   nie o jednej funkcji na cały system — SC-2-01 pkt 4 już dopuścił drugą. To trzecia, ostatnia
+   dopuszczona bez nowego aneksu; czwarta wymaga własnej decyzji.
+5. **Bramka na sumie i na rozkładzie jednakowo — nadpłacona ochrona świadomie.** F-13: "Permission to
+   view individual personnel costs shall be separable from permission to view aggregate results."
+   Suma kosztu scenariusza podlega TEJ SAMEJ koniunkcji co koszt per pozycja/miesiąc — wzorem SC-2-03
+   pkt 3 (stawka poddostawcy bramkowana identycznie jak wewnętrzna, mimo że to nadmiarowa ochrona
+   tego samego pola). Powód: przy jednej pozycji obsady i `headcount = 1` suma nieobjęta bramką byłaby
+   kosztem jednej konkretnej osoby bez żadnej ochrony — ta sama klasa degradacji danych osobowych co
+   aneks SC-3-02 pkt 11. **Zobowiązanie naprzód:** zysk i marża (blok 7, F-10) MUSZĄ dziedziczyć tę
+   samą koniunkcję w zadaniu, w którym powstają — inaczej `przychód − zysk` ujawniałby koszt mimo
+   zamkniętej bramki kosztowej. Nazwane tu, nie odkryte później.
+6. **Gałąź pozytywna nadal nieosiągalna w produkcji, bez zmiany placeholdera.** Jak w aneksie
+   2026-09-19 (SC-1-08) i aneksie SC-2-01 pkt 3 — dowód wyłącznie przez
+   `app.dependency_overrides[get_caller_identity]` w teście, `can_view_personnel_costs=true` ustawione
+   bezpośrednio w bazie. `PLACEHOLDER_PERMISSIONS` bez zmian; dodanie `PERSONNEL_COSTS_READ` do niego
+   zostaje odrzucone z tych samych powodów co w aneksie 2026-09-19 — otwierałoby katalog kosztowy
+   każdemu wołającemu w dev/test i czerwieniłoby kanarek równości zbiorów. Rejestr możliwości
+   nazywa gałąź pozytywną jako nieosiągalną.

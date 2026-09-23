@@ -997,4 +997,112 @@ history / this file's own change log, not as tracked product work.
   (encja fazy/workstreamu), #66 (Fixed Price), #67 (Outcome-based), #68 (Story Points), #69
   (reguły wspólne F-06.5).
 
+- [ ] **SC-4-06** — Ekran reguły T&M i przychodu scenariusza (F-06.1, frontend): konsument API
+  dostarczonego przez SC-4-01 (`GET`/`POST /projects/{id}/scenarios/{id}/commercial-terms`) —
+  ekran świadomie odłożony przy SC-4-01, wzorem każdego backend/frontend podziału w tym repo
+  (Issue #71).
+  *Done when:* `frontend/src` (vitest) dowodzi K-01..K-07, każde z zarejestrowanym przebiegiem
+  mutacyjnym. Fragment reguły komercyjnej i przychodu scenariusza, zamontowany w działającej
+  aplikacji (nie tylko we własnym teście), jako sekcja karty scenariusza w `ProjectListScreen`
+  (bramka 1, D-2 = opcja A). Pokazuje regułę albo stan "brak reguły" z akcją ustawienia T&M.
+  Kwotę i walutę pokazuje wyłącznie dla `revenue.state = "calculated"`, a każdy z sześciu
+  pozostałych nazwanych stanów (`no_commercial_terms`, `incomplete_commercial_terms`,
+  `unsupported_model_type`, `no_rate`, `currency_mismatch`, `no_revenue_currency`) oraz 403/404
+  odczytu dostaje własny, odróżnialny komunikat, nigdy `0` ani pusty fragment. Pokazuje wybrane
+  pola `assumptions_used` czytelnie — źródło stawki, okna, miesiące bez stawki (bramka 1, D-1 =
+  opcja B), bez rozwijania `position_id` do nazwy pozycji. Zapis T&M (`POST`, dziś tylko
+  `time_and_material`) renderuje regułę i przychód z ciała `201` (ADR-0009 aneks 2026-09-23
+  SC-4-06), rozróżnia 201, 409 "approved", 409 "reguła już istnieje" — dopasowaniem treści
+  odmowy, spiętym testem kontraktowym (bramka 1, D-3 = opcja b), 403, 404 i wynik nierozstrzygnięty
+  (timeout). Akcja "ustaw T&M" ukryta/wyłączona wg `scenario_status = "approved"` z odczytu, ze
+  ścieżką `409` zachowaną jako osobno dowiedziony wyścig (ADR-0009 aneks 2026-09-23 SC-4-06).
+  **Out of scope (explicit):** edycja i usuwanie reguły (ADR-0003 pkt 2, brak ścieżki w API);
+  modele inne niż T&M (Issues #66/#67/#68); rozwinięcie `position_id` z `unresolved_months` do
+  nazwy pozycji (wymagałoby koniunkcji `STAFFING_READ`+`COMMERCIAL_READ`, poza zakresem aneksu
+  ADR-0005 SC-4-01); koszt/zysk/marża (blok 5/7); router/stan wybranego projektu-scenariusza jako
+  ogólny mechanizm (odłożone do zadania, które go faktycznie potrzebuje — bramka 1, D-2); backend
+  (żadna zmiana w `backend/`); mobile/responsive (NF-09).
+  Podstawa: Issue #71, `backend/app/api/schemas/commercial_terms.py`,
+  `backend/app/api/commercial_terms.py`, `docs/PLAN.md` wpisy SC-1-06, SC-2-02, SC-2-04,
+  `docs/architecture/decisions/ADR-0003-model-modeli-komercyjnych.md`,
+  `ADR-0005-model-dostepu.md` (aneks SC-4-01), `ADR-0009-zapis-z-interfejsu.md` (aneks
+  2026-09-23), `ADR-0010-awaria-renderu-frontendu.md`.
+  **Decyzje bramki 1 (2026-09-23, architect + analyst, zaakceptowane przez człowieka):** ADR-0009
+  i ADR-0010 do przyjęcia (Draft→Accepted) przez człowieka niezależnie od tego wpisu — kod tego
+  zadania zakłada ich treść jak dla decyzji przyjętej. Aneksy do ADR-0009 (zawężenie pkt 3, wynik
+  zapisu z ciała `201`; doprecyzowanie pkt 4, prezentacja `scenario_status` dozwolona, wyścig `409`
+  zostaje) dopisane 2026-09-23.
+
+- [ ] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
+  worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
+  predykatem lustrzanym do ADR-0003/R-01), koszt jawnie bazowy (nie w pełni obciążony), bramka
+  koniunkcji kosztowej (`STAFFING_READ` na endpoincie, `PERSONNEL_COSTS_READ` ∧
+  `can_view_personnel_costs` na polu), czytelnik migawki dla zatwierdzonych scenariuszy (AC-04)
+  (Issue #9, Story F-07 zawężona na bramce 1 do wyłącznie tego zadania — reszta jako SC-5-02..).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07 (analyst, 2026-09-23):
+  1. (K-01) Koszt = Σ (`planned_allocation_hours × default_cost_rate`), jedno zaokrąglenie na
+     końcu (ADR-0002), bez `× headcount` (alokacja to już suma pozycji). Cztery niezależne mutacje
+     muszą zabić: `billable_hours` zamiast planu, `× headcount`, `default_selling_rate` zamiast
+     `default_cost_rate`, zaokrąglanie per miesiąc zamiast raz na końcu.
+  2. (K-02) Stawka kosztowa rozstrzygana per (pozycja, miesiąc) predykatem lustrzanym do
+     ADR-0003/R-01, po parze (`default_cost_rate`, `currency`), niezależnie od predykatu
+     sprzedażowego. Zmiana stawki kosztowej w trakcie miesiąca → "brak stawki kosztowej"; zmiana
+     wyłącznie sprzedażowej nie blokuje kosztu (ADR-0013 pkt 1).
+  3. (K-03) Wynik ma dokładnie dwa kształty: koszt bazowy albo stan nazwany (`no_cost_rate` /
+     `currency_mismatch`) — nigdy `0`, nigdy suma częściowa (ADR-0013 pkt 2).
+  4. (K-04) Pole kosztu (kwota i stawki w `assumptions_used`) obecne tylko przy koniunkcji
+     `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` dla projektu tego scenariusza; odmowa =
+     `200` bez pola, nie `403`. Sześć niezależnych mutacji, w tym: flaga z dowolnego przypisania
+     wołającego zamiast przypisania projektu scenariusza; bramka usuwa kwotę ale zostawia stawkę w
+     `assumptions_used`.
+  5. (K-05) Scenariusz/projekt spoza zasięgu → `404`, nieodróżnialne od nieistniejącego, dowiedzione
+     przy wołającym mającym wszystkie uprawnienia.
+  6. (K-06) Odpowiedź przychodu SC-4-01 nadal bez pola kosztowego, także przy otwartej bramce
+     kosztowej (nowy test, nie tylko istniejący `test_k_11_*` przy zamkniętej).
+  7. (K-07) Koszt zatwierdzonego scenariusza identyczny tuż przed i po zatwierdzeniu, nie zmienia
+     się po późniejszej edycji katalogu — dowiedzione dla miesiąca ze zmienną stawką sprzedażową w
+     trakcie (ADR-0004 aneks 2026-09-23 SC-5-01) i dla miesiąca ze zmienną stawką kosztową.
+
+  **Decyzje bramki 1 (2026-09-23, product-owner + analyst + architect, zaakceptowane przez
+  człowieka):** Q-1 `default_cost_rate` = stawka bazowa, przed narzutami (SC-5-02 dokłada składniki
+  na wierzchu; organizacje z już-obciążonymi stawkami dostają w SC-5-02 podwójny narzut do czasu
+  poprawy danych, nazwane tam wprost); Q-2 "worked time" = `planned_allocation_hours` (obejmuje
+  wysiłek nierozliczalny, domyka SC-3-01 Out of scope); Q-3 zakres migawki rozszerzony o predykat
+  kosztowy jako alternatywę do predykatu sprzedażowego (ADR-0004 aneks 2026-09-23 SC-5-01, bez
+  działania wstecz — scenariusze zatwierdzone wcześniej zostają z luką na zawsze, nazwane); Q-4
+  gałąź pozytywna bramki nieosiągalna w produkcji, przyjęta jak SC-1-08, `PLACEHOLDER_PERMISSIONS`
+  bez zmian; Q-5 pole kosztu w nowym `SCENARIO_COST_FIELDS`, trzecia funkcja kształtująca, endpoint
+  pod `STAFFING_READ` (ADR-0005 aneks 2026-09-23 SC-5-01) — test
+  `test_project_personnel_cost_visibility.py::test_k_06_…` zostaje zielony bez zmian, bo nadal
+  dotyczy wyłącznie payloadu projektu, nie scenariusza; Q-6 bramka na sumie scenariusza i na
+  rozkładzie jednakowo, nadpłacona ochrona świadomie (zobowiązanie naprzód: zysk/marża bloku 7
+  muszą dziedziczyć tę koniunkcję); Q-7 nowe **ADR-0013** "Koszt osobowy (F-07)", Draft — pending
+  approval, jako miejsce reguły kosztu i przyszłych SC-5-02..04.
+
+  **Out of scope (explicit):** premie/benefity/narzuty pracodawcy i koszt w pełni obciążony, test
+  na podwójny narzut (SC-5-02 — wymaga oceny skutków dla danych osobowych, `headcount=1` czyni
+  narzut pozycji daną jednej osoby, ADR-0005 aneks SC-3-02 pkt 11); kwota stała jako podstawa i
+  wybór podstawy per pozycja (SC-5-03 — nowe wejście, ścieżka zapisu, strażnik `approved`, wpis w
+  `SCENARIO_CHILD_COPIERS`); podstawa FTE (SC-5-04 — brak podstawy konwersji FTE→godziny, odłożone
+  w SC-3-01/SC-3-02); stawki kosztowe dzienne/miesięczne (katalog wymusza w bazie `unit='hour'`);
+  koszt nieobecności płatnych (`absence_type.generates_cost`, budżet urlopowy — inna podstawa
+  godzin, własna reguła bramki ADR-0005 aneks SC-3-03 pkt 4); stawki poddostawców na pozycji
+  (pozycja nie ma dziś `vendor_id`); F-08 (Issue #10, osobna Story); zysk/marża/suma kosztów (blok
+  7, F-10); eksport i ekran (F-11, osobne zadanie frontend); nadawanie `PERSONNEL_COSTS_READ` i
+  flagi przypisania (ADR uwierzytelniania); scenariusze zatwierdzone przed wdrożeniem aneksu
+  ADR-0004 2026-09-23 — świadome, nienaprawiane odstępstwo; `audit_log` (blok 8).
+
+  **Fundament nieudowodniony, przyjęty świadomie:** pierwszy konsument `default_cost_rate` w
+  jakimkolwiek wyliczeniu; pierwszy czytelnik kosztu z migawki
+  `approved_snapshot_catalog_default_rate`; pierwsza realna aktywacja koniunkcji kosztowej z
+  aneksu SC-1-08 na polu niezastępczym; gałąź pozytywna bramki nieosiągalna w produkcji; wyścig
+  edycji katalogu z zatwierdzeniem dziedziczy status "no evidence" z SC-2-03 (rozszerzony zakres
+  tej samej migawki). Podstawa: Issue #9, `Wymagania/Requirements_EN.md` §4 F-07 (pkt 1 i 3, tylko
+  worked time), §7 AC-01/AC-04/AC-06, `docs/PLAN.md` SC-3-01/SC-1-08/SC-4-01,
+  `docs/architecture/decisions/ADR-0002-obsluga-pieniedzy.md`,
+  `ADR-0003-model-modeli-komercyjnych.md` (pkt 4, 5, aneks R-01),
+  `ADR-0004-wersjonowanie-kalkulacji.md` (aneksy SC-4-01, 2026-09-23 SC-5-01),
+  `ADR-0005-model-dostepu.md` (aneksy SC-1-08, SC-3-01, SC-3-02, SC-3-03, SC-4-01, 2026-09-23
+  SC-5-01), `ADR-0008-przedzialy-obowiazywania.md`, `ADR-0013-koszt-osobowy.md` (nowa, Draft).
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
