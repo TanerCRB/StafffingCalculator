@@ -1,0 +1,178 @@
+{
+  "currency": "PLN",
+  "period": {
+    "start": "2026-09-01",
+    "end": "2027-02-28"
+  },
+  "months": [
+    "Sep 26",
+    "Oct 26",
+    "Nov 26",
+    "Dec 26",
+    "Jan 27",
+    "Feb 27"
+  ],
+  "hours": [
+    176,
+    176,
+    160,
+    168,
+    152,
+    160
+  ],
+  "positions": [
+    {
+      "role": "Technical lead",
+      "level": "Lead",
+      "location": "Poland",
+      "count": 1,
+      "cost": 200,
+      "sell": 320,
+      "bill": 0.9,
+      "alloc": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "role": "Backend engineer",
+      "level": "Senior",
+      "location": "Poland",
+      "count": 2,
+      "cost": 160,
+      "sell": 260,
+      "bill": 1,
+      "alloc": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "role": "QA engineer",
+      "level": "Mid",
+      "location": "Poland",
+      "count": 1,
+      "cost": 120,
+      "sell": 220,
+      "bill": 1,
+      "alloc": [
+        0.5,
+        0.75,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "role": "Product designer",
+      "level": "Senior",
+      "location": "Poland",
+      "count": 1,
+      "cost": 150,
+      "sell": 250,
+      "bill": 1,
+      "alloc": [
+        0.5,
+        0.5,
+        0.25,
+        0.25,
+        0,
+        0
+      ]
+    },
+    {
+      "role": "Project manager",
+      "level": "Senior",
+      "location": "Poland",
+      "count": 1,
+      "cost": 180,
+      "sell": 280,
+      "bill": 0.5,
+      "alloc": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ]
+    }
+  ],
+  "additionalCosts": [
+    16000,
+    10000,
+    4000,
+    4000,
+    4000,
+    4000
+  ],
+  "monthly": [
+    {
+      "month": "Sep 26",
+      "staff": 131120,
+      "extra": 16000,
+      "cost": 147120,
+      "revenue": 195888,
+      "profit": 48768
+    },
+    {
+      "month": "Oct 26",
+      "staff": 136400,
+      "extra": 10000,
+      "cost": 146400,
+      "revenue": 205568,
+      "profit": 59168
+    },
+    {
+      "month": "Nov 26",
+      "staff": 122800,
+      "extra": 4000,
+      "cost": 126800,
+      "revenue": 185680,
+      "profit": 58880
+    },
+    {
+      "month": "Dec 26",
+      "staff": 128940,
+      "extra": 4000,
+      "cost": 132940,
+      "revenue": 194964,
+      "profit": 62024
+    },
+    {
+      "month": "Jan 27",
+      "staff": 110960,
+      "extra": 4000,
+      "cost": 114960,
+      "revenue": 166896,
+      "profit": 51936
+    },
+    {
+      "month": "Feb 27",
+      "staff": 116800,
+      "extra": 4000,
+      "cost": 120800,
+      "revenue": 175680,
+      "profit": 54880
+    }
+  ],
+  "totals": {
+    "revenue": 1124676,
+    "cost": 789020,
+    "staff": 747020,
+    "profit": 335656,
+    "margin": 29.844684157926373
+  },
+  "plannedHours": 4590,
+  "billableHours": 4242.8,
+  "disclaimer": "Synthetic design fixture; not current rates or a production engine."
+}

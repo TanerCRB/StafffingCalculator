@@ -1,0 +1,120 @@
+/*
+ * Design tokens — the ONE source of colour, typography, spacing and radius for this app.
+ *
+ * Rule (PULL_REQUEST_TEMPLATE-frontend.md, "Invariants affected by this change"): a new colour is
+ * added here as a token, never as a literal at a call site. This is the only stylesheet in the
+ * repository allowed to contain a colour literal (`#rrggbb`, `rgb()`, `rgba()`, `hsl()`), and
+ * `src/styles/tokens.test.ts` fails the build if a second one appears.
+ *
+ * Palette and typography come from `Wymagania/UI/globallogic_style_guide-v3.docx`. That document
+ * is a PowerPoint handbook, not a web design system, so only the brand constants below are taken
+ * from it verbatim — the neutrals, the type scale and the spacing scale are this app's own,
+ * chosen to be consistent with them.
+ *
+ * Two brand rules travel with these values and are NOT enforceable by a token:
+ *   * `--sc-color-orange` may sit on white only. Never on `--sc-color-light-steel` — the style
+ *     guide rejects that pair for contrast.
+ *   * `--sc-color-blue` is the accent that works on light steel, and a secondary accent on white.
+ * They are review rules. Nothing in this repository tests them — see the implementation report.
+ */
+
+:root {
+  /* --- Brand palette (verbatim from the style guide) ------------------------------------- */
+  --sc-color-orange: #ff5500;
+  --sc-color-blue: #0066ff;
+  --sc-color-light-steel: #f0f2f5;
+  --sc-color-steel-gray-75: #3b4252;
+  --sc-color-white: #ffffff;
+  --sc-color-black: #000000;
+
+  /*
+   * Data palette — reserved for charts (F-10/F-11). Deliberately unused on the project list: a
+   * qualitative palette applied to non-chart surfaces stops meaning "this series" and starts
+   * meaning nothing.
+   */
+  --sc-color-data-teal: #00b4d8;
+  --sc-color-data-amber: #ffb703;
+  --sc-color-data-purple: #7209b7;
+  --sc-color-data-coral: #f72585;
+
+  /* --- Derived brand shades (hover/active states of the two accents) ---------------------- */
+  --sc-color-orange-hover: #e64d00;
+  --sc-color-blue-hover: #0052cc;
+  --sc-color-blue-deep: #0047b3;
+
+  /* --- Neutrals -------------------------------------------------------------------------- */
+  --sc-color-page: #ffffff;
+  --sc-color-surface: #ffffff;
+  --sc-color-surface-muted: #f0f2f5;
+  --sc-color-border: #d7dbe0;
+  --sc-color-border-strong: #b9c0c9;
+  --sc-color-text: #000000;
+  --sc-color-text-muted: #555e6b;
+  /* Dark enough to clear 4.5:1 on white, on light steel and on the disabled surface below.
+     WCAG 1.4.3 exempts inactive controls, but these controls exist precisely to be read before
+     they work (F-13), so they are held to the same bar as live text. */
+  --sc-color-text-disabled: #5d6573;
+  --sc-color-disabled-surface: #e9ecf0;
+
+  /* --- Status badges --------------------------------------------------------------------- */
+  /* Project status (Active/Archived) and scenario status (Draft/Approved) are the server's own
+     words; the fill is an additional channel on top of the word, never a replacement (NF-08). */
+  --sc-color-status-active-bg: #e0ebff;
+  --sc-color-status-active-text: var(--sc-color-blue-deep);
+  --sc-color-status-archived-bg: #e3e6eb;
+  --sc-color-status-archived-text: var(--sc-color-steel-gray-75);
+  --sc-color-status-approved-bg: #e0ebff;
+  --sc-color-status-approved-text: var(--sc-color-blue-deep);
+  --sc-color-status-draft-bg: #e3e6eb;
+  --sc-color-status-draft-text: var(--sc-color-steel-gray-75);
+
+  /* --- Feedback -------------------------------------------------------------------------- */
+  --sc-color-attention-bg: #fdeee7;
+  --sc-color-attention-text: #8a2f00;
+
+  /* --- Typography ------------------------------------------------------------------------ */
+  /* Manrope is the only brand typeface; it is requested in index.html (see frontend/README.md
+     for why the link lives there and not in an @import). The fallbacks keep the layout usable
+     when the font request fails — a screen with no text is worse than a screen in Segoe UI. */
+  --sc-font-family: "Manrope", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --sc-font-weight-regular: 400;
+  --sc-font-weight-medium: 500;
+  --sc-font-weight-semibold: 600;
+  --sc-font-weight-bold: 700;
+
+  --sc-font-size-xs: 0.75rem;
+  --sc-font-size-sm: 0.8125rem;
+  --sc-font-size-body: 0.9375rem;
+  --sc-font-size-md: 1rem;
+  --sc-font-size-lg: 1.125rem;
+  --sc-font-size-xl: 1.375rem;
+  --sc-font-size-2xl: 1.75rem;
+
+  --sc-line-height-tight: 1.25;
+  --sc-line-height-body: 1.5;
+
+  /* --- Spacing --------------------------------------------------------------------------- */
+  --sc-space-1: 0.25rem;
+  --sc-space-2: 0.5rem;
+  --sc-space-3: 0.75rem;
+  --sc-space-4: 1rem;
+  --sc-space-5: 1.5rem;
+  --sc-space-6: 2rem;
+  --sc-space-7: 2.5rem;
+
+  /* --- Radius and elevation --------------------------------------------------------------- */
+  --sc-radius-sm: 4px;
+  --sc-radius-md: 8px;
+  --sc-radius-lg: 12px;
+  --sc-radius-pill: 999px;
+  --sc-shadow-card: 0 1px 2px rgba(59, 66, 82, 0.08);
+  --sc-shadow-raised: 0 2px 8px rgba(59, 66, 82, 0.12);
+  /* No `--sc-focus-ring` token: the focus ring is an `outline` drawn in app.css from
+     `--sc-color-blue`. A second, unused box-shadow spelling of the same idea is how two focus
+     styles start to diverge. */
+
+  /* --- Layout ----------------------------------------------------------------------------- */
+  --sc-layout-max-width: 1360px;
+  --sc-layout-side-panel-width: 22rem;
+  --sc-accent-bar-height: 4px;
+}

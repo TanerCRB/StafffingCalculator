@@ -1,0 +1,337 @@
+{
+  "desktop": [
+    {
+      "route": "projects",
+      "id": "UI-01",
+      "title": "Projects",
+      "image": "screens/01-projects.png",
+      "width": 1440,
+      "height": 1116,
+      "requirements": [
+        "F-01",
+        "F-13"
+      ]
+    },
+    {
+      "route": "overview",
+      "id": "UI-02",
+      "title": "Project overview",
+      "image": "screens/02-overview.png",
+      "width": 1440,
+      "height": 1258,
+      "requirements": [
+        "F-10",
+        "F-11"
+      ]
+    },
+    {
+      "route": "staffing",
+      "id": "UI-03",
+      "title": "Staffing plan",
+      "image": "screens/03-staffing.png",
+      "width": 1440,
+      "height": 1154,
+      "requirements": [
+        "F-04",
+        "F-05",
+        "F-07"
+      ]
+    },
+    {
+      "route": "resource",
+      "id": "UI-04",
+      "title": "Position details",
+      "image": "screens/04-resource.png",
+      "width": 1440,
+      "height": 1154,
+      "requirements": [
+        "F-03",
+        "F-04",
+        "F-07"
+      ]
+    },
+    {
+      "route": "costs",
+      "id": "UI-05",
+      "title": "Additional costs",
+      "image": "screens/05-costs.png",
+      "width": 1440,
+      "height": 1392,
+      "requirements": [
+        "F-08"
+      ]
+    },
+    {
+      "route": "cost-detail",
+      "id": "UI-06",
+      "title": "Cost details",
+      "image": "screens/06-cost-detail.png",
+      "width": 1440,
+      "height": 1392,
+      "requirements": [
+        "F-08"
+      ]
+    },
+    {
+      "route": "tm",
+      "id": "UI-07",
+      "title": "Time & Material",
+      "image": "screens/07-tm.png",
+      "width": 1440,
+      "height": 1165,
+      "requirements": [
+        "F-06.1"
+      ]
+    },
+    {
+      "route": "fixed",
+      "id": "UI-08",
+      "title": "Fixed Price",
+      "image": "screens/08-fixed.png",
+      "width": 1440,
+      "height": 1146,
+      "requirements": [
+        "F-06.2"
+      ]
+    },
+    {
+      "route": "outcome",
+      "id": "UI-09",
+      "title": "Outcome-based",
+      "image": "screens/09-outcome.png",
+      "width": 1440,
+      "height": 1305,
+      "requirements": [
+        "F-06.3"
+      ]
+    },
+    {
+      "route": "points",
+      "id": "UI-10",
+      "title": "Story Points",
+      "image": "screens/10-points.png",
+      "width": 1440,
+      "height": 1228,
+      "requirements": [
+        "F-06.4"
+      ]
+    },
+    {
+      "route": "compare",
+      "id": "UI-11",
+      "title": "Scenario comparison",
+      "image": "screens/11-compare.png",
+      "width": 1440,
+      "height": 1113,
+      "requirements": [
+        "F-09",
+        "F-10"
+      ]
+    },
+    {
+      "route": "sensitivity",
+      "id": "UI-12",
+      "title": "Sensitivity analysis",
+      "image": "screens/12-sensitivity.png",
+      "width": 1440,
+      "height": 1080,
+      "requirements": [
+        "F-09"
+      ]
+    },
+    {
+      "route": "assumptions",
+      "id": "UI-13",
+      "title": "Scenario assumptions",
+      "image": "screens/13-assumptions.png",
+      "width": 1440,
+      "height": 1153,
+      "requirements": [
+        "F-02",
+        "F-05"
+      ]
+    },
+    {
+      "route": "calendar",
+      "id": "UI-14",
+      "title": "Working calendars",
+      "image": "screens/14-calendar.png",
+      "width": 1440,
+      "height": 1096,
+      "requirements": [
+        "F-05"
+      ]
+    },
+    {
+      "route": "catalog",
+      "id": "UI-15",
+      "title": "Roles & rates",
+      "image": "screens/15-catalog.png",
+      "width": 1440,
+      "height": 1647,
+      "requirements": [
+        "F-03",
+        "NF-10"
+      ]
+    },
+    {
+      "route": "versions",
+      "id": "UI-16",
+      "title": "Versions & approval",
+      "image": "screens/16-versions.png",
+      "width": 1440,
+      "height": 1118,
+      "requirements": [
+        "F-12"
+      ]
+    },
+    {
+      "route": "report",
+      "id": "UI-17",
+      "title": "Report preview",
+      "image": "screens/17-report.png",
+      "width": 1440,
+      "height": 1226,
+      "requirements": [
+        "F-11",
+        "F-12"
+      ]
+    },
+    {
+      "route": "access",
+      "id": "UI-18",
+      "title": "Project access",
+      "image": "screens/18-access.png",
+      "width": 1440,
+      "height": 1080,
+      "requirements": [
+        "F-13"
+      ]
+    },
+    {
+      "route": "states",
+      "id": "UI-19",
+      "title": "System states",
+      "image": "screens/19-states.png",
+      "width": 1440,
+      "height": 1114,
+      "requirements": [
+        "NF-05",
+        "NF-07",
+        "NF-08"
+      ]
+    },
+    {
+      "route": "create",
+      "id": "UI-20",
+      "title": "Create project",
+      "image": "screens/20-create.png",
+      "width": 1440,
+      "height": 1080,
+      "requirements": [
+        "F-01",
+        "NF-07"
+      ]
+    },
+    {
+      "route": "system",
+      "id": "UI-21",
+      "title": "Design system",
+      "image": "screens/21-system.png",
+      "width": 1440,
+      "height": 1080,
+      "requirements": [
+        "NF-07",
+        "NF-08"
+      ]
+    },
+    {
+      "route": "approved",
+      "id": "UI-22",
+      "title": "Approved version",
+      "image": "screens/22-approved.png",
+      "width": 1440,
+      "height": 1326,
+      "requirements": [
+        "F-12"
+      ]
+    },
+    {
+      "route": "conflict",
+      "id": "UI-23",
+      "title": "Save conflict",
+      "image": "screens/23-conflict.png",
+      "width": 1440,
+      "height": 1080,
+      "requirements": [
+        "NF-05"
+      ]
+    },
+    {
+      "route": "organization",
+      "id": "UI-24",
+      "title": "Organization defaults",
+      "image": "screens/24-organization.png",
+      "width": 1440,
+      "height": 1124,
+      "requirements": [
+        "F-02",
+        "NF-10"
+      ]
+    }
+  ],
+  "mobile": [
+    {
+      "route": "overview",
+      "title": "Mobile summary",
+      "image": "screens/mobile-overview.png",
+      "width": 390
+    },
+    {
+      "route": "projects",
+      "title": "Mobile project list",
+      "image": "screens/mobile-projects.png",
+      "width": 390
+    },
+    {
+      "route": "points",
+      "title": "Mobile commercial terms",
+      "image": "screens/mobile-points.png",
+      "width": 390
+    }
+  ],
+  "catalog_panels": [
+    {
+      "id": "UI-15A",
+      "title": "Roles",
+      "image": "screens/15-catalog-roles.png",
+      "dimension": "roles",
+      "width": 572,
+      "height": 510
+    },
+    {
+      "id": "UI-15B",
+      "title": "Seniorities",
+      "image": "screens/15-catalog-seniorities.png",
+      "dimension": "seniorities",
+      "width": 572,
+      "height": 510
+    },
+    {
+      "id": "UI-15C",
+      "title": "Locations",
+      "image": "screens/15-catalog-locations.png",
+      "dimension": "locations",
+      "width": 572,
+      "height": 468
+    },
+    {
+      "id": "UI-15D",
+      "title": "Engagement types",
+      "image": "screens/15-catalog-engagement-types.png",
+      "dimension": "engagement-types",
+      "width": 572,
+      "height": 468
+    }
+  ]
+}
