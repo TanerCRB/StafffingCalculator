@@ -694,6 +694,17 @@ na polu, które nie jest zastępcze.
    aneks SC-3-02 pkt 11. **Zobowiązanie naprzód:** zysk i marża (blok 7, F-10) MUSZĄ dziedziczyć tę
    samą koniunkcję w zadaniu, w którym powstają — inaczej `przychód − zysk` ujawniałby koszt mimo
    zamkniętej bramki kosztowej. Nazwane tu, nie odkryte później.
+   **Ryzyko nazwane (security-auditor, weryfikacja SC-5-01, 2026-09-23, B-01):** ochrona sumy
+   działa tylko wobec wołającego bez `PERSONNEL_COSTS_READ`. Wołający, który MA
+   `PERSONNEL_COSTS_READ` globalnie, ale nie ma flagi `can_view_personnel_costs` na projekcie,
+   dostaje `null` z tego endpointu, lecz może przeliczyć tę samą kwotę sam z `GET
+   .../staffing-positions` (`STAFFING_READ`, plan godzin) i odczytu katalogu (`CATALOG_READ`,
+   jednoczynnikowa bramka — aneks SC-2-01 pkt 3, ryzyko nazwane tam w pkt 7 jako "stawka katalogu
+   bez flagi projektu"). Dziś uśpione: `PLACEHOLDER_PERMISSIONS` nie zawiera
+   `PERSONNEL_COSTS_READ` (aneks 2026-09-19 pkt 5), więc żaden wołający produkcyjny nie ma
+   pierwszej połowy koniunkcji. Warunek ponownego otwarcia: ADR uwierzytelniania musi rozstrzygnąć,
+   czy `PERSONNEL_COSTS_READ` globalne ma w ogóle współistnieć z odczytem katalogu/obsady bez
+   flagi projektu — inaczej pierwszy wołający z tym uprawnieniem odziedziczy lukę.
 6. **Gałąź pozytywna nadal nieosiągalna w produkcji, bez zmiany placeholdera.** Jak w aneksie
    2026-09-19 (SC-1-08) i aneksie SC-2-01 pkt 3 — dowód wyłącznie przez
    `app.dependency_overrides[get_caller_identity]` w teście, `can_view_personnel_costs=true` ustawione
@@ -701,3 +712,13 @@ na polu, które nie jest zastępcze.
    zostaje odrzucone z tych samych powodów co w aneksie 2026-09-19 — otwierałoby katalog kosztowy
    każdemu wołającemu w dev/test i czerwieniłoby kanarek równości zbiorów. Rejestr możliwości
    nazywa gałąź pozytywną jako nieosiągalną.
+7. **Doprecyzowanie pkt 1 (2026-09-23, bramka 2 SC-5-01, Draft — pending approval): co odmowa
+   zostawia.** `SCENARIO_COST_FIELDS = {amount, assumptions_used}`; `state`, `cost_basis` i
+   `currency` pozostają widoczne wołającemu bez koniunkcji — świadomie, wzorem bramki katalogu
+   (aneks SC-2-01: usuwany wyłącznie `default_cost_rate`, waluta i okno zostają). Odmówiony
+   wołający wie, czy koszt jest policzalny i dlaczego nie (`no_cost_rate` / `currency_mismatch` /
+   `no_cost_currency`), nie wie ile ani z jakich stawek i miesięcy. Nazwane: wołający z
+   `STAFFING_READ` bez odczytu katalogu dowiaduje się w ten sposób o pokryciu katalogu stawką
+   wewnętrzną — informacja o danych referencyjnych, nie o koszcie osoby (F-13). Zobowiązanie
+   naprzód: każda przyszła wartość `state` lub `cost_basis`, z której da się wywnioskować kwotę lub
+   stawkę, przechodzi do `SCENARIO_COST_FIELDS` w zadaniu, w którym powstaje.

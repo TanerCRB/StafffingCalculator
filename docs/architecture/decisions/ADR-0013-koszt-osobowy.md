@@ -34,7 +34,7 @@ potrzebne jest jedno miejsce, nie rozproszenie po ADR-0003/ADR-0008 zadanie po z
    ze stawkami/oknami per miesiąc) albo stan nazwany: `no_cost_rate` (co najmniej jeden miesiąc
    alokacji bez rozstrzygniętej stawki kosztowej — wskazuje który) albo `currency_mismatch`
    (waluta rozstrzygniętej stawki różna od `scenarios.currency`, albo okna tej samej krotki i
-   miesiąca niezgodne walutą między sobą). Zakaz sumy częściowej: jeden miesiąc bez stawki
+   miesiąca niezgodne walutą między sobą — doprecyzowane aneksem 2026-09-23, bramka 2). Zakaz sumy częściowej: jeden miesiąc bez stawki
    przełącza CAŁY wynik pozycji w stan nazwany, nigdy nie jest pomijany w sumie. Zakaz `0` jako
    substytutu braku stawki.
 3. **Koszt bazowy = Σ (`planned_allocation_hours` × stawka kosztowa rozstrzygnięta dla miesiąca
@@ -85,3 +85,35 @@ stanem nazwanym, nie kursem — ADR-0006 bez zmian).
   zostaje zielony bez zmian.
 - Gałąź pozytywna bramki kosztowej pozostaje nieosiągalna w produkcji do czasu ADR
   uwierzytelniania — nazwane w rejestrze możliwości, nie naprawiane tym zadaniem.
+
+## Aneksy
+
+### 2026-09-23 — doprecyzowanie pkt 2: rozróżnienie stanów walutowych, stan `no_cost_currency` (SC-5-01, bramka 2)
+
+**Status:** Draft — pending approval
+
+Pkt 2 w brzmieniu "okna tej samej krotki i miesiąca niezgodne walutą między sobą" jako przypadek
+`currency_mismatch` jest niespełnialny: taki miesiąc nie spełnia predykatu pkt 1 (jedna para
+`default_cost_rate`, `currency`) i nigdy nie dochodzi do porównania walut. Rozstrzygnięcie:
+
+1. **Niejednorodna waluta MIĘDZY oknami jednej (pozycja, miesiąc) → miesiąc nierozstrzygnięty →
+   `no_cost_rate`**, tak samo jak zmiana stawki kosztowej w trakcie miesiąca i luka. Lustro ADR-0003
+   aneks R-01; spójne z ADR-0004 aneks 2026-09-23 SC-5-01, C-3 (taki miesiąc nie zamraża żadnego
+   okna).
+2. **`currency_mismatch` wyłącznie po rozstrzygnięciu wszystkich miesięcy**, gdy (b) waluta
+   rozstrzygniętych stawek różni się od `scenarios.currency` (jeśli zadeklarowana), albo (c)
+   rozstrzygnięte (pozycja, miesiąc) mają różne waluty między sobą. Bez przeliczenia (ADR-0006).
+   Kolejność: `no_cost_rate` ma pierwszeństwo przed `currency_mismatch`.
+3. **`no_cost_currency` — trzecia wartość stanu nazwanego** (nadal jeden kształt "stan nazwany", nie
+   trzeci kształt wyniku): scenariusz bez żadnego wiersza alokacji i bez `scenarios.currency`
+   (kolumna nullable). Wynik `0.00` musiałby nie nazywać waluty, co łamie pkt 2. Lustro
+   `no_revenue_currency` (ADR-0003 aneks R-01). Wiersze alokacji z `planned_allocation_hours = 0`
+   NIE wyzwalają tego stanu — podlegają pkt 1 i 4 jak każdy miesiąc.
+4. **Scenariusz bez `scenarios.currency` z rozstrzygniętymi stawkami w jednej walucie →
+   `calculated` w tej walucie** (lustro ścieżki przychodu).
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| W-1 | Zmiana samej waluty okna w trakcie miesiąca przy tej samej kwocie stawki kosztowej → `no_cost_rate`, nie `currency_mismatch`. |
+| W-2 | Dwie pozycje rozstrzygnięte w różnych walutach → `currency_mismatch`, obie waluty w `assumptions_used.currencies`; stawki w jednej walucie przy innej `scenarios.currency` → `currency_mismatch`; kontrast ze zgodną walutą → `calculated`. |
+| W-3 | Pusty plan: `scenarios.currency` zadeklarowana → `calculated`, `0.00` w tej walucie; brak → `no_cost_currency`, bez kwoty. |

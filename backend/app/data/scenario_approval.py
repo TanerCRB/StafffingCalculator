@@ -103,7 +103,9 @@ always empty, written without an error.
   assumptions from the frozen row and never from the live one. Since SC-4-01 a second one does:
   `approved_snapshot_catalog_default_rate` is read by `app.data.commercial_terms`, which prices an
   approved scenario's T&M revenue from the frozen windows, per month, with the same whole-month
-  predicate the live read uses (ADR-0004, addendum 2026-09-23 SC-4-01, point 2e). The other four
+  predicate the live read uses (ADR-0004, addendum 2026-09-23 SC-4-01, point 2e) — and, since
+  SC-5-01, by `app.data.personnel_cost` too, which costs an approved scenario from the frozen
+  `default_cost_rate` with the cost predicate (aneks 2026-09-23 SC-5-01, point 4). The other four
   tables still have no reader; theirs is the reproducible report of plan block 8. This module proves
   the rows are written and that editing the source afterwards does not move them (K-16).
 """
@@ -117,6 +119,7 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.commercial_terms import priced_month_windows
+from app.data.personnel_cost import costed_month_windows
 from app.data.scenario_guard import (
     approving_project_lock,
     draft_scenario,
@@ -231,12 +234,13 @@ class ApprovalResult:
 
     catalog_default_rates: int
     """The sixth counter (SC-4-01, ADR-0004 addendum 2026-09-23 SC-4-01, point 2): how many
-    catalogue rate windows the T&M revenue of this scenario reads and this approval froze — every
-    window of every priced month (`month_is_priced`: the month's windows cover it whole and share
-    one selling rate and currency), so one month may contribute more than one. Zero is again two
-    facts — "no position-month was priced" (legal: those months stay `no_rate`) or "windows
-    existed and were not copied" — so it is read against a contrast (criterion K-08), never on its
-    own. The same deliberate canary growth as the fourth and fifth."""
+    catalogue rate windows this scenario's calculations read and this approval froze — every window
+    of every month priced by the selling predicate (`month_is_priced`) **or**, since SC-5-01,
+    costed by the cost predicate (`month_has_cost_rate`; ADR-0004, aneks 2026-09-23 SC-5-01, point
+    6), so one month may contribute more than one. Zero is again two facts — "no position-month was
+    priced or costed" (legal: those months stay without a rate) or "windows existed and were not
+    copied" — so it is read against a contrast (criterion K-08), never on its own. The same
+    deliberate canary growth as the fourth and fifth."""
 
     @property
     def snapshot_rows(self) -> int:
@@ -689,7 +693,8 @@ def _copy_organization_defaults(scenario_id: uuid.UUID) -> sa.Insert:
 
 
 def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
-    """Freeze every catalogue rate window this scenario's T&M revenue prices a month with (SC-4-01).
+    """Freeze every catalogue rate window this scenario's T&M revenue prices a month with (SC-4-01)
+    or its base personnel cost costs a month with (SC-5-01).
 
     **The first rate snapshot in the repository** (ADR-0004, addendum 2026-09-23 SC-4-01, point 2):
     from SC-4-01 a result of an approved calculation depends on `default_selling_rate`, so editing a
@@ -714,10 +719,21 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     tuple, or thirty-six months of one window, are one frozen row — the SC-3-02 S-01/R-01 defect is
     not re-opened on the sixth table.
 
-    **`default_cost_rate` is copied although nothing in SC-4-01 reads it** (point 2b): the snapshot
-    has no UPDATE path, and a cost not frozen now is a cost an approved scenario never recovers. It
-    makes the table a carrier of personnel cost (ADR-0005, addendum SC-4-01, point 7); nothing in
-    SC-4-01 returns its rows.
+    **`default_cost_rate` is copied** (point 2b): the snapshot has no UPDATE path, and a cost not
+    frozen now is a cost an approved scenario never recovers. It makes the table a carrier of
+    personnel cost (ADR-0005, addendum SC-4-01, point 7). Since SC-5-01 it has a reader —
+    `app.data.personnel_cost` — whose rows go out only through the cost gate (ADR-0005, aneks
+    2026-09-23 SC-5-01).
+
+    **Since SC-5-01 the scope is "priced OR costed"** (ADR-0004, aneks 2026-09-23 SC-5-01, point 1):
+    every window of a month the selling predicate prices (`month_is_priced`) **or** the cost
+    predicate costs (`app.data.personnel_cost.month_has_cost_rate`). Without the second half, a
+    month whose windows cover it with one cost rate while the *selling* rate changes inside it had
+    a cost on the live path and froze nothing — the approved scenario then read "no cost rate" for
+    it for ever (criterion K-07 of SC-5-01). Two independent predicates, never one built from the
+    other (point 3); this copier is the only place that knows both. A month neither predicate
+    resolves still freezes nothing (point 2). Scenarios approved before this change keep their
+    narrower snapshot — no UPDATE path, no retroactive fill (point 7).
 
     A CTE of `_snapshot_statement` like the others (point 2d): a rate edited in the catalogue while
     this approval runs cannot land between "the months this scenario plans" and "the windows frozen
@@ -727,6 +743,22 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     priced = priced_month_windows(from_snapshot=False, scenario_id=scenario_id).subquery(
         "priced_catalog_months"
     )
+    costed = costed_month_windows(from_snapshot=False, scenario_id=scenario_id).subquery(
+        "costed_catalog_months"
+    )
+    # The windows **either** calculation reads (ADR-0004, aneks 2026-09-23 SC-5-01, point 1): of
+    # every month priced by the selling predicate, and of every month costed by the cost predicate
+    # — the alternative of two independent predicates, and this copier is the only place that knows
+    # both (point 3). Each filter sits outside the subquery computing its predicate, for the reason
+    # given above. `UNION` rather than `UNION ALL` is cosmetic here — the `DISTINCT` of
+    # `_deduplicated_with_new_ids` below is what makes a window read by both predicates, or by
+    # thirty-six months, one frozen row.
+    windows_read = sa.union(
+        sa.select(priced.c.scenario_id, priced.c.window_id).where(priced.c.month_is_priced),
+        sa.select(costed.c.scenario_id, costed.c.window_id).where(
+            costed.c.month_has_cost_rate
+        ),
+    ).subquery("windows_read")
     rates = _deduplicated_with_new_ids(
         sa.select(
             scenario_source.c.id.label("scenario_id"),
@@ -744,11 +776,8 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
             CatalogDefaultRate.effective_to,
         )
         .select_from(scenario_source)
-        .join(
-            priced,
-            sa.and_(priced.c.scenario_id == scenario_source.c.id, priced.c.month_is_priced),
-        )
-        .join(CatalogDefaultRate, CatalogDefaultRate.id == priced.c.window_id),
+        .join(windows_read, windows_read.c.scenario_id == scenario_source.c.id)
+        .join(CatalogDefaultRate, CatalogDefaultRate.id == windows_read.c.window_id),
         "copied_catalog_default_rates",
     )
     return (

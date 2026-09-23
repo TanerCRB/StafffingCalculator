@@ -28,6 +28,12 @@ scenario (a resolved staffing-position rate — plan blocks 3-5), the conjunctio
 reading a project's cost rate "through the catalogue" must not become a way around the assignment
 flag. Both gates remove *fields* and never refuse the row, and both do it here rather than in the
 frontend (AC-06, NF-04), so the F-11 export inherits them.
+
+**A third gate since SC-5-01** (ADR-0005, aneks 2026-09-23 SC-5-01): `_without_scenario_personnel_
+costs` gates a scenario's base personnel cost on the same conjunction as the project gate, with its
+own field set (`SCENARIO_COST_FIELDS`) and its own view type (`ScenarioCostView`) — the first gate
+here that removes a real personnel-cost figure inside a project context. `PERSONNEL_COST_FIELDS`
+(project payloads) stays empty.
 """
 
 from collections.abc import Sequence
@@ -55,6 +61,13 @@ from app.api.schemas.commercial_terms import (
     ScenarioCommercialTerms,
     UnresolvedMonthRead,
 )
+from app.api.schemas.personnel_cost import (
+    CostAssumptionsRead,
+    CostRateWindowRead,
+    PersonnelCostRead,
+    ScenarioPersonnelCost,
+    UnresolvedCostMonthRead,
+)
 from app.api.schemas.project import (
     DeliveryPeriod,
     ProjectDetail,
@@ -78,12 +91,15 @@ from app.data.assumptions import ScenarioAssumptionsView
 from app.data.catalog import DimensionRow
 from app.data.commercial_terms import ScenarioCommercialView
 from app.data.organization_defaults import OrganizationLevel
+from app.data.personnel_cost import ScenarioCostView
 from app.data.project_reads import CallerProjectView
 from app.data.staffing import StaffingPositionView
 from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, StatutoryLeaveType
 from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
+from app.domain.personnel_cost import CALCULATED as COST_CALCULATED
+from app.domain.personnel_cost import PersonnelCostResult
 from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
 from app.domain.revenue import RevenueResult
 from app.domain.scenario_readiness import assess
@@ -110,6 +126,23 @@ tests kill: a caller without `PERSONNEL_COSTS_READ` would start receiving the co
 
 A rate's *currency* and *selling* rate are not in here: F-13/AC-06 protect what a person costs, and
 removing the selling rate would make a commercial figure that every planner needs invisible."""
+
+SCENARIO_COST_FIELDS: frozenset[str] = frozenset({"amount", "assumptions_used"})
+"""Fields of a scenario's base personnel cost that carry a personnel cost (SC-5-01).
+
+A third set, next to `PERSONNEL_COST_FIELDS` (project payloads — still empty, and deliberately left
+so: ADR-0005, aneks 2026-09-23 SC-5-01, point 3) and `CATALOG_PERSONNEL_COST_FIELDS` (catalogue
+rows). Applied by `_without_scenario_personnel_costs` to `PersonnelCostRead`.
+
+**Two fields, and both are necessary**: `amount` is the cost, and `assumptions_used` names every
+cost rate the amount was computed from — removing the amount and leaving the rates would leak the
+same figure one multiplication away (criterion K-04). The *sum* is gated exactly like the rates,
+although F-13 speaks of "individual" costs: with one position of `headcount = 1` the scenario's sum
+**is** one person's cost (point 5 — overpaid protection, accepted on purpose).
+
+Not in here: `state`, `cost_basis` and `currency`. None of them is a figure a person costs, and a
+refused caller still learns that a cost exists and why it may not be stateable — the refusal is of
+the *field*, never of the scenario (point 1)."""
 
 _PROJECT_STATUS_LABELS = {
     ProjectStatus.ACTIVE: "Active",
@@ -731,6 +764,103 @@ def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCom
             )
         ),
         revenue=revenue,
+    )
+
+
+# --- a scenario's base personnel cost (SC-5-01) --------------------------------------------------
+# The third shaping function with its own gate (ADR-0005, aneks 2026-09-23 SC-5-01, point 4): not an
+# extension of `_without_personnel_costs` (the payload is not a project) nor of
+# `_without_catalog_personnel_costs` (the rate is not a bare catalogue row — it sits inside a
+# scenario, so the conjunction applies, never the catalogue's single-factor exception). The point
+# also says this is the last one admitted without a new decision.
+
+
+def _without_scenario_personnel_costs(
+    item: PersonnelCostRead, view: ScenarioCostView, caller: CallerIdentity
+) -> PersonnelCostRead:
+    """Remove `SCENARIO_COST_FIELDS` unless *both* halves of the SC-1-08 conjunction say yes.
+
+    - `caller.has(PERSONNEL_COSTS_READ)` — may this caller see personnel costs at all;
+    - `view.can_view_personnel_costs` — is this caller's `project_access` row **for the project this
+      scenario belongs to** one that allows it. It arrived with the view, from the same scope read
+      that returned the scenario (`app.data.staffing.scenario_view_in_scope`); nothing here
+      queries.
+
+    A denial of the *field*: same `200`, same scenario, `state` and `cost_basis` intact, `amount`
+    and `assumptions_used` `null` (point 1). Never a `403` or a `404`.
+
+    The same identity check as `_without_personnel_costs`, for the same reason: `view` and `caller`
+    are two arguments, and shaping user A's flag with user B's permission set would widen the gate
+    silently. Raised explicitly, so `python -O` cannot remove it, and before the conjunction reads
+    a flag that may belong to somebody else.
+    """
+    if view.user_id != caller.user_id:
+        raise AssertionError(
+            "A scenario cost view built for one user is being shaped with another user's "
+            "identity: the personnel-cost gate would combine one caller's assignment flag with "
+            "another caller's permission set. Build the view through app.data.personnel_cost for "
+            "the caller the response is for."
+        )
+    if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
+        return item
+    return item.model_copy(update=dict.fromkeys(SCENARIO_COST_FIELDS))
+
+
+def shape_scenario_personnel_cost(
+    view: ScenarioCostView, caller: CallerIdentity
+) -> ScenarioPersonnelCost:
+    """One scenario's base personnel cost as this caller may see it (SC-5-01).
+
+    Nothing is decided here but the gate: the state, the amount and the windows arrive resolved
+    from `app.data.personnel_cost`; the amount was rounded once, through
+    `app.core.money.round_money`, in `app.domain.personnel_cost`, and is not re-rounded on the way
+    out. Every representation goes through `_without_scenario_personnel_costs` — there is no path
+    out of this function that skips it.
+    """
+    answer = view.cost
+    assumptions = answer.assumptions_used
+    assumptions_read = CostAssumptionsRead(
+        hours_source=assumptions.hours_source,
+        vendor_axis=assumptions.vendor_axis,
+        rate_source=assumptions.rate_source,
+        rate_windows=[
+            CostRateWindowRead(
+                source_rate_id=window.source_rate_id,
+                effective_from=window.effective_from,
+                effective_to=window.effective_to,
+                default_cost_rate=window.cost_rate,
+                currency=window.currency,
+            )
+            for window in assumptions.rate_windows
+        ],
+        unresolved_months=[
+            UnresolvedCostMonthRead(
+                position_id=month.position_id, period_month=month.period_month
+            )
+            for month in assumptions.unresolved_months
+        ],
+        currencies=list(assumptions.currencies),
+    )
+    if isinstance(answer, PersonnelCostResult):
+        cost = PersonnelCostRead(
+            state=COST_CALCULATED,
+            cost_basis=answer.basis,
+            amount=answer.cost,
+            currency=answer.currency,
+            assumptions_used=assumptions_read,
+        )
+    else:
+        cost = PersonnelCostRead(
+            state=answer.reason,
+            cost_basis=answer.basis,
+            amount=NOT_APPLICABLE,
+            currency=None,
+            assumptions_used=assumptions_read,
+        )
+    return ScenarioPersonnelCost(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        personnel_cost=_without_scenario_personnel_costs(cost, view, caller),
     )
 
 
