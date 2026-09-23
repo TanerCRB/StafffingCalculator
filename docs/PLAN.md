@@ -848,4 +848,75 @@ history / this file's own change log, not as tracked product work.
   zweryfikowany jako nieszkodliwy — `--frozen-lockfile` przechodzi). Zob.
   `docs/architecture/capabilities.md`.
 
+- [x] **SC-1-10** — Rozstrzygaj założenia scenariusza z łańcucha organizacja → projekt →
+  scenariusz ze wskazaniem źródła wartości (F-02), na dwóch reprezentatywnych polach: marża
+  docelowa i próg przeciążenia alokacji; napraw wyścig współbieżności między zapisem pól grupy 2
+  Projektu a zatwierdzeniem scenariusza (Issue #4).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01, K-02, K-04–K-09 (analyst, 2026-09-23, runda
+  2 finalna): (1) scenariusz bez nadpisania dziedziczy wartość domyślną organizacji, źródło
+  "organizacja"; brak wszędzie = nazwany stan "brak danej", nigdy `0`, nigdy wyjątek; (2)
+  pierwszeństwo scenariusz→projekt→organizacja, `0` jest wartością rozstrzygniętą nie brakiem; (4)
+  gotowość do zatwierdzenia (F-01) liczy wartość rozstrzygniętą, wartość dziedziczona liczy się
+  jako dostarczona; (5) czytelnik migawki (pierwszy w repo) — zatwierdzony scenariusz czyta
+  wyłącznie zamrożoną wartość organizacji, nigdy żywą tabelę, zmiana defaultu po zatwierdzeniu nic
+  nie rusza (AC-04); (6) zatwierdzony w stanie "brak danej" zostaje w nim, nawet gdy wartość
+  domyślna pojawi się później; (7) nadpisanie projektu przez istniejący `PATCH /projects`, pole
+  grupy 2, `null` = powrót do dziedziczenia; (8) zapis dowolnego pola grupy 2 Projektu (istniejące
+  `reporting_currency`/`delivery_period_*` ORAZ nowe) serializowany z zatwierdzeniem scenariusza
+  tego projektu, dowiedzione testem wyścigu dwóch połączeń w obu kolejnościach; (9) próg jako %
+  `derived_capacity_hours`, odmowa wartości `≤0` na wszystkich trzech poziomach, w bazie nie tylko
+  w API.
+  **Decyzje bramki 1 (2026-09-23):** zakres zawężony przez PO z całego F-02 (10 typów założeń) do
+  mechanizmu na dwóch polach, reszta jako osobne, późniejsze zadania na tym samym wzorcu; P-A —
+  migawka zamraża SUROWĄ wartość domyślną organizacji, nie wynik łańcucha z polem źródła (źródło
+  wynika z obecności wiersza, wzorem stanu D z SC-3-03); P-B — SC-1-10 buduje pierwszego czytelnika
+  migawki w całym repo (dotąd nikt jej nie czytał); P-C — naprawiony TERAZ wyścig
+  projekt↔zatwierdzenie dla WSZYSTKICH pól grupy 2 (nie tylko nowych) jednym mechanizmem, zamiast
+  nazwania jako ryzyko; P-D — migracja NIE zasiewa wiersza wartości domyślnych; Q-1 — "zapisana
+  kalkulacja" (F-02) = "zatwierdzona" (AC-04), reguła 9 `agents/invariant-guardian.md`
+  doprecyzowana; Q-2 — próg przeciążenia jako % `derived_capacity_hours` (świadomie pogłębia G-1 z
+  SC-3-02, dwa źródła prawdy o tygodniu pracy); Q-3 — nadpisanie projektu przez ISTNIEJĄCY
+  `PATCH /projects` (bezpieczne dopiero po naprawie P-C), nadpisanie scenariusza fixture-only; Q-4
+  — poziom projektu zostaje w łańcuchu; Q-5 — wartość dziedziczona liczy się jako "dostarczona" dla
+  gotowości (`test_project_list.py:142,207,239` — asercje BEZ zmian, bo brak zasiewu pod P-D
+  zostawia rozstrzygniętą wartość jako "brak danej" w tych fixture'ach, zmienione tylko
+  komentarze); G-1 — `null` w `PATCH` kasuje nadpisanie WYŁĄCZNIE dla tych dwóch pól; G-2 — dolna
+  granica progu ściśle `>0`.
+  **Nowa decyzja architektoniczna: ADR-0012** ("Założenia konfigurowalne: łańcuch organizacja →
+  projekt → scenariusz i źródło wartości") — status Accepted, obejmuje wszystkie punkty P-A..P-D i
+  Q-1..Q-5 powyżej jako trwały wzorzec dla każdego kolejnego założenia F-02.
+  **Out of scope (explicit):** ścieżka zapisu nadpisania na poziomie SCENARIUSZA (fixture-only —
+  brak endpointu tworzenia/edycji scenariusza, jak SC-3-01/SC-3-02); ścieżka zapisu wartości
+  domyślnych ORGANIZACJI (fixture-only); jakikolwiek konsument progu przeciążenia (logika
+  porównania z alokacją — świadomie odłożone, jak w SC-3-01); pozostałych 8 typów założeń F-02
+  (kalendarz, waluta/kursy, fazy dostawy, eskalacja/rezerwy — każde osobna Story na tym samym
+  wzorcu); poziom projektu NIE jest zamrożony w migawce (czytany na żywo, chroniony tylko
+  strażnikiem zapisu K-08) — bezpośredni SQL z pominięciem `update_project` może go przesunąć,
+  ryzyko nazwane w ADR-0012 pkt 7; ekran (osobne zadanie frontend).
+  **Fundament:** dwa niezależne słowniki źródeł (`rate_source` z ADR-0006, nowy z ADR-0012)
+  współistnieją świadomie, nieujednolicone. Wartości domyślne organizacji i nadpisanie scenariusza
+  widoczne dla każdego wołającego z `PROJECT_READ` na jakikolwiek projekt-szkic — spójne z
+  istniejącym zachowaniem `target_margin_percent`, przyjęte świadomie (security-auditor D-1).
+  Podstawa: Issue #4, `Wymagania/Requirements_EN.md` §4 F-02, §7 AC-04,
+  `docs/architecture/decisions/ADR-0012-zalozenia-lancuch-nadpisan.md`,
+  `ADR-0004-wersjonowanie-kalkulacji.md`, `ADR-0006-waluty-i-kursy.md` (rozjazd słownika źródeł
+  nazwany), `ADR-0001-trwalosc-danych.md` (tabela singleton bez zasięgu).
+  **Done 2026-09-23:** PR #62 (scalone `8bfc2f5`). Dowód: `backend/tests/test_assumption_resolution.py`,
+  `test_assumption_readiness.py`, `test_assumption_approval.py`, `test_project_assumption_overrides.py`,
+  `test_project_group_two_race.py` — 533 testy backendowe zielono (było 473). Trzy równoległe rundy
+  weryfikacji (Invariant Guardian, reviewer, security-auditor) + poprawki: **zatrzymanie** —
+  istniejący test (`test_absence_budget_schema_constraints.py::test_the_absence_budget_migration_downgrades_and_upgrades_again`)
+  miał zahardkodowaną wersję migracji sprzeczną z własnym docstringiem testu ("revision the
+  database starts at is read, not hard-coded") — naprawione za zgodą człowieka, usunięta jedna
+  asercja, reszta testu (round-trip downgrade/upgrade) nietknięta; **R-01** (reviewer, Niska) —
+  nadpisanie projektu zapisywalne przez `PATCH`, ale nieodczytywalne żadnym endpointem — naprawione
+  osobną rundą, `ProjectDetail` rozszerzony o surowe wartości nadpisań; **R-02** (reviewer, Niska)
+  — nieaktualny docstring `draft_scenario` ("the only lock") — poprawiony po naprawie P-C; **S-01,
+  S-02** (invariant-guardian, Niskie) — ADR-0012 prowadził własne śledzenie statusu dowodu wbrew
+  regule 18 (rola wyłącznie `capabilities.md`) i miał martwe odesłanie — oba naprawione przed
+  merge. **Zaakceptowane, nie naprawiane:** D-1/D-2/D-3 security-auditora (Niskie — widoczność
+  wartości domyślnych, przyszłe ryzyko wnioskowania kosztu z marży+przychodu gdy przychód powstanie,
+  brak `statement_timeout` na sesjach aplikacji — wszystkie pre-existing albo nazwane świadomie).
+  Zob. `docs/architecture/capabilities.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
