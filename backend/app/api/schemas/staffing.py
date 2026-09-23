@@ -251,6 +251,29 @@ zero denominator that way (invariant-guardian rule 3, F-10, AC-05), and a second
 same thing would make a client need two branches for one idea. What is new in SC-3-02 is only the
 *reason* — no calendar rather than no denominator."""
 
+AbsenceBudgetState = Literal[
+    "resolved", "no_budget", "no_statutory_leave_type", "no_calendar"
+]
+"""The named states of the leave budget behind a month's capacity (F-05, SC-3-03).
+
+Four, and none of them is decoration:
+
+- `"no_budget"` covers both "no budget has been entered for this pair" and "every window has
+  expired" (ADR-0008, addendum SC-3-03, points 7 and 10b) — deliberately one answer, because both
+  mean the same thing to a planner: this figure rests on nothing, go and enter a budget;
+- `"no_statutory_leave_type"` means the budget exists and **was not applied**, because no absence
+  type carries `is_statutory_leave` and so nothing says which booked leave the entitlement already
+  covers (point 8b; reviewer R-02). It has to be visible *here*, on the capacity, and not only on
+  the catalogue endpoint: the alternative is deducting the entitlement on top of leave that was
+  already deducted — 46 days a year where the regulation grants 26 — with nothing in the payload
+  saying so. It is also the state a freshly migrated database is in, because the flag defaults to
+  `false` on every row and nothing prompts anyone to set it;
+- `"no_calendar"` appears here as well as in `CapacityState` because a location with no calendar has
+  no budget either, and the addendum (point 3a) requires that to be **one** named state a client
+  shows rather than two independent ones.
+
+The values come from `app.domain.absence_budget` and are not spelled again here."""
+
 CapacityState = Literal["resolved", "no_calendar"]
 """The named states of a derived capacity, spelled as a closed set at the boundary.
 
@@ -279,6 +302,53 @@ class DerivedCapacitySource(BaseModel):
     standard_hours_per_day: DecimalString
     working_days: int
     absence_day_equivalents: int
+
+
+class AbsenceBudgetSource(BaseModel):
+    """Which budget row a month's deduction came from, and how it was spread (F-05, SC-3-03).
+
+    The counterpart of `DerivedCapacitySource`, and required for the same reason: with only a
+    monthly figure, a reader cannot tell a large deduction caused by a **short window** from one
+    caused by a large entitlement — and the length of the window is exactly what criterion K-03's
+    first contrast varies (26 days over twelve months and 26 over six are different answers from
+    the same entitlement). F-02 ("identify the source of each inherited or overridden value") is the
+    requirement; this object is the answer.
+
+    `source` is the free text the budget row carries — where the number comes from, never who
+    entered it (ADR-0008, addendum 2026-09-22 SC-3-03, point 6). It is **not** gated: a budget is
+    organisational data, not a personnel cost (ADR-0005, addendum 2026-09-22 SC-3-03, point 3).
+    """
+
+    budget_id: uuid.UUID
+    budget_days: DecimalString
+    """What the regulation grants **one person** over the whole window, as stored — not the monthly
+    share and not this position's total. `Decimal` across the boundary as a fixed-point string, like
+    every other decimal in this API: these days multiply a standard working day and then a rate
+    (NF-01, ADR-0002)."""
+
+    entitlement_days: DecimalString
+    """What **this position** holds over the window: `budget_days × headcount` (reviewer R-01).
+
+    Carried beside `budget_days` rather than instead of it, because a reader needs both: a
+    five-person position entitled to 130 days from a regulation granting 26 is two facts, and a
+    payload showing only the first makes the deduction look four fifths too large — which is exactly
+    the misreading that would have hidden the bug this field was added with."""
+
+    unit: str
+    source: str
+    effective_from: date
+    effective_to: date
+    """Inclusive, as stored, and never `null`: this table refuses an open-ended window (ADR-0008,
+    addendum SC-3-03, point 10b), so the field has no "open-ended" case for a client to render."""
+
+    months_in_window: int
+    statutory_days_absorbed: int
+    """The two numbers the share is made of: the denominator of the proration, and how many
+    person-days of booked statutory leave the window already holds. The second one is what makes the
+    `max` rule visible — leave that fits inside the budget changes no capacity figure at all (point
+    9c), and this field is where a screen can say so instead of leaving it to be discovered. It is
+    counted per booked absence and never deduplicated (SC-3-02, K-06), i.e. in the same person-days
+    as `entitlement_days` above."""
 
 
 class StaffingAllocation(BaseModel):
@@ -312,6 +382,24 @@ class StaffingAllocation(BaseModel):
     """`None` exactly when the state is `"no_calendar"`, and never otherwise. Two fields rather than
     one nullable number, because "could not be computed" and "came out as zero" are two different
     answers and one field would make them one."""
+
+    absence_budget_hours: DecimalString | NotApplicable
+    """How many hours of this month's capacity the **leave budget** removed (F-05, SC-3-03).
+
+    Already inside `derived_capacity_hours` above — this field says how much of the reduction was
+    the budget rather than the absences actually booked, and it is the same figure the calculation
+    subtracted, not a second computation of it.
+
+    `"n/a"` whenever `absence_budget_state` is not `"resolved"`. Never `0.00` for a missing budget:
+    a zero is a number every later sum adds up, and it would be indistinguishable from a budget of
+    zero days — which is a legal row meaning "this engagement type has no entitlement" (ADR-0008,
+    addendum 2026-09-22 SC-3-03, point 7)."""
+
+    absence_budget_state: AbsenceBudgetState
+    absence_budget_source: AbsenceBudgetSource | None = None
+    """`None` exactly when the state is not `"resolved"`. The same two-field shape as the derived
+    capacity above, for the same reason: "there is no budget here" and "the budget came out as
+    zero" must not be one answer."""
 
 
 class StaffingAbsence(BaseModel):

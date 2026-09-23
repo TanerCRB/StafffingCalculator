@@ -1,7 +1,7 @@
-"""The organisational catalogue: role dimensions, vendors, rates, calendars and absence types
-(F-03, F-05; SC-2-01/SC-2-03/SC-3-02).
+"""The organisational catalogue: role dimensions, vendors, rates, calendars, absence types and
+absence budgets (F-03, F-05; SC-2-01/SC-2-03/SC-3-02/SC-3-03).
 
-Nine tables, and one thing they all have in common: **no column ties a row to a project, a user, a
+Ten tables, and one thing they all have in common: **no column ties a row to a project, a user, a
 business unit or a tenant.** That is what puts them outside the `project_access` scope filter
 (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu", point 1) and outside
 the single-guarded-read-path requirement (ADR-0001, addendum 2026-09-19 — a guard function exists so
@@ -23,6 +23,13 @@ pair, no new permission — and `catalog_locations.calendar_id` does **not** end
 points at another organisational row, not at a subject the caller acts for, exactly as `vendor_id`
 does (ADR-0001, addendum 2026-09-22, point 2). What is *not* here is the absence **instance**: that
 row belongs to a scenario and lives in `app.models.staffing`, behind the `project_access` filter.
+
+**SC-3-03 adds the eighth table, `AbsenceBudget`, and one flag column on `absence_type`** (ADR-0005,
+addendum 2026-09-22 SC-3-03, points 1-3): the same exemption from scope, the same
+`CATALOG_READ`/`CATALOG_WRITE` pair, no new permission. A budget is a number of **days**, not an
+amount — the decision that it is organisational data rather than cost data is point 3 of that
+addendum, and the boundary that comes with it is point 4: the *computed cost* of a budget is a cost
+field and goes back through the SC-1-08 conjunction. Nothing in SC-3-03 computes one.
 
 The five dictionaries are **data, not code** (NF-10): no `StrEnum` anywhere restricts which roles,
 seniorities, locations, engagement types or vendors may exist, so adding "Site Reliability Engineer"
@@ -688,6 +695,30 @@ class WorkingCalendarDay(Base):
     )
 
 
+STATUTORY_LEAVE_UNIQUE_INDEX = "uq_absence_type_statutory_leave"
+"""Name of the partial unique index that keeps `is_statutory_leave` true on **at most one** row.
+
+Spelled once, referenced by the tests that prove a refusal came from *this* mechanism and by the
+migration that creates it (ADR-0008, addendum 2026-09-22 SC-3-03, point 8a)."""
+
+STATUTORY_LEAVE_INDEX_EXPRESSION = "(true)"
+STATUTORY_LEAVE_INDEX_PREDICATE = "is_statutory_leave"
+"""`CREATE UNIQUE INDEX … ON absence_type ((true)) WHERE is_statutory_leave`, as SQL.
+
+A unique index on a **constant** expression, restricted to the flagged rows: two flagged rows would
+both index the value `true`, and the second one is refused **in the statement that inserts it**.
+That is the whole reason this is an index and not a `SELECT count(*)` in Python — a Python check is
+check-then-act, which has survived delivered tests three times in this repository (SC-1-02 ×2,
+SC-2-01) and which ADR-0008's addendum (point 8a) rejects here by name.
+
+What it cannot express is the other half — "at least one" — and that half is deliberately a *named
+state* rather than a constraint (point 8b): a catalogue with no statutory type answers "not
+named", never a guess and never a silent `0`.
+
+Spelled here and in the migration, and compared by the drift guard in
+`tests/test_absence_budget_schema_constraints.py`."""
+
+
 class AbsenceType(_CatalogDimension):
     """A kind of absence — holiday, sick leave, training — with its two commercial flags (F-05).
 
@@ -720,4 +751,273 @@ class AbsenceType(_CatalogDimension):
     """Whether time booked against this type is still billable to the client. Independent of
     `generates_cost` above — see the class docstring."""
 
-    __table_args__ = _dimension_table_args("absence_type")
+    is_statutory_leave: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """Which type the **absence budget** is settled against (F-05, SC-3-03).
+
+    A flag on the dictionary, not a column on the budget row (ADR-0008, addendum 2026-09-22 SC-3-03,
+    point 8, a human's decision): the budget's key stays `(calendar_id, engagement_type_id)` and the
+    question "what does this budget count against" is answered by the catalogue. The rejected
+    alternative is named there too — a type *name* hard-coded in Python, which NF-10 and the
+    `WEEK_PATTERN_EXPRESSION` precedent ("a pattern is data, not code") exclude in advance.
+
+    **At most one row may carry it, and the database says so** — `STATUTORY_LEAVE_UNIQUE_INDEX`.
+    **At least one is not enforceable that way and is a named state instead** (point 8b): with no
+    flagged row the answer is "no statutory leave type named", never the first type alphabetically,
+    never one whose name contains "leave", never a silent `0`.
+
+    `NOT NULL` with a `false` default, like the two flags above: an unanswered flag must not read as
+    "yes", and the column can be added to a populated table without a backfill (expand-only).
+
+    **No effective-date window, and the consequence is accepted rather than unnoticed** (point 8c):
+    moving the flag to another type changes what every budget row counts against, at once and
+    without a trace. Draft scenarios pick that up silently, exactly as they pick up any catalogue
+    edit; approved ones are protected only because the flag enters the approval snapshot
+    (ADR-0004, addendum 2026-09-22 SC-3-03, point 8)."""
+
+    __table_args__ = (
+        *_dimension_table_args("absence_type"),
+        # Declared here as well as created by the migration, so the model keeps describing the
+        # database that exists. A partial unique index on a constant expression — see
+        # `STATUTORY_LEAVE_INDEX_EXPRESSION` for why it is an index and not a Python check.
+        Index(
+            STATUTORY_LEAVE_UNIQUE_INDEX,
+            text(STATUTORY_LEAVE_INDEX_EXPRESSION),
+            unique=True,
+            postgresql_where=text(STATUTORY_LEAVE_INDEX_PREDICATE),
+        ),
+    )
+
+
+# --- the absence budget (F-05, SC-3-03) ----------------------------------------------------------
+
+
+BUDGET_PRECISION = 6
+BUDGET_SCALE = 2
+"""`NUMERIC(6,2)` for a number of budgeted days — `Decimal`, never `float` (NF-01, ADR-0002).
+
+The same reasoning as for `standard_hours_per_day`, and ADR-0008's addendum of 2026-09-22 (SC-3-03,
+point 5) states it for this column: the figure is one multiplication away from money — days × the
+calendar's standard day × a rate — so a binary rounding error here reaches every cost and revenue
+figure derived from it. Scale 2 because half-days are real; precision 6 because a year has fewer
+than 400 working days and a budget is not an amount.
+
+Nothing rounds the stored value on the way in (point 5, quoting point 6 of the decision): rounding
+is the consumer's rule, applied once, through `app.core.money.round_money`."""
+
+BUDGET_UNIT_DAY = "day"
+"""The only unit a budget row may carry, enforced by a CHECK in the database.
+
+ADR-0008's addendum (SC-3-03, point 5) requires the unit to be **named and enforced**, not inferred
+from the size of the number: "20" read as days and "20" read as FTE-days are two different answers
+from one row, and no test on a value from the middle of the range would notice. A constant rather
+than a one-member enum, exactly as `RATE_UNIT_HOUR` — F-07 may add FTE, and an enum with one member
+invites reading the unit as decoration."""
+
+ABSENCE_BUDGET_KEY_COLUMNS: tuple[str, ...] = ("calendar_id", "engagement_type_id")
+"""What the database treats as "the same budget": the calendar and the engagement type, and those
+two only (ADR-0008, addendum 2026-09-22 SC-3-03, point 3 — gate-1 decision Q-2).
+
+Both `NOT NULL`. A nullable column in this key would mean "any", i.e. a second, unnamed resolution
+mechanism laid on top of the date window — the argument `RATE_DIMENSION_COLUMNS` makes for its four
+dimensions, and the mutation criterion K-08 kills.
+
+**No `location_id`**, and that is a decision with an expiry condition (point 3b): locations pointing
+at one calendar share its budget, and "this location has no calendar" is therefore also "this
+location has no budget" — one named state to show, not two independent ones. The first request for
+two different budgets under one calendar re-opens it, and re-opening it is a rebuild of the
+`EXCLUDE` constraint, i.e. a migration with no expand/contract pair.
+
+As data, because it is both the tuple of the resolution lookup and the first two elements of the
+constraint key, and those must never disagree."""
+
+ABSENCE_BUDGET_NO_OVERLAP_CONSTRAINT = "ex_absence_budget_no_overlapping_periods"
+"""Name of this table's `EXCLUDE USING gist` constraint, spelled once — the second such constraint
+in this repository (ADR-0008, addendum SC-3-03, points 1 and 11), and the second table depending on
+`btree_gist`."""
+
+BUDGET_WINDOW_MONTH_ALIGNED_EXPRESSION = (
+    "effective_from = date_trunc('month', effective_from)"
+    " AND (effective_to + 1) = date_trunc('month', (effective_to + 1))"
+)
+"""A budget window begins on the first of a month and ends on the last day of one, as SQL.
+
+**The invariant of ADR-0008's addendum (SC-3-03, point 10a) made structural**: the monthly proration
+is "budget days ÷ months of the window", and its required property is that the shares of all the
+months of a window add back up to the budget. With a window that starts on 15 January, "how many
+months is that" has several defensible answers and each produces a different monthly figure — so
+instead of choosing one in the arithmetic, the shape that raises the question is refused. The
+denominator is then a count of whole months and the sum is exact by construction, for every window
+the table can hold.
+
+`(effective_to + 1)` rather than a second `date_trunc` idiom: it is the same "day after the end"
+the generated `valid_period` uses (`VALID_PERIOD_EXPRESSION`), so the two cannot disagree about
+where a window ends. On a `NULL` `effective_to` the comparison is `NULL`, i.e. this CHECK passes —
+the closed-window rule is a *separate*, named constraint (`effective_to_is_closed`), because they
+are two independent claims and merging them would make one refusal answer for both.
+
+Spelled once here and once in the migration, and compared by the drift guard in
+`tests/test_absence_budget_schema_constraints.py` (the R-02 mechanism)."""
+
+
+class AbsenceBudget(Base):
+    """How many days of statutory leave one calendar regime plus one engagement type carries (F-05).
+
+    The **eighth** table of the catalogue and the **fourth** consumer of ADR-0008's effective-range
+    pattern — the second one actually built (addendum 2026-09-22, SC-3-03, points 1-2). Same
+    columns, same generated `valid_period`, same `EXCLUDE USING gist`, same `btree_gist` dependency
+    as `CatalogDefaultRate`, with exactly one narrowing: a window here may not be open-ended (point
+    10b, and see `effective_to`).
+
+    **Organisational data, not cost data** (ADR-0005, addendum 2026-09-22 SC-3-03, points 1-3): no
+    column ties a row to a project, a user, a business unit or a tenant, so the exemption from the
+    `project_access` filter and from a guard function survives it, and the gate is `CATALOG_READ` /
+    `CATALOG_WRITE` with no new permission. A number of days is not an amount and reveals no
+    person's cost — the multiplier, a cost rate, is gated separately. **The boundary that comes with
+    that** (point 4): the *computed cost* of a budget is a cost field and goes back through the
+    SC-1-08 conjunction; nothing in this task computes one.
+
+    **Not a child of a scenario** (ADR-0004, addendum 2026-09-22 SC-3-03, point 1): the row belongs
+    to the organisation and can be edited after an approval by somebody who never heard of the
+    calculation, which is what puts it in group 1 — inherited, therefore snapshotted
+    (`app.models.approved_snapshot.ApprovedSnapshotAbsenceBudget`) — and keeps it out of
+    `SCENARIO_CHILD_COPIERS`.
+    """
+
+    __tablename__ = "absence_budget"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+
+    # No `ondelete` — i.e. `NO ACTION`, like every other foreign key in this module: the database
+    # refuses to delete a calendar or an engagement type a budget still references. Deleting either
+    # is out of scope, and refusing pre-empts no later decision about referential history.
+    calendar_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("working_calendar.id", name="fk_absence_budget_calendar_id"),
+        nullable=False,
+    )
+    """Which calendar regime this budget belongs to — **not** which location (point 3a).
+
+    The calendar is the unit of the working-time regime (addendum SC-3-02, point 1: "the unit of
+    versioning is the calendar, not the column"), and a location points at a calendar rather than
+    the other way round."""
+
+    engagement_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(
+            "catalog_engagement_types.id", name="fk_absence_budget_engagement_type_id"
+        ),
+        nullable=False,
+    )
+    """Which engagement type. `NOT NULL` for the reason the whole key is (`ABSENCE_BUDGET_KEY_
+    COLUMNS`): a `NULL` meaning "any type" would resolve a second way, next to the date window."""
+
+    budget_days: Mapped[Decimal] = mapped_column(
+        Numeric(BUDGET_PRECISION, BUDGET_SCALE), nullable=False
+    )
+    """The entitlement over the whole window, in days. `>= 0` and **zero is a legal, meaningful
+    value** (point 7): an engagement type with no leave entitlement is a row saying so, and it has
+    to stay distinguishable from *no row at all*, which is the named state "no budget"."""
+
+    unit: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=BUDGET_UNIT_DAY, default=BUDGET_UNIT_DAY
+    )
+    """Always `'day'` today, refused otherwise by a CHECK — see `BUDGET_UNIT_DAY`."""
+
+    source: Mapped[str] = mapped_column(String(500), nullable=False)
+    """Where the number comes from: a staff regulation, a clause of a collective agreement, an
+    organisational decision (ADR-0008, addendum SC-3-03, point 6).
+
+    **Mandatory and non-blank, in the database** — `NOT NULL` plus `source ~ '[^[:space:]]'`, the
+    same spelling of "blank" every name column in this module uses. A number with no named source is
+    a number nobody can check, and the refusal has to hold for a fixture, a seed script or an import
+    as much as for the API (criterion K-02).
+
+    **It is never the author of the row, and there is no column for one.** A "who entered this"
+    column would be the first column tying a catalogue row to a user, and it would expire both the
+    scope exemption and the absence of a guard function on these tables (ADR-0005, addendum
+    2026-09-21 SC-2-04, point 6) — introducing it needs its own dated entry there, not here.
+
+    **Free text, therefore unclassified with respect to personal data** (point 6b), and the approval
+    snapshot copies it verbatim, with no `UPDATE` or `DELETE` path to the copy. ADR-0008's addendum
+    made resolving that a precondition of the first write path; ADR-0005's addendum (SC-3-03,
+    point 6, a human's decision of 2026-09-22) resolves it as a **named risk without technical
+    enforcement**, on the same precedent as `AbsenceType.name` and `CatalogVendor.name`. Do not read
+    this column as personal-data-free by construction in a later audit — read it as unclassified,
+    exactly as `CatalogVendor` says of its own name. The reopening condition is the erasure
+    mechanism: the first task that designs one for `approved_snapshot_*` covers this column and
+    `AbsenceType.name` together. See `app.api.catalog.create_absence_budget`."""
+
+    # Calendar dates, not points in time (invariant-guardian rule 15).
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    """Inclusive, as everywhere in this pattern — and on **this** table it may not be `NULL`.
+
+    The column keeps the shared shape (nullable, with the shared `effective_period_ordered` CHECK
+    whose `IS NULL` branch is dead here) and the refusal is a separate, named CHECK:
+    `ck_absence_budget_effective_to_is_closed`. That is the one deviation ADR-0008's addendum
+    (SC-3-03, point 10b) allows this table, and it is narrow on purpose — the other three tables of
+    the pattern keep open-ended windows and `VALID_PERIOD_EXPRESSION` does not change at all.
+
+    Why the deviation exists: the monthly proration divides by the number of months of the window,
+    and an open-ended window has no denominator. Rather than giving the *arithmetic* an exception,
+    the table loses the shape that would force one.
+
+    The price, accepted deliberately: a budget **expires**, and a scenario planned past the last
+    window falls into the named "no budget" state (point 7) — never a silent `0`."""
+
+    valid_period: Mapped[Range[date]] = mapped_column(
+        DATERANGE,
+        Computed(VALID_PERIOD_EXPRESSION, persisted=True),
+        nullable=False,
+    )
+    """The one representation of the window — the same expression `CatalogDefaultRate` uses, not a
+    second one (ADR-0008, point 3). Read by the `EXCLUDE` constraint and by every lookup
+    (`valid_period @> :day`), so the constraint and the resolution cannot drift apart by a day."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    """ADR-0007's concurrency marker, present from this table's creation although SC-3-03 ships no
+    edit form: the addendum of 2026-09-21 rejected "which tables have a marker" as a second rule to
+    remember at every later form, so every organisational table gets one (the argument
+    `WorkingCalendarDay.updated_at` already makes)."""
+
+    __table_args__ = (
+        CheckConstraint(f"unit = '{BUDGET_UNIT_DAY}'", name="unit_is_day"),
+        # Zero is legal (point 7); negative is a sign error with no meaning in any calculation.
+        CheckConstraint("budget_days >= 0", name="budget_days_not_negative"),
+        # `NOT NULL` alone still admits `''` and `'   '` — the same argument every name column in
+        # this module makes, and criterion K-02's first mutation ("drop the non-blank rule from the
+        # database and keep the request validation") is exactly this constraint being removed.
+        CheckConstraint("source ~ '[^[:space:]]'", name="source_not_blank"),
+        # The shared shape, with a branch that is dead on this table (see `effective_to`). Removing
+        # that branch would be a second divergence from the pattern where one is enough.
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to >= effective_from",
+            name="effective_period_ordered",
+        ),
+        # The one named narrowing of the pattern (point 10b): no open-ended budget window.
+        CheckConstraint("effective_to IS NOT NULL", name="effective_to_is_closed"),
+        CheckConstraint(
+            BUDGET_WINDOW_MONTH_ALIGNED_EXPRESSION, name="window_aligned_to_whole_months"
+        ),
+        # Integrity in the database, never in application code (ADR-0001, rule 13). The `EXCLUDE` is
+        # the whole guarantee that a lookup never has to choose between two rows — with it, "the
+        # latest row wins" is not a rejected policy but a situation that cannot arise. A Python
+        # check-then-act equivalent survives a single-connection test by construction, which is why
+        # criterion K-01 requires the two-connection race.
+        ExcludeConstraint(
+            *[(column, "=") for column in ABSENCE_BUDGET_KEY_COLUMNS],
+            ("valid_period", "&&"),
+            using="gist",
+            name=ABSENCE_BUDGET_NO_OVERLAP_CONSTRAINT,
+        ),
+    )

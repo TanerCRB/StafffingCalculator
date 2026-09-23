@@ -18,6 +18,7 @@ These tests prove the mechanics and the scope. They are silent about the authori
 must not take them for more.
 """
 
+import re
 import threading
 import uuid
 from datetime import date
@@ -30,14 +31,30 @@ from sqlalchemy import Engine, event
 from sqlalchemy.orm import Session
 
 from app.api.scenarios import SCENARIO_NOT_FOUND_DETAIL
-from app.models import ProjectAccess, ScenarioStatus, WorkingCalendarDayKind
+from app.data.scenario_guard import unapproved_scenario
+from app.models import (
+    SNAPSHOT_TABLES,
+    ApprovedSnapshotAbsenceBudget,
+    ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotWorkingCalendar,
+    ApprovedSnapshotWorkingCalendarDay,
+    CatalogLocation,
+    ProjectAccess,
+    ScenarioStatus,
+    StaffingPosition,
+    WorkingCalendar,
+    WorkingCalendarDayKind,
+)
 from tests.conftest import (
     IN_SCOPE_USER,
     OUT_OF_SCOPE_USER,
+    STATUTORY_LEAVE_TYPE_NAME,
     approve_path,
     as_caller,
+    count_absence_budgets,
     count_snapshot_rows,
     make_absence,
+    make_absence_budget,
     make_absence_type,
     make_allocation,
     make_calendar_day,
@@ -51,9 +68,22 @@ from tests.conftest import (
 
 MARCH = date(2026, 3, 1)
 STATUS_UPDATE = "update scenarios set status"
-SNAPSHOT_INSERT = "insert into approved_snapshot"
+_SNAPSHOT_TARGET = re.compile(r"insert into (approved_snapshot_\w+)")
 
 Listener = Any
+
+
+def _snapshot_tables_inserted_by(statement: str) -> set[str]:
+    """Every `approved_snapshot_*` table one issued statement inserts into — anywhere in it.
+
+    Searched for, not matched as a prefix. Until S-01 (2026-09-23) every snapshot table had its own
+    `INSERT` statement and `startswith("insert into approved_snapshot")` recognised them all; since
+    the four inserts became data-modifying CTEs of one statement, that statement begins with
+    `WITH`, and a prefix test would recognise **nothing** — which in K-19's "the second approval
+    issued no snapshot insert" is a pass for the wrong reason. A search recognises both shapes, so
+    it is strictly stronger than the prefix it replaced.
+    """
+    return set(_SNAPSHOT_TARGET.findall(statement.lower()))
 
 
 def _committed_approvable_scenario(engine: Engine, **scenario_kwargs: Any) -> dict[str, Any]:
@@ -192,12 +222,14 @@ def test_k_18_the_snapshot_rows_are_written_before_the_status_update(
     an approved scenario with a full snapshot. Only the order tells them apart.
     """
     state = _committed_approvable_scenario(engine)
-    issued: list[str] = []
+    issued: list[tuple[str, frozenset[str]]] = []
 
     def record(connection, cursor, statement, parameters, context, executemany) -> None:
-        lowered = statement.lstrip().lower()
-        if lowered.startswith(SNAPSHOT_INSERT) or STATUS_UPDATE in lowered:
-            issued.append("snapshot" if lowered.startswith(SNAPSHOT_INSERT) else "status")
+        tables = _snapshot_tables_inserted_by(statement)
+        if tables:
+            issued.append(("snapshot", frozenset(tables)))
+        elif STATUS_UPDATE in statement.lower():
+            issued.append(("status", frozenset()))
 
     event.listen(Engine, "before_cursor_execute", record)
     try:
@@ -209,10 +241,27 @@ def test_k_18_the_snapshot_rows_are_written_before_the_status_update(
         event.remove(Engine, "before_cursor_execute", record)
 
     assert response.status_code == 200, response.text
-    assert issued == ["snapshot", "snapshot", "snapshot", "status"], issued
-    assert issued.index("status") == len(issued) - 1, (
+    kinds = [kind for kind, _ in issued]
+    # The status update is the last statement and there is exactly one of it; every snapshot insert
+    # comes before it. Asserted on kinds rather than on a literal sequence, because *how many*
+    # statements carry the snapshot is not this criterion's claim: until S-01 (2026-09-23) it was
+    # one per table, since then it is one for all of them (`_snapshot_statement`), and the order is
+    # what K-18 is about. That the inserts are one statement is S-01's own claim, proven below —
+    # by behaviour in the two race runs and by count in `test_s_01_the_snapshot_is_written_by_one_
+    # statement` — rather than here.
+    assert kinds.count("status") == 1 and kinds[-1] == "status", (
         "the status update was not the last statement of the approval — the snapshot inserts that "
-        "follow it would match no unapproved parent and write nothing"
+        f"follow it would match no unapproved parent and write nothing: {kinds}"
+    )
+    # Every snapshot table is inserted into before the status update. Read off the registry rather
+    # than written out, because the number is an artifact of how many snapshot tables exist
+    # (SC-3-03 added the fourth — ADR-0004, addendum 2026-09-22 SC-3-03, point 4): a fifth table
+    # registered without an insert — the "snapshot that is always empty" failure that registry
+    # exists to make visible — fails here.
+    inserted_before_status = set().union(*(tables for kind, tables in issued[:-1]))
+    assert inserted_before_status == set(SNAPSHOT_TABLES), (
+        f"snapshot tables inserted before the status update: {sorted(inserted_before_status)}; "
+        f"registered: {sorted(SNAPSHOT_TABLES)}"
     )
 
 
@@ -224,9 +273,10 @@ def test_k_19_approving_an_already_approved_scenario_writes_nothing_at_all(
 ) -> None:
     """K-19 — the second approval issues no write statement and adds no row.
 
-    Two runs in one test, and the **first one is the contrast**: it approves, it issues three
-    snapshot inserts and one status update, and it leaves three rows. The second run, against the
-    same scenario, issues *none* of those statements and leaves the count where it was.
+    Two runs in one test, and the **first one is the contrast**: it approves, it issues the snapshot
+    statement (one statement whose data-modifying CTEs insert into every snapshot table — S-01,
+    `_snapshot_statement`) and one status update, and it leaves three rows. The second run, against
+    the same scenario, issues *neither* of those statements and leaves the count where it was.
 
     Asserting on the statements matters and is not belt and braces. "Nothing was added" is also true
     of an implementation that wrote the snapshot rows again and rolled them back — and that
@@ -242,7 +292,7 @@ def test_k_19_approving_an_already_approved_scenario_writes_nothing_at_all(
 
     def record(connection, cursor, statement, parameters, context, executemany) -> None:
         lowered = statement.lstrip().lower()
-        if lowered.startswith(SNAPSHOT_INSERT) or STATUS_UPDATE in lowered:
+        if _snapshot_tables_inserted_by(lowered) or STATUS_UPDATE in lowered:
             issued.append(lowered.split("(")[0][:60])
 
     first = committing_client.post(
@@ -395,6 +445,419 @@ def test_k_19_two_concurrent_approvals_of_one_draft_leave_one_snapshot_not_two(
     assert rows == 3, (
         f"{rows} snapshot rows for one scenario: both approvals wrote one. The rows are never "
         "updated or deleted, so the duplicate freeze is permanent."
+    )
+
+
+# --- S-01: one snapshot of the catalogue for every snapshot table, taken under the lock ----------
+#
+# The approval's lock serialises it against the scenario's own children, never against the
+# catalogue: nobody editing a calendar, a location or a budget asks for a scenario's lock. Under
+# `READ COMMITTED` each statement reads the catalogue afresh, so the snapshot is internally
+# consistent only if every snapshot table is written by **one** statement (`_snapshot_statement`).
+#
+# The first two runs below force a catalogue edit to commit *between* two snapshot tables' inserts:
+# the hook fires after the **first** issued statement that inserts into **any** snapshot table and
+# commits the edit on a separate connection before the approval issues its next statement. With one
+# statement there is no "between" — the hook fires after the whole snapshot, the edit lands after
+# it, and the snapshot is the catalogue as it was. With the inserts split into several statements,
+# every table not in that first statement reads the edited catalogue.
+#
+# "The first statement, whichever tables it holds" rather than "the statement holding table X" is
+# what makes this catch *every* split, not only the historical one (R-01, 2026-09-23). The three
+# pairs that must agree — calendar ↔ days, calendar ↔ budgets, statutory type ↔ budgets — connect
+# all four tables, so any first statement that is not all of them separates at least one pair from
+# its partner, and the edit then lands between them. A hook keyed to one named table does not: in a
+# split whose *last* statement holds that table (types and budgets first, calendars and days
+# second), it fired after everything had been read, no race happened, and both runs passed on code
+# that had the defect back. Measured on every ordered split of the four copiers; see the report of
+# the R-01 round. `test_s_01_the_snapshot_is_written_by_one_statement` below says the same thing
+# structurally, so that a split is named as a split and not only as its symptom.
+#
+# The last run (`…_waits_for_the_lock_is_in_the_snapshot`) is the other half of S-01: the one
+# snapshot is taken *after* the lock is granted, so a child row committed while the approval waited
+# for the lock is in the copy. It passes on the four-statement code as well — it is not a proof of
+# the one-statement change, it is the guard against the change that was measured and rejected in
+# its place (`REPEATABLE READ`, variant A), which fixes the snapshot before the lock and would lose
+# exactly that row.
+
+
+def _approval_pausing_after(
+    committing_client: TestClient,
+    state: dict[str, Any],
+    *,
+    catalogue_edit: Any,
+) -> tuple[Any, list[str]]:
+    """Approve, committing `catalogue_edit` on another connection right after the **first**
+    statement that inserts into any `approved_snapshot_*` table — once, and before the approval's
+    next statement runs.
+
+    Deliberately not "after the statement that inserts into table X": which table a split puts
+    first is the one thing a regression is free to choose, and a hook keyed to a table that lands
+    in the last statement fires after the whole snapshot has been read (R-01; the section comment
+    above). `after_cursor_execute`, so the edit is committed after that statement has read the
+    catalogue and before anything later in the approval does. Returns the response and the list the
+    hook appends to, which the caller asserts non-empty: a run in which the edit never happened says
+    nothing about the race.
+    """
+    fired: list[str] = []
+
+    def edit_the_catalogue_between_statements(
+        connection: Any,
+        cursor: Any,
+        statement: str,
+        parameters: Any,
+        context: Any,
+        executemany: bool,
+    ) -> None:
+        if fired or not _snapshot_tables_inserted_by(statement):
+            return
+        fired.append(statement)
+        catalogue_edit()
+
+    event.listen(Engine, "after_cursor_execute", edit_the_catalogue_between_statements)
+    try:
+        response = committing_client.post(
+            approve_path(state["project_id"], state["scenario_id"]),
+            headers=as_caller(IN_SCOPE_USER),
+        )
+    finally:
+        event.remove(Engine, "after_cursor_execute", edit_the_catalogue_between_statements)
+    return response, fired
+
+
+def _frozen_calendar_ids(engine: Engine, scenario_id: uuid.UUID) -> dict[str, set[uuid.UUID]]:
+    """`source_calendar_id` of every frozen calendar, day and budget of one scenario — committed
+    rows, read from a separate connection."""
+    with engine.connect() as connection:
+        return {
+            model.__tablename__: set(
+                connection.execute(
+                    sa.select(model.source_calendar_id).where(model.scenario_id == scenario_id)
+                ).scalars()
+            )
+            for model in (
+                ApprovedSnapshotWorkingCalendar,
+                ApprovedSnapshotWorkingCalendarDay,
+                ApprovedSnapshotAbsenceBudget,
+            )
+        }
+
+
+def test_s_01_a_location_re_pointed_during_the_approval_cannot_split_a_calendar_from_its_days_or_budgets(  # noqa: E501 — the name is the claim
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """S-01 — the calendar, its days and its budgets are frozen from **one** catalogue.
+
+    Two calendars, each with exceptional days of its own and a budget of its own for the position's
+    engagement type. The position's location points at calendar A. Right after the approval's first
+    statement that writes any snapshot row, another connection re-points the location at calendar B
+    and commits.
+
+    With the snapshot as one statement: calendar A, the days of A, the budget of A — the catalogue
+    as it was when the statement started. With the calendar insert as its own statement (the code
+    until 2026-09-23): calendar A, and then the days and the budget of **B**, read by the next
+    statements from the edited catalogue — a frozen calendar whose holidays and entitlement belong
+    to a different calendar, a state the catalogue was never in, and permanent, because snapshot
+    rows are never updated or deleted. Split the other way round (budgets first, calendar later) it
+    is budgets of A under calendar B — the same broken pair, caught by the same assertion.
+
+    The assertion is the invariant rather than "A": every frozen day and every frozen budget belongs
+    to a frozen calendar. It is not vacuous — the contrast is that both sets are non-empty.
+    """
+    with Session(bind=engine, expire_on_commit=False, future=True) as setup:
+        calendar_a = make_working_calendar(
+            setup, name="Poland A", standard_hours_per_day=Decimal("7.50")
+        )
+        make_calendar_day(
+            setup, calendar_a, day=date(2026, 12, 25), kind=WorkingCalendarDayKind.NON_WORKING
+        )
+        calendar_b = make_working_calendar(
+            setup, name="Poland B", standard_hours_per_day=Decimal("7.25")
+        )
+        make_calendar_day(
+            setup, calendar_b, day=date(2026, 11, 11), kind=WorkingCalendarDayKind.NON_WORKING
+        )
+        make_calendar_day(
+            setup, calendar_b, day=date(2026, 5, 3), kind=WorkingCalendarDayKind.NON_WORKING
+        )
+        dimensions = make_dimension_tuple(setup, calendar=calendar_a)
+        for calendar, days in ((calendar_a, Decimal("26.00")), (calendar_b, Decimal("20.00"))):
+            make_absence_budget(
+                setup,
+                calendar,
+                dimensions.engagement_type_id,
+                budget_days=days,
+                effective_from=date(2026, 1, 1),
+                effective_to=date(2026, 12, 31),
+            )
+        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+        scenario = make_scenario(setup, project, name="Baseline")
+        position = make_staffing_position(
+            setup, scenario, dimensions, headcount=1, start_date=MARCH
+        )
+        make_allocation(setup, position, period_month=MARCH)
+        state = {"project_id": project.id, "scenario_id": scenario.id}
+        location_id, a_id, b_id = dimensions.location_id, calendar_a.id, calendar_b.id
+        setup.commit()
+
+    def re_point_the_location_at_calendar_b() -> None:
+        with engine.begin() as editor:
+            editor.execute(
+                sa.update(CatalogLocation)
+                .where(CatalogLocation.id == location_id)
+                .values(calendar_id=b_id)
+            )
+
+    response, fired = _approval_pausing_after(
+        committing_client,
+        state,
+        catalogue_edit=re_point_the_location_at_calendar_b,
+    )
+
+    assert fired, "the catalogue edit never ran — this run says nothing about the race"
+    assert response.status_code == 200, response.text
+    with engine.connect() as observer:
+        assert (
+            observer.execute(
+                sa.select(CatalogLocation.calendar_id).where(CatalogLocation.id == location_id)
+            ).scalar_one()
+            == b_id
+        ), "the edit did not commit — the race never happened"
+
+    frozen = _frozen_calendar_ids(engine, state["scenario_id"])
+    calendars = frozen["approved_snapshot_working_calendar"]
+    days = frozen["approved_snapshot_working_calendar_day"]
+    budgets = frozen["approved_snapshot_absence_budget"]
+    assert days and budgets, "the contrast is void: nothing but the calendar was frozen"
+    assert days <= calendars, (
+        "frozen days belong to a calendar that was not frozen — the calendar and its days were "
+        f"read from two different catalogues (days of {days}, calendars {calendars})"
+    )
+    assert budgets <= calendars, (
+        "a frozen budget belongs to a calendar that was not frozen — the calendar and its budgets "
+        f"were read from two different catalogues (budgets of {budgets}, calendars {calendars})"
+    )
+    # Last, so that a split is reported by the invariant it breaks where it breaks one. It still
+    # catches the split in which the first statement holds none of calendar, days and budgets
+    # (e.g. types alone): those three then agree with each other — on calendar B, the catalogue
+    # *after* the edit, which only a statement issued after the first could have read.
+    assert calendars == {a_id}, (
+        f"frozen calendar {calendars}, expected calendar A {a_id}: the snapshot was read after the "
+        "edit committed mid-approval, so it was not one statement"
+    )
+
+
+def test_s_01_a_budget_committed_during_the_approval_cannot_be_frozen_without_the_statutory_type(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """S-01 — the statutory type and the budgets are frozen from **one** catalogue.
+
+    `ApprovedSnapshotAbsenceType`'s contract: a frozen row with `is_statutory_leave = true` present
+    means the frozen budget applies; absent means nobody had named a statutory type and it applies
+    to nothing. The type here **is** flagged, from the start. There is no budget yet. Right after
+    the approval's first statement that writes any snapshot row, another connection creates the
+    budget the scenario's month reads and commits.
+
+    With one statement: no budget and no flagged type — the catalogue before the edit, and a
+    consistent answer ("no budget to apply"). With the types inserted as their own statement (the
+    code until 2026-09-23): no flagged type, because no budget existed when that statement read the
+    catalogue, and then **one** budget, because the next statement read it — a snapshot that says
+    "a 26-day entitlement, and no statutory type was ever named", i.e. deduct none of it, although
+    the type was named the whole time. Split the other way round (budgets first, types later) it is
+    no budget and a flagged type — (0, 1), outside the allowed set as well.
+
+    The assertion is the invariant — a frozen budget implies the frozen flagged type — plus the
+    contrast that the budget really was committed during the approval.
+    """
+    with Session(bind=engine, expire_on_commit=False, future=True) as setup:
+        calendar = make_working_calendar(
+            setup, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
+        )
+        make_absence_type(setup, name=STATUTORY_LEAVE_TYPE_NAME, is_statutory_leave=True)
+        dimensions = make_dimension_tuple(setup, calendar=calendar)
+        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+        scenario = make_scenario(setup, project, name="Baseline")
+        position = make_staffing_position(
+            setup, scenario, dimensions, headcount=1, start_date=MARCH
+        )
+        make_allocation(setup, position, period_month=MARCH)
+        state = {"project_id": project.id, "scenario_id": scenario.id}
+        setup.commit()
+
+    def create_the_budget_the_scenario_reads() -> None:
+        with Session(bind=engine, expire_on_commit=False, future=True) as editor:
+            make_absence_budget(
+                editor,
+                editor.get(WorkingCalendar, calendar.id),
+                dimensions.engagement_type_id,
+                budget_days=Decimal("26.00"),
+                effective_from=date(2026, 1, 1),
+                effective_to=date(2026, 12, 31),
+            )
+            editor.commit()
+
+    response, fired = _approval_pausing_after(
+        committing_client,
+        state,
+        catalogue_edit=create_the_budget_the_scenario_reads,
+    )
+
+    assert fired, "the catalogue edit never ran — this run says nothing about the race"
+    assert response.status_code == 200, response.text
+    with engine.connect() as observer:
+        assert count_absence_budgets(observer) == 1, "the budget did not commit — no race happened"
+        frozen_budgets = observer.execute(
+            sa.select(sa.func.count())
+            .select_from(ApprovedSnapshotAbsenceBudget)
+            .where(ApprovedSnapshotAbsenceBudget.scenario_id == state["scenario_id"])
+        ).scalar_one()
+        frozen_statutory = observer.execute(
+            sa.select(sa.func.count())
+            .select_from(ApprovedSnapshotAbsenceType)
+            .where(
+                ApprovedSnapshotAbsenceType.scenario_id == state["scenario_id"],
+                ApprovedSnapshotAbsenceType.is_statutory_leave.is_(True),
+            )
+        ).scalar_one()
+
+    assert (frozen_budgets, frozen_statutory) in {(0, 0), (1, 1)}, (
+        f"{frozen_budgets} frozen budget(s) and {frozen_statutory} frozen statutory type(s): the "
+        "snapshot says a budget applies to no named statutory type although one was flagged the "
+        "whole time — the types and the budgets were read from two different catalogues"
+    )
+
+
+def test_s_01_the_snapshot_is_written_by_one_statement(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """S-01, structurally — exactly one issued statement inserts into snapshot tables, and it
+    inserts into every registered one.
+
+    The two runs above prove the *consequence* of a split for the pairs they stage; this names the
+    split itself, whatever the grouping, whatever the order, and whatever the fixture data happens
+    to exercise. It is the cheaper half of R-01's fix and the one whose failure message says what
+    happened ("two statements") rather than what it broke — the behavioural runs stay, because a
+    count of statements says nothing about whether one statement really is one snapshot.
+
+    The contrast is built in: the count of statements is compared with 1 and the tables with the
+    registry, so an approval that issued no snapshot statement at all fails as surely as one that
+    issued two.
+    """
+    state = _committed_approvable_scenario(engine)
+    snapshot_statements: list[frozenset[str]] = []
+
+    def record(connection, cursor, statement, parameters, context, executemany) -> None:
+        tables = _snapshot_tables_inserted_by(statement)
+        if tables:
+            snapshot_statements.append(frozenset(tables))
+
+    event.listen(Engine, "before_cursor_execute", record)
+    try:
+        response = committing_client.post(
+            approve_path(state["project_id"], state["scenario_id"]),
+            headers=as_caller(IN_SCOPE_USER),
+        )
+    finally:
+        event.remove(Engine, "before_cursor_execute", record)
+
+    assert response.status_code == 200, response.text
+    assert len(snapshot_statements) == 1, (
+        f"the snapshot was written by {len(snapshot_statements)} statements "
+        f"({[sorted(tables) for tables in snapshot_statements]}); under READ COMMITTED each reads "
+        "the catalogue afresh, so the frozen tables can disagree with each other (S-01)"
+    )
+    assert snapshot_statements[0] == frozenset(SNAPSHOT_TABLES), (
+        f"the snapshot statement inserts into {sorted(snapshot_statements[0])}; "
+        f"registered: {sorted(SNAPSHOT_TABLES)}"
+    )
+
+
+def test_s_01_a_child_row_committed_while_the_approval_waits_for_the_lock_is_in_the_snapshot(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """S-01's other half — the one snapshot is taken **under** the lock, not before it.
+
+    Another transaction holds the scenario row the way every guarded child write does
+    (`unapproved_scenario`, `FOR UPDATE`). The approval starts on another thread and the test waits
+    until PostgreSQL reports it waiting for that lock. Only then does the holder add a month in 2027
+    to the position — a month read by a *second* budget window — and commit, releasing the lock.
+
+    That month is a row of the calculation being approved: it was committed before the approval
+    could read anything, and the approval then froze the scenario it belongs to. So its budget
+    window must be frozen too — two windows, not one.
+
+    **This run is green on the four-statement code as well**, and it says so here rather than
+    being presented as the proof of S-01: under `READ COMMITTED` every statement after the lock
+    takes a fresh snapshot, so that code saw the month too. It guards against the fix that was
+    measured and rejected in its place (variant A, `REPEATABLE READ`), which fixes the snapshot at
+    the transaction's first statement — before the lock is granted — and freezes one window here.
+    """
+    with Session(bind=engine, expire_on_commit=False, future=True) as setup:
+        calendar = make_working_calendar(
+            setup, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
+        )
+        dimensions = make_dimension_tuple(setup, calendar=calendar)
+        for year in (2026, 2027):
+            make_absence_budget(
+                setup,
+                calendar,
+                dimensions.engagement_type_id,
+                budget_days=Decimal("26.00") if year == 2026 else Decimal("24.00"),
+                effective_from=date(year, 1, 1),
+                effective_to=date(year, 12, 31),
+            )
+        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+        scenario = make_scenario(setup, project, name="Baseline")
+        position = make_staffing_position(
+            setup, scenario, dimensions, headcount=1, start_date=MARCH
+        )
+        make_allocation(setup, position, period_month=MARCH)
+        state = {"project_id": project.id, "scenario_id": scenario.id}
+        position_id = position.id
+        setup.commit()
+
+    outcome: dict[str, Any] = {}
+
+    def approval() -> None:
+        try:
+            outcome["response"] = committing_client.post(
+                approve_path(state["project_id"], state["scenario_id"]),
+                headers=as_caller(IN_SCOPE_USER),
+            )
+        except BaseException as error:  # noqa: BLE001 — reported, never swallowed
+            outcome["error"] = error
+
+    with Session(bind=engine, expire_on_commit=False, future=True) as holder:
+        assert holder.execute(unapproved_scenario(state["scenario_id"])).one_or_none()
+        thread = threading.Thread(target=approval, daemon=True)
+        thread.start()
+        blocked = wait_until_a_lock_request_is_pending(engine)
+        make_allocation(
+            holder, holder.get(StaffingPosition, position_id), period_month=date(2027, 1, 1)
+        )
+        holder.commit()
+
+    thread.join(timeout=30)
+    assert not thread.is_alive(), "the approval never finished"
+    assert "error" not in outcome, outcome.get("error")
+    assert blocked, (
+        "the approval never waited for the scenario lock — this run says nothing about what it "
+        "reads after the lock is granted"
+    )
+    assert outcome["response"].status_code == 200, outcome["response"].text
+
+    with engine.connect() as observer:
+        windows = sorted(
+            observer.execute(
+                sa.select(ApprovedSnapshotAbsenceBudget.effective_from).where(
+                    ApprovedSnapshotAbsenceBudget.scenario_id == state["scenario_id"]
+                )
+            ).scalars()
+        )
+    assert windows == [date(2026, 1, 1), date(2027, 1, 1)], (
+        f"frozen windows {windows}: the month committed while the approval waited for the lock is "
+        "part of the approved calculation, and the window it reads was not frozen — the snapshot "
+        "was taken before the lock"
     )
 
 
@@ -569,7 +1032,7 @@ def test_approving_a_scenario_with_no_positions_freezes_it_with_an_empty_snapsho
     alternative reading — "an empty snapshot means the approval failed" — is the one a later reader
     is likely to have.
 
-    It also pins the shape of the answer: `200` with three zero counts, not a `409` and not a `500`.
+    It also pins the shape of the answer: `200` with four zero counts, not a `409` and not a `500`.
     """
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
@@ -586,6 +1049,11 @@ def test_approving_a_scenario_with_no_positions_freezes_it_with_an_empty_snapsho
         "working_calendars": 0,
         "working_calendar_days": 0,
         "absence_types": 0,
+        # The fourth counter joined in SC-3-03 (ADR-0004, addendum 2026-09-22 SC-3-03, point 4).
+        # This equality is a canary, and it fired deliberately on the day a snapshot table was
+        # added: a scenario with no positions freezes no budget either, which is what this zero
+        # says. Updated with the change that caused it, not around it.
+        "absence_budgets": 0,
     }
     assert response.json()["status"] == "Approved"
     status, rows = _status_and_snapshot(engine, state["scenario_id"])

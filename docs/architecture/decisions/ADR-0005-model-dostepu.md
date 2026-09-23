@@ -494,3 +494,117 @@ wymaga wpisu dwukierunkowego.
     w odpowiedzi API musi tę degradację nazwać wprost i rozstrzygnąć, czy wymaga countermeasure
     (np. agregacja przy `headcount = 1`) — do tego czasu przyjęte jako nazwane, nieaktywnie
     zamknięte ryzyko, nie jako defekt do naprawy w SC-3-02.
+
+### 2026-09-22 — budżet urlopowy jest daną organizacyjną, nie daną kosztową (SC-3-03)
+
+Drugi aneks tej daty w tym pliku, osobny wpis, nie dopisek do poprzedniego — precedens: trzy
+aneksy z 2026-09-19. **Konsekwencja nazewnicza przyjęta razem z tym wpisem:** odwołanie „ADR-0005,
+aneks 2026-09-22" bez nazwy zadania — takie jak te w `backend/app/models/staffing.py`,
+`backend/app/models/catalog.py` i `backend/app/data/scenario_approval.py` — znaczy aneks
+**SC-3-02**; każde nowe odwołanie musi nazwać zadanie.
+
+Aneks z 2026-09-19 (SC-2-01) pkt 1 domyka się zdaniem: „Pierwsza tabela, której wiersz da się
+przypisać do projektu, jednostki biznesowej albo najemcy, przestaje być objęta tym punktem i wymaga
+własnego wpisu tutaj." Budżet urlopowy (SC-3-03, F-05) tym zdaniem **nie jest wymuszony** — jego
+wiersza nie da się przypisać do żadnego z tych trzech podmiotów — ale jest wymuszony czymś innym:
+jest pierwszą tabelą katalogu, której wartość wchodzi wprost do wyliczenia kosztu, a bramka
+kosztowa tej decyzji jest jedynym miejscem, w którym to musi być powiedziane.
+
+1. **Zasięg: bez zmian, dane organizacyjne.** Kryterium strukturalne z aneksu 2026-09-19 (SC-2-01)
+   pkt 1 spełnione: żadna kolumna nie wiąże wiersza budżetu z projektem, użytkownikiem, jednostką
+   biznesową ani najemcą, i żaden endpoint nie zawęża go po tożsamości wołającego. Kolumny klucza
+   (`calendar_id`, `engagement_type_id`) wskazują inne wiersze organizacyjne, nie podmiot, w imieniu
+   którego działa wołający — ta sama podstawa, którą dostały `vendor_id` (2026-09-21 pkt 1) i
+   `catalog_locations.calendar_id` (2026-09-22 SC-3-02 pkt 2). Zwolnienie z funkcji-strażnika
+   (ADR-0001, aneks 2026-09-19 pkt 2) obowiązuje dalej; warunek wygaśnięcia bez zmian — pierwszy
+   predykat **per wołający** na którejkolwiek z tych tabel kończy wyjątek.
+2. **Uprawnienia: `CATALOG_READ`/`CATALOG_WRITE`, bez nowych.** Ósma tabela katalogu, nie ósmy
+   mechanizm — precedens dosłowny z aneksu 2026-09-21 pkt 2 („poddostawca jest piątym słownikiem
+   katalogu, nie piątym mechanizmem") i z aneksu 2026-09-22 SC-3-02 pkt 3 (szósty i siódmy). To
+   samo dotyczy **nowej kolumny flagi na `absence_type`** wskazującej typ rozliczany budżetem
+   (ADR-0008, aneks z tą samą datą, SC-3-03, pkt 8): jest kolejną kolumną siódmego słownika, nie
+   nowym mechanizmem i nie predykatem per wołający — ustawienie organizacyjne, jednakowe dla
+   każdego, kto czyta katalog. **`PLACEHOLDER_PERMISSIONS` nie rośnie w tym zadaniu**; kanarek
+   równości zbiorów zostaje bez przezbrajania.
+3. **Budżet NIE jest daną kosztową w rozumieniu tej decyzji** (rozstrzygnięcie bramki 1,
+   2026-09-22, Q-4) — bramkuje go samo `CATALOG_READ`, nie `PERSONNEL_COSTS_READ`. Podstawa jest
+   rzeczowa, nie wygodnościowa: budżet jest liczbą dni (albo FTE) — parametrem uprawnieniowym
+   organizacji, nie kwotą i nie kosztem żadnej osoby. NF-11/AC-06 chronią „individual personnel
+   costs"; liczba dni urlopu przysługujących w danym reżimie kalendarzowym nie ujawnia ani jednej
+   kwoty, bo mnożnik — stawka kosztowa — jest już bramkowany osobno i wołający bez
+   `PERSONNEL_COSTS_READ` go nie dostaje. **`CATALOG_PERSONNEL_COST_FIELDS` zostaje
+   jednoelementowy.** Mutacja, którą to rozstrzygnięcie odrzuca: dopisanie kolumny budżetu do
+   zbioru pól kosztowych — dałoby to uprawnieniu o nazwie „koszty osobowe" **trzecie** znaczenie (po
+   dwóch, które nazywa aneks 2026-09-19 SC-2-01 pkt 3 i aneks 2026-09-21 pkt 3), a w działającym
+   dziś systemie uczyniłoby całą funkcję nieosiągalną, bo `PERSONNEL_COSTS_READ` nie należy do
+   zestawu placeholdera.
+4. **Granica, która nie może stać się cichym omijaniem bramki kosztowej — nazwana teraz, nie po
+   pierwszym zadaniu bloku 5.** Punkt 3 mówi o **budżecie jako liczbie dni**. **Wyliczony koszt
+   budżetu** — koszt nieobecności płatnej w odpowiedzi opisującej projekt albo scenariusz (F-07) —
+   jest polem kosztowym i podlega koniunkcji z aneksu 2026-09-19 (SC-1-08) pkt 1 bez żadnej zmiany,
+   wzmocnionej regułą kierunkową z aneksu 2026-09-19 (SC-2-01) pkt 3: wyjątek jednoczynnikowy
+   obowiązuje **wyłącznie tam, gdzie projektu nie ma**. Mutacja do zabicia: policzenie kosztu
+   budżetu i wypuszczenie go ścieżką kształtowania katalogu (jeden czynnik) zamiast ścieżką
+   projektu/scenariusza (koniunkcja).
+   **Dlaczego to jest zapisane tutaj, a nie zostawione domyślności.** To jest **odwrotność**
+   precedensu „ochrony nadpłaconej" z aneksu 2026-09-21 pkt 3 (Issue #46). Tam świadomie
+   **przepłaciliśmy** ochroną: pole, które nie jest indywidualnym kosztem osobowym (cena
+   kontrahenta), zostało objęte bramką kosztową, żeby nie mnożyć bramek na jednym polu. Tutaj ryzyko
+   idzie w drugą stronę: dana **niebramkowana** (budżet) jest wejściem do liczby, która bramce
+   podlega — i dokładnie tak powstaje ciche obejście, bo nikt nie klasyfikuje wyniku po pochodzeniu
+   składników. Zapisane wprost, żeby pierwsze zadanie wyceniające nieobecność odtworzyło koniunkcję
+   i dowiodło jej własnym kryterium, tak jak zobowiązuje je aneks 2026-09-22 SC-3-02 pkt 7.
+5. **Konsekwencja przyjęta świadomie, nie odkryta później:** każdy, kto planuje staffing, widzi
+   budżet urlopowy każdego reżimu kalendarzowego i każdego typu zaangażowania. W części organizacji
+   wymiar urlopu jest negocjowanym elementem warunków zatrudnienia, a nie stawką z regulaminu — to
+   ta sama klasa konsekwencji, którą aneks 2026-09-21 pkt 2 przyjął dla cenników poddostawców, i tak
+   samo przyjęta: nazwana, nie zamilczana. Pierwsze zadanie, w którym zacznie przeszkadzać,
+   rozdziela bramki i wymaga własnego, datowanego wpisu tutaj.
+6. **Wolny tekst źródła budżetu uruchamia warunek z pkt 10 aneksu SC-3-02, i SC-3-03 go rozstrzyga
+   wprost, bo wystawia pierwszą ścieżkę zapisu (`POST /catalog/absence-budgets`).** Wiersz budżetu
+   niesie obowiązkowe, niepuste pole źródła (ADR-0008, aneks z tą samą datą, SC-3-03, pkt 6) o
+   jedynej regule treści „niepusty ciąg", a migawka kopiuje je wprost, bez ścieżki UPDATE/DELETE.
+   **Rozstrzygnięcie (2026-09-22): nazwane ryzyko, bez wymuszenia technicznego.** Ten sam precedens
+   co `absence_type.name` i `catalog_vendors.name` (audyt 2026-09-21: „traktować jako
+   nieklasyfikowane") — pole zostaje wolnym tekstem, bez detekcji nazwisk (zawodna, dałaby fałszywe
+   poczucie bezpieczeństwa gorsze niż jego brak) i bez mechanizmu erasure/rectification dla wierszy
+   `approved_snapshot_*` (projektowanie takiego mechanizmu teraz, dla jednej kolumny jednej tabeli,
+   byłoby rozwiązywaniem problemu, którego `absence_type.name` już ma i nie rozwiązał). Kolumny
+   podmiotowej („kto wpisał") ten aneks nie wprowadza i wprowadzić nie wolno — patrz pkt 6 aneksu
+   2026-09-21 (SC-2-04). **Doprecyzowanie (security-auditor, weryfikacja SC-3-03, 2026-09-22):**
+   akceptacja opiera się na analogii z `absence_type.name` — nazwą słownikową wpisywaną raz. Pkt 5
+   tego samego aneksu przyznaje, że wymiar urlopu bywa negocjowanym elementem warunków zatrudnienia
+   — dla takiego wiersza naturalną treścią `source` jest odwołanie do osoby i jej aneksu umowy, nie
+   do regulaminu. Profil ekspozycji różni się od `absence_type.name`: pole opisowe wpisywane raz w
+   słowniku vs. zdanie pisane przy każdym wpisie liczby, dla wiersza, który z definicji może
+   dotyczyć jednej osoby. Wniosek (brak wymuszenia technicznego) zostaje w mocy — detekcja nazwisk
+   byłaby zawodna i dałaby gorsze niż nic poczucie bezpieczeństwa — ale interfejs zapisu powinien
+   zachęcać do wskazania dokumentu/reguły, nie osoby, tam gdzie to możliwe (treść pomocnicza pola,
+   nie walidacja). **Warunek ponownego otwarcia:** ten sam co pkt 10 aneksu SC-3-02, rozszerzony —
+   pierwsze zadanie projektujące mechanizm erasure/rectification dla `approved_snapshot_*`
+   (jakikolwiek powód, dowolna kolumna) musi objąć nim `absence_type.name` i `absence_budget.source`
+   naraz, **i** pierwsze zadanie czytające jakąkolwiek migawkę (blok 8) musi ocenić, czy odczyt
+   `source` wymaga własnej bramki widoczności, nie tylko bramki zapisu.
+7. **Degradacja pseudonimizacji z pkt 11 aneksu SC-3-02 rośnie, nie zmienia się — i mechanizm
+   egzekwujący jest węższy niż to zdanie pierwotnie zakładało.** Tamten punkt nazwał, że przy
+   `headcount = 1` krotka wymiarów katalogu wskazuje osobę, a lista nieobecności staje się
+   informacją o niej. Budżet dokłada do tego wymiar uprawnieniowy: wołający z `STAFFING_READ` +
+   wierszem `project_access` odczyta z wyliczenia, ile dni urlopu przysługuje tej jednej osobie —
+   warunek zatrudnienia, nie plan. **Korekta (security-auditor, weryfikacja SC-3-03, 2026-09-22):**
+   ścieżka obsady (`GET .../staffing-positions`) wynosi pola budżetowe pod samym `STAFFING_READ`,
+   bez wymogu `CATALOG_READ` — zgodnie z precedensem SC-3-02, gdzie ta sama ścieżka już wynosi
+   `calendar_name`/`standard_hours_per_day` pod samym `STAFFING_READ`. Dane organizacyjne
+   dziedziczone przez odpowiedź projektową nie dostają drugiej bramki tylko dlatego, że mają też
+   własny endpoint katalogowy — to byłaby bramka na polu bez podstawy w ADR-0005 (Decyzja: "warstwa
+   kształtowania", nie "dwie warstwy dla tej samej wartości w dwóch odpowiedziach"). Dziś
+   nieszkodliwe, bo placeholder daje oba uprawnienia naraz — rozbieżność aktywuje się dopiero z
+   rozdzieleniem uprawnień. **Warunek ponownego otwarcia bez zmian** (przeniesienie nieobecności na
+   osobę, Issue #31, albo pierwsze zadanie zależne od rozróżnienia `headcount = 1` od
+   `headcount > 1` w odpowiedzi API); do tego czasu przyjęte jako nazwane, nieaktywnie zamknięte
+   ryzyko, nie jako defekt do naprawy w SC-3-03.
+8. **Bramka kosztów osobowych jest nieaktywowana dopóty, dopóki SC-3-03 nie niesie kwoty.** Jeżeli
+   żadna odpowiedź tego zadania nie zawiera stawki ani kwoty, kierunek wyjątku z aneksu 2026-09-19
+   (SC-2-01) pkt 3 pozostaje nieudowodniony i musi tak zostać nazwany w rejestrze możliwości —
+   dokładnie jak w pkt 7 aneksu SC-3-02. Z chwilą, gdy zadanie pokaże choć jedną liczbę kosztową
+   wyprowadzoną z budżetu, obowiązuje pkt 4 wyżej i koniunkcja musi zostać dowiedziona własnym
+   kryterium.

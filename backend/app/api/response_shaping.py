@@ -34,12 +34,15 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.api.schemas.catalog import (
+    AbsenceBudgetEntry,
+    AbsenceBudgetList,
     AbsenceTypeEntry,
     AbsenceTypeList,
     CatalogRate,
     CatalogRateList,
     DimensionEntry,
     DimensionEntryList,
+    StatutoryLeaveRegime,
     WorkingCalendarDayEntry,
     WorkingCalendarEntry,
     WorkingCalendarList,
@@ -52,6 +55,7 @@ from app.api.schemas.project import (
     ScenarioListItem,
 )
 from app.api.schemas.staffing import (
+    AbsenceBudgetSource,
     DerivedCapacitySource,
     StaffingAbsence,
     StaffingAbsenceList,
@@ -60,12 +64,20 @@ from app.api.schemas.staffing import (
     StaffingPositionRead,
 )
 from app.core.identity import CallerIdentity, Permission
+from app.core.money import NOT_APPLICABLE
 from app.data.catalog import DimensionRow
 from app.data.project_reads import CallerProjectView
 from app.data.staffing import StaffingPositionView
+from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, StatutoryLeaveType
+from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
 from app.domain.scenario_readiness import assess
-from app.models.catalog import AbsenceType, CatalogDefaultRate, WorkingCalendar
+from app.models.catalog import (
+    AbsenceBudget,
+    AbsenceType,
+    CatalogDefaultRate,
+    WorkingCalendar,
+)
 from app.models.project import Project, ProjectStatus
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import StaffingPositionAbsence
@@ -299,6 +311,78 @@ def shape_working_calendar_list(
     )
 
 
+def shape_absence_budget(
+    budget: AbsenceBudget, statutory: StatutoryLeaveType | None
+) -> AbsenceBudgetEntry:
+    """One leave budget as the API returns it, with the regime of the flagged absence type.
+
+    **No `caller` argument, and that absence is the statement** — the same one
+    `shape_working_calendar` makes. A budget belongs to no project and no user, and not one of its
+    fields is gated on a permission: a number of days is not an amount, and the multiplier that
+    would make it one is gated separately and is not in this payload (ADR-0005, addendum 2026-09-22
+    SC-3-03, point 3). A caller parameter here would advertise a gate that is not there, which is
+    the dangerous direction to be wrong in.
+
+    **The day this repository returns the *cost* of a budget, that is a different field and a
+    different gate** (point 4): a cost inside a response describing a project or a scenario goes
+    through the SC-1-08 conjunction — `PERSONNEL_COSTS_READ` **and**
+    `project_access.can_view_personnel_costs` — and the single-factor catalogue exception explicitly
+    does not apply to it. Nothing here may be read as that gate already being in place.
+
+    `statutory` is passed in rather than looked up, because this layer never receives a `Session`
+    and must never grow a query of its own. `None` is the named state of ADR-0008's addendum (point
+    8b): the regime is `"n/a"` and the nested object is absent — never `false`, which would read as
+    a decided answer nobody decided, and never a `500`.
+    """
+    named = statutory is not None
+    return AbsenceBudgetEntry(
+        id=budget.id,
+        calendar_id=budget.calendar_id,
+        engagement_type_id=budget.engagement_type_id,
+        budget_days=budget.budget_days,
+        unit=budget.unit,
+        source=budget.source,
+        effective_from=budget.effective_from,
+        # `assert`-free narrowing for the type checker: the column is nullable in the shared shape
+        # of the pattern and a CHECK constraint refuses `NULL` on this table (ADR-0008, addendum
+        # SC-3-03, point 10b), so a row that reaches here always carries an end date.
+        effective_to=budget.effective_to,  # type: ignore[arg-type]
+        statutory_leave_state=BUDGET_RESOLVED if named else NO_STATUTORY_LEAVE_TYPE,
+        statutory_leave=(
+            StatutoryLeaveRegime(
+                absence_type_id=statutory.absence_type_id,
+                name=statutory.name,
+                generates_cost=statutory.generates_cost,
+                generates_revenue=statutory.generates_revenue,
+            )
+            if statutory is not None
+            else None
+        ),
+        # Read from the flagged type on every row, never copied onto the budget (criterion K-04):
+        # a literal here would stop following the type the day somebody edits it.
+        generates_cost=statutory.generates_cost if statutory is not None else NOT_APPLICABLE,
+        generates_revenue=(
+            statutory.generates_revenue if statutory is not None else NOT_APPLICABLE
+        ),
+        updated_at=budget.updated_at,
+    )
+
+
+def shape_absence_budget_list(
+    budgets: Sequence[AbsenceBudget], statutory: StatutoryLeaveType | None
+) -> AbsenceBudgetList:
+    """Every budget through the function above — no second construction path.
+
+    One `statutory` for the whole list, resolved once by the data layer: the flag is a property of
+    the dictionary and not of a budget row, so resolving it per row would be N lookups answering one
+    question — and it is the shape in which two rows of one response could disagree about which type
+    the organisation settles against.
+    """
+    return AbsenceBudgetList(
+        budgets=[shape_absence_budget(budget, statutory) for budget in budgets]
+    )
+
+
 def shape_absence_type(absence_type: AbsenceType) -> AbsenceTypeEntry:
     """One absence type with both of its flags, independently (F-05, SC-3-02).
 
@@ -311,6 +395,9 @@ def shape_absence_type(absence_type: AbsenceType) -> AbsenceTypeEntry:
         name=absence_type.name,
         generates_cost=absence_type.generates_cost,
         generates_revenue=absence_type.generates_revenue,
+        # The third flag (SC-3-03), read off the row like the other two and derived from nothing:
+        # which type the leave budget settles against is a stored fact, not a name match.
+        is_statutory_leave=absence_type.is_statutory_leave,
         updated_at=absence_type.updated_at,
     )
 
@@ -375,6 +462,7 @@ def _shape_derived_capacity(capacity: MonthCapacity) -> dict[str, Any]:
             "derived_capacity_hours": capacity.hours,
             "derived_capacity_state": capacity.state,
             "derived_capacity_source": None,
+            **_shape_absence_budget_share(capacity),
         }
     return {
         "derived_capacity_hours": capacity.hours,
@@ -385,6 +473,51 @@ def _shape_derived_capacity(capacity: MonthCapacity) -> dict[str, Any]:
             standard_hours_per_day=capacity.standard_hours_per_day,
             working_days=capacity.working_days,
             absence_day_equivalents=capacity.absence_day_equivalents,
+        ),
+        **_shape_absence_budget_share(capacity),
+    }
+
+
+def _shape_absence_budget_share(capacity: MonthCapacity) -> dict[str, Any]:
+    """The leave budget behind one month's capacity, as the three fields the payload carries.
+
+    Nothing here decides which state it is, and nothing here computes or re-rounds an hour figure:
+    `app.domain.absence_budget` resolved the state **and** allocated the month's hours (the
+    remainder distribution of S-01/R-05 makes the month's slice depend on where it sits in the
+    window), and `app.domain.capacity` subtracted exactly that figure. Reporting anything else here
+    — a second `quantize`, a share recomputed from days — is what would let the payload and the
+    capacity disagree by a cent.
+
+    Every state that is not `resolved` answers `"n/a"` and no source: `no_budget`, `no_calendar` and
+    `no_statutory_leave_type` alike. Never `0.00`, which is a number every later sum would add up
+    and which a real budget of zero days already means (ADR-0008, addendum 2026-09-22 SC-3-03,
+    point 7). The source object is present exactly when the budget was **applied**, which is a
+    stronger statement than "a budget row exists": a budget nobody can settle against
+    (`no_statutory_leave_type`) deducted nothing, and showing its figures beside a deduction of
+    `"n/a"` would invite reading them as one that happened.
+    """
+    share: BudgetShare | None = capacity.budget
+    if share is None or share.state != BUDGET_RESOLVED:
+        return {
+            "absence_budget_hours": NOT_APPLICABLE,
+            # A month with no calendar shows the calendar's own state here too, so a client has one
+            # named state to render and not two (addendum SC-3-03, point 3a).
+            "absence_budget_state": NO_CALENDAR if share is None else share.state,
+            "absence_budget_source": None,
+        }
+    return {
+        "absence_budget_hours": share.hours,
+        "absence_budget_state": share.state,
+        "absence_budget_source": AbsenceBudgetSource(
+            budget_id=share.budget_id,
+            budget_days=share.budget_days,
+            entitlement_days=share.entitlement_days,
+            unit=share.unit,
+            source=share.source,
+            effective_from=share.effective_from,
+            effective_to=share.effective_to,
+            months_in_window=share.months_in_window,
+            statutory_days_absorbed=share.statutory_days_absorbed,
         ),
     }
 

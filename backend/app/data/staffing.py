@@ -53,8 +53,13 @@ What this module deliberately does **not** do: resolve a rate or read a cost (AD
 2026-09-19, point 5). A position carries the four dimension ids and nothing priced, which is why
 there is no cost gate on this path and why `StaffingPositionView` carries no per-caller flag — a
 view object exists to carry a per-(caller, row) flag, and there is still none here to carry. It
-joins the catalogue for one thing only: the working calendar of the position's location, which is
-organisational data with no scope of its own (ADR-0001, addendum 2026-09-22).
+reads the catalogue for three things, all of them organisational data with no scope of its own
+(ADR-0001, addendum 2026-09-22; ADR-0005, addendum 2026-09-22 SC-3-03, point 1): the working
+calendar of the position's location, the **leave budget** of its (calendar, engagement type) pair,
+and which absence type carries `is_statutory_leave`. None of the three is gated on
+`PERSONNEL_COSTS_READ` and none of them is an amount — a budget is a number of days (ADR-0005,
+addendum SC-3-03, point 3). The day a *cost* is derived from one, that figure is a cost field and
+goes through the SC-1-08 conjunction (point 4).
 """
 
 import uuid
@@ -68,12 +73,20 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.identity import CallerIdentity
+from app.data.absence_budget import BudgetKey, budgets_for_months, statutory_leave_type
 from app.data.column_copy import values_to_copy
 from app.data.project_reads import project_for_caller
 from app.data.scenario_guard import unapproved_scenario
 from app.data.working_calendar import basis_by_location
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
-from app.domain.capacity import AbsenceSpan, CalendarBasis, MonthCapacity, month_capacity
+from app.domain.absence_budget import AbsenceBudget, StatutoryLeaveType, month_budget_share
+from app.domain.capacity import (
+    AbsenceSpan,
+    CalendarBasis,
+    MonthCapacity,
+    absence_day_equivalents_between,
+    month_capacity,
+)
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
     HOURS_COLUMNS,
@@ -222,36 +235,107 @@ def _views_of(
 ) -> Sequence[StaffingPositionView]:
     """Pair each position with the capacity derived for each of its months.
 
-    One calendar lookup for the whole sequence, keyed by location (`basis_by_location`): 200
-    positions in three locations are one statement, not 200. The absences are read from the rows
-    already loaded, so nothing here queries per position either.
+    Three lookups for the whole sequence, none of them per position: the calendars keyed by
+    location (`basis_by_location`), the budgets keyed by (calendar, engagement type) and month
+    (`budgets_for_months`), and the one absence type budgets settle against
+    (`statutory_leave_type`). 200 positions in three locations are three statements, not 600. The
+    absences are read from the rows already loaded, so nothing here queries per position either.
 
-    A location with no calendar is simply absent from the mapping, so `basis` is `None` and
-    `month_capacity` produces the named state — the branch is one `dict.get`, and there is no
-    fallback value anywhere on this path to fall into instead (K-23, K-01).
+    A location with no calendar is simply absent from the calendar mapping, so `basis` is `None`,
+    `month_capacity` produces the named state and the budget answers with the *same* state — a
+    location with no calendar has no budget either, and that is one named state to show rather than
+    two (ADR-0008, addendum 2026-09-22 SC-3-03, point 3a). The branch is one `dict.get`, and there
+    is no fallback value anywhere on this path to fall into instead (K-23, K-01, K-08).
+
+    A month no budget window covers is likewise absent from the budget mapping: the named "no
+    budget" state is the *absence* of a key, never a zero the caller could add up (K-06, K-08).
     """
     bases = basis_by_location(session, [position.location_id for position in positions])
-    return [_view_of(position, bases.get(position.location_id)) for position in positions]
+    statutory = statutory_leave_type(session)
+    keys: list[BudgetKey] = []
+    months: list[date] = []
+    for position in positions:
+        basis = bases.get(position.location_id)
+        if basis is None:
+            continue
+        keys.append((basis.calendar_id, position.engagement_type_id))
+        months.extend(allocation.period_month for allocation in position.allocations)
+    budgets = budgets_for_months(session, keys, months)
+    return [
+        _view_of(position, bases.get(position.location_id), budgets, statutory)
+        for position in positions
+    ]
 
 
-def _view_of(position: StaffingPosition, basis: CalendarBasis | None) -> StaffingPositionView:
-    """One position's view: its months, its absences and the capacity of each month."""
+def _view_of(
+    position: StaffingPosition,
+    basis: CalendarBasis | None,
+    budgets: Mapping[tuple[BudgetKey, date], AbsenceBudget],
+    statutory: StatutoryLeaveType | None,
+) -> StaffingPositionView:
+    """One position's view: its months, its absences and the capacity of each month.
+
+    **Which absences count against the budget is decided here, once, from the flagged type** — the
+    span carries a `bool` and the capacity formula never sees an absence type id (ADR-0008, addendum
+    2026-09-22 SC-3-03, point 8). **With no flagged type at all the budget is not applied and the
+    answer says so** (`statutory_leave_named=False` → `NO_STATUTORY_LEAVE_TYPE`): the `max` of point
+    9 has no second operand, because nothing says which booked absences the entitlement already
+    covers, and applying it anyway deducts the same leave twice — once as itself and once as an
+    entitlement that absorbed nothing (reviewer R-02). That is the state a freshly migrated database
+    is in, so the silent version of this answer would have been the default one.
+
+    The `max` of point 9 is resolved over the budget's **window**, so the statutory days are counted
+    over `effective_from`..`effective_to` and not over the month — `absence_day_equivalents_between`
+    is the same intersection rule the monthly deduction uses, over a different range. Reversing the
+    order (a `max` per month) is the mutation that turns 24 budgeted days plus 20 booked in July
+    into 42 days deducted over a year.
+
+    **That count is memoised per budget window** (reviewer R-04). Its value depends on the position
+    and the window and on nothing else, while the loop below runs per *month*: recomputing it there
+    walked every day of every window once per month of the grid — measured at 2.2 s of pure Python
+    for an NF-03 grid with no absences at all, and 21 s for a five-year window, before a single row
+    was read. The memo is local to one position and one call, so it can hold nothing stale.
+    """
     spans = [
-        AbsenceSpan(start_date=absence.start_date, end_date=absence.end_date)
+        AbsenceSpan(
+            start_date=absence.start_date,
+            end_date=absence.end_date,
+            is_statutory_leave=(
+                statutory is not None and absence.absence_type_id == statutory.absence_type_id
+            ),
+        )
         for absence in position.absences
     ]
-    return StaffingPositionView(
-        position=position,
-        capacity={
-            allocation.period_month: month_capacity(
-                basis,
-                headcount=position.headcount,
-                period_month=allocation.period_month,
-                absences=spans,
-            )
-            for allocation in position.allocations
-        },
+    statutory_spans = [span for span in spans if span.is_statutory_leave]
+    key: BudgetKey | None = (
+        None if basis is None else (basis.calendar_id, position.engagement_type_id)
     )
+    absorbed: dict[uuid.UUID, int] = {}
+    capacity: dict[date, MonthCapacity] = {}
+    for allocation in position.allocations:
+        budget = None if key is None else budgets.get((key, allocation.period_month))
+        share = None
+        if budget is not None and basis is not None:
+            if budget.budget_id not in absorbed:
+                absorbed[budget.budget_id] = absence_day_equivalents_between(
+                    basis, statutory_spans, budget.effective_from, budget.effective_to
+                )
+            share = month_budget_share(
+                budget,
+                period_month=allocation.period_month,
+                headcount=position.headcount,
+                standard_hours_per_day=basis.standard_hours_per_day,
+                statutory_leave_named=statutory is not None,
+                manual_statutory_days_in_window=absorbed[budget.budget_id],
+            )
+        capacity[allocation.period_month] = month_capacity(
+            basis,
+            headcount=position.headcount,
+            period_month=allocation.period_month,
+            absences=spans,
+            budget_share=share,
+        )
+    return StaffingPositionView(position=position, capacity=capacity)
 
 
 def list_positions(

@@ -2,11 +2,13 @@
 
 from app.models.approved_snapshot import (
     SNAPSHOT_TABLES,
+    ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
 )
 from app.models.catalog import (
+    AbsenceBudget,
     AbsenceType,
     CatalogDefaultRate,
     CatalogEngagementType,
@@ -29,7 +31,9 @@ from app.models.staffing import (
 
 __all__ = [
     "SNAPSHOT_TABLES",
+    "AbsenceBudget",
     "AbsenceType",
+    "ApprovedSnapshotAbsenceBudget",
     "ApprovedSnapshotAbsenceType",
     "ApprovedSnapshotWorkingCalendar",
     "ApprovedSnapshotWorkingCalendarDay",

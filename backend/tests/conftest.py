@@ -39,7 +39,9 @@ from app.core.identity import CallerIdentity, Permission  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
+    AbsenceBudget,
     AbsenceType,
+    ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
@@ -219,6 +221,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotWorkingCalendarDay))
             connection.execute(sa.delete(ApprovedSnapshotWorkingCalendar))
             connection.execute(sa.delete(ApprovedSnapshotAbsenceType))
+            connection.execute(sa.delete(ApprovedSnapshotAbsenceBudget))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -227,6 +230,11 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             # refusal is the intended behaviour (deleting a dimension entry in use is out of scope
             # for SC-2-01), which makes the order here part of the fixture, not a detail.
             connection.execute(sa.delete(CatalogDefaultRate))
+            # Budgets before the dictionaries for the same reason as rates: `absence_budget`
+            # references `working_calendar` and `catalog_engagement_types` with no `ON DELETE`
+            # action, so the database refuses to empty either while a budget still points at one
+            # (SC-3-03).
+            connection.execute(sa.delete(AbsenceBudget))
             # An absence type is referenced by an absence row, which is already gone above; a
             # calendar is referenced by `catalog_locations.calendar_id`, which is why the locations
             # have to be emptied before the calendars and its days before it.
@@ -499,23 +507,112 @@ def make_absence_type(
     name: str = "Paid holiday",
     generates_cost: bool = True,
     generates_revenue: bool = False,
+    is_statutory_leave: bool = False,
 ) -> AbsenceType:
-    """Insert one absence type directly, with both flags set independently (K-11).
+    """Insert one absence type directly, with all three flags set independently (K-11, SC-3-03).
 
     The defaults are the realistic asymmetric case — paid holiday costs money and earns none — so a
     test that does not care about the flags still exercises two *different* values, and an
     implementation aliasing one to the other would be visible rather than hidden behind two equal
     defaults.
+
+    `is_statutory_leave` defaults to `False`, and that default is deliberate in the same way
+    `make_dimension_tuple`'s `calendar=None` is: a dictionary with no flagged type is the named
+    state of ADR-0008's addendum (2026-09-22 SC-3-03, point 8b), it is the state every row created
+    before SC-3-03 is in, and a fixture that quietly flagged every type would make it unreachable
+    from most tests — which is the state an implementation guessing "the first type alphabetically"
+    hides in.
     """
     entry = AbsenceType(
         id=uuid.uuid4(),
         name=name,
         generates_cost=generates_cost,
         generates_revenue=generates_revenue,
+        is_statutory_leave=is_statutory_leave,
     )
     session.add(entry)
     session.flush()
     return entry
+
+
+# --- absence budgets (F-05, SC-3-03) ------------------------------------------------------------
+
+STATUTORY_LEAVE_TYPE_NAME = "Statutory annual leave"
+"""The name every fixture gives the type flagged `is_statutory_leave`, and it is **not** first
+alphabetically among the names this suite uses (`Paid holiday`, `Sick leave`, `Training` all sort
+before it in at least one test each, and the K-04 fixtures make that explicit).
+
+Criterion K-04's mutation (b) is "pick the type by name instead of by the flag"; a fixture whose
+flagged type happened to be the first one alphabetically would let that mutation pass."""
+
+BUDGET_SOURCE = "Staff regulations §12 (2026 edition)"
+"""The source text every budget fixture carries: a rule, never a person (ADR-0008, addendum
+2026-09-22 SC-3-03, point 6). Spelled once so a test asserting "the source came back whole" and a
+test asserting "a blank source is refused" cannot disagree about what a valid one looks like."""
+
+
+def make_absence_budget(
+    session: Session,
+    calendar: "WorkingCalendar",
+    engagement_type_id: uuid.UUID,
+    *,
+    budget_days: Decimal,
+    effective_from: date,
+    effective_to: date,
+    source: str = BUDGET_SOURCE,
+    unit: str = "day",
+) -> AbsenceBudget:
+    """Insert one budget window directly — no endpoint, no request schema.
+
+    Deliberately bypasses `AbsenceBudgetCreateRequest`: the constraints under test (the `EXCLUDE`,
+    the non-blank source, the closed and month-aligned window, the unit CHECK) are claims about the
+    *database*, and a path through Pydantic would prove only that Pydantic refused first (criterion
+    K-02's first mutation).
+
+    `budget_days` and the window are required with no defaults, because every criterion that uses
+    this fixture varies one of them and a default would make "26 days over twelve months" look like
+    a property of the system rather than of the row.
+
+    Flushes rather than commits, so the row lives in the test's transaction; the tests that need a
+    committed row (the two-connection races) commit for themselves.
+    """
+    budget = AbsenceBudget(
+        id=uuid.uuid4(),
+        calendar_id=calendar.id,
+        engagement_type_id=engagement_type_id,
+        budget_days=budget_days,
+        unit=unit,
+        source=source,
+        effective_from=effective_from,
+        effective_to=effective_to,
+    )
+    session.add(budget)
+    session.flush()
+    return budget
+
+
+def budget_payload(
+    calendar_id: uuid.UUID, engagement_type_id: uuid.UUID, **overrides: object
+) -> dict[str, object]:
+    """A valid `POST /catalog/absence-budgets` body. Days as a string, never a JSON float."""
+    body: dict[str, object] = {
+        "calendar_id": str(calendar_id),
+        "engagement_type_id": str(engagement_type_id),
+        "budget_days": "26.00",
+        "unit": "day",
+        "source": BUDGET_SOURCE,
+        "effective_from": "2026-01-01",
+        "effective_to": "2026-12-31",
+    }
+    return body | overrides
+
+
+def count_absence_budgets(session: Session | sa.Connection) -> int:
+    """Budget rows visible to that connection — used to prove a refused write wrote nothing, not
+    merely that the response said no."""
+    return session.execute(
+        sa.select(sa.func.count()).select_from(AbsenceBudget)
+    ).scalar_one()
 
 
 def make_absence(
@@ -577,9 +674,14 @@ SNAPSHOT_MODELS = (
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
     ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotAbsenceBudget,
 )
-"""The three snapshot tables, as models — so a test counting "every snapshot row" cannot count two
-of the three and look green (criteria K-17, K-18, K-19)."""
+"""The four snapshot tables, as models — so a test counting "every snapshot row" cannot count three
+of the four and look green (criteria K-17, K-18, K-19 of SC-3-02; K-07 of SC-3-03).
+
+The fourth joined in SC-3-03, and this tuple growing is a **deliberate** canary change: ADR-0004's
+addendum of 2026-09-22 (SC-3-03, point 4) requires a new snapshot table to be covered by the same
+canaries as the three existing ones, "because the registry is silent about omissions"."""
 
 
 def count_snapshot_rows(connection: sa.Connection | Session, scenario_id: uuid.UUID) -> int:
