@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { NOT_IMPLEMENTED_PREFIX } from "../lib/notImplemented";
 import { AppShell, type ScreenKey } from "./AppShell";
 
 /**
@@ -11,6 +12,27 @@ import { AppShell, type ScreenKey } from "./AppShell";
  */
 
 const SCREEN_CONTENT = "Screen placed in the shell";
+
+/** The rail of `Wymagania/prototyp/screens/15-catalog.png`, top to bottom (SC-2-05). Literals, not
+ * the shell's own lists: a test that read its expectation from the component would agree with it. */
+const ALL_RAIL_ENTRIES = [
+  "Projects",
+  "Compare scenarios",
+  "Roles & rates",
+  "Working calendars",
+  "Organization defaults",
+  "Overview",
+  "Staffing plan",
+  "Additional costs",
+  "Commercial terms",
+  "Assumptions",
+  "Versions & approval",
+];
+
+/** The nine of them this application does not have. */
+const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
+  (label) => label !== "Projects" && label !== "Roles & rates",
+);
 
 interface ShellOptions {
   readonly activeScreen?: ScreenKey;
@@ -121,24 +143,126 @@ describe("AppShell", () => {
     );
   });
 
-  it("lists only the screens this application has, not the screens the design proposal shows", () => {
+  it("offers as live only the screens this application has, and shows every other screen of the design proposal as not implemented yet", () => {
+    // SC-2-05 (Issue #59, gate-1 decision Q-1) rewrote this test. Until then the rail had two
+    // entries and this asserted that the mockup's other screens were absent. The rail now shows the
+    // mockup's eleven entries, so the claim — the rail says truthfully what exists — is asserted
+    // the other way round and more strictly: every entry is pinned by name and position, the two
+    // that exist are live, and each of the nine that do not says so, in the one convention
+    // `lib/notImplemented.ts` owns, and does nothing when pressed.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const onNavigate = vi.fn();
+    renderShell("ok", { activeScreen: "roles-and-rates", onNavigate });
+
+    const entries = within(rail()).getAllByRole("listitem");
+    expect(entries.map((entry) => entry.textContent)).toEqual(ALL_RAIL_ENTRIES);
+
+    // The nine planned entries: a button each, reachable and announced, marked as not available
+    // with the tooltip every such control carries, and naming why.
+    for (const label of PLANNED_RAIL_ENTRIES) {
+      const entry = within(rail()).getByRole("button", { name: label });
+      expect(entry, label).toHaveAttribute("aria-disabled", "true");
+      expect(entry, label).not.toHaveAttribute("disabled");
+      expect(entry.tabIndex, label).toBe(0);
+      expect(entry.getAttribute("title"), label).toMatch(new RegExp(`^${NOT_IMPLEMENTED_PREFIX} — .+`));
+      expect(entry, label).not.toHaveAttribute("aria-current");
+    }
+
+    // The two that exist carry none of that.
+    const projects = within(rail()).getByRole("button", { name: "Projects" });
+    expect(projects).not.toHaveAttribute("aria-disabled");
+    expect(projects.getAttribute("title")).toBeNull();
+    expect(within(rail()).getByText("Roles & rates")).toHaveAttribute("aria-current", "page");
+
+    // Pressing a planned entry navigates nowhere and reads nothing.
+    for (const label of PLANNED_RAIL_ENTRIES) {
+      fireEvent.click(within(rail()).getByRole("button", { name: label }));
+    }
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText(SCREEN_CONTENT)).toBeInTheDocument();
+
+    // Contrast: the live entry in the same rail does report its choice — so the silence above is
+    // the planned entries', not a rail that reports nothing.
+    fireEvent.click(projects);
+    expect(onNavigate).toHaveBeenCalledWith("projects");
+  });
+
+  it("names the project group in the accessibility tree without a heading, and without the mockup's sample project name", () => {
     renderShell();
 
-    // Two entries, both named. An entry for a screen with no backend behind it would be a promise
-    // the product cannot keep, and — unlike a disabled entry — nothing about it would say so.
-    const entries = within(rail()).getAllByRole("listitem");
-    expect(entries.map((entry) => entry.textContent)).toEqual(["Projects", "Roles & rates"]);
-
-    for (const absent of [
-      "Compare scenarios",
-      "Working calendars",
-      "Organization defaults",
+    // Gate-1 decision Q-2: "Commerce platform" is the mockup's example project, not a section name.
+    const group = within(rail()).getByRole("list", { name: "Project" });
+    expect(within(group).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Overview",
       "Staffing plan",
+      "Additional costs",
       "Commercial terms",
+      "Assumptions",
       "Versions & approval",
-    ]) {
-      expect(within(rail()).queryByText(absent)).toBeNull();
+    ]);
+    expect(within(rail()).queryByText(/Commerce platform/)).toBeNull();
+    // Not a heading: the rail adds none, so the page's headings stay the shell's `h1` and the
+    // screen's own.
+    expect(within(rail()).queryAllByRole("heading")).toHaveLength(0);
+  });
+
+  it("says why each planned screen is missing — a missing screen, not a missing feature, where the backend already exists", () => {
+    renderShell();
+
+    const hint = (label: string) =>
+      within(rail()).getByRole("button", { name: label }).getAttribute("title") ?? "";
+
+    // Gate-1 decision Q-4: the calendars (SC-3-02, SC-3-03) and the staffing lines (SC-3-01) are
+    // stored and proven. A tooltip saying the feature does not exist would be the false statement.
+    expect(hint("Working calendars")).toBe(
+      `${NOT_IMPLEMENTED_PREFIX} — the calendars are stored by the backend (SC-3-02, SC-3-03); the screen is not built`,
+    );
+    expect(hint("Staffing plan")).toBe(
+      `${NOT_IMPLEMENTED_PREFIX} — staffing lines are stored by the backend (SC-3-01); the screen is not built`,
+    );
+
+    // The rest name the requirement and the Issue that owns it.
+    expect(hint("Compare scenarios")).toContain("F-09 (Issue #11)");
+    expect(hint("Organization defaults")).toContain("F-02 (Issue #4)");
+    expect(hint("Overview")).toContain("F-10 and F-11 (Issues #12, #13)");
+    expect(hint("Additional costs")).toContain("F-08 (Issue #10)");
+    expect(hint("Commercial terms")).toContain("F-06 (Issue #8)");
+    expect(hint("Assumptions")).toContain("F-02 (Issue #4)");
+    expect(hint("Versions & approval")).toContain("F-12 (Issue #14)");
+  });
+
+  it("leaves the topbar as it was — no identity, no workspace badge, no currency footer from the mockup", () => {
+    renderShell();
+
+    // Gate-1 decision Q-3: nothing in this product backs them.
+    for (const absent of ["Project manager", "PM", "Internal workspace", "Planning workspace"]) {
+      expect(screen.queryByText(absent)).toBeNull();
     }
+    expect(screen.queryByText(/scenario currency/i)).toBeNull();
+    expect(screen.getByTestId("backend-status")).toHaveTextContent("Backend: ok");
+  });
+
+  it("does not move focus when a planned entry is pressed, because nothing was navigated to", () => {
+    const { rerender } = render(
+      <AppShell backendStatus="ok" activeScreen="projects" onNavigate={() => {}}>
+        <h2 tabIndex={-1}>First screen</h2>
+      </AppShell>,
+    );
+    const planned = within(rail()).getByRole("button", { name: "Compare scenarios" });
+    planned.focus();
+    fireEvent.click(planned);
+
+    // `App` would re-render the shell with the same `activeScreen` — a planned entry never calls
+    // `onNavigate` — and the `[activeScreen]` effect does not fire for that.
+    rerender(
+      <AppShell backendStatus="ok" activeScreen="projects" onNavigate={() => {}}>
+        <h2 tabIndex={-1}>First screen</h2>
+      </AppShell>,
+    );
+    expect(planned).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "First screen" })).not.toHaveFocus();
   });
 
   it("puts the screen it frames inside the main landmark, reachable past the rail", () => {

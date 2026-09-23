@@ -41,6 +41,14 @@ const components = import.meta.glob("../**/*.tsx", {
   eager: true,
 }) as Record<string, string>;
 
+/** SC-2-05 (ADR-0011): any graphic file under `src/`. None today — the icons come from
+ * `@tabler/icons-react` — and the check below holds the day the first one is added. */
+const graphics = import.meta.glob("../**/*.svg", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+
 // --- A very small stylesheet reader ------------------------------------------------------------
 // Enough for these files and no more: flat rules, no media queries, no nesting. It is deliberately
 // dumb — if the stylesheets ever grow a construct it cannot see, the checks below must be made to
@@ -241,6 +249,36 @@ describe("theme tokens", () => {
     expect(Object.keys(components).length).toBeGreaterThan(0);
     expect(inlineStyles).toEqual([]);
   });
+
+  it("carries no colour in an icon — no `fill`, `stroke` or `color` attribute with a value, and no graphic file with one (SC-2-05, K-29)", () => {
+    // ADR-0011, point 2. The two checks above read stylesheets and `style={{`; an icon painted by
+    // attribute — `<IconPlus color="#0066ff" />`, `<path fill="#ff5500">` — is neither, and forks
+    // the palette just as completely. `@tabler/icons-react` draws in `currentColor` by construction,
+    // so the only way a colour gets into one is somebody writing it here.
+    const PAINT_ATTRIBUTE = /\b(fill|stroke|color)\s*=\s*\{?\s*["'`]([^"'`]*)["'`]/g;
+    const ALLOWED = new Set(["none", "currentcolor", "transparent", "inherit"]);
+
+    const offenders: string[] = [];
+    for (const [path, source_] of Object.entries(components)) {
+      for (const match of source_.matchAll(PAINT_ATTRIBUTE)) {
+        if (!ALLOWED.has(match[2].trim().toLowerCase())) {
+          offenders.push(`${path}: ${match[0]}`);
+        }
+      }
+    }
+    for (const [path, svg] of Object.entries(graphics)) {
+      if (colourLiterals(svg).length > 0 || /\b(fill|stroke)\s*=\s*["'](?!none|currentColor)/i.test(svg)) {
+        offenders.push(path);
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // Contrast: the icons this rule is about exist, so it is not an empty check over a codebase
+    // with no icons in it.
+    expect(
+      Object.values(components).some((source_) => source_.includes('from "@tabler/icons-react"')),
+    ).toBe(true);
+  });
 });
 
 describe("colour contrast", () => {
@@ -294,17 +332,16 @@ describe("colour contrast", () => {
       { where: "rail entry not implemented yet", foreground: "--sc-color-text-disabled", background: "--sc-color-disabled-surface" },
       { where: "search placeholder, inactive", foreground: "--sc-color-text-disabled", background: "--sc-color-disabled-surface" },
       // SC-2-02, the catalogue screen. Every pair its stylesheet leaves to the cascade: the count
-      // sentence and the panel titles sit on a `.card`, the period and the withheld cost sit on a
-      // rate row. The withheld cost is the one that matters most — "Restricted" is the only thing
-      // in that cell, so if it is unreadable the cell is empty, and a screenshot shows a gap that
-      // looks deliberate.
+      // sentence and the panel titles sit on a `.card`, the period sits on a rate row. The withheld
+      // cost rate ("Restricted") and dictionary entries no longer leave their colour to the cascade
+      // as of SC-2-05 — `.catalog__restricted` carries its own background, and entries sit on a
+      // white `.card` — so both are proven by the rule-pair test below instead of listed here (a
+      // pair listed against a background nothing renders it on proves nothing; see SC-2-05 R-02).
       { where: "rate count sentence on a panel card", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
       // K-12: the same sentence's truncated-page state, on the same card.
       { where: "truncated rate count sentence on a panel card", foreground: "--sc-color-attention-text", background: "--sc-color-surface" },
       { where: "effective period cell on a rate row", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
-      { where: "withheld cost rate on a rate row", foreground: "--sc-color-attention-text", background: "--sc-color-surface" },
-      { where: "dictionary entry chip", foreground: "--sc-color-text", background: "--sc-color-surface-muted" },
-      // SC-2-03. Same reasoning as the withheld cost one line up: "Internal" is the whole content
+      // SC-2-03. Same reasoning as the withheld cost rate above: "Internal" is the whole content
       // of the vendor cell on every internal rate, so an unreadable colour empties the cell — and
       // an empty vendor cell is exactly the reading K-09 forbids.
       { where: "internal rate in the vendor cell of a rate row", foreground: "--sc-color-text-muted", background: "--sc-color-surface" },
@@ -316,10 +353,6 @@ describe("colour contrast", () => {
       { where: "field label inside a catalogue form", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
       { where: "field hint inside a catalogue form", foreground: "--sc-color-text-muted", background: "--sc-color-surface-muted" },
       { where: "stated (not editable) value inside a catalogue form", foreground: "--sc-color-text", background: "--sc-color-surface-muted" },
-      // The withheld cost rate again, this time in the edit form rather than in the table: the
-      // `.catalog__restricted` rule is reused there on the form's surface, and "Restricted" is the
-      // whole content of that field, so an unreadable colour empties it exactly as it would a cell.
-      { where: "withheld cost rate inside a catalogue form", foreground: "--sc-color-attention-text", background: "--sc-color-surface-muted" },
       { where: "refused save inside a catalogue form", foreground: "--sc-color-attention-text", background: "--sc-color-attention-bg" },
     ];
 
@@ -358,9 +391,15 @@ describe("colour contrast", () => {
       // K-12: the truncated-page state of the same sentence, on the same `.card` surface.
       ".catalog__count--truncated": "--sc-color-surface",
       ".catalog__cell-period": "--sc-color-surface",
-      ".catalog__restricted": "--sc-color-surface",
+      // SC-2-05: `.catalog__restricted` left this list because it is no longer colour-only — the
+      // label now sets `--sc-color-attention-bg` next to its colour (K-30c), so the pairing test
+      // above computes it from the rule itself. The two claims below about its colour still hold.
       // SC-2-03: the vendor cell of an internal rate, also on `.catalog__row > td`.
       ".catalog__internal": "--sc-color-surface",
+      // SC-2-05: the screen and section descriptions (G-2) sit on the page, outside any card; the
+      // dictionary entries are rows on the panel's white `.card`, no longer chips on a wash.
+      ".catalog__description": "--sc-color-page",
+      ".catalog__entry": "--sc-color-surface",
       // SC-2-04: the three colour-only rules of the write forms. They sit on `.catalog__form`,
       // which sets `--sc-color-surface-muted` and no colour of its own — the one background in this
       // stylesheet that is not white, which is why naming it here rather than inheriting the
@@ -411,6 +450,217 @@ describe("colour contrast", () => {
       ?.declarations.get("color");
     expect(internal).toBe("var(--sc-color-text-muted)");
     expect(internal).not.toBe("var(--sc-color-attention-text)");
+  });
+
+  // --- SC-2-05, K-29: the same closure, for every stylesheet and for both halves of a pair --------
+  //
+  // The test above closes one hole for one file. The analyst's K-29 named three it leaves open:
+  //
+  //   1. It reads only `CatalogScreen.css`. A colour-only rule added to `app.css` or `AppShell.css`
+  //      — `color: var(--sc-color-blue)` on the muted surface, 4.31:1 — joins no list and fails
+  //      nothing.
+  //   2. It only asks "which surface is under this colour". A rule that sets a *surface* and no
+  //      colour has the mirror-image problem — which text sits on it — and was answered only by the
+  //      hand-written `declaredPairs`, which nothing forces anybody to extend.
+  //   3. A rule with `background: none` / `transparent` next to its colour was treated as having a
+  //      background of its own, so it fell out of both checks. `.button.catalog__link-button` is one.
+  //
+  // Both maps below are keyed by file and selector, and both are compared against the stylesheets
+  // in full: a new rule with no entry fails, and an entry for a rule that no longer exists fails.
+  // The surfaces and foregrounds are still named by hand — the cascade is not reconstructed here —
+  // but they are now named for every rule in every stylesheet, not for the ones someone remembered.
+
+  /** `path/to/File.css selector` — the stylesheet's base name keeps the keys readable. */
+  function ruleKey(rule: Rule): string {
+    return `${rule.file.split("/").pop() ?? rule.file} ${rule.selector}`;
+  }
+
+  /** The rule's own background as a colour, or null when it has none (`none`, `transparent`, unset). */
+  function ownBackground(rule: Rule): string | null {
+    return resolveColour(
+      rule.declarations.get("background-color") ?? rule.declarations.get("background") ?? "",
+    );
+  }
+
+  function checkPairs(pairs: { where: string; foreground: string; background: string }[]) {
+    return pairs
+      .map((pair) => {
+        const foreground = resolveColour(`var(${pair.foreground})`);
+        const background = resolveColour(`var(${pair.background})`);
+        if (foreground === null || background === null) {
+          throw new Error(`Not a colour token: ${pair.foreground} / ${pair.background} (${pair.where})`);
+        }
+        return { where: pair.where, ratio: contrastRatio(foreground, background) };
+      })
+      .filter((pair) => pair.ratio < AA_NORMAL_TEXT);
+  }
+
+  it("meets WCAG AA for every colour any stylesheet sets without a background of its own, on every surface it is named to sit on", () => {
+    // Every surface each rule's text actually lands on — a rule used on two surfaces is listed with
+    // both, because the same token can pass on one and fail on the other.
+    const surfacesUnder: Readonly<Record<string, readonly string[]>> = {
+      // The catalogue (see the test above for the reasoning of each).
+      "CatalogScreen.css .catalog__description": ["--sc-color-page"],
+      "CatalogScreen.css .catalog__count": ["--sc-color-surface"],
+      "CatalogScreen.css .catalog__count--truncated": ["--sc-color-surface"],
+      "CatalogScreen.css .catalog__field-label": ["--sc-color-surface-muted"],
+      "CatalogScreen.css .catalog__field-hint": ["--sc-color-surface-muted"],
+      "CatalogScreen.css .catalog__field-stated": ["--sc-color-surface-muted"],
+      "CatalogScreen.css .catalog__cell-period": ["--sc-color-surface"],
+      "CatalogScreen.css .catalog__internal": ["--sc-color-surface"],
+      // "Edit" on a white rate row, "Rename" on a dictionary panel's white card.
+      "CatalogScreen.css .button.catalog__link-button": ["--sc-color-surface"],
+      "CatalogScreen.css .catalog__entry": ["--sc-color-surface"],
+      // The project list: a row is white, light steel under the pointer, pale blue when selected.
+      "ProjectListScreen.css .project-list__client, .project-list__period": [
+        "--sc-color-surface",
+        "--sc-color-surface-muted",
+        "--sc-color-status-active-bg",
+      ],
+      "ProjectListScreen.css .project-list__name-button": [
+        "--sc-color-surface",
+        "--sc-color-surface-muted",
+        "--sc-color-status-active-bg",
+      ],
+      "ProjectListScreen.css .project-list__name-button:hover": [
+        "--sc-color-surface-muted",
+        "--sc-color-status-active-bg",
+      ],
+      'ProjectListScreen.css .project-list__name-button[aria-pressed="true"]': [
+        "--sc-color-status-active-bg",
+      ],
+      "ProjectListScreen.css .project-list__details-meta, .project-list__details-empty": [
+        "--sc-color-surface-muted",
+      ],
+      "ProjectListScreen.css .scenario-card__gaps": ["--sc-color-surface"],
+      "ProjectListScreen.css .scenario-card__metric": ["--sc-color-surface"],
+      // The shell: the topbar and the rail are both white.
+      "AppShell.css .app-shell__subtitle": ["--sc-color-surface"],
+      "AppShell.css .app-shell__breadcrumb-list": ["--sc-color-surface"],
+      'AppShell.css .app-shell__breadcrumb-list li[aria-current="page"]': ["--sc-color-surface"],
+      "AppShell.css .app-shell__nav-item": ["--sc-color-surface"],
+      "AppShell.css .app-shell__nav-group-label": ["--sc-color-surface"],
+      // The base layer: a placeholder in a live input and in a not-yet-implemented one.
+      "app.css .input::placeholder": ["--sc-color-surface", "--sc-color-disabled-surface"],
+    };
+
+    const colourOnly = rules.filter(
+      (rule) =>
+        rule.file !== TOKENS_PATH &&
+        resolveColour(rule.declarations.get("color") ?? "") !== null &&
+        ownBackground(rule) === null,
+    );
+    expect(colourOnly.length).toBeGreaterThan(10);
+    expect(colourOnly.map(ruleKey).sort()).toEqual(Object.keys(surfacesUnder).sort());
+
+    const failures = checkPairs(
+      colourOnly.flatMap((rule) =>
+        (surfacesUnder[ruleKey(rule)] ?? []).map((surface) => ({
+          where: `${ruleKey(rule)} on ${surface}`,
+          foreground: /^var\(\s*(--sc-[\w-]+)\s*\)$/.exec(rule.declarations.get("color") ?? "")?.[1] ?? "",
+          background: surface,
+        })),
+      ),
+    );
+    expect(failures).toEqual([]);
+  });
+
+  it("meets WCAG AA for every text colour named to sit on a surface a stylesheet sets without a colour of its own", () => {
+    // The mirror image. An empty list is a statement too — "nothing is written on this" — and it is
+    // only allowed with the reason next to it.
+    const foregroundsOn: Readonly<Record<string, readonly string[]>> = {
+      // The catalogue form: its title and stated values in body text, labels and hints muted.
+      "CatalogScreen.css .catalog__form": ["--sc-color-text", "--sc-color-text-muted"],
+      // A rate row: names, the muted period and "Internal", the link-style "Edit".
+      "CatalogScreen.css .catalog__row > td": [
+        "--sc-color-text",
+        "--sc-color-text-muted",
+        "--sc-color-blue-deep",
+      ],
+      "ProjectListScreen.css .project-list__row > th, .project-list__row > td": [
+        "--sc-color-text",
+        "--sc-color-text-muted",
+      ],
+      "ProjectListScreen.css .project-list__row:hover > th, .project-list__row:hover > td": [
+        "--sc-color-text",
+        "--sc-color-text-muted",
+        "--sc-color-blue-deep",
+      ],
+      "ProjectListScreen.css .project-list__row--selected > th, .project-list__row--selected > td": [
+        "--sc-color-text",
+        "--sc-color-text-muted",
+        "--sc-color-blue-deep",
+      ],
+      "ProjectListScreen.css .project-list__row--selected:hover > th, .project-list__row--selected:hover > td":
+        ["--sc-color-text", "--sc-color-text-muted", "--sc-color-blue-deep"],
+      "ProjectListScreen.css .project-list__details": ["--sc-color-text", "--sc-color-text-muted"],
+      "ProjectListScreen.css .scenario-card": [
+        "--sc-color-text",
+        "--sc-color-text-muted",
+        "--sc-color-attention-text",
+      ],
+      // The orange accent bar on a scenario card: a 4px stripe, no text.
+      "ProjectListScreen.css .scenario-card::before": [],
+      // The page under every screen: headings and body text, and the catalogue's descriptions.
+      "AppShell.css .app-shell": ["--sc-color-text", "--sc-color-text-muted"],
+      "AppShell.css .app-shell__topbar": ["--sc-color-text", "--sc-color-text-muted"],
+      // The three bars of the tool mark: drawn shapes, no text.
+      "AppShell.css .app-shell__brandmark i": [],
+      "AppShell.css .app-shell__rail": ["--sc-color-text-muted"],
+      // A panel card: body text, muted counts, the truncated count, the link-style "Rename".
+      "app.css .card": [
+        "--sc-color-text",
+        "--sc-color-text-muted",
+        "--sc-color-attention-text",
+        "--sc-color-blue-deep",
+      ],
+      // Hover states of buttons whose resting rule sets both halves: the label keeps its colour.
+      "app.css .button--primary:hover": ["--sc-color-text"],
+      "app.css .button--secondary:hover": ["--sc-color-white"],
+      'app.css .button[aria-disabled="true"]:hover': ["--sc-color-text-disabled"],
+    };
+
+    const surfaceOnly = rules.filter(
+      (rule) =>
+        rule.file !== TOKENS_PATH &&
+        ownBackground(rule) !== null &&
+        resolveColour(rule.declarations.get("color") ?? "") === null,
+    );
+    expect(surfaceOnly.length).toBeGreaterThan(5);
+    expect(surfaceOnly.map(ruleKey).sort()).toEqual(Object.keys(foregroundsOn).sort());
+
+    const failures = checkPairs(
+      surfaceOnly.flatMap((rule) =>
+        (foregroundsOn[ruleKey(rule)] ?? []).map((foreground) => ({
+          where: `${foreground} on ${ruleKey(rule)}`,
+          foreground,
+          background:
+            /^var\(\s*(--sc-[\w-]+)\s*\)$/.exec(
+              rule.declarations.get("background-color") ?? rule.declarations.get("background") ?? "",
+            )?.[1] ?? "",
+        })),
+      ),
+    );
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("the catalogue stylesheet's reach (SC-2-05, K-26)", () => {
+  it("scopes every selector in the catalogue stylesheet to a catalogue class, so it cannot restyle another screen", () => {
+    // A stylesheet a component imports is global the moment it loads. A bare `.button--quiet` or
+    // `th` rule in CatalogScreen.css would restyle the project list's row actions and the shell as
+    // well — with nothing on those screens' own tests to notice, because they do not read this file.
+    const catalogueRules = rules.filter((rule) => rule.file.endsWith("/CatalogScreen.css"));
+    expect(catalogueRules.length).toBeGreaterThan(20);
+
+    const unscoped = catalogueRules.flatMap((rule) =>
+      rule.selector
+        .split(",")
+        .map((part) => part.trim())
+        .filter((part) => !/\.catalog(?:__[\w-]+|--[\w-]+)?(?![\w-])/.test(part))
+        .map((part) => `${part} (in "${rule.selector}")`),
+    );
+    expect(unscoped).toEqual([]);
   });
 });
 

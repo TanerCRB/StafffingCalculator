@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 
+import { handleNotYetImplemented, notImplementedHint } from "../lib/notImplemented";
 import { ScreenErrorBoundary } from "./ScreenErrorBoundary";
 import "./AppShell.css";
 
@@ -8,8 +9,11 @@ import "./AppShell.css";
  * decision about what may be read or shown, and it fetches nothing (the screen inside it does).
  *
  * Visual reference: `Wymagania/prototyp/` (design proposal, UI-01). A reference, not a
- * specification: nothing here is pixel-checked, and the rail deliberately does not reproduce the
- * prototype's 24 navigation entries — see RAIL_ITEMS.
+ * specification: nothing here is pixel-checked. Since SC-2-05 the rail shows the eleven entries of
+ * `15-catalog.png` — two live, nine planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
+ * The topbar does not follow the mockup's identity chip, "Internal workspace" badge or currency
+ * footer: this product has no identity endpoint, no workspace entity and no conversion to state
+ * (gate-1 decision Q-3), and the backend indicator the mockup drops is kept.
  *
  * The name stays "StafffingCalculator" and the entity stays "Scenario"; the prototype's "Staffing
  * planner" and "Calculation details" are product-naming questions, settled elsewhere (gate-1
@@ -23,7 +27,7 @@ import "./AppShell.css";
  * heading of the screen that activation just mounted (Reviewer R-03, SC-2-02) — and, since
  * Reviewer R-02 of SC-1-09, after the error boundary's "Try again" too, which re-mounts a screen
  * without the active one changing. The active rail
- * entry renders as a `<span>`, not a `<button>` (see `RAIL_ORDER` below) — the element holding
+ * entry renders as a `<span>`, not a `<button>` (see `RailItem` below) — the element holding
  * keyboard focus at the moment of activation is removed from the DOM by that same click, and the
  * browser has nowhere else to put focus but `document.body`. The shell is the one thing that knows
  * both when that happens and which screen replaced it, so it is the one place this fix can live
@@ -51,18 +55,74 @@ const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
 };
 
 /**
- * Two entries, against the prototype's twenty-four. The rail names what this application actually
- * has: Projects (SC-1-06) and Roles & rates (SC-2-02). Entries for screens with no backend behind
- * them would be a promise the product cannot keep — and unlike a disabled entry, nothing about them
- * would say so.
+ * A rail entry for a screen this application does not have yet (SC-2-05, Issue #59, gate-1
+ * decision Q-4).
  *
- * Both entries are live controls now. Until SC-2-02 the second one was rendered `aria-disabled` with
- * a "Not implemented yet" tooltip (F-13: the shape of the product ahead of its implementation); the
- * screen behind it exists, so that tooltip would now be the false statement. The convention itself
- * is untouched and still lives in `lib/notImplemented.ts`, which the screens use for the controls
- * that really are unbuilt.
+ * Deliberately **not** a `ScreenKey`. `ScreenKey` is the set of screens `App` can mount, and `App`
+ * picks between them with a two-way ternary — a third key would type-check and silently mount the
+ * catalogue. A planned entry is a label and the reason it is not built, and nothing it does can
+ * reach `onNavigate`.
  */
-const RAIL_ORDER: readonly ScreenKey[] = ["projects", "roles-and-rates"];
+interface PlannedRailItem {
+  readonly label: string;
+  /** What has to exist first — read after "Not implemented yet — " in the entry's tooltip. */
+  readonly reason: string;
+}
+
+/**
+ * One row of the rail, in the mockup's order (`Wymagania/prototyp/screens/15-catalog.png`): either
+ * a screen that exists, or one that is planned.
+ */
+type RailEntry =
+  | { readonly kind: "screen"; readonly key: ScreenKey }
+  | ({ readonly kind: "planned" } & PlannedRailItem);
+
+function planned(label: string, reason: string): RailEntry {
+  return { kind: "planned", label, reason };
+}
+
+/*
+ * The reasons say what is missing, and no more than is true. Two of the screens have a backend
+ * already — the calendars (SC-3-02, SC-3-03) and the staffing lines (SC-3-01) are stored and
+ * proven — so for them the missing piece is the screen, not the feature, and the tooltip says so
+ * (gate-1 decision Q-4). The rest name the requirement block and its open Issue.
+ */
+
+/** The workspace-level entries. */
+const RAIL_WORKSPACE: readonly RailEntry[] = [
+  { kind: "screen", key: "projects" },
+  planned("Compare scenarios", "scenario comparison, F-09 (Issue #11)"),
+  { kind: "screen", key: "roles-and-rates" },
+  planned(
+    "Working calendars",
+    "the calendars are stored by the backend (SC-3-02, SC-3-03); the screen is not built",
+  ),
+  planned("Organization defaults", "organization-level defaults, F-02 (Issue #4)"),
+];
+
+/**
+ * The entries that belong to one project and its scenario. In the mockup this group is headed by
+ * the selected project's name ("Commerce platform" — sample data from `UI_SPEC.md`, not a section
+ * name); this application has no selected project to name, so the heading is the generic word
+ * "Project" (gate-1 decision Q-2). None of these screens exists, so the group needs no project
+ * state yet — building the first of them is where that question, and the router one, get decided.
+ */
+const RAIL_PROJECT_GROUP_LABEL = "Project";
+
+const RAIL_PROJECT: readonly RailEntry[] = [
+  planned("Overview", "results and metrics, F-10 and F-11 (Issues #12, #13)"),
+  planned(
+    "Staffing plan",
+    "staffing lines are stored by the backend (SC-3-01); the screen is not built",
+  ),
+  planned("Additional costs", "additional costs, F-08 (Issue #10)"),
+  planned("Commercial terms", "commercial models and revenue, F-06 (Issue #8)"),
+  planned("Assumptions", "configurable scenario assumptions, F-02 (Issue #4)"),
+  planned(
+    "Versions & approval",
+    "history and versions, F-12 (Issue #14); the approval endpoint exists (SC-3-02), the screen does not",
+  ),
+];
 
 /**
  * Where focus goes when the content frame has just been given a different screen — after a rail
@@ -82,6 +142,64 @@ const RAIL_ORDER: readonly ScreenKey[] = ["projects", "roles-and-rates"];
  */
 function focusScreenHeading(container: HTMLElement | null): void {
   container?.querySelector<HTMLElement>("h1, h2")?.focus();
+}
+
+function railEntryKey(entry: RailEntry): string {
+  return entry.kind === "screen" ? entry.key : entry.label;
+}
+
+/** One row of the rail, in whichever of its three states it is. */
+function RailItem({
+  entry,
+  activeScreen,
+  onNavigate,
+}: {
+  entry: RailEntry;
+  activeScreen: ScreenKey;
+  onNavigate: (screen: ScreenKey) => void;
+}) {
+  if (entry.kind === "planned") {
+    return (
+      <li>
+        {/* A screen that does not exist yet (F-13: visible, never hidden). The convention of
+            `lib/notImplemented.ts`, unchanged: `aria-disabled` rather than `disabled`, so it keeps
+            its place in the tab order and is announced; a tooltip that opens with the same words
+            everywhere; and a handler that does nothing — in particular it never reaches
+            `onNavigate`, so `activeScreen` does not change and focus is not moved. */}
+        <button
+          type="button"
+          className="app-shell__nav-item"
+          aria-disabled="true"
+          title={notImplementedHint(entry.reason)}
+          onClick={handleNotYetImplemented}
+        >
+          {entry.label}
+        </button>
+      </li>
+    );
+  }
+  const { key } = entry;
+  if (key === activeScreen) {
+    return (
+      <li>
+        {/* The screen the user is already on. Not a control: there is nowhere for it to go, and a
+            button that does nothing when pressed is indistinguishable from one that is broken. */}
+        <span className="app-shell__nav-item app-shell__nav-item--current" aria-current="page">
+          {SCREEN_LABELS[key]}
+        </span>
+      </li>
+    );
+  }
+  return (
+    <li>
+      {/* A real `<button>`, so the platform activates it on Enter and Space; the shell only reports
+          the choice upwards and mounts nothing itself. It fetches nothing either — a rail entry
+          that prefetched the screen behind it would be a read the user never asked for. */}
+      <button type="button" className="app-shell__nav-item" onClick={() => onNavigate(key)}>
+        {SCREEN_LABELS[key]}
+      </button>
+    </li>
+  );
 }
 
 interface AppShellProps {
@@ -171,37 +289,36 @@ export function AppShell({ backendStatus, activeScreen, onNavigate, children }: 
 
       <div className="app-shell__body">
         <nav className="app-shell__rail" aria-label="Sections">
-          <ul className="app-shell__nav">
-            {RAIL_ORDER.map((key) =>
-              key === activeScreen ? (
-                <li key={key}>
-                  {/* The screen the user is already on. Not a control: there is nowhere for it to
-                      go, and a button that does nothing when pressed is indistinguishable from one
-                      that is broken. */}
-                  <span
-                    className="app-shell__nav-item app-shell__nav-item--current"
-                    aria-current="page"
-                  >
-                    {SCREEN_LABELS[key]}
-                  </span>
-                </li>
-              ) : (
-                <li key={key}>
-                  {/* A real `<button>`, so the platform activates it on Enter and Space; the shell
-                      only reports the choice upwards and mounts nothing itself. It fetches nothing
-                      either — a rail entry that prefetched the screen behind it would be a read the
-                      user never asked for. */}
-                  <button
-                    type="button"
-                    className="app-shell__nav-item"
-                    onClick={() => onNavigate(key)}
-                  >
-                    {SCREEN_LABELS[key]}
-                  </button>
-                </li>
-              ),
-            )}
-          </ul>
+          <div className="app-shell__nav">
+            <ul className="app-shell__nav-list">
+              {RAIL_WORKSPACE.map((entry) => (
+                <RailItem
+                  key={railEntryKey(entry)}
+                  entry={entry}
+                  activeScreen={activeScreen}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </ul>
+
+            {/* The group's name is in the accessibility tree — the list below is labelled by it —
+                and it is not a heading: an `h3` here would sit between the shell's `h1` and the
+                screen's `h2` in the document outline, before either of them (gate-1 decision Q-2
+                rules out `h1`/`h2`, which the screen-title tests read). */}
+            <p className="app-shell__nav-group-label" id="app-shell-nav-group-project">
+              {RAIL_PROJECT_GROUP_LABEL}
+            </p>
+            <ul className="app-shell__nav-list" aria-labelledby="app-shell-nav-group-project">
+              {RAIL_PROJECT.map((entry) => (
+                <RailItem
+                  key={railEntryKey(entry)}
+                  entry={entry}
+                  activeScreen={activeScreen}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </ul>
+          </div>
         </nav>
 
         <main className="app-shell__main" id="app-shell-content" ref={mainRef}>

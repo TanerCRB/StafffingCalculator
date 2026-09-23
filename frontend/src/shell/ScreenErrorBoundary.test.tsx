@@ -131,8 +131,23 @@ describe("the shell's render-error boundary", () => {
     expect(within(breadcrumb).getByText("Projects")).toHaveAttribute("aria-current", "page");
     expect(screen.getByTestId("backend-status")).toHaveTextContent("Backend: ok");
 
+    // SC-2-05 (gate-1 decision Q-1): the rail grew from two entries to the mockup's eleven, nine of
+    // them planned. The claim here is unchanged — the whole rail survived the crash — and it is now
+    // held against all eleven, in order, not two.
     const entries = within(rail()).getAllByRole("listitem");
-    expect(entries.map((entry) => entry.textContent)).toEqual(["Projects", "Roles & rates"]);
+    expect(entries.map((entry) => entry.textContent)).toEqual([
+      "Projects",
+      "Compare scenarios",
+      "Roles & rates",
+      "Working calendars",
+      "Organization defaults",
+      "Overview",
+      "Staffing plan",
+      "Additional costs",
+      "Commercial terms",
+      "Assumptions",
+      "Versions & approval",
+    ]);
     const otherScreen = within(rail()).getByRole("button", { name: "Roles & rates" });
     expect(otherScreen.tabIndex).toBe(0);
     otherScreen.focus();

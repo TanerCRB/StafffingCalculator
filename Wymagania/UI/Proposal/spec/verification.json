@@ -1,0 +1,180 @@
+{
+  "date": "2026-09-19",
+  "scope": "Standalone design prototype only",
+  "viewport": {
+    "width": 1440,
+    "height": 1080
+  },
+  "screens": [
+    {
+      "screen": "UI-01",
+      "route": "projects",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-02",
+      "route": "overview",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-03",
+      "route": "staffing",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-04",
+      "route": "resource",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-05",
+      "route": "costs",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-06",
+      "route": "cost-detail",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-07",
+      "route": "tm",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-08",
+      "route": "fixed",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-09",
+      "route": "outcome",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-10",
+      "route": "points",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-11",
+      "route": "compare",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-12",
+      "route": "sensitivity",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-13",
+      "route": "assumptions",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-14",
+      "route": "calendar",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-15",
+      "route": "catalog",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-16",
+      "route": "versions",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-17",
+      "route": "report",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-18",
+      "route": "access",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-19",
+      "route": "states",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-20",
+      "route": "create",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-21",
+      "route": "system",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-22",
+      "route": "approved",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-23",
+      "route": "conflict",
+      "pageOverflow": false
+    },
+    {
+      "screen": "UI-24",
+      "route": "organization",
+      "pageOverflow": false
+    }
+  ],
+  "mobile": [
+    {
+      "route": "overview",
+      "title": "Mobile summary",
+      "image": "screens/mobile-overview.png",
+      "width": 390
+    },
+    {
+      "route": "projects",
+      "title": "Mobile project list",
+      "image": "screens/mobile-projects.png",
+      "width": 390
+    },
+    {
+      "route": "points",
+      "title": "Mobile commercial terms",
+      "image": "screens/mobile-points.png",
+      "width": 390
+    }
+  ],
+  "checks": [
+    "24 screen routes render",
+    "No document overflow at desktop and mobile widths",
+    "Search and archive filtering",
+    "Sensitivity values",
+    "FTE / hours toggle",
+    "Allocation dialog and Escape",
+    "Explicit approval confirmation",
+    "In-memory project creation",
+    "Fixture arithmetic"
+  ],
+  "browserErrors": [],
+  "visualReview": {
+    "date": "2026-09-19",
+    "reviewed": "All 24 desktop screens in six contact sheets; full-size overview, staffing, outcome, comparison, conflict, mobile overview and overview board",
+    "findingsFixed": [
+      "Full-page export footer overlap",
+      "Desktop short-screen vertical alignment",
+      "Mobile transient toast in screenshot",
+      "Additional-cost schedule consistency",
+      "Commercial context model label",
+      "Conflict save-status wording"
+    ]
+  },
+  "limitations": [
+    "No production API integration",
+    "No production accessibility certification",
+    "Only overview, projects and commercial terms exported at mobile size",
+    "Draft ADRs and business decisions remain pending"
+  ]
+}

@@ -1,11 +1,18 @@
 /*
- * Catalogue screen — layout only. Reference: Wymagania/prototyp/screens/15-catalog.png (a
- * reference, not a specification: Issue #39, out of scope 9 — no pixel fidelity, no
- * visual-regression tests).
+ * Catalogue screen — layout only. Reference: Wymagania/prototyp/screens/15-catalog*.png (a
+ * reference, not a specification: Issue #39, out of scope 9, and ADR-0011 point 4 — no pixel
+ * fidelity, no visual-regression tests). SC-2-05 brought it closer to that reference; what may and
+ * may not have changed with it is pinned in CatalogScreenStructure.test.tsx (K-27, K-28) and
+ * CatalogScreenAppearance.test.tsx (K-30).
  *
  * Every colour is a token from src/styles/tokens.css; src/styles/tokens.test.ts fails the build if a
- * literal appears here. No `@media` either — the panels are flex items that wrap, the same way the
- * shell's rail does, so there is no breakpoint at which a section disappears untested.
+ * literal appears here, and it names the surface each colour-only rule sits on. No `@media` either
+ * — the stylesheet reader in that test refuses a construct it cannot see (Issue #59, out of scope
+ * 3), so the two-column dictionary grid stays two columns at every width.
+ *
+ * Every selector here carries a `catalog`-prefixed class (K-26, checked in tokens.test.ts): a bare
+ * `.button--quiet` or `th` rule in this file would restyle the project list and the shell too,
+ * because a stylesheet a component imports is global the moment it loads.
  */
 
 .catalog {
@@ -14,30 +21,78 @@
   gap: var(--sc-space-5);
 }
 
-.catalog__panel {
-  min-width: 0;
-  padding: var(--sc-space-5);
+/* --- Screen and section headings (K-30e: title > section heading > panel heading) -------------- */
+
+.catalog__intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-2);
 }
 
-.catalog__panel-header {
+/* The screen title. An `h2` — the page's `h1` belongs to the shell (Issue #59, out of scope 11) —
+   set at the mockup's size: larger than anything else on the screen. */
+.catalog__title {
+  font-size: var(--sc-font-size-2xl);
+  font-weight: var(--sc-font-weight-bold);
+  line-height: var(--sc-line-height-tight);
+}
+
+.catalog__description {
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+  line-height: var(--sc-line-height-body);
+}
+
+.catalog__description--section {
+  font-size: var(--sc-font-size-xs);
+}
+
+.catalog__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-3);
+  min-width: 0;
+}
+
+.catalog__section-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: var(--sc-space-4);
-  margin-bottom: var(--sc-space-2);
 }
 
-.catalog__panel-title {
+.catalog__section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-1);
+  min-width: 0;
+}
+
+.catalog__section-title {
   font-size: var(--sc-font-size-lg);
   font-weight: var(--sc-font-weight-bold);
   line-height: var(--sc-line-height-tight);
 }
 
+/* Icons draw in `currentColor` (ADR-0011): no colour here, only their place in the button. */
+.catalog__icon {
+  flex: 0 0 auto;
+}
+
+/* --- Rates panel ------------------------------------------------------------------------------ */
+
+/* The bordered box around the count, the table and its footnote. `overflow-x: auto` rather than
+   `hidden`: a table too wide for the box scrolls, it is never clipped (nothing here truncates). */
+.catalog__rates {
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .catalog__count {
-  margin-bottom: var(--sc-space-4);
+  padding: var(--sc-space-3) var(--sc-space-4) var(--sc-space-2);
   color: var(--sc-color-text-muted);
-  font-size: var(--sc-font-size-sm);
+  font-size: var(--sc-font-size-xs);
 }
 
 /*
@@ -49,6 +104,16 @@
 .catalog__count--truncated {
   color: var(--sc-color-attention-text);
   font-weight: var(--sc-font-weight-semibold);
+}
+
+/* The sentence under the table (G-2). Its own surface and colour in one rule, so the pairing check
+   in tokens.test.ts computes its contrast without a hand-written entry. */
+.catalog__footnote {
+  padding: var(--sc-space-3) var(--sc-space-4);
+  border-top: 1px solid var(--sc-color-border);
+  background-color: var(--sc-color-surface-muted);
+  color: var(--sc-color-text);
+  font-size: var(--sc-font-size-xs);
 }
 
 .catalog__message {
@@ -79,20 +144,20 @@
 
 /* A form opens inside the panel it belongs to, above the data it changes: a modal would take the
    rows out of view at the moment a person is deciding what to type into a row that looks like
-   them. */
+   them. SC-2-05 kept that place (G-5, variant B) and changed only the look. */
 .catalog__form {
   display: flex;
   flex-direction: column;
   gap: var(--sc-space-4);
-  margin-bottom: var(--sc-space-4);
-  padding: var(--sc-space-5);
+  margin: var(--sc-space-2) 0 var(--sc-space-4);
+  padding: var(--sc-space-4);
   border: 1px solid var(--sc-color-border);
   border-radius: var(--sc-radius-md);
   background-color: var(--sc-color-surface-muted);
 }
 
 .catalog__form-title {
-  font-size: var(--sc-font-size-md);
+  font-size: var(--sc-font-size-sm);
   font-weight: var(--sc-font-weight-bold);
   line-height: var(--sc-line-height-tight);
   overflow-wrap: anywhere;
@@ -147,6 +212,13 @@
   overflow-wrap: anywhere;
 }
 
+/* The withheld cost rate inside the edit form wears the same label as in the table (G-4 inherits
+   it, as the analyst noted) — sized to the word, not stretched to the height of an input. */
+.catalog__field-stated.catalog__restricted {
+  align-self: flex-start;
+  min-height: 0;
+}
+
 /* A refused save. Announced (`role="alert"` in the component) and coloured, in that order of
    importance — the colour is the second channel, never the only one (NF-08). */
 .catalog__form-failure {
@@ -158,19 +230,20 @@
   font-weight: var(--sc-font-weight-semibold);
 }
 
+/* Cancel │ Save, at the right edge (G-9). The DOM carries the same order, so no `row-reverse`. */
 .catalog__form-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--sc-space-3);
 }
 
 /* --- Rates table ------------------------------------------------------------------------------ */
 
-/* Separated borders: each row is its own white card with rounded ends, as on the project list. */
+/* Collapsed borders: rows separated by one hairline each, as in the mockup (K-30b). */
 .catalog__table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0 var(--sc-space-2);
+  border-collapse: collapse;
   text-align: left;
 }
 
@@ -180,6 +253,7 @@
 .catalog__table th,
 .catalog__table td {
   padding: var(--sc-space-3) var(--sc-space-4);
+  border-bottom: 1px solid var(--sc-color-border);
   vertical-align: middle;
   overflow-wrap: anywhere;
 }
@@ -193,32 +267,14 @@
   font-weight: var(--sc-font-weight-semibold);
 }
 
-.catalog__table thead th:first-child {
-  border-top-left-radius: var(--sc-radius-sm);
-  border-bottom-left-radius: var(--sc-radius-sm);
-}
-
-.catalog__table thead th:last-child {
-  border-top-right-radius: var(--sc-radius-sm);
-  border-bottom-right-radius: var(--sc-radius-sm);
-}
-
 .catalog__row > td {
   background-color: var(--sc-color-surface);
-  border-top: 1px solid var(--sc-color-border);
-  border-bottom: 1px solid var(--sc-color-border);
+  font-size: var(--sc-font-size-sm);
 }
 
-.catalog__row > td:first-child {
-  border-left: 1px solid var(--sc-color-border);
-  border-top-left-radius: var(--sc-radius-md);
-  border-bottom-left-radius: var(--sc-radius-md);
-}
-
-.catalog__row > td:last-child {
-  border-right: 1px solid var(--sc-color-border);
-  border-top-right-radius: var(--sc-radius-md);
-  border-bottom-right-radius: var(--sc-radius-md);
+/* The footnote below draws the line under the last row. */
+.catalog__row:last-child > td {
+  border-bottom: 0;
 }
 
 .catalog__cell-period {
@@ -226,8 +282,11 @@
   white-space: nowrap;
 }
 
-/* Tabular figures so amounts of different lengths still line up down the column. */
+/* Right-aligned with tabular figures, header included, so amounts of different lengths still line
+   up down the column and under their heading (K-30b). */
+.catalog__head-amount,
 .catalog__cell-amount {
+  text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -240,13 +299,21 @@
 }
 
 /*
- * A cost rate the response did not carry. Set apart from an amount by weight and colour *in
- * addition to* the word (NF-08) — the word is what carries the meaning, and there is no shared
- * placeholder glyph any other empty value could borrow.
+ * A cost rate the response did not carry — a label now, not a bare word (K-30c). Set apart from an
+ * amount by its own surface and colour *in addition to* the word (NF-08): the word is what carries
+ * the meaning, and there is no shared placeholder glyph any other empty value could borrow. Surface
+ * and colour sit in one rule, so the pair is checked for contrast wherever the label appears — in
+ * the table and in the edit form alike.
  */
 .catalog__restricted {
+  display: inline-block;
+  padding: var(--sc-space-1) var(--sc-space-2);
+  border-radius: var(--sc-radius-sm);
+  background-color: var(--sc-color-attention-bg);
   color: var(--sc-color-attention-text);
+  font-size: var(--sc-font-size-xs);
   font-weight: var(--sc-font-weight-semibold);
+  line-height: var(--sc-line-height-tight);
 }
 
 /*
@@ -261,36 +328,76 @@
   font-weight: var(--sc-font-weight-medium);
 }
 
-/* --- Dictionary panels ------------------------------------------------------------------------ */
-
-/* Five panels side by side where there is room, wrapping where there is not. No panel is ever
-   hidden: each one is the only statement that its dictionary exists. */
-.catalog__dictionaries {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: var(--sc-space-5);
+/*
+ * "Edit" and "Rename": quiet, link-style controls with a pencil (K-30d). A class of this screen's
+ * own rather than a change to `.button--quiet`, which the project list's row actions also wear
+ * (K-26). `--sc-color-blue-deep`, not `--sc-color-blue`: the brighter blue is 4.31:1 on the muted
+ * surface, below AA (analyst, K-29). The transparent background makes this a colour-only rule as
+ * far as contrast goes; tokens.test.ts names the surfaces it sits on.
+ *
+ * Two classes on purpose: this stylesheet loads *before* app.css (main.tsx imports `App`, and with
+ * it every screen's stylesheet, ahead of `app.css`), so a one-class rule here loses every property
+ * it shares with `.button` on source order alone.
+ */
+.button.catalog__link-button {
+  min-height: 1.875rem;
+  padding: var(--sc-space-1) var(--sc-space-2);
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--sc-color-blue-deep);
+  font-size: var(--sc-font-size-xs);
 }
 
-.catalog__dictionaries > .catalog__panel {
-  flex: 1 1 14rem;
+.button.catalog__link-button:hover {
+  text-decoration: underline;
+}
+
+/* --- Dictionary panels ------------------------------------------------------------------------ */
+
+/* Two equal columns in the mockup's order — Roles | Seniorities, Locations | Engagement types,
+   Vendors — which is `CATALOG_DIMENSIONS` filling the grid row by row (K-30a). No panel is ever
+   hidden: each one is the only statement that its dictionary exists. */
+.catalog__dictionaries {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--sc-space-4);
+}
+
+.catalog__panel {
+  min-width: 0;
+  padding: var(--sc-space-4) var(--sc-space-5) var(--sc-space-3);
+}
+
+.catalog__panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sc-space-4);
+  padding-bottom: var(--sc-space-3);
+}
+
+.catalog__panel-title {
+  font-size: var(--sc-font-size-md);
+  font-weight: var(--sc-font-weight-bold);
+  line-height: var(--sc-line-height-tight);
 }
 
 .catalog__entries {
   display: flex;
   flex-direction: column;
-  gap: var(--sc-space-1);
-  margin-top: var(--sc-space-3);
 }
 
+/* One hairline above each entry, as in the mockup (K-30f) — the entries are rows of a list, no
+   longer chips on a wash. */
 .catalog__entry {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sc-space-3);
-  padding: var(--sc-space-2) var(--sc-space-3);
-  border-radius: var(--sc-radius-sm);
-  background-color: var(--sc-color-surface-muted);
+  min-height: 2.625rem;
+  border-top: 1px solid var(--sc-color-border);
   color: var(--sc-color-text);
   font-size: var(--sc-font-size-sm);
   overflow-wrap: anywhere;
