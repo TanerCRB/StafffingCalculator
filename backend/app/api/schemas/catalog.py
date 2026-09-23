@@ -15,13 +15,36 @@ conversion to PostgreSQL's half-open form happens only inside the generated `val
 """
 
 import uuid
-from datetime import date, datetime
-from typing import Annotated, Any, Self
+from datetime import date, datetime, timedelta
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from app.api.schemas.common import DecimalString, Iso4217Code, NonEmptyName
-from app.models.catalog import RATE_PRECISION, RATE_SCALE, RATE_UNIT_HOUR
+from app.core.money import NOT_APPLICABLE
+from app.models.catalog import (
+    BUDGET_PRECISION,
+    BUDGET_SCALE,
+    BUDGET_UNIT_DAY,
+    RATE_PRECISION,
+    RATE_SCALE,
+    RATE_UNIT_HOUR,
+)
+
+NotApplicableValue = Literal[NOT_APPLICABLE]
+"""`"n/a"` as a type — the project's one sentinel for a figure that cannot be computed.
+
+Taken from `app.core.money` rather than spelled again, exactly as `app.api.schemas.staffing` takes
+it: this repository already answers a margin with a zero denominator that way (invariant-guardian
+rule 3, F-10, AC-05), and a second string meaning the same thing would make a client need two
+branches for one idea."""
 
 RateAmount = Annotated[
     DecimalString, Field(ge=0, max_digits=RATE_PRECISION, decimal_places=RATE_SCALE)
@@ -321,6 +344,35 @@ class WorkingCalendarList(BaseModel):
     calendars: list[WorkingCalendarEntry]
 
 
+BudgetDays = Annotated[
+    DecimalString, Field(ge=0, max_digits=BUDGET_PRECISION, decimal_places=BUDGET_SCALE)
+]
+"""A number of budgeted days on the way in: non-negative, and exactly as precise as `NUMERIC(6,2)`.
+
+`ge=0` and not `gt=0`: zero days is a legal, meaningful row — an engagement type with no leave
+entitlement — and it stays distinguishable from *no row*, which is the named "no budget" state
+(ADR-0008, addendum 2026-09-22 SC-3-03, point 7). A negative entitlement is a sign error with no
+meaning in any calculation.
+
+`max_digits`/`decimal_places` come from the column's own constants, so the boundary cannot drift
+away from the storage it protects — the R-05 lesson applied one table over: without
+`decimal_places`, `26.125` would be accepted and stored as `26.13`, i.e. silently rounded at write
+time, which is the one thing an *input* value must never be."""
+
+BudgetSourceText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)
+]
+"""Where the number comes from — mandatory, non-blank, and bounded in length.
+
+**Not `NonEmptyName`**, although the rules look alike: a source is a sentence ("Staff regulations
+§12, 2026 edition"), not a name, and it is stored in a `varchar(500)` rather than a `varchar(200)`.
+Sharing the alias would tie the two to one bound and make the next change to either move both.
+
+The **content** of this field is otherwise unconstrained, and that is a decision this task could not
+complete on its own — see `app.api.catalog.create_absence_budget`, which names what was decided here
+and what is still open (ADR-0005, addendum 2026-09-22 SC-3-03, point 6)."""
+
+
 class AbsenceTypeEntry(BaseModel):
     """One absence type: a name and its two independent flags (F-05, SC-3-02).
 
@@ -335,11 +387,195 @@ class AbsenceTypeEntry(BaseModel):
     name: str
     generates_cost: bool
     generates_revenue: bool
+
+    is_statutory_leave: bool
+    """Whether this is the type the leave **budget** settles against (F-05, SC-3-03).
+
+    At most one type in the whole dictionary carries it, and the database is what says so
+    (`app.models.catalog.STATUTORY_LEAVE_UNIQUE_INDEX`). A `bool` on every row rather than a single
+    "which type is it" field somewhere else: the flag *is* on the row, and a client showing the
+    dictionary has to be able to show which entry carries it."""
+
     updated_at: datetime
 
 
 class AbsenceTypeList(BaseModel):
     absence_types: list[AbsenceTypeEntry]
+
+
+# --- the absence budget (F-05, SC-3-03) ----------------------------------------------------------
+#
+# The eighth catalogue table, gated by `CATALOG_READ`/`CATALOG_WRITE` and by nothing else (ADR-0005,
+# addendum 2026-09-22 SC-3-03, points 2-3). **No field here is a personnel cost**: a budget is a
+# number of days, not an amount, and the one multiplier that would make it money — a cost rate — is
+# gated separately and is not in this payload. `CATALOG_PERSONNEL_COST_FIELDS` therefore stays
+# one-element, and adding a field of this payload to it is the mutation point 3 of that addendum
+# rejects by name (it would give "personnel costs" a third meaning and, in today's system, make the
+# whole feature unreachable — `PERSONNEL_COSTS_READ` is not in the placeholder's set).
+
+
+class StatutoryLeaveRegime(BaseModel):
+    """What a day of this budget does commercially — **read from the flagged absence type**.
+
+    Never a copy of the flags onto the budget row (criterion K-04): "does leave of this kind still
+    cost the organisation money, and is it still billable" is a property of the *type*, and a
+    literal on the budget would stop following the type the moment somebody edits it. There is one
+    such type at most, named by `absence_type.is_statutory_leave` and by no other rule — not "the
+    first one alphabetically", not "the one whose name contains leave" (ADR-0008, addendum
+    2026-09-22 SC-3-03, point 8).
+    """
+
+    absence_type_id: uuid.UUID
+    name: str
+    generates_cost: bool
+    generates_revenue: bool
+
+
+class AbsenceBudgetEntry(BaseModel):
+    """One leave budget: a key, a number of days, a closed window and where the number came from."""
+
+    id: uuid.UUID
+    calendar_id: uuid.UUID
+    engagement_type_id: uuid.UUID
+    """The whole key, and only these two (ADR-0008, addendum 2026-09-22 SC-3-03, point 3). No
+    `location_id`: locations sharing a calendar share its budget."""
+
+    budget_days: DecimalString
+    unit: str
+    """Named rather than inferred from the size of the number (point 5): `"20"` read as days and
+    `"20"` read as FTE-days are two different answers from one row."""
+
+    source: str
+    """Mandatory and non-blank — a number nobody can trace to a rule is a number nobody can check.
+    **Never the author of the entry**: there is no column for one, and introducing it would expire
+    the exemption that keeps the catalogue outside the `project_access` filter (ADR-0005, addendum
+    2026-09-21 SC-2-04, point 6; addendum 2026-09-22 SC-3-03, point 6)."""
+
+    effective_from: date
+    effective_to: date
+    """Inclusive at both ends and never `null` — this is the one table of ADR-0008's pattern whose
+    window may not be open-ended (addendum SC-3-03, point 10b), so a client has no "unbounded" case
+    to render here and a budget visibly *expires*."""
+
+    statutory_leave_state: str
+    """`"resolved"` or `"no_statutory_leave_type"` (`app.domain.absence_budget`).
+
+    The second value is the named state of point 8b — the half of "exactly one flagged type" that no
+    index can enforce. The answer is that no type was named; it is never a guess, never a silent
+    `0`, and never a `500`."""
+
+    statutory_leave: StatutoryLeaveRegime | None = None
+    generates_cost: bool | NotApplicableValue
+    generates_revenue: bool | NotApplicableValue
+    """The regime, spelled twice on purpose: nested (with the type that produced it) and flat beside
+    the budget's own fields, because the flat pair is what a grid renders and the nested object is
+    what says *where it came from*. Both are `"n/a"`/`null` in the `no_statutory_leave_type` state —
+    the project's one sentinel for a figure that cannot be computed (`app.core.money`), never
+    `false`, which would read as a decided answer nobody decided."""
+
+    updated_at: datetime
+    """ADR-0007's marker, carried on every read although SC-3-03 ships no edit form: the marker is
+    on the table from its creation, and a read that dropped it would be the read from which a later
+    form could not be built (the argument `WorkingCalendarEntry.updated_at` already makes)."""
+
+
+class AbsenceBudgetList(BaseModel):
+    """An object, not a bare array — the same contract room every other list payload keeps."""
+
+    budgets: list[AbsenceBudgetEntry]
+
+
+class AbsenceBudgetCreateRequest(BaseModel):
+    """The body of `POST /catalog/absence-budgets`.
+
+    `extra="forbid"`, and here it does real work rather than tidying up (criterion K-02's second
+    contrast): a body carrying `author`, `entered_by`, `user` or `approved_by` is refused with a
+    `422` naming the field instead of being silently dropped. Naming *who* entered a number is not
+    naming *where the number comes from*, and there is no column for the former (ADR-0008, addendum
+    2026-09-22 SC-3-03, point 6). `valid_period` is likewise refused: it is a generated column, and
+    a body naming it must fail rather than look like it set the window.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    calendar_id: uuid.UUID
+    engagement_type_id: uuid.UUID
+    """Validated as identifiers only: that they name existing catalogue rows is decided by the
+    foreign keys in the database, which is the path a client cannot go around."""
+
+    budget_days: BudgetDays
+    unit: str = BUDGET_UNIT_DAY
+    source: BudgetSourceText
+    """**Required, with no default.** A default — even `""` — would make the source of a number an
+    optional field, which is precisely what criterion K-02 refuses; the database refuses it a second
+    time, for every path that never sees this schema."""
+
+    effective_from: date
+    effective_to: date
+    """Required and inclusive. Typed as `date` and not `date | None`, so "open-ended" cannot even be
+    expressed here — the narrowing ADR-0008's addendum (SC-3-03, point 10b) gives this table, stated
+    at the boundary as a `422` and in the database as a CHECK."""
+
+    @model_validator(mode="after")
+    def _unit_is_accepted(self) -> Self:
+        """A `422` naming the field instead of the `500` a violated `unit_is_day` CHECK would be.
+
+        The constraint in the database stays the guarantee — criterion K-02 asks about the path that
+        never sees this schema — and this is the status code, not the rule.
+        """
+        if self.unit != BUDGET_UNIT_DAY:
+            raise ValueError(f"unit must be {BUDGET_UNIT_DAY!r}")
+        return self
+
+    @model_validator(mode="after")
+    def _window_is_ordered_and_aligned_to_whole_months(self) -> Self:
+        """The window starts on the first of a month and ends on the last day of one.
+
+        Same division of labour as everywhere else: a `422` naming the field here,
+        `ck_absence_budget_window_aligned_to_whole_months` in the database as the guarantee. The
+        rule is not cosmetic — the monthly proration divides by the number of months of the window
+        (ADR-0008, addendum SC-3-03, point 10), and a window starting mid-month would make "how many
+        months is that" a question with several defensible answers and a different monthly figure
+        for each.
+        """
+        if self.effective_to < self.effective_from:
+            raise ValueError("effective_to must not be earlier than effective_from")
+        if self.effective_from.day != 1:
+            raise ValueError(
+                "effective_from must be the first day of a month; a budget window is a whole "
+                f"number of months, so {self.effective_from.replace(day=1).isoformat()}, not "
+                f"{self.effective_from.isoformat()}"
+            )
+        if (self.effective_to + timedelta(days=1)).day != 1:
+            raise ValueError(
+                "effective_to must be the last day of a month; a budget window is a whole number "
+                "of months"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _dates_are_inside_the_planning_horizon(self) -> Self:
+        """`LATEST_PLANNING_DATE`, applied to both dates — the same rule as on a rate window.
+
+        `valid_period` is generated as `daterange(effective_from, effective_to + 1, '[)')`, so an
+        `effective_to` of `9999-12-31` asks PostgreSQL for `10000-01-01`, a date the driver cannot
+        carry back: a `500` where a `422` naming the field is the honest answer (R-01, one table
+        over). Unlike a rate window, this one has no "open-ended" spelling to offer instead — a far
+        future date is simply refused.
+        """
+        too_far = sorted(
+            name
+            for name, value in (
+                ("effective_from", self.effective_from),
+                ("effective_to", self.effective_to),
+            )
+            if value > LATEST_PLANNING_DATE
+        )
+        if too_far:
+            raise ValueError(
+                f"{', '.join(too_far)} must not be later than {LATEST_PLANNING_DATE.isoformat()}"
+            )
+        return self
 
 
 NULLABLE_RATE_EDIT_FIELDS: frozenset[str] = frozenset({"effective_to"})

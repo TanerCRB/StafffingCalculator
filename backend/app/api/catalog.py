@@ -1,7 +1,10 @@
 """Catalogue endpoints — role dimensions, vendors and default rates (F-03, SC-2-01, SC-2-03).
 
 - `GET   /catalog/working-calendars` — the calendars with their days (`CATALOG_READ`, SC-3-02)
-- `GET   /catalog/absence-types` — the absence types with their two flags (`CATALOG_READ`)
+- `GET   /catalog/absence-types` — the absence types with their three flags (`CATALOG_READ`)
+- `GET   /catalog/absence-budgets` — the leave budgets with the regime they settle against
+(`CATALOG_READ`, SC-3-03)
+- `POST  /catalog/absence-budgets` — add a budget window (`CATALOG_WRITE`, SC-3-03)
 - `GET   /catalog/dimensions/{dimension}` — one dictionary's entries (`CATALOG_READ`)
 - `POST  /catalog/dimensions/{dimension}` — add an entry (`CATALOG_WRITE`)
 - `PATCH /catalog/dimensions/{dimension}/{entry_id}` — rename an entry (`CATALOG_WRITE`)
@@ -49,6 +52,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.response_shaping import (
+    shape_absence_budget,
+    shape_absence_budget_list,
     shape_absence_type_list,
     shape_catalog_rate,
     shape_catalog_rate_list,
@@ -57,6 +62,9 @@ from app.api.response_shaping import (
     shape_working_calendar_list,
 )
 from app.api.schemas.catalog import (
+    AbsenceBudgetCreateRequest,
+    AbsenceBudgetEntry,
+    AbsenceBudgetList,
     AbsenceTypeList,
     CatalogRate,
     CatalogRateCreateRequest,
@@ -69,6 +77,12 @@ from app.api.schemas.catalog import (
     WorkingCalendarList,
 )
 from app.core.identity import CallerIdentity, Permission
+from app.data.absence_budget import (
+    AbsenceBudgetWriteRefused,
+    create_budget,
+    list_budgets,
+    statutory_leave_type,
+)
 from app.data.catalog import (
     DEFAULT_RATE_LIST_LIMIT,
     DIMENSION_MODELS,
@@ -314,6 +328,119 @@ def list_catalog_absence_types(
     that is the whole of criterion K-11.
     """
     return shape_absence_type_list(list_absence_types(session))
+
+
+@router.get(
+    "/absence-budgets",
+    response_model=AbsenceBudgetList,
+    summary="List the leave budgets with the regime of the absence type they settle against",
+)
+def list_catalog_absence_budgets(
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> AbsenceBudgetList:
+    """Every leave budget — the same rows for every caller who may read the catalogue (F-05).
+
+    **`CATALOG_READ`, and no new permission** (ADR-0005, addendum 2026-09-22 SC-3-03, point 2). The
+    eighth table of the catalogue, not an eighth mechanism: it belongs to no project, so there is no
+    `project_access` filter here and a caller holding this permission with zero project access sees
+    exactly these rows. The `Permission` enum is unchanged by SC-3-03 and a canary asserts its
+    membership by set equality (criterion K-09).
+
+    **Not gated by `PERSONNEL_COSTS_READ`, and that is a decision rather than an omission** (same
+    addendum, point 3, gate-1 decision Q-4). A budget is a number of *days* — an entitlement
+    parameter of the organisation, not an amount and not any person's cost. NF-11/AC-06 protect
+    individual personnel costs, and the multiplier that would turn these days into one, a cost rate,
+    is gated separately and is not in this payload. Two things follow, both stated so neither is
+    discovered later: a caller holding `CATALOG_READ` and not `PERSONNEL_COSTS_READ` receives the
+    figure **whole**, not whitened; and the first response carrying the *cost* of a budget (F-07)
+    reinstates the SC-1-08 conjunction and has to prove it with a criterion of its own (point 4).
+
+    The regime — whether a day of this budget costs money and whether it is billable — is read from
+    the single absence type flagged `is_statutory_leave`, once per response. With no flagged type
+    the answer is the named state `"no_statutory_leave_type"` and `"n/a"`, never a guess and never a
+    `500` (ADR-0008, addendum 2026-09-22 SC-3-03, point 8b).
+
+    `caller` is injected although nothing below reads it: the parameter *is* the permission check.
+    """
+    return shape_absence_budget_list(list_budgets(session), statutory_leave_type(session))
+
+
+@router.post(
+    "/absence-budgets",
+    response_model=AbsenceBudgetEntry,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a leave budget for one calendar and engagement type over one window",
+    responses={
+        409: {
+            "description": "Refused by the state of the data: the window overlaps an existing one "
+            "for the same (calendar, engagement type) pair, a referenced row does not exist, or a "
+            "check constraint rejected a value. The SQLSTATE and the constraint name say which."
+        }
+    },
+)
+def create_absence_budget(
+    payload: AbsenceBudgetCreateRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> AbsenceBudgetEntry:
+    """Add one budget window — `409` if the state of the data refuses it, `500` if the write broke.
+
+    `CATALOG_WRITE`, the same permission as every other catalogue write and no new one (ADR-0005,
+    addendum 2026-09-22 SC-3-03, point 2): NF-10 puts maintaining the catalogue with an organisation
+    administrator, and a leave regulation is exactly that kind of maintenance.
+
+    The overlap refusal is not written here and not in the data layer: it is the `EXCLUDE`
+    constraint, evaluated inside the `INSERT` (ADR-0008). What this function does with it is map the
+    refusal to a status code and to a message that names the constraint without quoting the row.
+
+    **The source of the number is mandatory, and an author is not a substitute** (criterion K-02).
+    A body with no `source` is a `422`; a body naming `author`, `entered_by` or `approved_by` is a
+    `422` as well, because `extra="forbid"` refuses fields this API has no column for — and there is
+    no column for one deliberately (ADR-0005, addendum 2026-09-21 SC-2-04, point 6). The database
+    refuses a blank source a second time, for every path that never sees the request schema.
+
+    **The personal-data precondition this endpoint activates, and how it was resolved.** ADR-0008's
+    addendum (SC-3-03, point 6) made the first write path for this free-text field conditional on
+    resolving, *explicitly*, either a content restriction or an erasure/rectification rule for the
+    `approved_snapshot_*` rows that copy the text. ADR-0005's addendum (SC-3-03, point 6 — a human's
+    decision of 2026-09-22) resolves it as a **named risk with no technical enforcement**: the same
+    precedent as `absence_type.name` and `catalog_vendors.name`, with no name detection (unreliable,
+    and a false sense of safety is worse than none) and no erasure mechanism designed for one column
+    of one table.
+
+    What this endpoint does is therefore exactly what that decision allows and nothing more: the
+    field is mandatory, non-blank and bounded at 500 characters, and a body naming a *person* rather
+    than a *source* is refused with a `422` because there is no column for one and there must not be
+    (ADR-0005, addendum 2026-09-21 SC-2-04, point 6). The reopening condition belongs to the erasure
+    mechanism rather than to this endpoint: the first task that designs one for
+    `approved_snapshot_*` — for any reason, for any column — must cover `absence_type.name` and
+    `absence_budget.source` together, not one at a time as tasks happen to touch them.
+
+    **Only `AbsenceBudgetWriteRefused` becomes a `409`** (R-01). The data layer classifies by
+    SQLSTATE, and a failure outside that closed set — a value wider than `NUMERIC(6,2)`, a date
+    arithmetic overflow, a timeout, a dropped connection — propagates and is served as a `500`. Most
+    of those never get this far: the request schema bounds the figure to the column's precision and
+    both dates to a planning horizon, so they are `422`s about a field rather than errors about the
+    database.
+    """
+    try:
+        budget = create_budget(
+            session,
+            calendar_id=payload.calendar_id,
+            engagement_type_id=payload.engagement_type_id,
+            budget_days=payload.budget_days,
+            unit=payload.unit,
+            source=payload.source,
+            effective_from=payload.effective_from,
+            effective_to=payload.effective_to,
+        )
+    except AbsenceBudgetWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{_REFUSED_BY_THE_DATABASE} {refusal}",
+        ) from None
+    return shape_absence_budget(budget, statutory_leave_type(session))
 
 
 @router.get(

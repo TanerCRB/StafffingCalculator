@@ -259,3 +259,176 @@ musi być rozstrzygnięciem, nie przeoczeniem odkrytym przez następne zadanie.
    bez kalendarza dostaje nazwany stan "brak kalendarza" w wyliczonej pojemności, nigdy `0` i nigdy
    wyjątek. Ta sama zasada co dla `vendor_id`/`vendor` w SC-2-03: pominięcie jest stanem, nie luką
    do wypełnienia domysłem.
+
+### 2026-09-22 — budżet urlopowy jako czwarty konsument wzorca przedziału obowiązywania (SC-3-03)
+
+Drugi aneks tej daty w tym pliku i osobny wpis, nie dopisek do poprzedniego — precedens dosłowny:
+2026-09-21, dwa aneksy (SC-2-03 i SC-2-04). **Konsekwencja nazewnicza przyjęta razem z tym
+wpisem:** odwołanie brzmiące „ADR-0008, aneks 2026-09-22" bez nazwy zadania — takie jak te w
+`backend/app/models/catalog.py` i `backend/app/models/staffing.py` — znaczy aneks **SC-3-02**.
+Każde nowe odwołanie do któregokolwiek z tych dwóch musi nazwać zadanie.
+
+„Konsekwencje" wyliczają trzy tabele dzielące jeden wzorzec kolumn i jedno ograniczenie
+integralności. Budżet urlopowy (SC-3-03, F-05) jest **czwartą** tabelą, której ten wzorzec zostaje
+przypisany, i **drugą, która go faktycznie buduje**: z trzech pierwotnych powstał jeden katalog
+stawek (SC-2-01), a `exchange_rates` (ADR-0006) i `commercial_terms` (ADR-0003, wciąż Draft)
+pozostają zadecydowane i nieistniejące — dokładnie stan, który sekcja „Kontekst" nazywa pułapką
+(„zadecydowany dwukrotnie, ani razu zbudowany").
+
+1. **Budżet dostaje wzorzec w całości, z jednym nazwanym zawężeniem.** `effective_from DATE NOT
+   NULL`, `effective_to DATE` **włączające** na wejściu i w API, kolumna generowana `valid_period`
+   jako jedyne miejsce konwersji `+ 1 dzień`, `EXCLUDE USING gist` na kluczu × `valid_period WITH
+   &&`, `btree_gist`, `CHECK` porządkujący parę dat (bez niego `daterange` daje zakres pusty, a `&&`
+   przestaje cokolwiek chronić — pkt 2, 3 i 4 decyzji plus komentarz przy
+   `effective_period_ordered`). Jedyne odstępstwo — zakaz okna bezterminowego na **tej** tabeli —
+   jest nazwane w pkt 10b i nigdzie indziej; poza nim żadnej własnej odmiany, bo drugi kształt tego
+   samego wzorca jest tym, co „Konsekwencje" nazywają migracją fazy contract dotykającą wszystkich
+   tabel naraz.
+2. **Dlaczego budżet dostaje to, czego odmówiono `standard_hours_per_day`** (aneks z tą samą datą,
+   SC-3-02). Tamta odmowa nie była niechęcią do wzorca — jej podstawą był pkt 2 tamtego aneksu:
+   okno na tej kolumnie byłoby **drugim** mechanizmem rozstrzygania w czasie obok samego zbioru dni
+   kalendarza. Budżet nie ma konkurenta: żadna inna tabela nie odpowiada na pytanie „ile dni
+   przysługuje na dzień D", a jednostką wersjonowania nie może tu być kalendarz, bo budżet zmienia
+   się niezależnie od niego (nowy regulamin, nie nowy zbiór świąt). Reguła 13 Strażnika zostaje
+   spełniona w ten sam sposób co dla stawek: **jeden** mechanizm rozstrzygania, egzekwowany przez
+   `EXCLUDE` przy zapisie, nigdy przez „najnowszy wiersz wygrywa" przy odczycie.
+3. **Klucz: `(calendar_id, engagement_type_id)`, oba `NOT NULL`, i tylko te dwa** (rozstrzygnięcie
+   bramki 1, 2026-09-22, Q-2, potwierdzone po rozstrzygnięciu pkt 8 — klucz **nie** jest
+   reotwierany). Nullowalna kolumna w kluczu znaczyłaby „dowolny", czyli drugi, nienazwany
+   mechanizm rozstrzygania nałożony na okno dat — ten sam argument, którym `RATE_DIMENSION_COLUMNS`
+   trzyma wszystkie cztery wymiary stawki jako `NOT NULL`. Mutacja do zabicia testem: poluzowanie
+   którejkolwiek z dwóch kolumn do `NULL` z odczytem „pasuje do wszystkiego".
+   a. **Budżet wisi na kalendarzu, nie na lokalizacji**, bo to kalendarz jest jednostką reżimu czasu
+      pracy — pkt 1 aneksu SC-3-02 („jednostką wersjonowania jest kalendarz, nie kolumna") — a
+      lokalizacja wskazuje kalendarz, nie odwrotnie. Konsekwencje przyjęte razem z tym wyborem:
+      lokalizacje wskazujące jeden kalendarz **dzielą budżet**, a lokalizacja bez kalendarza
+      (`catalog_locations.calendar_id IS NULL`, aneks SC-3-02 pkt 7) nie ma też budżetu i daje
+      **jeden** nazwany stan do pokazania, nie dwa niezależne.
+   b. **Odrzucone: `location_id` w kluczu.** Pozwoliłoby dwóm lokalizacjom na jednym kalendarzu
+      mieć różne budżety, ale rozszczepiałoby „brak kalendarza" i „brak budżetu" na dwa niezależne
+      nazwane stany, które każda odpowiedź musiałaby rozróżniać, i wymagałoby kompletu wierszy
+      budżetu przy każdej nowej lokalizacji. **Warunek ponownego rozpatrzenia:** pierwsze żądanie
+      dwóch różnych budżetów pod jednym kalendarzem — jest to przebudowa ograniczenia `EXCLUDE`,
+      czyli jedna migracja bez pary expand/contract (aneks 2026-09-21, SC-2-03, pkt 4), i wymaga
+      własnego, datowanego wpisu tutaj.
+4. **Żadnego aparatu sentinela z SC-2-03 — i to nie jest niespójność.** `VENDOR_KEY_SENTINEL`,
+   `COALESCE(vendor_id, …)`, `CHECK` na `catalog_vendors` i literał nil UUID istnieją wyłącznie
+   dlatego, że `vendor_id` jest nullowalne i `NULL` znaczy tam jedną konkretną rzecz („stawka
+   wewnętrzna"), a `NULL = NULL` nie jest `TRUE` (aneks 2026-09-21, pkt 3). Tutaj żadna kolumna
+   klucza nie ma znaczenia „brak wartości", więc kopiowanie tamtego aparatu dodałoby wyrażenie,
+   wartownik i `CHECK`, które niczego nie chronią, a sugerują istnienie stanu „budżet niczyj".
+   Klucz jest z dwóch zwykłych kolumn i z `valid_period`.
+5. **Budżet jest liczbą dni albo FTE, nie kwotą — i jest o jedno mnożenie od pieniędzy.**
+   `NUMERIC` z jawną, zadeklarowaną skalą, `Decimal` nigdy `float` (ADR-0002, NF-01) — ta sama
+   podstawa, którą `standard_hours_per_day` dostaje `NUMERIC(4,2)`: ta liczba mnoży się przez
+   podstawę godzinową i przez stawkę, więc błąd binarny tutaj dociera do każdej liczby kosztowej i
+   przychodowej. Pkt 6 decyzji obowiązuje bez zmian, mimo że nie chodzi o pieniądze: wartość
+   wprowadzona nie jest zaokrąglana przy zapisie, zaokrąglenie jest regułą konsumenta w momencie
+   użycia. **Jednostka jest jedna, nazwana i egzekwowana w bazie** (wzorem `CHECK unit = 'hour'` na
+   stawce), nie domyślana z wielkości liczby: „20" jako dni i „20" jako FTE-dni to dwa różne wyniki
+   z tego samego wiersza, a takiej pomyłki nie wykryje żaden test na wartości ze środka zakresu.
+6. **Pole źródła: obowiązkowe, niepuste, i jest granicą danych osobowych.** Wiersz budżetu niesie
+   tekstowe pole źródła (regulamin, punkt umowy zbiorowej, decyzja organizacyjna) o jedynej regule
+   treści „niepusty ciąg" — i **nigdy nie jest to autor wpisu**. Dwa powody, oba już rozstrzygnięte
+   gdzie indziej: (a) kolumna „kto wpisał" byłaby pierwszą kolumną wiążącą wiersz katalogu z
+   użytkownikiem i wygaszałaby zarówno wyjątek „dane organizacyjne bez zasięgu", jak i zwolnienie z
+   funkcji-strażnika (ADR-0005, aneks 2026-09-21 SC-2-04 pkt 6; ADR-0001) — wprowadzenie jej
+   wymagałoby własnego, datowanego wpisu tam, nie tutaj; (b) wolny tekst jest wobec danych osobowych
+   **nieklasyfikowany**, dokładnie jak `catalog_vendors.name` (audyt 2026-09-21: „traktować jako
+   nieklasyfikowane") i `absence_type.name` (ADR-0005, aneks 2026-09-22 SC-3-02 pkt 10) — a ponieważ
+   budżet wchodzi do migawki (ADR-0004, aneks z tą samą datą, SC-3-03), treść tego pola staje się
+   trwała i nieusuwalna. **Warunek, który uruchamia się z chwilą, gdy SC-3-03 wystawia jakąkolwiek
+   ścieżkę zapisu budżetu:** ten sam, który ADR-0005 aneks SC-3-02 pkt 10 nałożył na pierwsze
+   zadanie wystawiające zapis `absence_type` — rozstrzygnięcie wprost ograniczenia treści albo
+   zasady erasure/rectification dla wierszy `approved_snapshot_*`, które ten tekst już skopiowały,
+   jako warunek wstępny, nie do odkrycia po fakcie.
+7. **Brak wiersza budżetu jest nazwanym stanem, nigdy cichym zerem** (rozstrzygnięcie bramki 1,
+   Q-3). Ta sama zasada, którą `calendar_id IS NULL` dostało w aneksie SC-3-02 pkt 7 i `vendor_id`
+   w aneksie 2026-09-21 pkt 6: pominięcie jest stanem, nie luką do wypełnienia domysłem. Dwie
+   odpowiedzi są zakazane — `0` dni (pozycja z pełną zdolnością rozliczalną, czyli cicho lepsza
+   marża) i wyjątek. Wymóg, który z tego wynika i który trzeba dowieść: **„brak wiersza" musi być
+   w odpowiedzi odróżnialne od „wiersz o wartości 0"**, bo zerowy budżet jest wartością legalną i
+   znaczącą (typ zaangażowania bez prawa do urlopu), a zlanie obu w jedną odpowiedź kasuje różnicę
+   bez ostrzeżenia. Ten sam stan obejmuje budżet **wygasły** — patrz pkt 10b.
+8. **Typ nieobecności, przeciw któremu budżet się rozlicza: flaga w słowniku** (rozstrzygnięcie
+   człowieka, 2026-09-22). Budżet nie niesie `absence_type_id` i klucz z pkt 3 zostaje
+   dwuelementowy; typ rozliczany budżetem wskazuje **nowa kolumna logiczna na `absence_type`**
+   (np. `is_statutory_leave`). Odrzucone razem z tym rozstrzygnięciem: nazwa typu zaszyta w kodzie —
+   NF-10 i precedens `WEEK_PATTERN_EXPRESSION` („wzorzec jest daną, nie kodem") wykluczają ją z
+   góry, nie jest trzecią możliwością.
+   a. **Baza egzekwuje „co najwyżej jeden", i tyle da się egzekwować.** Częściowy indeks unikalny
+      na stałym wyrażeniu z predykatem na fladze (`… ON absence_type ((true)) WHERE
+      is_statutory_leave`) odrzuca drugi wiersz z flagą **w tej samej instrukcji, która go
+      wstawia**. Sprawdzenie po stronie aplikacji jest tu zakazane po imieniu: check-then-act
+      przeżył w tym repozytorium dostarczone testy trzykrotnie (SC-1-02 ×2, SC-2-01), a ADR-0001
+      wymaga integralności w bazie tam, gdzie to możliwe.
+   b. **Druga połowa („co najmniej jeden") nie jest egzekwowalna indeksem i jest nazwanym stanem,
+      nie wyjątkiem.** Słownik bez żadnego wiersza z flagą to ten sam przypadek co brak wiersza
+      budżetu (pkt 7): odpowiedź mówi, że typu ustawowego nie wskazano, i **nigdy** nie zgaduje —
+      ani „pierwszy typ alfabetycznie", ani typ o nazwie zawierającej „urlop", ani cichy `0`.
+      Zgadywanie byłoby drugim mechanizmem rozstrzygania obok flagi, dokładnie tym, przed czym
+      broni reguła 13 w swojej drugiej połowie.
+   c. **Konsekwencja przyjęta świadomie: flaga nie ma okna obowiązywania, więc jej przeniesienie
+      zmienia znaczenie wszystkich wierszy budżetu naraz, bez śladu.** Scenariusze `draft`
+      podchwytują zmianę po cichu — tak jak podchwytują każdą zmianę katalogu. Zatwierdzone są
+      chronione tylko dlatego, że flaga wchodzi do migawki (ADR-0004, aneks z tą samą datą,
+      SC-3-03, pkt 8); bez tamtego punktu to rozstrzygnięcie byłoby cichą regresją AC-10, nie
+      uproszczeniem.
+9. **Zbieg budżetu z ręczną nieobecnością rozstrzyga `max`, na okresie okna obowiązywania budżetu**
+   (rozstrzygnięcie bramki 1 P-4 i decyzja człowieka z 2026-09-22). Budżet i lista ręcznych
+   nieobecności są dwoma źródłami tej samej wielkości, a reguła 13 w drugiej połowie broni przed
+   pozostawieniem wyboru odczytowi. Reguła: `max(budżet okna, suma ręcznych nieobecności typu z
+   pkt 8 w tym oknie)`. **Okresem jest okno obowiązywania, nie rok i nie miesiąc** — żadne nowe
+   pojęcie kalendarzowe nie wchodzi do systemu, a jedyny przedział, którego budżet używa, to ten,
+   który już ma.
+   a. **Kolejność jest częścią reguły, nie szczegółem: `max` rozstrzyga się na oknie, a dopiero
+      jego wynik jest proratowany na miesiące** (pkt 10). Odwrotna kolejność — `max` per miesiąc —
+      daje wynik drastycznie inny: budżet 24 dni na oknie rocznym i 20 dni urlopu zaplanowanych w
+      lipcu dają przy kolejności nakazanej 24 dni, a przy kolejności odwróconej 42. To jest mutacja
+      do zabicia testem, nie preferencja stylistyczna.
+   b. **`max` nie da się wyrazić ograniczeniem bazy** — ani `EXCLUDE`, ani `CHECK` nie sięgają
+      dwóch tabel z dwóch różnych agregatów — więc jest to reguła wyliczenia i wymaga testów po
+      **obu** stronach zbiegu (budżet większy, ręczne większe, równe). Sama ścieżka „przeszło"
+      niczego tu nie dowodzi: dla wartości równych obie implementacje dają to samo.
+   c. **Cena przyjęta razem z tą regułą:** ręczna nieobecność mieszcząca się w budżecie jest w
+      wyniku **niewidoczna** — zaplanowanie 5 dni urlopu przy budżecie 26 dni nie zmienia ani jednej
+      liczby. To jest poprawne i będzie odebrane jako awaria, więc musi zostać powiedziane na
+      ekranie, nie odkryte przez użytkownika.
+10. **Proracja miesięczna: budżet okna dzielony równomiernie przez miesiące okna** (rozstrzygnięcie
+    człowieka, 2026-09-22, G-2). Pojemność liczona jest per miesiąc (SC-3-02), a budżet w oknie
+    obowiązywania sam z siebie nie mówi, ile dni przypada na jeden miesiąc — bez nazwanej reguły
+    każdy konsument wymyśliłby własną, co jest dokładnie tą klasą rozjazdu, przed którą broni pkt 3
+    decyzji (jedna konwersja, jedno miejsce). Reguła: **dni budżetu ÷ liczba miesięcy okna**,
+    w `Decimal`, **bez zaokrąglenia pośredniego**; jedyny punkt zaokrąglenia zostaje tam, gdzie był
+    (`app.core.money.round_money` na wartości końcowej, ADR-0002, pkt 6 decyzji). Zaokrąglanie
+    proracji do pełnych dni w każdym miesiącu jest mutacją, która przy dwunastu miesiącach gubi albo
+    dokłada kilka dni, a widać to dopiero w sumie rocznej.
+    a. **Niezmiennik, który kryterium ma dowieść, i który jest mocniejszy niż sama formuła: suma
+       proracji po wszystkich miesiącach okna równa się budżetowi okna.** Zabija naraz dwie rzeczy —
+       zaokrąglenie pośrednie oraz dwuznaczność miesiąca niepełnego (okno zaczynające się 15
+       stycznia): jakkolwiek policzony zostanie miesiąc brzegowy, wynik musi się sumować do
+       budżetu, więc żadna interpretacja nie może po drodze wyprodukować ani stracić dnia.
+    b. **Okno budżetu jest zawsze domknięte: `CHECK effective_to IS NOT NULL`** (rozstrzygnięcie
+       człowieka, 2026-09-22). Proracja z pkt 10 dzieli przez liczbę miesięcy okna, a okno
+       bezterminowe nie ma mianownika — więc zamiast dawać tej jednej tabeli wyjątek w regule
+       wyliczenia, odbiera się jej możliwość, która ten wyjątek by wymuszała. **Jest to jawne, wąskie
+       odstępstwo od pkt 2 decyzji** („`NULL` = bezterminowa"), obowiązujące **wyłącznie** tabelę
+       budżetu: pozostałe trzy tabele wzorca zachowują okno bezterminowe, a wspólne wyrażenie
+       `valid_period` nie zmienia się wcale (`effective_to + 1` na `NULL` nadal daje górną granicę
+       nieograniczoną — po prostu żaden wiersz tej tabeli takiej wartości nie osiągnie). `CHECK`
+       porządkujący parę dat zostaje w kształcie wspólnym, z gałęzią `effective_to IS NULL`, która
+       na tej tabeli jest martwa — usunięcie jej byłoby drugim rozjazdem ze wzorcem tam, gdzie
+       jeden wystarczy.
+       **Cena przyjęta świadomie:** data końca jest obowiązkowa przy każdym budżecie, więc budżet
+       *wygasa* — a scenariusz planowany poza ostatnie okno wpada w nazwany stan z pkt 7 („brak
+       wiersza"), nigdy w ciche `0`. To jest zamierzone: regulamin urlopowy bez daty końca jest
+       założeniem, nie danymi, i lepiej, żeby system o niego upomniał się widocznie.
+       **Warunek ponownego rozpatrzenia:** pierwsze zadanie, które nada proracji inny mianownik niż
+       długość okna albo usunie prorację, wygasza to odstępstwo — `CHECK` wraca wtedy do wspólnego
+       kształtu tym samym zadaniem, nie później.
+11. **Pkt 7 decyzji rośnie po raz drugi.** Druga tabela z `EXCLUDE USING gist` znaczy drugą tabelę
+    zależną od `btree_gist` — a dowód z CI nadal dowodzi migracji i mechanizmu, nie tego, że rola
+    aplikacyjna na nieistniejącym jeszcze środowisku docelowym wykona `CREATE EXTENSION` (open
+    decision #5). Naruszenie tego `EXCLUDE` owija się tym samym mechanizmem co każde inne
+    (`_describe_without_values`): komunikat bazy niesie wartości wiersza, a te — choć nie są kwotą —
+    są warunkami zatrudnienia i nie wracają do wołającego.

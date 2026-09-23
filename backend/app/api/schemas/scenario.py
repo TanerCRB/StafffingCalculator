@@ -24,14 +24,23 @@ from app.api.schemas.project import ScenarioStatusLabel
 class ApprovedSnapshotCounts(BaseModel):
     """How many rows the approval froze, per snapshot table.
 
-    One field per table rather than a single total: the tables are frozen by three separate
+    One field per table rather than a single total: the tables are frozen by four separate
     statements, and a single number would report "something was written" where the interesting
-    failure is "one of the three wrote nothing".
+    failure is "one of the four wrote nothing".
     """
 
     working_calendars: int
     working_calendar_days: int
     absence_types: int
+    absence_budgets: int
+    """The fourth table, from SC-3-03 (ADR-0004, addendum 2026-09-22 SC-3-03).
+
+    Adding a field to this payload is a **deliberate** change to a canary: every test asserting
+    these counts by equality fails on the day a snapshot table joins, which is the only moment at
+    which noticing is cheap. A zero here is two different facts — "no budget covers the pairs this
+    scenario reads", which is legal and named, and "budgets existed and were not copied", which is
+    the regression point 2 of that addendum is about — so it is read against a contrast and never on
+    its own (point 6)."""
 
 
 class ScenarioApproval(BaseModel):

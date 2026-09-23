@@ -120,5 +120,6 @@ def approve(
             working_calendars=result.working_calendars,
             working_calendar_days=result.working_calendar_days,
             absence_types=result.absence_types,
+            absence_budgets=result.absence_budgets,
         ),
     )

@@ -17,9 +17,11 @@ Four properties, each of them a decision with a mutation attached:
    asserts that by introspecting `pg_constraint`, because the mutation "store the id as an FK and
    read through a join" is invisible to any behavioural test that never changes the source.
 3. **Values, not names to resolve later**: the calendar's name, its standard working day, its week
-   pattern, every one of its exceptional days, and the name and both flags of every absence type.
-   Editing the source calendar after approval must not move a single figure here (AC-04, AC-10 —
-   criterion K-16).
+   pattern, every one of its exceptional days, the name and **three** flags of every absence type
+   (SC-3-03 replaces "both flags" here — ADR-0004, addendum 2026-09-22 SC-3-03, point 8), and the
+   raw leave budget of every (calendar, engagement type) pair the scenario reads. Editing the source
+   calendar, type or budget after approval must not move a single figure here (AC-04, AC-10 —
+   criteria K-16 and K-07).
 4. **Write-once, and therefore no concurrency marker** (ADR-0007, addendum 2026-09-22, point 5).
    These rows are written inside the one transaction that approves a scenario and are never edited,
    so there are no two editors for a marker to arbitrate between.
@@ -60,6 +62,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.catalog import (
+    BUDGET_PRECISION,
+    BUDGET_SCALE,
     STANDARD_HOURS_PRECISION,
     STANDARD_HOURS_SCALE,
     WEEK_PATTERN_LENGTH,
@@ -70,19 +74,23 @@ SNAPSHOT_TABLES: tuple[str, ...] = (
     "approved_snapshot_working_calendar",
     "approved_snapshot_working_calendar_day",
     "approved_snapshot_absence_type",
+    "approved_snapshot_absence_budget",
 )
-"""Every snapshot table SC-3-02 creates, as data.
+"""Every snapshot table, as data — three from SC-3-02 and the fourth from SC-3-03.
+
+Growing this tuple is a **deliberate** act and the canaries that compare against it are meant to
+fail on the day it changes (ADR-0004, addendum 2026-09-22 SC-3-03, point 4): a table added to the
+registry without an entry in the approval transaction is a snapshot that is always empty, and a
+table added to the approval without a canary looks covered while it is not.
 
 Read by the schema tests (which ask the migrated database about the foreign keys of each) and by
-the canary that counts the rows a copied scenario holds. A table added here without an entry in the
-approval transaction would be a snapshot that is always empty — which is the visible failure mode
-ADR-0004 prefers to a guard nobody notices is missing."""
+the canary that counts the rows a copied scenario holds."""
 
 
 class _ApprovedSnapshotRow(Base):
     """What every snapshot row carries: its own id and the scenario whose approval wrote it.
 
-    Abstract, so the three tables below cannot disagree about the two columns that make them
+    Abstract, so the four tables below cannot disagree about the two columns that make them
     snapshots. `created_at` is here and `updated_at` deliberately is not — see the module docstring.
     """
 
@@ -191,6 +199,17 @@ class ApprovedSnapshotAbsenceType(_ApprovedSnapshotRow):
     The **dictionary entry** is snapshotted; the scenario's absence *instances* are not (see the
     module docstring). The flags are organisational configuration that can be edited after the
     approval, which is exactly the class of value AC-04/AC-10 require to be frozen.
+
+    **The contract a reader of this table relies on** (S-02, invariant-guardian, SC-3-03): for one
+    scenario, *a row with `is_statutory_leave = true` is present* **if and only if** *the frozen
+    budgets (`approved_snapshot_absence_budget`) apply*. Present → a type was named when the
+    scenario was approved, the frozen budget is deducted, and the scenario's own bookings of that
+    type count against it. Absent → nobody had named one, and the frozen budget applies to nothing
+    (the frozen counterpart of the live `NO_STATUTORY_LEAVE_TYPE` state). The absence of the row is
+    therefore data, not a gap: it is why the flagged type is copied whenever a budget is frozen,
+    whether or not the scenario booked anything against it — without that, "deduct the whole
+    entitlement" and "deduct none of it" would freeze identical rows. The writer that keeps this
+    contract is `app.data.scenario_approval._copy_absence_types`, which carries the full reasoning.
     """
 
     __tablename__ = "approved_snapshot_absence_type"
@@ -209,6 +228,104 @@ class ApprovedSnapshotAbsenceType(_ApprovedSnapshotRow):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     generates_cost: Mapped[bool] = mapped_column(Boolean, nullable=False)
     generates_revenue: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    """Both flags, independently, exactly as the source carries them (criterion K-11's shape one
-    table over). No default on either: a snapshot column with a default is a column that can be
-    written without a value having been read from the source."""
+    is_statutory_leave: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    """The name and **three** flags, independently, exactly as the source carries them.
+
+    The third flag joins in SC-3-03 (ADR-0004, addendum 2026-09-22 SC-3-03, point 8), and that
+    addendum replaces — rather than deletes — the phrase "the name and both flags" in this module's
+    docstring and in the SC-3-02 addendum. Without it the approval would be formally complete and
+    still wrong: moving `is_statutory_leave` to another absence type after an approval would change
+    what the `max` rule of ADR-0008 (addendum SC-3-03, point 9) compares the frozen budget against,
+    i.e. it would move the capacity of an approved calculation. The mutation the criterion names is
+    exactly "copy the name and two flags, and leave the third".
+
+    No default on any of them: a snapshot column with a default is a column that can be written
+    without a value having been read from the source."""
+
+
+class ApprovedSnapshotAbsenceBudget(_ApprovedSnapshotRow):
+    """The leave budget of one (calendar, engagement type) pair, frozen **raw** at approval (F-05).
+
+    The fourth snapshot table (ADR-0004, addendum 2026-09-22 SC-3-03). Three properties of it are
+    decisions with mutations attached, and the third is the one that is easy to get wrong:
+
+    1. **It is written by the same approval that freezes the calendars, not by a separate step**
+       (point 2). A snapshot holding a calendar and not the budget the calendar's positions read
+       would reproduce a *different* billable capacity than the one approved: the working days would
+       come from the frozen calendar and the leave days subtracted from them from the live table. No
+       code mutation is needed for that failure — it is what happens if this table is simply not
+       added.
+    2. **One row per (pair, window the plan touches)**, resolved by `valid_period @> <month of the
+       plan>` — the same containment the live read uses (ADR-0004, addendum 2026-09-22 SC-3-03,
+       point 7, and its history). The earlier wording of that point — "one row per pair, resolved on
+       the day of the approval" — froze the *wrong* window for any scenario not planned for the
+       current one: a 2027 plan approved in 2026 kept the 2026 entitlement for ever, since nothing
+       updates a snapshot row. What is frozen now is still narrower than the "every window in the
+       snapshot" variant the addendum rejects: only the windows the plan actually reads. The price
+       it names (point 7c) is that the reader resolves per month, and the first reader has to prove
+       that resolution with a criterion of its own.
+    3. **What is frozen is the raw budget — days, window, source, unit — and never the monthly
+       share.** The proration (ADR-0008, addendum SC-3-03, point 10) is the reader's formula,
+       not a state: a column holding "hours removed per month" would be a computed figure inside a
+       record of what was approved, and it would silently be wrong the moment the reader's month
+       grid differed from the one that produced it. Criterion K-07 asserts that over the *set of
+       columns*, not over behaviour, because a computed column is invisible to any test that only
+       reads values back.
+    """
+
+    __tablename__ = "approved_snapshot_absence_budget"
+
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("scenarios.id", name="fk_approved_snapshot_absence_budget_scenario_id"),
+        nullable=False,
+        index=True,
+    )
+    """The only foreign key a snapshot row is allowed to have — see
+    `ApprovedSnapshotWorkingCalendar.scenario_id`."""
+
+    source_budget_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    source_calendar_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    source_engagement_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), nullable=False
+    )
+    """Values, never foreign keys (ADR-0004, addendum 2026-09-22 SC-3-02, point 3b).
+
+    The key a later reader looks a row up by is `(scenario_id, source_calendar_id,
+    source_engagement_type_id, effective_from)` — the pair **plus the window**, because a scenario
+    whose months span two budget windows freezes both of them (reviewer R-03). Each of those occurs
+    exactly once per approval, and the `EXCLUDE` on the source table is what guarantees the windows
+    of one pair cannot overlap, so resolving a month against them has exactly one answer here
+    too."""
+
+    budget_days: Mapped[Decimal] = mapped_column(
+        Numeric(BUDGET_PRECISION, BUDGET_SCALE), nullable=False
+    )
+    unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    source: Mapped[str] = mapped_column(String(500), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date] = mapped_column(Date, nullable=False)
+    """The raw budget: how many days, in what unit, over which window, on whose authority.
+
+    The column types are the source's own, so nothing is narrowed on the way in. `effective_to` is
+    `NOT NULL` here without needing a CHECK, because the source table refuses an open-ended window
+    in the first place (ADR-0008, addendum SC-3-03, point 10b) — a snapshot records what was
+    approved and does not re-judge it.
+
+    **`source` is free text copied verbatim, and there is no `UPDATE` or `DELETE` path to it.** That
+    is what made the erasure/rectification question a precondition of the write path rather than a
+    later discovery; ADR-0005's addendum (2026-09-22 SC-3-03, point 6) answers it as a **named risk
+    carried**, not as a mechanism built — the same answer `ApprovedSnapshotAbsenceType.name` already
+    has, and for the same reason. Whatever mechanism eventually erases or rectifies a snapshot row
+    has to cover both of those columns at once rather than whichever one a later task happens to
+    trip over. See `app.api.catalog.create_absence_budget`."""
+
+    # **There is no `resolved_on`, and its absence is a decision** (reviewer R-03/R-06, 2026-09-22).
+    # ADR-0004's addendum (SC-3-03, point 7a) required the day the window was resolved on to be
+    # stored, and given point 7 it was right to: one window per pair, chosen by the approval's own
+    # date, is a frozen number that cannot be attributed to a window unless the row says which day
+    # picked it. The correction to point 7 removes the premise — the windows are resolved by the
+    # months the scenario plans, every window the plan touches is frozen, and each row carries its
+    # own `effective_from`/`effective_to`. The attribution is in the data; a date column would be a
+    # fact about a clock that no reader of this table needs, and dropping it takes the last clock
+    # read out of the approval path.

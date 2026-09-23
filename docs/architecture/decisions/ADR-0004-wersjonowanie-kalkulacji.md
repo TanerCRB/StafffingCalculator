@@ -338,3 +338,132 @@ zadanie.
    nieodwracalnie zamrozi kalkulację — bez roli, bez audytu (blok 8 odłożony, `audit_log`
    nieistniejący). Zamknięcie: osobny ADR uwierzytelniania (dla roli) + blok 8 planu (dla
    `audit_log`).
+
+### 2026-09-22 — budżet urlopowy wchodzi do migawki RAZEM z kalendarzem (SC-3-03)
+
+Drugi aneks tej daty w tym pliku i osobny wpis, nie dopisek do poprzedniego: punkty aneksu SC-3-02
+są cytowane **po numerach** w `backend/app/models/approved_snapshot.py`,
+`backend/app/data/scenario_approval.py`, `backend/app/data/scenario_guard.py` i
+`backend/app/models/staffing.py`, więc dopisanie punktu w tamtej sekcji jest cichą edycją tekstu, do
+którego kod się odwołuje. **Konsekwencja nazewnicza przyjęta razem z tym wpisem:** odwołanie
+„ADR-0004, aneks 2026-09-22" bez nazwy zadania znaczy aneks **SC-3-02**; każde nowe odwołanie musi
+nazwać zadanie.
+
+Aneks z 2026-09-19 (SC-3-01) pkt 4 zobowiązuje każdą nową tabelę do otrzymania przypisania
+„dziedziczona → migawka" albo „własna → strażnik zapisu" **w chwili powstania**, a tabela dodana bez
+przypisania wpada domyślnie do grupy 2. To wpis, którego to zobowiązanie wymaga dla budżetu
+urlopowego (SC-3-03, F-05).
+
+1. **Przypisanie grupy: budżet urlopowy to wartość dziedziczona spoza scenariusza — grupa 1,
+   migawka.** Kryterium z aneksu 2026-09-19 („kierunek dziedziczenia, nie udział w wyliczeniu")
+   spełnione wprost: wiersz budżetu należy do organizacji, nie do scenariusza, i może zostać
+   zmieniony po zatwierdzeniu przez kogoś, kto nigdy nie słyszał o tej kalkulacji — dokładnie klasa
+   wartości, przed którą bronią AC-04 i AC-10. Budżet nie jest dzieckiem scenariusza, więc brak
+   wpisu w `SCENARIO_CHILD_COPIERS` jest tu poprawnością, nie pominięciem (precedens: katalog, aneks
+   2026-09-19 SC-2-01; kalendarz, aneks 2026-09-22 SC-3-02 pkt 1).
+2. **Budżet wchodzi do migawki RAZEM z kalendarzem, nie osobno** (rozstrzygnięcie bramki 1,
+   2026-09-22, Q-1). Para „kalendarz + budżet" jest w migawce atomowa: zatwierdzenie, które
+   zamroziło kalendarze, a nie zamroziło budżetów, do których te kalendarze prowadzą, jest
+   zatwierdzeniem niekompletnym, nie zatwierdzeniem uboższym.
+   **Cicha regresja AC-10, której ta decyzja unika, nazwana wprost:** migawka z kalendarzem bez
+   budżetu odtworzyłaby **inną zdolność rozliczalną** niż zatwierdzona kalkulacja. Dni robocze
+   pochodziłyby z zamrożonego kalendarza, a odjęte od nich dni urlopu — z żywej tabeli budżetu, więc
+   zmiana regulaminu urlopowego po zatwierdzeniu przesuwałaby wynik zatwierdzonej oferty bez jednego
+   komunikatu i bez jednej zmiany w wierszach, które ktokolwiek ogląda. To jest ten sam kształt
+   błędu, który pkt 3d aneksu SC-3-02 każe zabijać kryterium („edycja kalendarza źródłowego po
+   zatwierdzeniu nie zmienia ani jednej wartości w migawce") — z tą różnicą, że tutaj obejście nie
+   wymaga żadnej mutacji w kodzie, wystarczy **nie dodać** drugiej tabeli.
+3. **Zakres kopiowania: to, co kalkulacja tego scenariusza faktycznie czyta.** Te same kalendarze,
+   które zamraża `app.data.scenario_approval._copy_calendars`, skrzyżowane z typami zaangażowania
+   pozycji obsady: budżety par (kalendarz, typ zaangażowania) wynikających z pozycji scenariusza,
+   nie cała tabela budżetów. Migawka wierszy, na które nie wskazuje żadna pozycja, rośnie razem z
+   organizacją zamiast razem z kalkulacją i nie zmienia żadnej odpowiedzi. Scenariusz bez pozycji
+   zamraża zero budżetów — to jest uczciwy stan draftu, w którym nic nie zaplanowano.
+4. **Kształt tabeli migawkowej: wzorzec z pkt 3 aneksu SC-3-02 bez żadnej zmiany.** Jedna tabela
+   migawkowa na jedną tabelę źródłową, nazwana `approved_snapshot_<tabela>`, nigdy generyczny blob
+   `jsonb` (liczba w JSON jest typem zmiennoprzecinkowym, a budżet mnoży się przez podstawę godzinową
+   i przez stawkę — ADR-0002, NF-01); kluczowana przez `scenario_id`; identyfikatory wierszy
+   źródłowych przechowywane **jako wartości**, nigdy jako klucze obce; kopiowane wartości, a nie
+   nazwy do rozwiązania później. **Trzecia grupa obowiązuje:** nowa tabela dochodzi do
+   `SNAPSHOT_TABLES`, **nie** dochodzi do `SCENARIO_CHILD_COPIERS` (brak wpisu jest tu wymagany, nie
+   dozwolony), a kanarek „kopia zatwierdzonego scenariusza ma zero wierszy migawkowych" musi objąć
+   ją tak samo jak trzy istniejące — rejestr milczy o pominięciach, więc tabela dopisana bez kanarka
+   wygląda na objętą, choć nie jest.
+5. **Moment zapisu i kolejność w transakcji: bez zmian, żaden nowy strażnik.** Wiersze budżetu
+   wchodzą do tej samej transakcji zatwierdzenia, przed `UPDATE scenarios SET status = 'approved'`
+   (pkt 4 aneksu SC-3-02), a ich `scenario_id` pochodzi z `unapproved_scenario(...)` wewnątrz
+   `INSERT ... SELECT`, nie z parametru — to właśnie czyni nakazaną kolejność własnością instrukcji,
+   a nie komentarzem. Strażnik `app.data.scenario_guard` jest jeden dla wszystkich tabel-dzieci i nie
+   zyskuje tu drugiego kształtu.
+6. **Kanarek odróżniający dwa zera.** Zero wierszy budżetu w migawce znaczy dwie zupełnie różne
+   rzeczy: „w źródle nie było wiersza budżetu dla tej pary" — stan nazwany i legalny (ADR-0008, aneks
+   z tą samą datą, SC-3-03, pkt 7) — albo „budżet istniał i nie został skopiowany", czyli regresja z
+   pkt 2. Same liczniki `ApprovalResult` tych dwóch przypadków nie rozróżniają, więc dowód wymaga
+   kontrastu: zatwierdzenie scenariusza, którego pozycje mają budżet, zamraża dokładnie tyle wierszy,
+   ile par czyta, a edycja wiersza źródłowego po zatwierdzeniu nie rusza ani jednej liczby w migawce.
+7. **Migawka rozstrzyga okno budżetu przez miesiące, które scenariusz faktycznie planuje — nie
+   przez dzień zatwierdzenia.** *(Poprawka wprowadzona 2026-09-22 przy weryfikacji tego samego
+   zadania, zastępująca pierwotne rozstrzygnięcie tego punktu — patrz „Historia tego punktu" niżej;
+   reguła 18 Strażnika nie ma tu zastosowania, bo poprawka zapada przed pierwszym scaleniem tego
+   aneksu, nie po nim.)* Budżet jest — inaczej niż nazwa kalendarza i flagi typu nieobecności —
+   wartością z **przedziałem obowiązywania** (ADR-0008, aneks SC-3-03), więc „kopiuj wartość, nie
+   nazwę do rozwiązania później" (pkt 3c aneksu SC-3-02) miało tu dwa odczyty. Pierwotny wybór
+   („jedna liczba na parę, rozstrzygnięta przez `valid_period @> CURRENT_DATE`") okazał się błędny
+   w przeglądzie: zatwierdzenie scenariusza planowanego na okres inny niż ten, w którym leży dzień
+   kliknięcia „zatwierdź", zamrażało uprawnienie okna **nieużywanego przez ani jeden miesiąc tego
+   scenariusza** — regresja tej samej klasy co ta, przed którą broni pkt 2 tego aneksu, tylko że tu
+   żadna mutacja kodu nie jest potrzebna, wystarczy zwykłe użycie (scenariusz na przyszły rok, budżet
+   przyszłego roku już wprowadzony do katalogu). Nienaprawialne po fakcie: migawka nie ma ścieżki
+   UPDATE/DELETE.
+
+   **Rozstrzygnięcie poprawione:** okno(-a) budżetu rozstrzyga się tym samym predykatem co ścieżka
+   żywa (`valid_period @> okres_miesiąca`, `app.data.absence_budget.budgets_for_months`), przeciwko
+   **zbiorowi miesięcy, które pozycje obsady scenariusza faktycznie planują**
+   (`staffing_position_allocation.period_month`) — nie przeciwko jednemu dniu.
+   a. **Zamrażane są WSZYSTKIE okna, których dotykają te miesiące, nie jedno.** Scenariusz planujący
+      przejście przez zmianę regulaminu urlopowego czyta dwa uprawnienia na żywej ścieżce (jedno na
+      miesiące przed zmianą, drugie po) — zamrożenie tylko jednego zafałszowałoby połowę miesięcy
+      planu. Klucz odczytu migawki rośnie o okno: `(scenario_id, source_calendar_id,
+      source_engagement_type_id, effective_from)`, unikalny dzięki temu, że `EXCLUDE` na tabeli
+      źródłowej nie dopuszcza dwóch okien pokrywających jeden miesiąc dla tej samej pary.
+   b. **Dzień rozstrzygnięcia (`resolved_on`) znika — atrybucją wiersza jest okno, które niesie.**
+      Punkt a) pierwotnej wersji tego rozstrzygnięcia (kolumna z dniem zatwierdzenia) tracił sens
+      razem z jednym rozstrzygnięciem na parę: przy wielu zamrożonych oknach per para nie ma już
+      jednego „dnia, na który rozstrzygnięto" do zapisania — każdy wiersz migawki sam mówi, do
+      którego okna źródłowego należy (`effective_from`/`effective_to`), a to wystarcza.
+   c. **Czytelnik migawki rozstrzyga PER MIESIĄC, tym samym predykatem co ścieżka żywa.** To jest
+      świadomie węższa wersja wariantu „komplet okien w migawce", odrzuconego w pierwotnej wersji
+      tego punktu z tym samym uzasadnieniem (przenosi mechanizm rozstrzygania do czytelnika, musi
+      być tam dowiedziony drugi raz — reguła 13 Strażnika, druga połowa) — zaakceptowana teraz, bo
+      alternatywa (jedno rozstrzygnięcie na dzień zatwierdzenia) okazała się nie mechanizmem
+      uproszczonym, tylko mechanizmem błędnym. Warunek: pierwszy czytelnik migawki (blok 8) musi
+      dowieść tego rozstrzygania własnym kryterium, nie założyć go po cichu.
+   d. **Scenariusz z pozycjami, ale bez wierszy miesięcy (alokacji), zamraża zero budżetów.** Nic nie
+      czyta — ten sam uczciwy stan draftu bez planu co w pkt 3 tego aneksu.
+   e. **Konsekwencja przyjęta razem z tą poprawką, nie odkryta później:** scenariusz, którego okres
+      dostawy sięga za koniec ostatniego zamrożonego okna (bo w chwili zatwierdzenia katalog nie miał
+      jeszcze budżetu na tę część okresu), zostaje bez wiersza budżetu dla tamtych miesięcy —
+      nazwany stan „brak budżetu" (ADR-0008 aneks SC-3-03 pkt 7), nie cicha ekstrapolacja ostatniego
+      znanego okna. To jest świadome ograniczenie odtwarzalności „w przód", tej samej klasy co pola
+      opisowe Projektu pokazywane w wartości bieżącej (aneks 2026-09-18, grupa 1).
+
+   **Historia tego punktu (zapisana, nie usunięta — reguła 18 Strażnika: ADR nie prowadzi własnego
+   śledzenia statusu, ale też nie kasuje decyzji bez śladu).** Pierwotna wersja tego punktu (jedna
+   liczba na parę, `valid_period @> CURRENT_DATE`, kolumna `resolved_on`) była błędna od chwili
+   spisania — nie stała się błędna później przez zmianę okoliczności. Poprawka zapadła w tej samej
+   rundzie weryfikacji tego zadania, przed pierwszym scaleniem, więc nie jest to „datowany aneks do
+   zaakceptowanej decyzji" w rozumieniu reguły 18 — jest to poprawka błędu w tekście, który jeszcze
+   nie stał się faktem historycznym. Gdyby ten punkt trafił już scalony do `main` przed znalezieniem
+   błędu, poprawka wymagałaby osobnego, datowanego wpisu zamiast edycji w miejscu.
+8. **Flaga typu ustawowego wchodzi do migawki razem z nazwą i dwiema flagami handlowymi.**
+   Rozstrzygnięcie z ADR-0008 (aneks SC-3-03, pkt 8) wskazuje typ rozliczany budżetem **flagą na
+   `absence_type`**, a nie kolumną na wierszu budżetu — więc od tego zadania odpowiedź na pytanie
+   „przeciw czemu liczy się ten budżet" jest wartością organizacyjną, którą ktoś może po
+   zatwierdzeniu przenieść na inny typ. Kryterium przynależności z aneksu 2026-09-19 stosuje się
+   wprost i bez wyjątku: **dziedziczona, więc grupa 1**. `approved_snapshot_absence_type` rośnie o tę
+   kolumnę, a zdanie „nazwa i obie flagi" w pkt 3c aneksu SC-3-02 i w docstringu
+   `app.models.approved_snapshot` przestaje być kompletne — nowy wpis je zastępuje, nie kasuje.
+   **Bez tego punktu rozstrzygnięcie flagowe byłoby cichą regresją AC-10:** przeniesienie flagi na
+   inny typ nieobecności zmieniłoby comparand reguły `max` (ADR-0008, aneks SC-3-03, pkt 9) dla
+   zatwierdzonej kalkulacji, której migawka byłaby formalnie kompletna. Mutacja do zabicia testem:
+   skopiowanie do migawki nazwy i dwóch flag, a pominięcie trzeciej.

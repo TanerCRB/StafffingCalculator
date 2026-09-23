@@ -426,10 +426,21 @@ def alembic_config(database_url: str) -> Config:
 
 
 _REVISION = "f3a1d0c58b27"
+"""The migration under test — the one whose `downgrade()` this file exercises.
+
+**It is not compared with `head`**, and that is the correction SC-3-03 made (decision of a human,
+2026-09-22). It used to be, and the assertion was true only for as long as this was the newest
+migration in the repository: the first migration added on top of it — `a7c2e5f81b94` — made the test
+fail while nothing about *this* migration had changed. The revision the database starts at is now
+read from the database (`before` below), exactly as
+`tests/test_catalog_migration_reversibility.py` reads it, and every other assertion of the test is
+untouched."""
+
 _PREVIOUS_REVISION = "d5e94a1c6b73"
-"""Spelled as revision ids rather than as `"-1"`, for the reason the reversibility test of SC-2-03
-records: a relative step is a claim about *how many* migrations separate `head` from here, and that
-claim goes stale the next time one is added on top."""
+"""What `f3a1d0c58b27` revises — the target of `command.downgrade`. Spelled as a revision id rather
+than as `"-1"`, for the reason the reversibility test of SC-2-03 records: a relative step is a claim
+about *how many* migrations separate `head` from here, and that claim goes stale the next time one
+is added on top."""
 
 
 def _current_revision(engine: Engine) -> str:
@@ -462,6 +473,10 @@ def test_the_migration_downgrades_and_upgrades_again_including_the_enum_type(
 
     `command.upgrade(alembic_config, "head")` runs in `finally` whatever happens: `engine` is
     session-scoped and every other test in this suite reads the schema this one leaves behind.
+
+    The revision the database starts at is **read**, not asserted against a literal (see
+    `_REVISION`): what this test is about is that `downgrade()` undoes what `upgrade()` did — the
+    tables, the column and the enum type — and not how many migrations have been added since.
     """
     type_exists = (
         "SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'working_calendar_day_kind')"
@@ -475,7 +490,7 @@ def test_the_migration_downgrades_and_upgrades_again_including_the_enum_type(
         " WHERE table_name = 'catalog_locations' AND column_name = 'calendar_id')"
     )
 
-    assert _current_revision(engine) == _REVISION
+    before = _current_revision(engine)
     assert _object_exists(engine, type_exists)
     assert _object_exists(engine, table_exists)
     assert _object_exists(engine, column_exists)
@@ -493,7 +508,7 @@ def test_the_migration_downgrades_and_upgrades_again_including_the_enum_type(
     finally:
         command.upgrade(alembic_config, "head")
 
-    assert _current_revision(engine) == _REVISION
+    assert _current_revision(engine) == before
     assert _object_exists(engine, type_exists)
     assert _object_exists(engine, table_exists)
     assert _object_exists(engine, column_exists)
