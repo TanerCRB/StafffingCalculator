@@ -54,6 +54,7 @@ from app.api.schemas.project import (
     ProjectListResponse,
     ScenarioListItem,
 )
+from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
 from app.api.schemas.staffing import (
     AbsenceBudgetSource,
     DerivedCapacitySource,
@@ -65,11 +66,14 @@ from app.api.schemas.staffing import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.core.money import NOT_APPLICABLE
+from app.data.assumptions import ScenarioAssumptionsView
 from app.data.catalog import DimensionRow
+from app.data.organization_defaults import OrganizationLevel
 from app.data.project_reads import CallerProjectView
 from app.data.staffing import StaffingPositionView
 from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, StatutoryLeaveType
 from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
+from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
 from app.domain.scenario_readiness import assess
 from app.models.catalog import (
@@ -106,8 +110,14 @@ _SCENARIO_STATUS_LABELS = {
 }
 
 
-def _shape_scenario(scenario: Scenario) -> ScenarioListItem:
-    readiness = assess(scenario)
+def _shape_scenario(
+    scenario: Scenario, project: Project, organization_level: OrganizationLevel
+) -> ScenarioListItem:
+    # Readiness asks the resolved value, not the column (SC-1-10, gate 1 Q-5): an inherited margin
+    # is not a missing one. The organisation level arrived with the view; nothing here queries.
+    readiness = assess(
+        scenario, resolve_all(scenario, project, organization_level.for_scenario(scenario))
+    )
     return ScenarioListItem(
         id=scenario.id,
         name=scenario.name,
@@ -118,9 +128,34 @@ def _shape_scenario(scenario: Scenario) -> ScenarioListItem:
     )
 
 
-def _common_project_fields(project: Project) -> dict[str, Any]:
+def shape_scenario_assumptions(view: ScenarioAssumptionsView) -> ScenarioAssumptions:
+    """One scenario's resolved assumptions as the API returns them (SC-1-10).
+
+    **No `caller` argument, and that absence is the statement** — the one `shape_staffing_position`
+    makes: a target margin and an overload threshold are commercial parameters, not what a person
+    costs (Issue #4, "Dane osobowe: nie dotyczy"), so nothing here is gated on a permission. The day
+    a resolved *rate* or cost travels through this payload it grows the SC-1-08 conjunction.
+
+    Nothing is decided here: value, state and source arrive resolved from `app.domain.assumptions`,
+    and the frozen-or-live choice was made in `app.data.organization_defaults`.
+    """
+    resolved = {
+        name: ResolvedAssumptionRead(
+            value=assumption.value, state=assumption.state, source=assumption.source
+        )
+        for name, assumption in view.assumptions.items()
+    }
+    return ScenarioAssumptions(
+        id=view.scenario.id,
+        status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        **resolved,
+    )
+
+
+def _common_project_fields(view: CallerProjectView) -> dict[str, Any]:
     """The fields every project representation shares. One source, so the list row and the
     detail row cannot drift into disagreeing about the same project."""
+    project = view.project
     return {
         "id": project.id,
         "name": project.name,
@@ -131,13 +166,16 @@ def _common_project_fields(project: Project) -> dict[str, Any]:
         "reporting_currency": project.reporting_currency,
         "description": project.description,
         "status": _PROJECT_STATUS_LABELS[project.status],
-        "scenarios": [_shape_scenario(scenario) for scenario in project.scenarios],
+        "scenarios": [
+            _shape_scenario(scenario, project, view.organization_level)
+            for scenario in project.scenarios
+        ],
     }
 
 
 def _shape_project(view: CallerProjectView, caller: CallerIdentity) -> ProjectListItem:
     return _without_personnel_costs(
-        ProjectListItem(**_common_project_fields(view.project)), view, caller
+        ProjectListItem(**_common_project_fields(view)), view, caller
     )
 
 
@@ -151,11 +189,16 @@ def shape_project_detail(view: CallerProjectView, caller: CallerIdentity) -> Pro
     """
     project = view.project
     item = ProjectDetail(
-        **_common_project_fields(project),
+        **_common_project_fields(view),
         owner=project.owner,
         # The concurrency token (ADR-0007). Added to the detail representation only, so the list
         # contract of SC-1-05/06 is unchanged: `_common_project_fields` stays the shared subset.
         updated_at=project.updated_at,
+        # The project level's own override columns, as stored (SC-1-10, R-01) — deliberately not
+        # `resolve_all`: `null` here is "no override on this level", the meaning `PATCH` gives it.
+        # Commercial parameters, not personnel costs, so the gate below does not concern them.
+        target_margin_percent=project.target_margin_percent,
+        overload_threshold_percent=project.overload_threshold_percent,
     )
     return _without_personnel_costs(item, view, caller)
 

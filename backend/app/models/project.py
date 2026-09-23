@@ -8,14 +8,16 @@ a scenario's `approved` status.
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Enum, String, Text, func
+from sqlalchemy import CheckConstraint, Date, DateTime, Enum, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
 if TYPE_CHECKING:
     from app.models.scenario import Scenario
@@ -45,6 +47,19 @@ class Project(Base):
     # arrives as an amount/currency pair (ADR-0002, ADR-0006).
     reporting_currency: Mapped[str] = mapped_column(String(3), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # --- the project level of the assumption chain (F-02, ADR-0012) ----------------------------
+    # Overrides of the organisation's defaults, `NULL` meaning "no override here — inherit". The
+    # same column names as on `scenarios` and `organization_defaults`, so the resolution rule
+    # (`app.domain.assumptions`) reads one name on three levels and cannot pair the wrong ones.
+    # Group 2 of ADR-0004's addendum 2026-09-18: they enter the calculation, so once a scenario of
+    # the project is approved they are frozen
+    # (`app.data.project_writes.FROZEN_BY_APPROVED_SCENARIO`).
+    target_margin_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(PERCENT_PRECISION, PERCENT_SCALE), nullable=True
+    )
+    overload_threshold_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(PERCENT_PRECISION, PERCENT_SCALE), nullable=True
+    )
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(
             ProjectStatus,
@@ -80,4 +95,7 @@ class Project(Base):
         CheckConstraint("name ~ '[^[:space:]]'", name="name_not_blank"),
         CheckConstraint("client ~ '[^[:space:]]'", name="client_not_blank"),
         CheckConstraint("owner ~ '[^[:space:]]'", name="owner_not_blank"),
+        # Strictly positive on every level of the chain, in the database (SC-1-10, K-09; gate 1,
+        # G-2). `NULL` passes a CHECK, which is what "no override" needs.
+        CheckConstraint("overload_threshold_percent > 0", name="overload_threshold_positive"),
     )

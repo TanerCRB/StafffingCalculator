@@ -19,6 +19,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.identity import CallerIdentity
+from app.data.organization_defaults import OrganizationLevel, organization_level_for
 from app.models.project import Project
 from app.models.project_access import ProjectAccess
 
@@ -56,6 +57,12 @@ class CallerProjectView:
     user_id: str
     project: Project
     can_view_personnel_costs: bool
+    organization_level: OrganizationLevel
+    """The organisation level of the assumption chain for this project's scenarios (SC-1-10) —
+    the live defaults for its drafts and the frozen ones for its approved scenarios, loaded in the
+    same read for the reason the cost flag is: readiness (`app.domain.scenario_readiness`) is
+    shaped in a layer that never receives a `Session`. It carries no scope and decides none; it is
+    loaded only for scenarios this module's scope-filtered statement already returned."""
 
 
 def accessible_projects(caller: CallerIdentity) -> Select[tuple[Project, bool]]:
@@ -81,7 +88,9 @@ def accessible_projects(caller: CallerIdentity) -> Select[tuple[Project, bool]]:
     )
 
 
-def _as_view(row: tuple[Project, bool], caller: CallerIdentity) -> CallerProjectView:
+def _as_view(
+    row: tuple[Project, bool], caller: CallerIdentity, organization_level: OrganizationLevel
+) -> CallerProjectView:
     """Pair one row of `accessible_projects(caller)` with the caller that statement was built for.
 
     `caller` is the same object the statement's `WHERE` was narrowed by, so the view's `user_id` and
@@ -92,6 +101,7 @@ def _as_view(row: tuple[Project, bool], caller: CallerIdentity) -> CallerProject
         user_id=caller.user_id,
         project=project,
         can_view_personnel_costs=bool(can_view_personnel_costs),
+        organization_level=organization_level,
     )
 
 
@@ -113,7 +123,12 @@ def list_projects_for_caller(
         .options(selectinload(Project.scenarios))
         .order_by(Project.name, Project.id)
     )
-    return [_as_view(row, caller) for row in session.execute(statement).unique().all()]
+    rows = session.execute(statement).unique().all()
+    # One organisation level for the whole list — two statements, not two per project (SC-1-10).
+    level = organization_level_for(
+        session, (scenario for project, _ in rows for scenario in project.scenarios)
+    )
+    return [_as_view(row, caller, level) for row in rows]
 
 
 def project_for_caller(
@@ -143,4 +158,7 @@ def project_for_caller(
         .where(Project.id == project_id)
     )
     row = session.execute(statement).unique().one_or_none()
-    return None if row is None else _as_view(row, caller)
+    if row is None:
+        return None
+    project, _ = row
+    return _as_view(row, caller, organization_level_for(session, project.scenarios))

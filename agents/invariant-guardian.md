@@ -64,8 +64,10 @@ silently.
    hidden in the UI.
 8. **A report/export reads exchange rates, calendars, and rule versions from the saved version's
    own snapshot**, never from current organization defaults (AC-10).
-9. **Changing an organization-level default does not mutate any already-saved calculation**
-   (F-02, AC-04).
+9. **Changing an organization-level default does not mutate any already-**approved** calculation**
+   (F-02, AC-04; "saved" means "approved" — ADR-0012 pkt 8, gate-1 decision Q-1, SC-1-10). A draft
+   that inherits the default follows its current value — accepted, and visible through the
+   reported source (ADR-0012 pkt 1-2).
 
 ### IV. Commercial models and revenue (F-06)
 

@@ -31,6 +31,7 @@ from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import Engine  # noqa: E402
+from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.api.deps import get_caller_identity  # noqa: E402
@@ -43,6 +44,7 @@ from app.models import (  # noqa: E402
     AbsenceType,
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
     CatalogDefaultRate,
@@ -51,6 +53,7 @@ from app.models import (  # noqa: E402
     CatalogRole,
     CatalogSeniority,
     CatalogVendor,
+    OrganizationDefaults,
     Project,
     ProjectAccess,
     ProjectStatus,
@@ -222,6 +225,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotWorkingCalendar))
             connection.execute(sa.delete(ApprovedSnapshotAbsenceType))
             connection.execute(sa.delete(ApprovedSnapshotAbsenceBudget))
+            connection.execute(sa.delete(ApprovedSnapshotOrganizationDefaults))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -252,6 +256,9 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
                 connection.execute(sa.delete(dimension))
             connection.execute(sa.delete(WorkingCalendarDay))
             connection.execute(sa.delete(WorkingCalendar))
+            # The organisation's defaults (SC-1-10): at most one row, referenced by nothing. No
+            # migration seeds it (gate 1, P-D), so emptying it restores the migrated state exactly.
+            connection.execute(sa.delete(OrganizationDefaults))
 
 
 def as_caller(user_id: str) -> dict[str, str]:
@@ -675,9 +682,11 @@ SNAPSHOT_MODELS = (
     ApprovedSnapshotWorkingCalendarDay,
     ApprovedSnapshotAbsenceType,
     ApprovedSnapshotAbsenceBudget,
+    # The fifth, SC-1-10 (ADR-0012, point 6) — the same deliberate canary growth as the fourth.
+    ApprovedSnapshotOrganizationDefaults,
 )
-"""The four snapshot tables, as models — so a test counting "every snapshot row" cannot count three
-of the four and look green (criteria K-17, K-18, K-19 of SC-3-02; K-07 of SC-3-03).
+"""The five snapshot tables, as models — so a test counting "every snapshot row" cannot count some
+of the five and look green (criteria K-17, K-18, K-19 of SC-3-02; K-07 of SC-3-03; K-05 of SC-1-10).
 
 The fourth joined in SC-3-03, and this tuple growing is a **deliberate** canary change: ADR-0004's
 addendum of 2026-09-22 (SC-3-03, point 4) requires a new snapshot table to be covered by the same
@@ -828,8 +837,14 @@ def make_scenario(
     full_time_hours_per_week: Decimal | None = None,
     currency: str | None = None,
     target_margin_percent: Decimal | None = None,
+    overload_threshold_percent: Decimal | None = None,
 ) -> Scenario:
-    """Insert a scenario row directly. Anything left at `None` is a missing input by design."""
+    """Insert a scenario row directly. Anything left at `None` is a missing input by design.
+
+    `overload_threshold_percent` (SC-1-10) is the scenario level of the assumption chain, and like
+    `target_margin_percent` it is written here and nowhere else: no endpoint creates or edits a
+    scenario (SC-1-10, out of scope), so the scenario-level override is fixture-only.
+    """
     scenario = Scenario(
         id=uuid.uuid4(),
         project_id=project.id,
@@ -841,6 +856,7 @@ def make_scenario(
         full_time_hours_per_week=full_time_hours_per_week,
         currency=currency,
         target_margin_percent=target_margin_percent,
+        overload_threshold_percent=overload_threshold_percent,
     )
     session.add(scenario)
     session.flush()
@@ -977,3 +993,72 @@ def count_allocations(session: Session) -> int:
     return session.execute(
         sa.select(sa.func.count()).select_from(StaffingPositionAllocation)
     ).scalar_one()
+
+
+# --- the assumption chain (F-02, SC-1-10) -------------------------------------------------------
+
+
+def set_organization_defaults(
+    session: Session | sa.Connection,
+    *,
+    target_margin_percent: Decimal | None = None,
+    overload_threshold_percent: Decimal | None = None,
+) -> None:
+    """Write the organisation's one defaults row — insert it, or overwrite the one that exists.
+
+    Direct write, no endpoint: SC-1-10 ships no path that edits the organisation's defaults (out of
+    scope, named at gate 1), so this is the only way to reach the row. An upsert on the pinned key
+    rather than an `INSERT`, because the criteria *change* the default after an approval (K-05) and
+    the table admits exactly one row.
+
+    Takes a `Connection` too, because the AC-04 criteria change the default on a separate, committed
+    connection and then read the approved scenario back.
+    """
+    values = {
+        "id": 1,
+        "target_margin_percent": target_margin_percent,
+        "overload_threshold_percent": overload_threshold_percent,
+    }
+    statement = pg_insert(OrganizationDefaults).values(**values)
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[OrganizationDefaults.id],
+            set_={
+                "target_margin_percent": statement.excluded.target_margin_percent,
+                "overload_threshold_percent": statement.excluded.overload_threshold_percent,
+            },
+        )
+    )
+    if isinstance(session, Session):
+        session.flush()
+
+
+def set_project_overrides(
+    session: Session | sa.Connection,
+    project_id: uuid.UUID,
+    *,
+    target_margin_percent: Decimal | None = None,
+    overload_threshold_percent: Decimal | None = None,
+) -> None:
+    """Set (or clear, with `None`) both project-level overrides directly — a fixture write.
+
+    The production path is `PATCH /projects/{id}` (criterion K-07), and the criteria about *that*
+    path use it. This exists for the criteria about the resolution rule, which must not depend on
+    the edit endpoint being green.
+    """
+    session.execute(
+        sa.update(Project)
+        .where(Project.id == project_id)
+        .values(
+            target_margin_percent=target_margin_percent,
+            overload_threshold_percent=overload_threshold_percent,
+        )
+    )
+    if isinstance(session, Session):
+        session.flush()
+        session.expire_all()
+
+
+def assumptions_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    """The address of one scenario's resolved assumptions — the reader of SC-1-10 (gate 1, P-B)."""
+    return f"/projects/{project_id}/scenarios/{scenario_id}/assumptions"

@@ -37,8 +37,11 @@ from tests.conftest import (
 
 SCENARIO_COLUMNS = (
     "id, project_id, name, status, start_date, end_date, working_calendar,"
-    " full_time_hours_per_week, currency, target_margin_percent, created_at, updated_at"
+    " full_time_hours_per_week, currency, target_margin_percent, overload_threshold_percent,"
+    " created_at, updated_at"
 )
+# `overload_threshold_percent` joined in SC-1-10 (the scenario level of the assumption chain): a
+# column archiving must not touch either, added here deliberately as the docstring below asks.
 """Every column of `scenarios`, listed explicitly rather than as `*`.
 
 `SELECT *` would compare whatever the table happens to have today, and a column added tomorrow

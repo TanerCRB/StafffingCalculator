@@ -1054,6 +1054,11 @@ def test_approving_a_scenario_with_no_positions_freezes_it_with_an_empty_snapsho
         # added: a scenario with no positions freezes no budget either, which is what this zero
         # says. Updated with the change that caused it, not around it.
         "absence_budgets": 0,
+        # The fifth counter, SC-1-10 (ADR-0012, point 6). A deliberate canary growth, like the
+        # fourth: zero because this fixture configures no organisation defaults row (gate 1, P-D:
+        # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
+        # `tests/test_assumption_approval.py`.
+        "organization_defaults": 0,
     }
     assert response.json()["status"] == "Approved"
     status, rows = _status_and_snapshot(engine, state["scenario_id"])
