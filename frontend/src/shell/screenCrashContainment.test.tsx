@@ -194,9 +194,20 @@ describe("a screen that crashes while rendering, in the running application", ()
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("StafffingCalculator");
     expect(screen.getByTestId("backend-status")).toBeVisible();
     const rail = screen.getByRole("navigation", { name: "Sections" });
+    // SC-2-05 (gate-1 decision Q-1): all eleven entries of the mockup's rail, in order — the claim
+    // (the chrome survived the crash) held against the whole rail rather than its first two.
     expect(within(rail).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       "Projects",
+      "Compare scenarios",
       "Roles & rates",
+      "Working calendars",
+      "Organization defaults",
+      "Overview",
+      "Staffing plan",
+      "Additional costs",
+      "Commercial terms",
+      "Assumptions",
+      "Versions & approval",
     ]);
     expect(within(rail).getByRole("button", { name: "Roles & rates" })).toBeVisible();
 

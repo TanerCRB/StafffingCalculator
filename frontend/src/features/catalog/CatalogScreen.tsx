@@ -1,3 +1,4 @@
+import { IconPencil, IconPlus } from "@tabler/icons-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, RequestTimeoutError, getCatalogDimension, getCatalogRates } from "../../api/client";
@@ -308,9 +309,17 @@ export function CatalogScreen() {
       {/* `tabIndex={-1}`: focusable by script, never by Tab. `AppShell` focuses this heading after
           a rail activation mounts this screen, so the keyboard focus the rail entry held does not
           fall through to `document.body` when that entry leaves the DOM (Reviewer R-03). */}
-      <h2 id="catalog-heading" className="card__title" tabIndex={-1}>
-        Roles &amp; rates
-      </h2>
+      <div className="catalog__intro">
+        <h2 id="catalog-heading" className="catalog__title" tabIndex={-1}>
+          Roles &amp; rates
+        </h2>
+        {/* SC-2-05, gate-1 decision G-2: static text from the mockup, true of the screen as built
+            — every catalogue rate is hourly (`RATE_UNIT_HOUR`), and the five dictionaries are what
+            a staffing line is keyed by. Only once the catalogue is on screen: the loading and the
+            three failure states have no mockup (Issue #59, out of scope 7), so their content
+            stays exactly what it was. */}
+        {state.kind === "ready" && <p className="catalog__description">{SCREEN_DESCRIPTION}</p>}
+      </div>
 
       {/* `role="status"`: the one loading state that follows every navigation to this screen, and
           — unlike the three failure states below it — the only one that was not announced to a
@@ -452,6 +461,40 @@ function emptyPageLabel(total: number): string {
   return `Showing 0 of ${total} default rates — this page of the catalogue is empty.`;
 }
 
+/*
+ * SC-2-05, gate-1 decision G-2: the static sentences the mockup (`15-catalog.png`) adds around the
+ * data. Each one is true of the screen as built — hourly rates, matching over the five dimensions
+ * (SC-2-03), a cost column the server may withhold (ADR-0005) — and none of them states anything
+ * about the data a particular response carried. The mockup's "Amounts and dates are examples." is
+ * deliberately not here: it describes the prototype's sample data, not this product (Issue #59,
+ * out of scope 6).
+ */
+const SCREEN_DESCRIPTION =
+  "Manage default hourly rates and the shared dictionaries used across staffing plans.";
+const RATES_DESCRIPTION =
+  "Rates are matched by role, seniority, location, engagement type and vendor.";
+const DIMENSIONS_HEADING = "Dimensions";
+const DIMENSIONS_DESCRIPTION =
+  "Shared name dictionaries used to configure staffing and default rates.";
+const RATES_FOOTNOTE = "Cost rates may be restricted by access permissions.";
+
+/**
+ * The decorative half of a control whose words are its name (ADR-0011, point 3). `aria-hidden`
+ * because the label next to it already says everything — an icon that reached the accessibility
+ * tree would add nothing but noise to "Add role". No `title` either: `@tabler/icons-react` turns a
+ * `title` prop into an `<svg><title>`, which is exactly a name leaking into the button's.
+ *
+ * No colour here and none on the icon: it draws with `currentColor` by construction, so it takes
+ * the colour of the button it sits in (ADR-0011, points 1–2).
+ */
+function PlusIcon() {
+  return <IconPlus className="catalog__icon" size={16} aria-hidden="true" focusable="false" />;
+}
+
+function PencilIcon() {
+  return <IconPencil className="catalog__icon" size={16} aria-hidden="true" focusable="false" />;
+}
+
 /** The two ways a rate table can have no rows, told apart by `total` and never by `rates.length`
  * alone (Reviewer R-03). */
 function NoRatesMessage({ total }: { total: number }) {
@@ -484,11 +527,17 @@ function RatesPanel({
   dictionaries: Dictionaries;
 } & FormHosting) {
   return (
-    <section className="card catalog__panel" aria-labelledby="catalog-rates-heading">
-      <div className="catalog__panel-header">
-        <h3 id="catalog-rates-heading" className="catalog__panel-title">
-          Default rates
-        </h3>
+    // SC-2-05: the section's heading and its "Add" control stand above the bordered table, as in
+    // `15-catalog.png`, rather than inside one card with it. Same elements, same order — heading,
+    // control, form, count, table — so nothing a screen reader meets moved (K-27).
+    <section className="catalog__section" aria-labelledby="catalog-rates-heading">
+      <div className="catalog__section-header">
+        <div className="catalog__section-heading">
+          <h3 id="catalog-rates-heading" className="catalog__section-title">
+            Default rates
+          </h3>
+          <p className="catalog__description catalog__description--section">{RATES_DESCRIPTION}</p>
+        </div>
         {/* Offered unconditionally. Whether this caller may write is the server's answer to the
             request, not this screen's answer to a question it never asks (K-18). */}
         <button
@@ -497,6 +546,7 @@ function RatesPanel({
           disabled={rereading}
           onClick={() => onOpen({ kind: "add-rate" })}
         >
+          <PlusIcon />
           Add default rate
         </button>
       </div>
@@ -519,7 +569,7 @@ function RatesPanel({
       {rates.length === 0 ? (
         <NoRatesMessage total={total} />
       ) : (
-        <>
+        <div className="card catalog__rates">
           {/* `total > rates.length`: the backend paged (K-11) and this is not the whole catalogue.
               A separate, named sentence and a separate class — never `rateCountLabel`'s literal
               with a bigger number silently substituted in, which would state a page's size as the
@@ -537,7 +587,10 @@ function RatesPanel({
             rereading={rereading}
             onOpen={onOpen}
           />
-        </>
+          {/* G-2. Outside the `<table>`, not a `<tfoot>`: a footer row would be read as a row of
+              the table, and this is a sentence about the column, not a rate. */}
+          <p className="catalog__footnote">{RATES_FOOTNOTE}</p>
+        </div>
       )}
     </section>
   );
@@ -568,10 +621,15 @@ function RatesTable({
             </th>
           ))}
           <th scope="col">Effective period</th>
-          <th scope="col">Default selling rate</th>
+          {/* SC-2-05: the two amount headers align with the amounts under them (K-30b). */}
+          <th scope="col" className="catalog__head-amount">
+            Default selling rate
+          </th>
           {/* Always rendered, including when every row's cost rate was removed for this caller.
               A column that disappeared would say "the catalogue has no costs" (gate-1 decision 2). */}
-          <th scope="col">Default cost rate</th>
+          <th scope="col" className="catalog__head-amount">
+            Default cost rate
+          </th>
           {/* SC-2-04. Last, so every existing column keeps its position. */}
           <th scope="col">Actions</th>
         </tr>
@@ -612,13 +670,14 @@ function RatesTable({
                   turns a rate row into words (K-01). */}
               <button
                 type="button"
-                className="button button--quiet"
+                className="button catalog__link-button"
                 aria-label={`Edit the default rate for ${CATALOG_DIMENSIONS.map((dimension) =>
                   dimensionNameOf(rate, dimension, names),
                 ).join(", ")}, ${formatEffectivePeriod(rate.effective_from, rate.effective_to)}`}
                 disabled={rereading}
                 onClick={() => onOpen({ kind: "edit-rate", rate })}
               >
+                <PencilIcon />
                 Edit
               </button>
             </td>
@@ -638,6 +697,39 @@ function DictionaryPanels({
   onCancel,
 }: { dictionaries: Dictionaries } & FormHosting) {
   return (
+    <>
+      {/* G-2: the group heading from the mockup. An `h3`, a sibling of the dictionary panels'
+          own `h3`s rather than their parent: demoting those five to `h4` would change heading
+          levels this task may not change (K-27; Issue #59, out of scope 11). */}
+      <div className="catalog__section-header">
+        <div className="catalog__section-heading">
+          <h3 className="catalog__section-title">{DIMENSIONS_HEADING}</h3>
+          <p className="catalog__description catalog__description--section">
+            {DIMENSIONS_DESCRIPTION}
+          </p>
+        </div>
+      </div>
+      <DictionaryGrid
+        dictionaries={dictionaries}
+        openForm={openForm}
+        rereading={rereading}
+        onOpen={onOpen}
+        onSaved={onSaved}
+        onCancel={onCancel}
+      />
+    </>
+  );
+}
+
+function DictionaryGrid({
+  dictionaries,
+  openForm,
+  rereading,
+  onOpen,
+  onSaved,
+  onCancel,
+}: { dictionaries: Dictionaries } & FormHosting) {
+  return (
     <div className="catalog__dictionaries">
       {CATALOG_DIMENSIONS.map((dimension) => {
         const entries = dictionaries[dimension];
@@ -649,12 +741,15 @@ function DictionaryPanels({
               <h3 id={headingId} className="catalog__panel-title">
                 {labels.section}
               </h3>
+              {/* Primary, as in the mockup (K-30d) — in the product's orange, not the mockup's
+                  blue (gate-1 decision G-8: one primary colour on every screen). */}
               <button
                 type="button"
-                className="button button--quiet"
+                className="button button--primary"
                 disabled={rereading}
                 onClick={() => onOpen({ kind: "add-entry", dimension })}
               >
+                <PlusIcon />
                 {`Add ${labels.column.toLowerCase()}`}
               </button>
             </div>
@@ -686,11 +781,12 @@ function DictionaryPanels({
                     <span className="catalog__entry-name">{entry.name}</span>
                     <button
                       type="button"
-                      className="button button--quiet catalog__entry-action"
+                      className="button catalog__link-button catalog__entry-action"
                       aria-label={`Rename ${entry.name} in the ${labels.inSentence} dictionary`}
                       disabled={rereading}
                       onClick={() => onOpen({ kind: "edit-entry", dimension, entry })}
                     >
+                      <PencilIcon />
                       Rename
                     </button>
                   </li>

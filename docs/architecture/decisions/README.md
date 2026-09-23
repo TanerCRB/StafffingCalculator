@@ -28,3 +28,4 @@ the same file — never a silent edit of the original text.
 | [ADR-0008](ADR-0008-przedzialy-obowiazywania.md) | Przedziały obowiązywania i ich egzekwowanie w bazie | Accepted |
 | [ADR-0009](ADR-0009-zapis-z-interfejsu.md) | Zapis z interfejsu przeglądarki | Draft — pending approval |
 | [ADR-0010](ADR-0010-awaria-renderu-frontendu.md) | Awaria renderu frontendu: granica błędu i kształt odpowiedzi | Draft — pending approval |
+| [ADR-0011](ADR-0011-zasoby-wizualne-frontendu.md) | Zasoby graficzne frontendu: ikony i referencje wizualne | Accepted |

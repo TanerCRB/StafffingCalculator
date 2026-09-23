@@ -167,9 +167,21 @@
 .app-shell__nav {
   position: sticky;
   top: calc(var(--sc-layout-topbar-height) + var(--sc-space-4));
+}
+
+.app-shell__nav-list {
   display: flex;
   flex-direction: column;
   gap: var(--sc-space-1);
+}
+
+/* The name of the project group (SC-2-05, gate-1 decision Q-2): small and muted, as the mockup's
+   section label, and set apart from the entries above by space rather than a rule. It labels the
+   list under it, so it is text, not a control and not a heading. */
+.app-shell__nav-group-label {
+  margin: var(--sc-space-5) var(--sc-space-3) var(--sc-space-2);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-xs);
 }
 
 .app-shell__nav-item {
@@ -204,10 +216,10 @@ button.app-shell__nav-item:hover {
 }
 
 /*
- * A navigation entry for a screen that does not exist yet (F-13: visible, never hidden). No rail
- * entry is in that state today — SC-2-02 wired the second of the two — and these rules are kept
- * rather than deleted for the next entry the rail gains: the appearance of "not yet" is a
- * convention shared with app.css, and `src/styles/tokens.test.ts` still checks its contrast pair.
+ * A navigation entry for a screen that does not exist yet (F-13: visible, never hidden). Nine of
+ * the rail's eleven entries are in that state since SC-2-05 — the planned screens of the mockup.
+ * The appearance of "not yet" is a convention shared with app.css, and `src/styles/tokens.test.ts`
+ * checks its contrast pair.
  *
  * Same quietened appearance as the not-yet-implemented controls in app.css — muted surface, muted text,
  * no opacity over a live colour (Reviewer R-05) — so "not yet" reads the same in the rail as it

@@ -54,12 +54,16 @@ export function FormShell({
           {failure}
         </p>
       )}
+      {/* Cancel before Save, in the DOM and on screen alike (SC-2-05, gate-1 decision G-9 — the
+          one named change of order in that task). Not `flex-direction: row-reverse` over the old
+          order: the tab order and the reading order would then disagree with what is seen
+          (WCAG 1.3.2, 2.4.3). The pair is pushed to the right by the stylesheet. */}
       <div className="catalog__form-actions">
-        <button type="submit" className="button button--primary" disabled={busy}>
-          {busy ? SAVING_LABEL : submitLabel}
-        </button>
         <button type="button" className="button button--quiet" onClick={onCancel} disabled={busy}>
           {CANCEL_LABEL}
+        </button>
+        <button type="submit" className="button button--primary" disabled={busy}>
+          {busy ? SAVING_LABEL : submitLabel}
         </button>
       </div>
     </form>
