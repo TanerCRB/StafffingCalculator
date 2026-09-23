@@ -467,3 +467,58 @@ urlopowego (SC-3-03, F-05).
    inny typ nieobecności zmieniłoby comparand reguły `max` (ADR-0008, aneks SC-3-03, pkt 9) dla
    zatwierdzonej kalkulacji, której migawka byłaby formalnie kompletna. Mutacja do zabicia testem:
    skopiowanie do migawki nazwy i dwóch flag, a pominięcie trzeciej.
+
+### 2026-09-23 — reguła komercyjna jako dana własna; pierwsza migawka stawek (SC-4-01)
+
+Aneks SC-3-01 pkt 4 zobowiązuje każdą nową tabelę do przypisania grupy w chwili powstania.
+"Decyzja" wylicza w migawce "rozwiązane stawki" i "wersję reguł komercyjnych"; SC-4-01 (Issue #8,
+T&M) jest pierwszym zadaniem, które buduje którąkolwiek z nich.
+
+1. **`commercial_terms` i `tm_terms` — grupa 2, strażnik zapisu.** Reguła należy do scenariusza
+   (ADR-0003 pkt 1); nic spoza scenariusza jej nie zmienia — kryterium "kierunek dziedziczenia, nie
+   udział w wyliczeniu" (aneks SC-3-01) spełnione wprost. **Zawężenie zdania z "Decyzji":** "wersja
+   reguł komercyjnych" w migawce nie dotyczy reguły scenariusza — dotyczyłaby wyłącznie przyszłych
+   wartości domyślnych organizacji dla reguł komercyjnych, jeśli powstaną. Konsekwencje:
+   a. `INSERT`/`UPDATE`/`DELETE` obu tabel odrzucane pod `approved` przez `app.data.scenario_guard`
+      w tej samej instrukcji co zapis; test odmowy i test wyścigu dwóch połączeń **per ścieżka
+      zapisu** (warunek aneksu SC-3-01). Żaden nowy kształt strażnika.
+   b. **Jeden wpis agregatu w `SCENARIO_CHILD_COPIERS`**: kopiujący `commercial_terms` kopiuje w tej
+      samej funkcji `tm_terms` (pkt 1 aneksu SC-3-01 — "jeden wpis na agregat, którego korzeń jest
+      dzieckiem scenariusza"). Kanarek: kopia scenariusza z regułą T&M ma regułę **i** wiersz
+      szczegółów o nowych identyfikatorach; kopia bez wiersza szczegółów to reguła niekompletna,
+      nie reguła skopiowana.
+
+2. **Nowa tabela migawkowa `approved_snapshot_catalog_default_rate` — grupa 1.** Stawka katalogu
+   jest wartością organizacyjną, zmienialną po zatwierdzeniu przez kogoś, kto kalkulacji nie zna —
+   dokładnie AC-04. **Jest to pierwsze miejsce w repozytorium, które zamraża stawki, i pierwsze, w
+   którym wyliczenie czyta `default_selling_rate`**; do SC-4-01 żaden wynik zatwierdzonej kalkulacji
+   od stawki nie zależał, więc brak tej tabeli nie był regresją — od SC-4-01 byłby.
+   a. **Kształt: wzorzec pkt 3 aneksu SC-3-02 bez zmian** — jedna tabela na tabelę źródłową,
+      kluczowana `scenario_id`, identyfikator wiersza źródłowego jako wartość (nigdy klucz obcy),
+      kopiowane wartości: cztery wymiary, `vendor_id`, obie stawki, waluta, jednostka,
+      `effective_from`/`effective_to`.
+   b. **Zamrażana jest także `default_cost_rate`, choć SC-4-01 jej nie czyta.** Migawka nie ma
+      ścieżki UPDATE: scenariusz zatwierdzony przed blokiem 5 bez zamrożonego kosztu nie odzyskałby
+      go nigdy (precedens stanu D, aneks SC-3-03). Tabela staje się przez to nośnikiem kosztu
+      osobowego: każdy jej przyszły czytelnik podlega bramce kosztowej w kontekście projektu
+      (ADR-0005, aneks SC-2-01 pkt 3 — koniunkcja), a SC-4-01 nie wystawia żadnej ścieżki zwracającej
+      jej wiersze.
+   c. **Zakres: tylko okna, które kalkulacja czyta** — wzorem budżetu (aneks SC-3-03 pkt 3 i 7):
+      dla każdej krotki pozycji obsady scenariusza (z `vendor_id IS NULL`, ADR-0003 pkt 4) i każdego
+      miesiąca jej alokacji — okno obejmujące cały miesiąc, tym samym predykatem co ścieżka żywa
+      (ADR-0003 pkt 5). Nie cały katalog. Dwie pozycje o tej samej krotce zamrażają to okno raz
+      (kanarek deduplikacji — ta sama pułapka co `DISTINCT` z `gen_random_uuid()`, SC-3-02 S-01/R-01).
+      Miesiąc bez takiego okna nie daje wiersza i zostaje "brakiem stawki" na zawsze (pkt 3d
+      obowiązuje w tej samej postaci: edycja stawki po zatwierdzeniu nie zmienia ani jednej wartości
+      migawki).
+   d. **Zapis: szóste CTE w tej samej instrukcji `_snapshot_statement`** (wzorzec S-01, SC-3-03) —
+      zapis katalogu w trakcie zatwierdzenia nie może rozerwać pary "miesiące scenariusza ↔
+      zamrożone okna". `scenario_id` z `unapproved_scenario(...)` wewnątrz `INSERT … SELECT`, jak
+      pozostałe tabele (pkt 5 aneksu SC-3-03). Tabela dochodzi do `SNAPSHOT_TABLES`, **nie** do
+      `SCENARIO_CHILD_COPIERS`; kanarek "kopia zatwierdzonego scenariusza ma zero wierszy
+      migawkowych" obejmuje ją.
+   e. **Czytelnik migawki rozstrzyga per miesiąc tym samym predykatem co ścieżka żywa** — warunek
+      pkt 7c aneksu SC-3-03 obowiązuje: dowodzony własnym kryterium SC-4-01, nie założony.
+
+3. **Czego ten aneks nie obejmuje:** migawki kursów walut (ADR-0006, brak tabeli źródłowej) i
+   wartości domyślnych organizacji dla reguł komercyjnych (nie istnieją).

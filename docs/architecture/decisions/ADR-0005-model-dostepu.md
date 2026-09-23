@@ -608,3 +608,42 @@ kosztowa tej decyzji jest jedynym miejscem, w którym to musi być powiedziane.
    dokładnie jak w pkt 7 aneksu SC-3-02. Z chwilą, gdy zadanie pokaże choć jedną liczbę kosztową
    wyprowadzoną z budżetu, obowiązuje pkt 4 wyżej i koniunkcja musi zostać dowiedziona własnym
    kryterium.
+
+### 2026-09-23 — reguła komercyjna scenariusza: uprawnienia COMMERCIAL_*, przychód bez bramki kosztowej (SC-4-01)
+
+Reguła komercyjna (`commercial_terms` + `tm_terms`, ADR-0003) jest tabelą z zasięgiem dziedziczonym
+przez scenariusz — ten sam przypadek co pozycja obsady (aneks 2026-09-19 SC-3-01).
+
+1. **Zasięg bez nowej decyzji.** `commercial_terms.scenario_id → scenarios.project_id`, filtr
+   `project_access` przez `project_for_caller` i przynależność scenariusza do `Project.scenarios`.
+   Reguła i przychód scenariusza spoza zasięgu: `404`, nigdy `403`, także dla zapisu; `409`/`422`
+   nie mogą potwierdzać istnienia (pkt 4 aneksu SC-3-01).
+2. **Uprawnienia: `COMMERCIAL_READ` i `COMMERCIAL_WRITE`, nowe** — z argumentu ziarnistości akcji
+   (aneks 2026-09-18 pkt 1, pkt 2 aneksu SC-3-01): warunki handlowe ustala rutynowo inna osoba niż
+   planista obsady. `COMMERCIAL_READ` strzeże odczytu reguły **i** wyliczonego przychodu;
+   `COMMERCIAL_WRITE` — zapisu reguły. Każde z obowiązkowym testem odmowy, w którym odmawiany
+   wołający trzyma wszystkie pozostałe uprawnienia (w tym `STAFFING_*` i `CATALOG_*`).
+3. **Przychód nie jest kosztem osobowym — bez koniunkcji z `PERSONNEL_COSTS_READ`.** F-13/AC-06
+   chronią to, ile kosztuje człowiek; precedens: `default_selling_rate` nie należy do
+   `CATALOG_PERSONNEL_COST_FIELDS` ("removing the selling rate would make a commercial figure that
+   every planner needs invisible"). **Warunek, który czyni to prawdą:** odpowiedź reguły i przychodu
+   nie niesie żadnego pola kosztowego — ani `default_cost_rate`, ani kosztu, zysku, marży. Dowód
+   strukturalny (zbiór pól odpowiedzi porównany równością), nie asercja `not in`. Pierwsze zadanie
+   dokładające do tej odpowiedzi zysk lub marżę (blok 5/7) odtwarza koniunkcję z aneksu 2026-09-19
+   SC-1-08 — kierunek wyjątku z aneksu SC-2-01 pkt 3 zostaje tym zadaniem **nadal nieaktywowany**.
+   `PERSONNEL_COST_FIELDS` bez zmian.
+4. **Konsekwencja nazwana: `COMMERCIAL_READ` ujawnia dane dwóch innych obszarów.** `assumptions_used`
+   (F-06.5) podaje stawki sprzedażowe i okna katalogu użyte przez scenariusz, a sam przychód jest
+   agregatem `billable_hours` — wołający bez `CATALOG_READ` i bez `STAFFING_READ` zobaczy je w tym
+   zakresie. Przyjęte: stawka sprzedażowa nie jest daną chronioną, a godziny są zagregowane i w
+   zasięgu projektu, do którego wołający ma dostęp. Warunek ponownego rozpatrzenia: ADR
+   uwierzytelniania rozdzielający te role w praktyce.
+5. **`PLACEHOLDER_PERMISSIONS` rośnie o `COMMERCIAL_READ`/`COMMERCIAL_WRITE`, i tylko o nie.**
+   `PERSONNEL_COSTS_READ` nadal poza zbiorem (aneks 2026-09-19 pkt 5); kanarek równości zbiorów
+   przezbrojony, nie poluzowany. Granica bez zmian: `APP_ALLOW_PLACEHOLDER_IDENTITY`, `development`/
+   `test`.
+6. **Luka z aneksu 2026-09-19 rozszerza się o kolejną tabelę:** `COMMERCIAL_WRITE` zwracające
+   reprezentację reguły jest w praktyce jej odczytem. Warunek zamknięcia bez zmian.
+7. **Migawka stawek niesie koszt** (ADR-0004, aneks 2026-09-23 SC-4-01 pkt 2b), a SC-4-01 nie
+   wystawia jej wierszy. Pierwsza ścieżka, która je zwraca, podlega koniunkcji — nie wyjątkowi
+   katalogowemu, bo wiersz migawki należy do scenariusza.
