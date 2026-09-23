@@ -8,6 +8,7 @@ import {
   formatPercent,
   formatPercentString,
   formatRatePerUnit,
+  isDecimalString,
   roundDecimalString,
 } from "./money";
 
@@ -210,5 +211,38 @@ describe("roundDecimalString", () => {
   it("keeps digits a JS number could not hold", () => {
     // 9007199254740993 is not representable as a JS number; a float path would corrupt it.
     expect(roundDecimalString("9007199254740993.004", 2)).toBe("9007199254740993.00");
+  });
+});
+
+describe("isDecimalString is the formatter's own grammar (Reviewer R-01, SC-4-06; ADR-0002)", () => {
+  // A shape check at the network boundary uses this predicate so that a malformed amount ends in a
+  // named read failure instead of a render-phase throw (ADR-0010, point 2). It is only worth that if
+  // it accepts exactly what `roundDecimalString` accepts: a string it lets through that the
+  // formatter throws on is the crash it was meant to stop; one it refuses that the formatter reads is
+  // a legal amount shown as a broken read.
+  const CANDIDATES: readonly string[] = [
+    "0", "0.00", "150.005", "-1.5", "+2", ".5", "5.", " 7.25 ", "12345678901234567.89",
+    "abc", "1,00", "", " ", ".", "-", "+.", "1.2.3", "1e3", "n/a", "--1", "1 000", "0x10",
+  ];
+
+  it("accepts a string exactly when roundDecimalString does not throw on it", () => {
+    for (const candidate of CANDIDATES) {
+      let formatterAccepts = true;
+      try {
+        roundDecimalString(candidate, 2);
+      } catch {
+        formatterAccepts = false;
+      }
+      expect(isDecimalString(candidate), JSON.stringify(candidate)).toBe(formatterAccepts);
+    }
+    // Not vacuous: the list holds both kinds.
+    expect(CANDIDATES.filter((candidate) => isDecimalString(candidate)).length).toBeGreaterThan(0);
+    expect(CANDIDATES.filter((candidate) => !isDecimalString(candidate)).length).toBeGreaterThan(0);
+  });
+
+  it("refuses anything that is not a string, instead of throwing on it", () => {
+    for (const value of [1.5, 0, null, undefined, {}, ["1.00"]]) {
+      expect(isDecimalString(value), String(value)).toBe(false);
+    }
   });
 });

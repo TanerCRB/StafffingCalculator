@@ -124,12 +124,38 @@ Precedens ustanowiony milcząco jest kopiowany razem z tym, czego nikt nie rozwa
 - **Szeroki ADR o UX zapisu (autosave, kolejkowanie, tryb offline)** — odrzucone: projektowanie
   przed potrzebą; decyzja bez zadania nie ma jak zostać dowiedziona.
 
+## Aneks 2026-09-23 (Issue #71, SC-4-06 — bramka 1)
+
+Drugi formularz zapisujący (pierwszy wewnątrz projektu, pod bramką zasięgu — dokładnie przypadek
+nazwany w „Rozważanych alternatywach" poniżej). Bramka 1 tego zadania rozstrzygnęła dwa punkty
+węższe niż litera powyższej decyzji:
+
+- **Zawężenie pkt 3.** „Ponowny odczyt listy, nie wstawienie wiersza z odpowiedzi zapisu" dotyczyło
+  wprost bramki kosztowej katalogu (odpowiedź zapisu przechodzi tę samą bramkę `PERSONNEL_COSTS_READ`
+  co odczyt — ryzyko, którego reguła miała zapobiec, to odtworzenie po stronie klienta pola, które
+  serwer usunął). `POST /projects/{id}/scenarios/{id}/commercial-terms` nie ma tej bramki: odpowiedź
+  `201` niesie pełny, wyliczony przez serwer `ScenarioCommercialTerms` (przychód i regułę), nie echo
+  formularza. SC-4-06 renderuje wprost z ciała `201`, pod warunkiem że ciało przechodzi tę samą
+  walidację kształtu co odpowiedź `GET` (ADR-0010 pkt 2) — jeden zapis, jedno żądanie. Reguła pkt 3
+  w brzmieniu pierwotnym („nigdy z tego, co człowiek wpisał w formularz") zostaje nienaruszona:
+  wartości pochodzą z serwera, nie z pól formularza.
+- **Doprecyzowanie pkt 4.** „Ekran pokazuje odmowę, nie uprzedza jej" zakazuje klientowi
+  odtwarzania reguły stanu danych (check-then-act). Nie zakazuje **prezentacji** stanu, który
+  serwer już podał w tej samej odpowiedzi odczytu: `GET` niesie `scenario_status`. SC-4-06 ukrywa
+  lub wyłącza akcję „ustaw T&M", gdy `scenario_status = "Approved"` (`ScenarioStatusLabel`), jako
+  prezentację cudzego
+  ustalenia, nie jako własną walidację. Ścieżka `409` (odmowa zapisu dla scenariusza zatwierdzonego
+  między odczytem a zapisem — wyścig, capabilities.md w.156) zostaje w kodzie i musi mieć własny,
+  osobno dowiedziony test — nie wolno jej uznać za martwą dlatego, że kontrolka zwykle jest ukryta.
+
 ## Powiązane wymagania
 
 NF-05, NF-07, NF-08, NF-11, AC-06, F-03, NF-10; ADR-0002 (kierunek wejścia kwoty — aneks SC-2-04),
 ADR-0005 (bramka kosztowa i semantyka częściowego `PATCH` — aneks SC-2-04), ADR-0007 (znacznik
 współbieżności katalogu — aneks 2026-09-21, aktywowany; autosave nadal poza zakresem), ADR-0008
-(okno obowiązywania wpisywane i edytowane przez człowieka — aneks SC-2-04).
+(okno obowiązywania wpisywane i edytowane przez człowieka — aneks SC-2-04), ADR-0003 (blokada
+zapisu do scenariusza `approved` — aneks 2026-09-23 SC-4-01, powtórzona tu jako aneks 2026-09-23
+SC-4-06).
 
 **Ryzyko nazwane, nie zamknięte (Invariant Guardian, bramka 2, 2026-09-22):** edycja stawki
 katalogowej jest zdarzeniem AC-04 ("An organization's default role rate changes") — dziś bez

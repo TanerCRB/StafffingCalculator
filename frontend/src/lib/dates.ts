@@ -37,3 +37,17 @@ export const OPEN_ENDED_PERIOD = "Open-ended";
 export function formatEffectivePeriod(from: string, to: string | null | undefined): string {
   return `${from} ${RANGE_SEPARATOR} ${to ?? OPEN_ENDED_PERIOD}`;
 }
+
+const CALENDAR_MONTH = /^(\d{4}-\d{2})-\d{2}$/;
+
+/**
+ * Renders a calendar month the API sends as the date of its first day ("2026-03-01" → "2026-03"),
+ * e.g. a revenue's `unresolved_months[].period_month` (SC-4-06).
+ *
+ * Still no parsing — the month is cut out of the string, for the same UTC-midnight reason as above.
+ * A value that is not a calendar date is printed exactly as sent: a month shown as the server spelled
+ * it is a stranger-looking truth, a month this function re-spelled would be a guess.
+ */
+export function formatCalendarMonth(periodMonth: string): string {
+  return CALENDAR_MONTH.exec(periodMonth)?.[1] ?? periodMonth;
+}
