@@ -41,12 +41,16 @@ from dataclasses import dataclass
 from datetime import date
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import DATERANGE
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.column_copy import values_to_copy
+from app.data.rate_windows import (
+    days_covered_in_month,
+    frozen_windows_overlapping,
+    internal_catalog_windows_overlapping,
+)
 from app.data.scenario_guard import unapproved_scenario
 from app.data.staffing import scenario_in_scope
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
@@ -106,36 +110,12 @@ _TERMS_TABLE = CommercialTerms.__table__
 # frozen, what a draft reads and what an approved scenario reads cannot differ by a clause.
 
 
-def whole_month(period_month: sa.ColumnElement[date]) -> sa.ColumnElement[object]:
-    """`daterange(period_month, (period_month + interval '1 month')::date, '[)')` — one calendar
-    month as a half-open range.
-
-    Exact because `period_month` is the first day of its month by a CHECK in the database
-    (`app.models.staffing.FIRST_DAY_OF_MONTH_EXPRESSION`), so the range is the calendar month and
-    never "thirty days from some day". Half-open like PostgreSQL's canonical `daterange`, so no
-    `- 1` appears anywhere.
-
-    **This is not a second spelling of a rate window's boundary.** The window's own inclusive
-    `effective_to` is converted exactly once, by the generated `valid_period` column (ADR-0008,
-    point 3); this expression builds the *month* the window is asked about.
-    """
-    next_month = sa.cast(
-        period_month + sa.literal_column("interval '1 month'", sa.Interval), sa.Date
-    )
-    return sa.func.daterange(
-        period_month, next_month, sa.literal_column("'[)'"), type_=DATERANGE
-    )
-
-
-def _days_of(range_expression: sa.ColumnElement[object]) -> sa.ColumnElement[int]:
-    """`upper(r) - lower(r)` — the number of days in a bounded, half-open date range.
-
-    `NULL` for `NULL` (an outer-joined month with no window), which the sum below turns into `0`.
-    Applied only to ranges intersected with a month, so it is always bounded.
-    """
-    return sa.type_coerce(
-        sa.func.upper(range_expression) - sa.func.lower(range_expression), sa.Integer
-    )
+# **The month geometry lives in `app.data.rate_windows` since SC-5-01** — `whole_month`, the day
+# count, "the windows overlapping the month cover it" and the two overlap joins (live catalogue and
+# the scenario's own snapshot). Moved, not copied: the cost path (`app.data.personnel_cost`) needs
+# the same spelling of "the month", "internal" and "this scenario's snapshot", and may not import
+# this module to get it (ADR-0004, aneks 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant
+# Guardian). What stays here is the revenue's own half of the predicate: one *selling* rate.
 
 
 def month_is_priced(
@@ -154,67 +134,21 @@ def month_is_priced(
     - **one price** — `min = max` of the selling rate and of the currency across the month's
       windows.
 
-    The result is never `NULL`, and the one place that makes it so is the `coalesce` on `covered`
-    below — see the comment there.
+    The result is never `NULL`, and the one place that makes it so is the `coalesce` inside
+    `app.data.rate_windows.days_covered_in_month` — see the comment below.
     """
-    month = whole_month(period_month)
-    # A month with no overlapping window at all (the `LEFT JOIN` found nothing) has a `NULL` sum:
-    # `coalesce(…, 0)` turns it into "0 days covered", so `covered == days of the month` is `false`,
-    # never `NULL`. That `false` also decides the conjunction below, although `one_price` is `NULL`
-    # for such a month (`min`/`max` over nothing): `false AND NULL` is `false` in SQL. A `NULL`
-    # must never be read as "priced", and this is what guarantees it cannot arise.
-    covered = sa.func.coalesce(
-        sa.func.sum(_days_of(valid_period.op("*", return_type=DATERANGE)(month))).over(
-            partition_by=allocation_id
-        ),
-        sa.literal(0, sa.Integer),
-    )
+    # A month with no overlapping window at all (the `LEFT JOIN` found nothing) is "0 days covered",
+    # so `covered` is `false`, never `NULL`. That `false` also decides the conjunction below,
+    # although `one_price` is `NULL` for such a month (`min`/`max` over nothing): `false AND NULL`
+    # is `false` in SQL. A `NULL` must never be read as "priced".
+    covered = days_covered_in_month(allocation_id, period_month, valid_period)
     one_price = sa.and_(
         sa.func.min(selling_rate).over(partition_by=allocation_id)
         == sa.func.max(selling_rate).over(partition_by=allocation_id),
         sa.func.min(currency).over(partition_by=allocation_id)
         == sa.func.max(currency).over(partition_by=allocation_id),
     )
-    return sa.and_(covered == _days_of(month), one_price)
-
-
-def _internal_catalog_windows_overlapping() -> sa.ColumnElement[bool]:
-    """The join condition "an internal catalogue window of the position's tuple overlapping the
-    month".
-
-    The four dimensions, `vendor_id IS NULL` — **internal, never "any vendor"** (ADR-0003, point 4;
-    ADR-0008, addendum 2026-09-21, point 6) — and `&&` with the month. Overlap here, not
-    containment: *whether* the overlapping windows price the month is `month_is_priced`'s question.
-    """
-    rate = CatalogDefaultRate
-    return sa.and_(
-        rate.role_id == StaffingPosition.role_id,
-        rate.seniority_id == StaffingPosition.seniority_id,
-        rate.location_id == StaffingPosition.location_id,
-        rate.engagement_type_id == StaffingPosition.engagement_type_id,
-        rate.vendor_id.is_(None),
-        rate.valid_period.bool_op("&&")(whole_month(StaffingPositionAllocation.period_month)),
-    )
-
-
-def _frozen_windows_overlapping() -> sa.ColumnElement[bool]:
-    """The same condition asked of the approval snapshot of the position's own scenario.
-
-    The same tuple, the same vendor axis, the same overlap with the month — against the snapshot's
-    `valid_period`, generated from the same expression as the catalogue's. Resolving per month here,
-    with the same `month_is_priced`, rather than trusting "whatever was frozen" is what point 2e of
-    the addendum requires, and what criterion K-09 proves.
-    """
-    frozen = ApprovedSnapshotCatalogDefaultRate
-    return sa.and_(
-        frozen.scenario_id == StaffingPosition.scenario_id,
-        frozen.source_role_id == StaffingPosition.role_id,
-        frozen.source_seniority_id == StaffingPosition.seniority_id,
-        frozen.source_location_id == StaffingPosition.location_id,
-        frozen.source_engagement_type_id == StaffingPosition.engagement_type_id,
-        frozen.source_vendor_id.is_(None),
-        frozen.valid_period.bool_op("&&")(whole_month(StaffingPositionAllocation.period_month)),
-    )
+    return sa.and_(covered, one_price)
 
 
 def priced_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.Select:
@@ -238,11 +172,13 @@ def priced_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
     if from_snapshot:
         window = ApprovedSnapshotCatalogDefaultRate
         window_id = window.source_rate_id
-        condition = _frozen_windows_overlapping()
+        # Resolving per month on the frozen rows, with the same `month_is_priced`, rather than
+        # trusting "whatever was frozen" is what point 2e of the addendum requires (K-09).
+        condition = frozen_windows_overlapping()
     else:
         window = CatalogDefaultRate
         window_id = window.id
-        condition = _internal_catalog_windows_overlapping()
+        condition = internal_catalog_windows_overlapping()
     return (
         sa.select(
             StaffingPosition.scenario_id.label("scenario_id"),

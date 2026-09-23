@@ -75,7 +75,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.identity import CallerIdentity
 from app.data.absence_budget import BudgetKey, budgets_for_months, statutory_leave_type
 from app.data.column_copy import values_to_copy
-from app.data.project_reads import project_for_caller
+from app.data.project_reads import CallerProjectView, project_for_caller
 from app.data.scenario_guard import unapproved_scenario
 from app.data.working_calendar import basis_by_location
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
@@ -197,12 +197,30 @@ def scenario_in_scope(
     a caller of this function cannot tell them apart even if it wanted to, so the API has nothing
     from which to build an "exists, but not yours" answer.
     """
+    in_scope = scenario_view_in_scope(session, caller, project_id, scenario_id)
+    return None if in_scope is None else in_scope[1]
+
+
+def scenario_view_in_scope(
+    session: Session, caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
+) -> tuple[CallerProjectView, Scenario] | None:
+    """`scenario_in_scope`, keeping the caller's project view it was decided from (SC-5-01).
+
+    **The same scope decision, not a second one** — `scenario_in_scope` is this function with the
+    view dropped. It exists because the first path gated on personnel costs inside a scenario
+    (`app.data.personnel_cost`) needs `project_access.can_view_personnel_costs` for **the project
+    the scenario belongs to**, and the one place that flag may come from is the statement that
+    decided the caller may see that project (ADR-0005, aneks 2026-09-19, point 6; aneks 2026-09-23
+    SC-5-01, point 2). Reading it again afterwards would be a second query deciding a per-caller
+    fact, and reading it from "any assignment of the caller" would be the per-subject answer to a
+    per-assignment question (criterion K-04).
+    """
     view = project_for_caller(session, caller, project_id)
     if view is None:
         return None
     for scenario in view.project.scenarios:
         if scenario.id == scenario_id:
-            return scenario
+            return view, scenario
     return None
 
 

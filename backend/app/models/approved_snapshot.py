@@ -426,7 +426,11 @@ class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
        cost could never recover one. The consequence named with it: this table is a **carrier of
        personnel cost**, every future reader of its rows is subject to the SC-1-08 conjunction
        (ADR-0005, addendum 2026-09-23 SC-4-01, point 7), and SC-4-01 exposes no path that returns
-       them — the revenue reader selects the selling-rate columns only.
+       them — the revenue reader selects the selling-rate columns only. **SC-5-01 is its first
+       reader** (`app.data.personnel_cost`), behind the cost gate (ADR-0005, aneks 2026-09-23
+       SC-5-01), and widens point 1: the windows of a month the *cost* predicate resolves are
+       frozen too, whether or not the selling predicate prices it (ADR-0004, aneks 2026-09-23
+       SC-5-01, point 1).
     3. **`valid_period` is generated from the same expression as the source's**
        (`app.models.catalog.VALID_PERIOD_EXPRESSION`), so the reader asks the frozen rows the exact
        question the live read asks the catalogue — `month_is_priced` over the windows overlapping
@@ -469,7 +473,8 @@ class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
     default_cost_rate: Mapped[Decimal] = mapped_column(
         Numeric(RATE_PRECISION, RATE_SCALE), nullable=False
     )
-    """Frozen, never read by SC-4-01 — see point 2 of the class docstring."""
+    """Frozen; never read by SC-4-01, read by SC-5-01's cost reader — see point 2 of the class
+    docstring."""
 
     default_selling_rate: Mapped[Decimal] = mapped_column(
         Numeric(RATE_PRECISION, RATE_SCALE), nullable=False

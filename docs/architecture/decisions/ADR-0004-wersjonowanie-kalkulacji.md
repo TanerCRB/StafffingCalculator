@@ -578,3 +578,17 @@ pozostaje prawdziwe dla przychodu; ten aneks rozszerza zbiór zamrażanych okien
 | C-2 | Ten sam miesiąc po zatwierdzeniu: przychód nadal `no_rate` (kontrast do C-1). |
 | C-3 | Miesiąc bez pełnego pokrycia albo ze zmianą waluty nie zamraża żadnego okna (istniejące K-08 SC-4-01 pozostają zielone bez zmian). |
 | C-4 | Kopiarka pozostaje jedną CTE `_snapshot_statement`; rozbicie na osobną instrukcję wywraca test S-01. |
+| C-5 | `app.data.rate_windows` nie importuje `app.data.commercial_terms`, `app.data.personnel_cost` ani `app.domain.revenue*`/`app.domain.personnel_cost` i nie odwołuje się do `default_selling_rate` ani `default_cost_rate`; `app.data.commercial_terms` i `app.data.personnel_cost` nie importują się wzajemnie (test strukturalny, czerwony na dodaniu któregokolwiek z tych odwołań). |
+
+**Doprecyzowanie pkt 3 (2026-09-23, bramka 2 SC-5-01, Draft — pending approval).** Geometria
+miesiąca — miesiąc jako zakres półotwarty, liczba dni, "okna nachodzące na miesiąc pokrywają każdy
+jego dzień", złączenia okien wewnętrznych (`vendor_id IS NULL`) katalogu i migawki własnego
+scenariusza — żyje w neutralnym module `app.data.rate_windows`, z którego korzystają obie ścieżki.
+Nie narusza to reguły 10 Strażnika: moduł nie czyta żadnej kolumny stawki i nie importuje żadnej z
+dwóch ścieżek, a połowa predykatu decydująca "co jest wycenione" (jedna para stawka+waluta)
+pozostaje osobną funkcją w każdym module (`month_is_priced`, `month_has_cost_rate`). Wspólna
+geometria jest świadomie preferowana nad kopią: kopia pozwalałaby obu kalkulacjom rozjechać się o
+klauzulę (np. oś poddostawcy). Konsekwencja nazwana: zmiana w `app.data.rate_windows` zmienia
+jednocześnie koszt i przychód i wymaga zielonych testów obu ścieżek. Moduł nie może przyjąć żadnego
+argumentu ani kolumny stawki — dodanie tam predykatu "wyceniony" wymaga nowego aneksu. Pilnowane
+kontrolą C-5.

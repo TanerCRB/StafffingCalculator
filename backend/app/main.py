@@ -5,6 +5,7 @@ from app.api.catalog import router as catalog_router
 from app.api.commercial_terms import router as commercial_terms_router
 from app.api.deps import assert_identity_mechanism_allowed
 from app.api.health import router as health_router
+from app.api.personnel_cost import router as personnel_cost_router
 from app.api.projects import router as projects_router
 from app.api.scenarios import router as scenarios_router
 from app.api.staffing import router as staffing_router
@@ -44,3 +45,8 @@ app.include_router(scenarios_router)
 # (ADR-0005, addendum 2026-09-23 SC-4-01), which a shared router would make look interchangeable
 # with the staffing or project permissions.
 app.include_router(commercial_terms_router)
+# Same nesting, fifth router (SC-5-01): the base personnel cost declares `STAFFING_READ` on the
+# endpoint and gates its figure on `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` in response
+# shaping (ADR-0005, aneks 2026-09-23 SC-5-01). Not a verb on the commercial router — cost and
+# revenue are independent calculations (F-06) under different permissions.
+app.include_router(personnel_cost_router)
