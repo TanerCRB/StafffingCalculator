@@ -731,4 +731,71 @@ history / this file's own change log, not as tracked product work.
   reidentyfikuje osobę przez nieobecność) — zamknięte jako nazwane ryzyko z warunkiem ponownego
   otwarcia, ADR-0005 aneks 2026-09-22 pkt 10-11. Zob. `docs/architecture/capabilities.md`.
 
+- [x] **SC-3-03** — Wprowadź roczny budżet urlopowy jako konfigurowalną własność pary (kalendarz,
+  typ zaangażowania); zbieg z ręcznymi wpisami nieobecności typu ustawowego regułą `max`; zamroź
+  budżet razem z kalendarzem w migawce zatwierdzenia (wydzielone z Issue #7/SC-3-02 na polecenie
+  właściciela produktu — Issue #54).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-09 (analyst, 2026-09-22, rewizja 2,
+  finalna): (1) budżet w pełnych dniach, przedział obowiązywania zawsze domknięty (`CHECK
+  effective_to IS NOT NULL`, odstępstwo nazwane od ADR-0008), kluczem `(calendar_id,
+  engagement_type_id)`, nakładające się okna odrzuca baza, także w wyścigu dwóch połączeń; (2) brak
+  wiersza dla krotki jest nazwanym stanem, nigdy `0`, nigdy wyjątek; (3) budżet redukuje
+  `derived_capacity_hours` przez równomierną prorację, jeden punkt zaokrąglenia, okno wyrównane do
+  granic miesiąca; (4) zbieg z wpisami ręcznymi typu flagowanego `is_statutory_leave` (dokładnie
+  jeden taki wiersz, indeks częściowy) daje `max(budżet, suma ręcznych)` na całym oknie, z
+  zachowaniem rozkładu miesięcznego; (5) okno przyszłe nie rusza roku bieżącego, luka między oknami
+  = brak budżetu; (6) zatwierdzenie zamraża surowy budżet w dniach + okno + flagę typu RAZEM z
+  kalendarzem (nie osobno) jako wartości; (7) odmowa dostępu jest odmową (`403` bez `CATALOG_READ`,
+  pełna liczba bez `PERSONNEL_COSTS_READ` — budżet NIE jest daną kosztową, `404` nigdy `403` dla
+  scenariusza spoza zasięgu).
+  **Decyzje bramki 1 (2026-09-22):** Story rozdzielona na dwie (Q-1: budżet urlopowy jako zakres
+  bez podstawy w `Requirements_EN.md`, pochodzący z bezpośredniego polecenia PO — datowany aneks do
+  wymagań, nie odkrycie w zbieraniu wymagań); klucz budżetu `(kalendarz/lokalizacja, typ
+  zaangażowania)`, oba `NOT NULL`, bez pułapki `NULL = NULL` i bez aparatu sentinela z SC-2-03
+  (Q-2); brak wiersza budżetu = nazwany stan, nigdy cichy `0` (Q-3); budżet NIE jest daną kosztową
+  w sensie ADR-0005 — bramkowany zwykłym `CATALOG_READ`, nie `PERSONNEL_COSTS_READ` (Q-4); zbieg
+  budżetu z ręcznym wpisem tego samego typu w tym samym okresie: `max(budżet, suma ręcznych)`,
+  ciągłe, ręczny wpis uszczegóławia budżet zamiast się do niego dokładać (P-4); okno budżetu zawsze
+  domknięte, `CHECK effective_to IS NOT NULL` jako wąskie, nazwane odstępstwo od wzorca ADR-0008
+  (pytanie architekta, aneks pkt 10b); `adr-deviation` zdjęta — wariant przyjęty nie dotyka wymiaru
+  kraju.
+  **Twarda zależność:** SC-3-03 zablokowane na SC-3-02 do czasu jego scalenia (kryteria K-03/K-04/
+  K-07/K-08 konsumują mechanizmy kalendarza i migawki, których wcześniej nie było) — zdjęta po
+  merge PR #55/#56.
+  **Out of scope (explicit):** poprawność liczby budżetu wobec prawa jakiegokolwiek konkretnego
+  kraju — zaimplementowano jedną regułę (roczny budżet w dniach, proracja miesięczna), nie że jest
+  jedyna słuszna; jakakolwiek kwota (brak kalkulacji kosztu/przychodu w repo); osiągalność ścieżki
+  zapisu w produkcji (brak endpointu tworzenia scenariusza, F-02, Issue #4, i zapisu
+  `absence_type`); ekran (osobne zadanie frontend); współbieżna edycja tego samego budżetu przez
+  dwóch administratorów katalogu jednocześnie poza parą kalendarz/typ (tę chroni S-01); pozycja
+  krótsza niż okno budżetu (proracja per miesiąc obsługuje to poprawnie z konstrukcji, nikt tego
+  nie testuje wprost).
+  **Fundament nieudowodniony:** K-05 był najsłabszym fundamentem w zestawie — mechanizm `max()` nie
+  istniał wcześniej nigdzie w repo, spełnienie tego kryterium go tworzy. K-03/K-04/K-07/K-08 stoją
+  na fundamencie SC-3-02, w chwili analizy scalonym lecz jeszcze niezarejestrowanym (bramka 3
+  tamtego zadania otwarta) — ryzyko przeniesione, zamknięte merge PR #56. Podstawa: Issue #54,
+  `Wymagania/Requirements_EN.md` §4 F-05 (aneks datowany 2026-09-22 dla wymiaru budżetu/kraju),
+  `docs/architecture/decisions/ADR-0004-wersjonowanie-kalkulacji.md` (aneks SC-3-03),
+  `ADR-0005-model-dostepu.md` (aneks SC-3-03), `ADR-0008-przedzialy-obowiazywania.md` (aneks
+  SC-3-03, pkt 10b — okno bezterminowe).
+  **Done 2026-09-23:** PR #57 (scalone `45731b3`). Dowód: `backend/tests/test_absence_budget_schema_constraints.py`,
+  `test_absence_budget_capacity.py`, `test_catalog_absence_budgets.py`, `test_absence_budget_access.py`,
+  `test_scenario_approval_snapshot.py`, `test_scenario_approval.py` — 473 testy backendowe zielono
+  (było 469), 153 frontendowe bez zmian. Cztery rundy weryfikacji (Invariant Guardian, reviewer) +
+  poprawki: **NOWY R-01** (reviewer, Wysoka — typ ustawowy w migawce kopiowany tylko przez
+  zabookowane nieobecności, scenariusz z zastosowanym budżetem ale bez żadnej zabookowanej
+  nieobecności dawał migawkę bit-w-bit identyczną z brakiem flagowanego typu w katalogu — naprawione
+  drugą gałęzią złączenia z zamrożonym budżetem, niezależnie od zabookowania); **S-01** (invariant-
+  guardian, Średnia — cztery osobne instrukcje zapisu migawki czytały katalog w różnych momentach
+  pod `READ COMMITTED`, zapis do katalogu między nimi mógł zamrozić niespójną parę kalendarz↔budżety
+  albo budżet↔typ ustawowy; wariant `REPEATABLE READ` rozważony i **odrzucony** po pomiarze
+  empirycznym na żywym PostgreSQL — gorszy defekt, migawka RR powstaje przed blokadą wiersza
+  scenariusza; naprawione złożeniem czterech kopiarek w jedną instrukcję SQL pod blokadą, R-01
+  reviewera na tej poprawce (luka w teście dla nietypowego porządku rozbicia) domknięta wyczerpującym
+  dowodem na wszystkich 75 możliwych podziałach). **Zaakceptowane, nie naprawiane:** R-03 reviewera
+  (Niska — predykat złączenia z budżetem zduplikowany w dwóch miejscach, bez testu na rozjazd między
+  nimi); S-02/S-03 invariant-guardiana (Niskie — dryf dokumentacji ADR-0004 pkt 5, dowód mutacyjny
+  75-podziałowy zadeklarowany w komentarzu testu zamiast w logu mutacji, uzupełniony teraz w
+  `docs/architecture/capabilities.md`). Zob. `docs/architecture/capabilities.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
