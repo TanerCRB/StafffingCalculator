@@ -638,6 +638,10 @@ przez scenariusz — ten sam przypadek co pozycja obsady (aneks 2026-09-19 SC-3-
    zakresie. Przyjęte: stawka sprzedażowa nie jest daną chronioną, a godziny są zagregowane i w
    zasięgu projektu, do którego wołający ma dostęp. Warunek ponownego rozpatrzenia: ADR
    uwierzytelniania rozdzielający te role w praktyce.
+   **Doprecyzowanie (security-auditor, weryfikacja SC-4-01, 2026-09-23, B-01):** `COMMERCIAL_READ`
+   ujawnia też identyfikatory pozycji obsady i ich miesiące alokacji
+   (`assumptions_used.unresolved_months[].position_id`/`period_month`) wołającemu bez
+   `STAFFING_READ` — przy jednej pozycji w scenariuszu w praktyce identyfikuje to konkretną pozycję.
 5. **`PLACEHOLDER_PERMISSIONS` rośnie o `COMMERCIAL_READ`/`COMMERCIAL_WRITE`, i tylko o nie.**
    `PERSONNEL_COSTS_READ` nadal poza zbiorem (aneks 2026-09-19 pkt 5); kanarek równości zbiorów
    przezbrojony, nie poluzowany. Granica bez zmian: `APP_ALLOW_PLACEHOLDER_IDENTITY`, `development`/
