@@ -919,7 +919,7 @@ history / this file's own change log, not as tracked product work.
   brak `statement_timeout` na sesjach aplikacji — wszystkie pre-existing albo nazwane świadomie).
   Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-4-01** — Wylicz przychód Time & Material dla scenariusza (F-06.1): reguła komercyjna
+- [x] **SC-4-01** — Wylicz przychód Time & Material dla scenariusza (F-06.1): reguła komercyjna
   scenariusza, stawka sprzedażowa rozstrzygana z katalogu oknem obejmującym cały miesiąc alokacji,
   przychód = Σ (`billable_hours` × stawka), z migawką stawek dla zatwierdzonych scenariuszy
   (Issue #8, Story F-06 zawężona na bramce 1 do wyłącznie tego zadania — reszta modeli i reguł
@@ -984,5 +984,17 @@ history / this file's own change log, not as tracked product work.
   `ADR-0004-wersjonowanie-kalkulacji.md` (aneks SC-4-01), `ADR-0005-model-dostepu.md` (aneks
   SC-4-01), `ADR-0008-przedzialy-obowiazywania.md` (aneks SC-4-01), `ADR-0001-trwalosc-danych.md`,
   `ADR-0002-obsluga-pieniedzy.md`, `ADR-0007-wspolbiezna-edycja.md`.
+  **Done 2026-09-23:** PR #64 (scalone `ffdb735`). Dowód: `backend/tests/test_commercial_revenue.py`,
+  `test_commercial_revenue_gate_2.py`, `test_commercial_terms_access.py`, `test_commercial_terms_guards.py`,
+  `test_commercial_terms_copy.py`, `test_commercial_terms_schema.py` — 581 testów backendowych zielono
+  (było 533). Dwie rundy weryfikacji: QA (mutacje, proof holds po obu rundach — R-01..R-06 zamknięte),
+  Invariant Guardian PASS (×2), reviewer STOP→PASS (R-01: zmiana stawki kosztowej w trakcie miesiąca
+  blokowała przychód, naprawione; R-02/R-03: nieznany `model_type` dawał 500/kopię niekompletną,
+  naprawione defensywnie; R-05: kopiowanie omijało `DETAIL_TABLE_BY_MODEL`, naprawione), security-auditor
+  PASS WITH RESERVATIONS (B-01: zakres `COMMERCIAL_READ` doprecyzowany w ADR-0005). ADR-0003 poprawiony
+  i przyjęty (Accepted), aneksy ADR-0004/0005/0008 tego samego dnia, aneks ADR-0003 2026-09-23 (R-01).
+  Story F-06 (Issue #8) zawężona na bramce 1 do wyłącznie tego zadania — reszta jako Issues #65
+  (encja fazy/workstreamu), #66 (Fixed Price), #67 (Outcome-based), #68 (Story Points), #69
+  (reguły wspólne F-06.5).
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
