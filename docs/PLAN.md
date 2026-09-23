@@ -997,7 +997,7 @@ history / this file's own change log, not as tracked product work.
   (encja fazy/workstreamu), #66 (Fixed Price), #67 (Outcome-based), #68 (Story Points), #69
   (reguły wspólne F-06.5).
 
-- [ ] **SC-4-06** — Ekran reguły T&M i przychodu scenariusza (F-06.1, frontend): konsument API
+- [x] **SC-4-06** — Ekran reguły T&M i przychodu scenariusza (F-06.1, frontend): konsument API
   dostarczonego przez SC-4-01 (`GET`/`POST /projects/{id}/scenarios/{id}/commercial-terms`) —
   ekran świadomie odłożony przy SC-4-01, wzorem każdego backend/frontend podziału w tym repo
   (Issue #71).
@@ -1032,6 +1032,19 @@ history / this file's own change log, not as tracked product work.
   zadania zakłada ich treść jak dla decyzji przyjętej. Aneksy do ADR-0009 (zawężenie pkt 3, wynik
   zapisu z ciała `201`; doprecyzowanie pkt 4, prezentacja `scenario_status` dozwolona, wyścig `409`
   zostaje) dopisane 2026-09-23.
+  **Done 2026-09-23:** PR #73 (scalone `00798bd`). Dowód: `frontend/src/features/projects/ScenarioCommercialTerms.test.tsx`
+  (K-01..K-07, 54 testy, w tym jeden przez zamontowane `<App/>`), `frontend/src/api/contracts/commercialTermsRefusals.test.ts`
+  (5 testów kontraktowych D-3) — 234 testy frontendowe zielono (było 173). Backend niezmieniony,
+  581 testów zielono. Cztery równoległe rundy weryfikacji: QA PASS WITH GAPS (luka M3 — brak
+  resetu stanu zapisu po `readAgain` — domknięta nowym testem kontrastowym), Invariant Guardian
+  PASS (3 uwagi niskie, wszystkie domknięte przed mergem), reviewer PASS z **naprawionym**
+  znaleziskiem R-01 (średnia — kwota/stawka o złej gramatyce liczby dziesiętnej przechodziła
+  walidację kształtu i wywalała cały `ProjectListScreen` w fazie renderu; naprawa: `isDecimalString`
+  eksportowany z `lib/money.ts`, użyty w `isRevenueShape`/`isRateWindowShape`, 3 mutacje zabite),
+  security-auditor PASS. **Zaakceptowane, nie naprawiane:** R-02 (reviewer, niska) — N równoległych
+  odczytów kart na projekt może się otrzeć o limit gniazd przeglądarki i budżet 12 s przy bardzo
+  dużych projektach; strażnik `mounted` przy zapisie jest nieobserwowalny w React 18 (dekoracyjny,
+  udokumentowane w teście).
 
 - [ ] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
   worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
