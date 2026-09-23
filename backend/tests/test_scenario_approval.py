@@ -1059,6 +1059,10 @@ def test_approving_a_scenario_with_no_positions_freezes_it_with_an_empty_snapsho
         # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
         # `tests/test_assumption_approval.py`.
         "organization_defaults": 0,
+        # The sixth counter, SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 2d): a
+        # deliberate canary growth. Zero because this fixture has no catalogue rate; the
+        # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
+        "catalog_default_rates": 0,
     }
     assert response.json()["status"] == "Approved"
     status, rows = _status_and_snapshot(engine, state["scenario_id"])

@@ -26,6 +26,7 @@ from app.api.schemas.project import (
     ProjectListResponse,
 )
 from app.core.identity import CallerIdentity, Permission
+from app.data.commercial_terms import CommercialTermsNotCopyable
 from app.data.project_reads import list_projects_for_caller, project_for_caller
 from app.data.project_writes import (
     ProjectEditRefused,
@@ -219,7 +220,13 @@ def archive_project_endpoint(
     response_model=ProjectDetail,
     status_code=status.HTTP_201_CREATED,
     summary="Copy a project with all its scenarios",
-    responses={404: {"description": PROJECT_NOT_FOUND_DETAIL}},
+    responses={
+        404: {"description": PROJECT_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: a scenario's commercial terms use a model this version of the "
+            "application cannot copy. Nothing was copied."
+        },
+    },
 )
 def copy_project_endpoint(
     project_id: uuid.UUID,
@@ -248,5 +255,10 @@ def copy_project_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
         )
-    copy = copy_project(session, caller, source)
+    try:
+        copy = copy_project(session, caller, source)
+    except CommercialTermsNotCopyable as refusal:
+        # R-03 (SC-4-01, gate 2): a readable, named refusal instead of an unhandled `500` — and it
+        # is reached only for a project the caller can already see, so it confirms nothing.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
     return shape_project_detail(copy, caller)

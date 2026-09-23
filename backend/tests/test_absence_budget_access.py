@@ -224,12 +224,17 @@ def test_k_09_the_permission_vocabulary_did_not_grow_in_this_task(
         Permission.CATALOG_WRITE,
         Permission.STAFFING_READ,
         Permission.STAFFING_WRITE,
+        # Re-armed in SC-4-01, not loosened: ADR-0005's addendum of 2026-09-23 (SC-4-01, point 2)
+        # adds this pair for the commercial rule — a table of a scenario, not of the catalogue — so
+        # the claim of this canary (the catalogue tables take no permission of their own) holds.
+        Permission.COMMERCIAL_READ,
+        Permission.COMMERCIAL_WRITE,
     }, (
         "the permission vocabulary changed in SC-3-03. ADR-0005's addendum of 2026-09-22 (SC-3-03, "
         "point 2) decides that the absence budget is the eighth table of the catalogue and takes "
         "no permission of its own."
     )
-    assert len(Permission) == 10
+    assert len(Permission) == 12
 
 
 def test_the_budget_carrying_staffing_read_is_not_gated_on_the_personnel_cost_permission(

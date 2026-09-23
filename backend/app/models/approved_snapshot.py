@@ -19,10 +19,11 @@ Four properties, each of them a decision with a mutation attached:
 3. **Values, not names to resolve later**: the calendar's name, its standard working day, its week
    pattern, every one of its exceptional days, the name and **three** flags of every absence type
    (SC-3-03 replaces "both flags" here — ADR-0004, addendum 2026-09-22 SC-3-03, point 8), and the
-   raw leave budget of every (calendar, engagement type) pair the scenario reads, and (SC-1-10) the
-   organisation's raw default assumptions. Editing the source calendar, type, budget or default
-   after approval must not move a single figure here (AC-04, AC-10 — criteria K-16 and K-07 of
-   SC-3-02/03, K-05 and K-06 of SC-1-10).
+   raw leave budget of every (calendar, engagement type) pair the scenario reads, (SC-1-10) the
+   organisation's raw default assumptions, and (SC-4-01) every catalogue rate window the scenario's
+   months read. Editing the source calendar, type, budget, default or rate after approval must not
+   move a single figure here (AC-04, AC-10 — criteria K-16 and K-07 of SC-3-02/03, K-05 and K-06 of
+   SC-1-10, K-09 of SC-4-01).
 4. **Write-once, and therefore no concurrency marker** (ADR-0007, addendum 2026-09-22, point 5).
    These rows are written inside the one transaction that approves a scenario and are never edited,
    so there are no two editors for a marker to arbitrate between.
@@ -50,6 +51,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Computed,
     Date,
     DateTime,
     Enum,
@@ -58,6 +60,7 @@ from sqlalchemy import (
     String,
     func,
 )
+from sqlalchemy.dialects.postgresql import DATERANGE, Range
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -65,8 +68,11 @@ from app.db.base import Base
 from app.models.catalog import (
     BUDGET_PRECISION,
     BUDGET_SCALE,
+    RATE_PRECISION,
+    RATE_SCALE,
     STANDARD_HOURS_PRECISION,
     STANDARD_HOURS_SCALE,
+    VALID_PERIOD_EXPRESSION,
     WEEK_PATTERN_LENGTH,
     WorkingCalendarDayKind,
 )
@@ -78,9 +84,11 @@ SNAPSHOT_TABLES: tuple[str, ...] = (
     "approved_snapshot_absence_type",
     "approved_snapshot_absence_budget",
     "approved_snapshot_organization_defaults",
+    "approved_snapshot_catalog_default_rate",
 )
-"""Every snapshot table, as data — three from SC-3-02, the fourth from SC-3-03 and the fifth from
-SC-1-10 (the organisation's default assumptions, ADR-0012, point 6).
+"""Every snapshot table, as data — three from SC-3-02, the fourth from SC-3-03, the fifth from
+SC-1-10 (the organisation's default assumptions, ADR-0012, point 6) and the sixth from SC-4-01 (the
+catalogue rate windows a T&M revenue reads — ADR-0004, addendum 2026-09-23 SC-4-01, point 2).
 
 Growing this tuple is a **deliberate** act and the canaries that compare against it are meant to
 fail on the day it changes (ADR-0004, addendum 2026-09-22 SC-3-03, point 4): a table added to the
@@ -389,3 +397,95 @@ class ApprovedSnapshotOrganizationDefaults(_ApprovedSnapshotRow):
     source is — `NULL` here is "the organisation had no default for this one", frozen as such. **No
     CHECK repeated** (the source refuses a non-positive threshold; a snapshot records what was
     approved and does not re-judge it — the rule every other snapshot table follows)."""
+
+
+class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
+    """One catalogue rate window a scenario's T&M revenue reads, frozen at approval (SC-4-01).
+
+    The sixth snapshot table and **the first that freezes a rate** (ADR-0004, addendum 2026-09-23
+    SC-4-01, point 2): until SC-4-01 no result of an approved calculation depended on a rate, so the
+    absence of this table was not a regression; from SC-4-01 it would be (AC-04, AC-10). The shape
+    is the SC-3-02 pattern without a change — one table per source table, keyed by `scenario_id`,
+    the source ids stored as values, values copied rather than names resolved later.
+
+    Four properties, each of them a decision with a mutation attached:
+
+    1. **Only the windows the calculation reads** (point 2c), the way the budget snapshot freezes
+       only the windows its months touch (addendum SC-3-03, points 3 and 7): for each position of
+       the scenario, with `vendor_id IS NULL` (ADR-0003, point 4), and each month of its allocation
+       that is **priced** — `app.data.commercial_terms.month_is_priced`: the windows overlapping
+       the month cover every day of it and share one selling rate and currency (SC-4-01 gate 2,
+       R-01) — **every** window of that month. Usually one; two or more when a boundary that
+       changes only the cost rate falls inside the month, and then all of them are frozen, because
+       the reader re-asks the same question of the frozen rows and needs every piece to answer yes.
+       Not the catalogue. Two positions of one tuple freeze one row per window (the deduplication
+       canary of SC-3-02 S-01/R-01). A month that is not priced yields no row and stays "no rate"
+       for ever.
+    2. **`default_cost_rate` is frozen too, although SC-4-01 never reads it** (point 2b). There is
+       no UPDATE path to a snapshot, so a scenario approved before plan block 5 without a frozen
+       cost could never recover one. The consequence named with it: this table is a **carrier of
+       personnel cost**, every future reader of its rows is subject to the SC-1-08 conjunction
+       (ADR-0005, addendum 2026-09-23 SC-4-01, point 7), and SC-4-01 exposes no path that returns
+       them — the revenue reader selects the selling-rate columns only.
+    3. **`valid_period` is generated from the same expression as the source's**
+       (`app.models.catalog.VALID_PERIOD_EXPRESSION`), so the reader asks the frozen rows the exact
+       question the live read asks the catalogue — `month_is_priced` over the windows overlapping
+       the month — with no second spelling of the window's boundary (point 2e; the rule 13 of the
+       Invariant Guardian that a mechanism moved into the reader must be proven there, which
+       criteria K-09 and R-01 do).
+    4. **No foreign key but the scenario's, no CHECK repeated, no `updated_at`** — the rules every
+       snapshot table follows (module docstring).
+    """
+
+    __tablename__ = "approved_snapshot_catalog_default_rate"
+
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(
+            "scenarios.id", name="fk_approved_snapshot_catalog_default_rate_scenario_id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    """The only foreign key a snapshot row is allowed to have — see
+    `ApprovedSnapshotWorkingCalendar.scenario_id`."""
+
+    source_rate_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    source_role_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    source_seniority_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    source_location_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    source_engagement_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), nullable=False
+    )
+    source_vendor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True
+    )
+    """Values, never foreign keys (ADR-0004, addendum 2026-09-22 SC-3-02, point 3b): which window
+    was frozen (`source_rate_id`), and the four dimensions plus the vendor axis it was priced for —
+    the key a reader matches a position's tuple against. `source_vendor_id` is `NULL` on every row
+    SC-4-01 writes (only internal rates are read) and is copied anyway, because the snapshot records
+    the source row as it was rather than re-deciding which of its columns matter."""
+
+    default_cost_rate: Mapped[Decimal] = mapped_column(
+        Numeric(RATE_PRECISION, RATE_SCALE), nullable=False
+    )
+    """Frozen, never read by SC-4-01 — see point 2 of the class docstring."""
+
+    default_selling_rate: Mapped[Decimal] = mapped_column(
+        Numeric(RATE_PRECISION, RATE_SCALE), nullable=False
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    """The source's own column types, so nothing is narrowed on the way in. `effective_to` stays
+    nullable — an open-ended source window is frozen as open-ended — and the reader never compares
+    it: it asks `valid_period` below."""
+
+    valid_period: Mapped[Range[date]] = mapped_column(
+        DATERANGE,
+        Computed(VALID_PERIOD_EXPRESSION, persisted=True),
+        nullable=False,
+    )
+    """Generated by the database from the two dates above, with the source's expression — read-only
+    from the ORM's point of view and absent from the approval's `INSERT … SELECT` column list."""

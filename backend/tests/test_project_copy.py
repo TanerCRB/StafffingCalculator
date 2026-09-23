@@ -622,8 +622,10 @@ def test_k_15_copying_a_project_copies_no_organisational_calendar_row(
             "satisfied by a copy that copies nothing"
         )
 
-    # (3) the registry is unchanged.
-    assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 1
+    # (3) the registry is unchanged by the copy. Two entries since SC-4-01 — re-armed, not loosened:
+    # the second is the commercial-rule aggregate (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b),
+    # a scenario-owned table, and still no calendar copier.
+    assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 2
 
 
 def test_k_15_the_copied_positions_still_point_at_the_one_shared_calendar(

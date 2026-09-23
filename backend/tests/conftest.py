@@ -44,6 +44,7 @@ from app.models import (  # noqa: E402
     AbsenceType,
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotCatalogDefaultRate,
     ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
@@ -53,6 +54,7 @@ from app.models import (  # noqa: E402
     CatalogRole,
     CatalogSeniority,
     CatalogVendor,
+    CommercialTerms,
     OrganizationDefaults,
     Project,
     ProjectAccess,
@@ -62,6 +64,7 @@ from app.models import (  # noqa: E402
     StaffingPosition,
     StaffingPositionAbsence,
     StaffingPositionAllocation,
+    TmTerms,
     WorkingCalendar,
     WorkingCalendarDay,
     WorkingCalendarDayKind,
@@ -226,6 +229,12 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotAbsenceType))
             connection.execute(sa.delete(ApprovedSnapshotAbsenceBudget))
             connection.execute(sa.delete(ApprovedSnapshotOrganizationDefaults))
+            # SC-4-01: the rate snapshot like every snapshot table, and the commercial rule — its
+            # details row first, because `tm_terms` points at `commercial_terms` with no `ON
+            # DELETE` action, and the rule points at `scenarios` the same way.
+            connection.execute(sa.delete(ApprovedSnapshotCatalogDefaultRate))
+            connection.execute(sa.delete(TmTerms))
+            connection.execute(sa.delete(CommercialTerms))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -684,6 +693,9 @@ SNAPSHOT_MODELS = (
     ApprovedSnapshotAbsenceBudget,
     # The fifth, SC-1-10 (ADR-0012, point 6) — the same deliberate canary growth as the fourth.
     ApprovedSnapshotOrganizationDefaults,
+    # The sixth, SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 2d: the canary "a copy of an
+    # approved scenario holds zero snapshot rows" must cover the new table).
+    ApprovedSnapshotCatalogDefaultRate,
 )
 """The five snapshot tables, as models — so a test counting "every snapshot row" cannot count some
 of the five and look green (criteria K-17, K-18, K-19 of SC-3-02; K-07 of SC-3-03; K-05 of SC-1-10).
@@ -1062,3 +1074,32 @@ def set_project_overrides(
 def assumptions_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
     """The address of one scenario's resolved assumptions — the reader of SC-1-10 (gate 1, P-B)."""
     return f"/projects/{project_id}/scenarios/{scenario_id}/assumptions"
+
+
+# --- the commercial rule and its revenue (F-06.1, SC-4-01) ---------------------------------------
+
+
+def commercial_terms_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    """The address of one scenario's commercial rule and revenue — the project id carries the
+    scope."""
+    return f"/projects/{project_id}/scenarios/{scenario_id}/commercial-terms"
+
+
+def make_commercial_terms(
+    session: Session, scenario: Scenario, *, with_details: bool = True
+) -> CommercialTerms:
+    """Insert a T&M rule directly — and, unless told otherwise, its `tm_terms` row.
+
+    `with_details=False` is the only way to reach the named `incomplete_commercial_terms` state: the
+    production write path creates both rows in one statement, and the database enforces the *type*
+    of a details row, not its existence (ADR-0003, point 3).
+    """
+    terms = CommercialTerms(
+        id=uuid.uuid4(), scenario_id=scenario.id, model_type="time_and_material"
+    )
+    session.add(terms)
+    session.flush()
+    if with_details:
+        session.add(TmTerms(commercial_terms_id=terms.id, model_type="time_and_material"))
+        session.flush()
+    return terms

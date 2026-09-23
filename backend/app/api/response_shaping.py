@@ -47,6 +47,14 @@ from app.api.schemas.catalog import (
     WorkingCalendarEntry,
     WorkingCalendarList,
 )
+from app.api.schemas.commercial_terms import (
+    CommercialTermsRead,
+    RateWindowRead,
+    RevenueAssumptionsRead,
+    RevenueRead,
+    ScenarioCommercialTerms,
+    UnresolvedMonthRead,
+)
 from app.api.schemas.project import (
     DeliveryPeriod,
     ProjectDetail,
@@ -68,6 +76,7 @@ from app.core.identity import CallerIdentity, Permission
 from app.core.money import NOT_APPLICABLE
 from app.data.assumptions import ScenarioAssumptionsView
 from app.data.catalog import DimensionRow
+from app.data.commercial_terms import ScenarioCommercialView
 from app.data.organization_defaults import OrganizationLevel
 from app.data.project_reads import CallerProjectView
 from app.data.staffing import StaffingPositionView
@@ -75,6 +84,8 @@ from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, Stat
 from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
+from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
+from app.domain.revenue import RevenueResult
 from app.domain.scenario_readiness import assess
 from app.models.catalog import (
     AbsenceBudget,
@@ -654,6 +665,73 @@ def shape_staffing_position_list(
     the caller may not see is never in this sequence in the first place.
     """
     return StaffingPositionList(positions=[shape_staffing_position(view) for view in views])
+
+
+def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCommercialTerms:
+    """One scenario's commercial rule and revenue as the API returns them (SC-4-01).
+
+    **No `caller` argument, and that absence is the statement** — the one `shape_staffing_position`
+    makes. Nothing in this payload is a personnel cost: a revenue and a selling rate are what the
+    client pays, not what a person costs (ADR-0005, addendum 2026-09-23 SC-4-01, point 3; the
+    precedent is `default_selling_rate` staying outside `CATALOG_PERSONNEL_COST_FIELDS`). What makes
+    that true is the schema, which has no cost field to remove — asserted by equality of the whole
+    field set (criterion K-11). The first task adding profit or margin here grows a `caller`
+    argument *and* the SC-1-08 conjunction.
+
+    Nothing is decided here: the state, the amount and the windows arrive resolved from
+    `app.data.commercial_terms`; the amount was rounded once, through `app.core.money.round_money`,
+    in `app.domain.revenue_time_and_material`, and is not re-rounded on the way out.
+    """
+    answer = view.revenue
+    assumptions = answer.assumptions_used
+    assumptions_read = RevenueAssumptionsRead(
+        model_type=assumptions.model_type,
+        hours_source=assumptions.hours_source,
+        vendor_axis=assumptions.vendor_axis,
+        rate_source=assumptions.rate_source,
+        rate_windows=[
+            RateWindowRead(
+                source_rate_id=window.source_rate_id,
+                effective_from=window.effective_from,
+                effective_to=window.effective_to,
+                default_selling_rate=window.selling_rate,
+                currency=window.currency,
+            )
+            for window in assumptions.rate_windows
+        ],
+        unresolved_months=[
+            UnresolvedMonthRead(position_id=month.position_id, period_month=month.period_month)
+            for month in assumptions.unresolved_months
+        ],
+        currencies=list(assumptions.currencies),
+    )
+    if isinstance(answer, RevenueResult):
+        revenue = RevenueRead(
+            state=REVENUE_CALCULATED,
+            amount=answer.revenue,
+            currency=answer.currency,
+            assumptions_used=assumptions_read,
+        )
+    else:
+        revenue = RevenueRead(
+            state=answer.reason,
+            amount=NOT_APPLICABLE,
+            currency=None,
+            assumptions_used=assumptions_read,
+        )
+    terms = view.terms
+    return ScenarioCommercialTerms(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        commercial_terms=(
+            None
+            if terms is None
+            else CommercialTermsRead(
+                id=terms.id, model_type=terms.model_type, updated_at=terms.updated_at
+            )
+        ),
+        revenue=revenue,
+    )
 
 
 def shape_catalog_rate_list(

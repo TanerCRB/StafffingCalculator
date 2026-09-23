@@ -100,9 +100,12 @@ always empty, written without an error.
 - **It does not read the snapshot.** One table of it has a reader now, and it lives elsewhere:
   `approved_snapshot_organization_defaults` is read by `app.data.organization_defaults` (SC-1-10,
   gate 1 P-B — the first snapshot reader in the repository), which resolves an approved scenario's
-  assumptions from the frozen row and never from the live one. The other four tables still have no
-  reader; theirs is the reproducible report of plan block 8. This module proves the rows are written
-  and that editing the source afterwards does not move them (K-16).
+  assumptions from the frozen row and never from the live one. Since SC-4-01 a second one does:
+  `approved_snapshot_catalog_default_rate` is read by `app.data.commercial_terms`, which prices an
+  approved scenario's T&M revenue from the frozen windows, per month, with the same whole-month
+  predicate the live read uses (ADR-0004, addendum 2026-09-23 SC-4-01, point 2e). The other four
+  tables still have no reader; theirs is the reproducible report of plan block 8. This module proves
+  the rows are written and that editing the source afterwards does not move them (K-16).
 """
 
 import uuid
@@ -113,6 +116,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
+from app.data.commercial_terms import priced_month_windows
 from app.data.scenario_guard import (
     approving_project_lock,
     draft_scenario,
@@ -123,6 +127,7 @@ from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.models.approved_snapshot import (
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotCatalogDefaultRate,
     ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
@@ -130,6 +135,7 @@ from app.models.approved_snapshot import (
 from app.models.catalog import (
     AbsenceBudget,
     AbsenceType,
+    CatalogDefaultRate,
     CatalogLocation,
     WorkingCalendar,
     WorkingCalendarDay,
@@ -223,6 +229,15 @@ class ApprovalResult:
     scenario keeps "no organisation default" for ever (criterion K-06). The same deliberate canary
     growth as the fourth counter."""
 
+    catalog_default_rates: int
+    """The sixth counter (SC-4-01, ADR-0004 addendum 2026-09-23 SC-4-01, point 2): how many
+    catalogue rate windows the T&M revenue of this scenario reads and this approval froze — every
+    window of every priced month (`month_is_priced`: the month's windows cover it whole and share
+    one selling rate and currency), so one month may contribute more than one. Zero is again two
+    facts — "no position-month was priced" (legal: those months stay `no_rate`) or "windows
+    existed and were not copied" — so it is read against a contrast (criterion K-08), never on its
+    own. The same deliberate canary growth as the fourth and fifth."""
+
     @property
     def snapshot_rows(self) -> int:
         """Every snapshot row this approval wrote — what criterion K-18's contrast counts."""
@@ -232,6 +247,7 @@ class ApprovalResult:
             + self.absence_types
             + self.absence_budgets
             + self.organization_defaults
+            + self.catalog_default_rates
         )
 
 
@@ -572,9 +588,8 @@ def _copy_absence_budgets(scenario_id: uuid.UUID) -> sa.Insert:
     positions sharing a (calendar, engagement type) pair freeze one row per window they read, and
     thirty-six months of one window are one row and not thirty-six. Two locations pointing at one
     calendar are one budget row here and not two, because the budget hangs on the calendar and not
-    on
-    the location (ADR-0008, addendum SC-3-03, point 3a) — which is also why this table, unlike the
-    frozen calendar, carries no `source_location_id`.
+    on the location (ADR-0008, addendum SC-3-03, point 3a) — which is also why this table, unlike
+    the frozen calendar, carries no `source_location_id`.
     """
     scenario_source = unapproved_scenario(scenario_id).subquery("open_scenario_budgets")
     budgets = _deduplicated_with_new_ids(
@@ -673,8 +688,96 @@ def _copy_organization_defaults(scenario_id: uuid.UUID) -> sa.Insert:
     )
 
 
+def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
+    """Freeze every catalogue rate window this scenario's T&M revenue prices a month with (SC-4-01).
+
+    **The first rate snapshot in the repository** (ADR-0004, addendum 2026-09-23 SC-4-01, point 2):
+    from SC-4-01 a result of an approved calculation depends on `default_selling_rate`, so editing a
+    catalogue rate after approval must move nothing (AC-04, AC-10; criterion K-09).
+
+    **Scope of the copy: only the windows the calculation reads** (point 2c) — for each position of
+    the scenario and each month of its allocation, the organisation's own windows (`vendor_id IS
+    NULL`, ADR-0003 point 4) that **price** that month: `month_is_priced` over
+    `app.data.commercial_terms.priced_month_windows`, the very statement the live revenue read uses,
+    so the frozen set is by construction the set the draft was priced with. Since R-01 (gate 2) that
+    can be **more than one window per month** — a cost-rate change mid-month splits the month into
+    two windows sharing one selling rate — and then **all** of them are frozen, because the snapshot
+    reader re-asks "do they cover the month with one price?" and needs every piece to answer yes.
+    A month that is not priced freezes nothing and stays `no_rate` for ever. Not the catalogue, not
+    another vendor's window, not a window no priced month reaches (criterion K-08).
+
+    The filter on `month_is_priced` sits **outside** the subquery that computes it: the predicate is
+    a window function over each month's windows, and a `WHERE` inside would change the partitions it
+    sees.
+
+    **Deduplicated over the copied values** (`_deduplicated_with_new_ids`): two positions of one
+    tuple, or thirty-six months of one window, are one frozen row — the SC-3-02 S-01/R-01 defect is
+    not re-opened on the sixth table.
+
+    **`default_cost_rate` is copied although nothing in SC-4-01 reads it** (point 2b): the snapshot
+    has no UPDATE path, and a cost not frozen now is a cost an approved scenario never recovers. It
+    makes the table a carrier of personnel cost (ADR-0005, addendum SC-4-01, point 7); nothing in
+    SC-4-01 returns its rows.
+
+    A CTE of `_snapshot_statement` like the others (point 2d): a rate edited in the catalogue while
+    this approval runs cannot land between "the months this scenario plans" and "the windows frozen
+    for them", because both are read from the one snapshot of the database this statement takes.
+    """
+    scenario_source = unapproved_scenario(scenario_id).subquery("open_scenario_rates")
+    priced = priced_month_windows(from_snapshot=False, scenario_id=scenario_id).subquery(
+        "priced_catalog_months"
+    )
+    rates = _deduplicated_with_new_ids(
+        sa.select(
+            scenario_source.c.id.label("scenario_id"),
+            CatalogDefaultRate.id.label("source_rate_id"),
+            CatalogDefaultRate.role_id.label("source_role_id"),
+            CatalogDefaultRate.seniority_id.label("source_seniority_id"),
+            CatalogDefaultRate.location_id.label("source_location_id"),
+            CatalogDefaultRate.engagement_type_id.label("source_engagement_type_id"),
+            CatalogDefaultRate.vendor_id.label("source_vendor_id"),
+            CatalogDefaultRate.default_cost_rate,
+            CatalogDefaultRate.default_selling_rate,
+            CatalogDefaultRate.currency,
+            CatalogDefaultRate.unit,
+            CatalogDefaultRate.effective_from,
+            CatalogDefaultRate.effective_to,
+        )
+        .select_from(scenario_source)
+        .join(
+            priced,
+            sa.and_(priced.c.scenario_id == scenario_source.c.id, priced.c.month_is_priced),
+        )
+        .join(CatalogDefaultRate, CatalogDefaultRate.id == priced.c.window_id),
+        "copied_catalog_default_rates",
+    )
+    return (
+        sa.insert(ApprovedSnapshotCatalogDefaultRate.__table__)
+        .from_select(
+            [
+                "id",
+                "scenario_id",
+                "source_rate_id",
+                "source_role_id",
+                "source_seniority_id",
+                "source_location_id",
+                "source_engagement_type_id",
+                "source_vendor_id",
+                "default_cost_rate",
+                "default_selling_rate",
+                "currency",
+                "unit",
+                "effective_from",
+                "effective_to",
+            ],
+            rates,
+        )
+        .returning(ApprovedSnapshotCatalogDefaultRate.__table__.c.id)
+    )
+
+
 def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
-    """Every snapshot insert as one statement: five data-modifying CTEs and a count of each (S-01).
+    """Every snapshot insert as one statement: six data-modifying CTEs and a count of each (S-01).
 
     Rendered, it is::
 
@@ -683,7 +786,9 @@ def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
              snapshot_absence_types AS (INSERT INTO approved_snapshot_absence_type … ),
              snapshot_absence_budgets AS (INSERT INTO approved_snapshot_absence_budget … ),
              snapshot_organization_defaults AS (INSERT INTO
-                 approved_snapshot_organization_defaults … )
+                 approved_snapshot_organization_defaults … ),
+             snapshot_catalog_default_rates AS (INSERT INTO
+                 approved_snapshot_catalog_default_rate … )
         SELECT (SELECT count(*) FROM snapshot_calendars) AS working_calendars, …
 
     **Why one statement** is the module docstring's S-01 section: one statement is one snapshot of
@@ -715,6 +820,11 @@ def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
         # organisational rows like the catalogue, edited by people who never ask for this lock.
         "organization_defaults": _copy_organization_defaults(scenario_id).cte(
             "snapshot_organization_defaults"
+        ),
+        # The sixth (SC-4-01, ADR-0004 addendum 2026-09-23 point 2d): the rate windows the T&M
+        # revenue reads, from the same snapshot of the catalogue as everything else frozen here.
+        "catalog_default_rates": _copy_catalog_default_rates(scenario_id).cte(
+            "snapshot_catalog_default_rates"
         ),
     }
     return sa.select(
@@ -795,4 +905,5 @@ def approve_scenario(
         absence_types=counts.absence_types,
         absence_budgets=counts.absence_budgets,
         organization_defaults=counts.organization_defaults,
+        catalog_default_rates=counts.catalog_default_rates,
     )

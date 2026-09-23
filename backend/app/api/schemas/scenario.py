@@ -53,6 +53,13 @@ class ApprovedSnapshotCounts(BaseModel):
     approved scenario keeps "no organisation default" for ever, whatever is configured later
     (criterion K-06). The same deliberate canary growth as `absence_budgets`."""
 
+    catalog_default_rates: int
+    """The sixth table, from SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 2): how many
+    catalogue rate windows the scenario's T&M revenue reads and the approval froze — only those,
+    never the catalogue (criterion K-08). A count, never the rows: the frozen rows carry
+    `default_cost_rate` (point 2b), and no path in SC-4-01 returns them (ADR-0005, addendum SC-4-01,
+    point 7). The same deliberate canary growth as the fourth and fifth."""
+
 
 class ScenarioApproval(BaseModel):
     """The result of approving one scenario: its new status and what was frozen with it."""

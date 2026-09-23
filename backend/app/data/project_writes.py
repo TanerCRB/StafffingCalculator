@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.column_copy import values_to_copy
+from app.data.commercial_terms import CommercialTermsNotCopyable, copy_commercial_terms
 from app.data.organization_defaults import organization_level_for
 from app.data.project_reads import CallerProjectView, project_for_caller
 from app.data.scenario_guard import project_group_two_lock
@@ -355,7 +356,12 @@ def update_project(
 ScenarioChildCopier = Callable[[Session, Scenario, Scenario], None]
 """Copies the rows of one child table from a source scenario to its copy, in that order."""
 
-SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (copy_staffing_positions,)
+SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (
+    copy_staffing_positions,
+    # SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b): the commercial rule and its
+    # details row — one entry for one aggregate, like the staffing entry above.
+    copy_commercial_terms,
+)
 """The cascade, as data rather than as prose (ADR-0004, addendum, point 4).
 
 **Each task creating a child table of `scenarios` must append its copier here, in that same task.**
@@ -363,7 +369,9 @@ A table left out raises nothing — it yields a copy that shares the source's da
 what AC-02 forbids. The registry exists so that adding a table is one append in one named place
 instead of a search for every place that copies something.
 
-One entry today: the staffing aggregate of SC-3-01 (F-04). It is **one entry for two tables** —
+Two entries since SC-4-01: the commercial-rule aggregate (`commercial_terms` + `tm_terms`, one entry
+for two tables for the same reason as below — ADR-0004, addendum 2026-09-23 SC-4-01, point 1b), and
+the staffing aggregate of SC-3-01 (F-04). The staffing entry is **one entry for two tables** —
 positions and their monthly allocation rows — because the allocation row is a *grandchild* of the
 scenario and this contract carries no mapping from old position ids to new ones (ADR-0004, addendum
 2026-09-19, point 1). The consequence is named there and repeated here: "one entry per table" is no
@@ -372,7 +380,9 @@ future completeness test over this registry has to know the difference or the ne
 will look registered while it is not.
 
 Still absent, and owed by the tasks that create them: scenario-level rate overrides, cost rows and
-commercial-model rules (ADR-0003). The company catalogue is **not** absent by omission — a catalogue
+the details tables of the other commercial models (ADR-0003, "Odłożone" — each joins the
+commercial-rule copier, not the registry). The approval snapshot is absent on purpose — the third
+group, never copied. The company catalogue is **not** absent by omission — a catalogue
 row belongs to the organisation and not to a scenario, so it has no entry here on purpose (ADR-0004,
 addendum 2026-09-19 "katalog organizacyjny nie jest dzieckiem scenariusza").
 """
@@ -486,6 +496,12 @@ def copy_project(
         session.flush()
         grants_cost_visibility = bool(grant.can_view_personnel_costs)
         session.commit()
+    except CommercialTermsNotCopyable:
+        # A scenario's rule names a model this version cannot copy (R-03, SC-4-01 gate 2): the whole
+        # copy is undone — a project copied without one scenario's commercial details is worse than
+        # a copy refused — and the refusal travels up unchanged, for the endpoint to answer `409`.
+        session.rollback()
+        raise
     except SQLAlchemyError as error:
         session.rollback()
         # Same reasoning as in `create_project`: `from None` keeps psycopg's `DETAIL: Failing row
