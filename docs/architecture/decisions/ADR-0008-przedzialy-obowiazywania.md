@@ -432,3 +432,23 @@ pozostają zadecydowane i nieistniejące — dokładnie stan, który sekcja „K
     decision #5). Naruszenie tego `EXCLUDE` owija się tym samym mechanizmem co każde inne
     (`_describe_without_values`): komunikat bazy niesie wartości wiersza, a te — choć nie są kwotą —
     są warunkami zatrudnienia i nie wracają do wołającego.
+
+### 2026-09-23 — `commercial_terms` wychodzi z listy tabel wzorca (SC-4-01)
+
+"Konsekwencje" wyliczają trzy tabele dzielące wzorzec: katalog stawek, `exchange_rates`,
+`commercial_terms`; aneks SC-3-03 nazywa dwie ostatnie "zadecydowanymi i nieistniejącymi".
+Rozstrzygnięcie bramki 1 SC-4-01 (P-1, ADR-0003 w wersji z 2026-09-23) zmienia to dla
+`commercial_terms`.
+
+1. **`commercial_terms` nie ma przedziału obowiązywania ani `EXCLUDE`.** Jedna reguła na scenariusz
+   (`UNIQUE scenario_id`); wersjonowanie reguły (F-06.5 "Commercial rates and terms shall be
+   versioned") realizuje mechanizm ADR-0004 — kopia scenariusza i strażnik zapisu pod `approved` —
+   nie okno dat. Dwa mechanizmy wersjonowania jednej reguły byłyby drugim mechanizmem rozstrzygania
+   (reguła 13, druga połowa).
+2. **Wzorzec obowiązuje dalej wszystkie pozostałe tabele** (katalog stawek, budżet urlopowy,
+   `exchange_rates`); stawka, którą reguła T&M czyta, jest rozstrzygana tym wzorcem (predykat
+   obejmowania całego miesiąca, ADR-0003 pkt 5 — ta sama kolumna `valid_period`, żadnej drugiej
+   konwersji granic).
+3. **Warunek ponownego rozpatrzenia:** reguły na poziomie fazy/workstreamu albo reguła
+   obowiązująca tylko w części okresu scenariusza — wtedy przedział obowiązywania na
+   `commercial_terms` wraca jako własny, datowany wpis tutaj.

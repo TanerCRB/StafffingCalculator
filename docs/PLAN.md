@@ -919,4 +919,70 @@ history / this file's own change log, not as tracked product work.
   brak `statement_timeout` na sesjach aplikacji — wszystkie pre-existing albo nazwane świadomie).
   Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-4-01** — Wylicz przychód Time & Material dla scenariusza (F-06.1): reguła komercyjna
+  scenariusza, stawka sprzedażowa rozstrzygana z katalogu oknem obejmującym cały miesiąc alokacji,
+  przychód = Σ (`billable_hours` × stawka), z migawką stawek dla zatwierdzonych scenariuszy
+  (Issue #8, Story F-06 zawężona na bramce 1 do wyłącznie tego zadania — reszta modeli i reguł
+  wspólnych to przyszłe, osobne Issues na tym samym wzorcu).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-11: (1) AC-01, część przychodowa: 100 h
+  fakturowalnych × 200 PLN/h = 20000 PLN; (2) przychód liczony z `billable_hours`, nie z
+  `planned_allocation_hours`/dostępności — podniesienie planu przy stałych godzinach fakturowalnych
+  zostawia przychód bez zmian; (3) stawka rozstrzygana oknem `valid_period` obejmującym CAŁY miesiąc
+  alokacji; zmiana stawki w trakcie miesiąca daje nazwany stan "brak stawki" dla tego miesiąca,
+  kontrast na zmianie przypadającej dokładnie na granicę miesiąca (przechodzi); (4) zgodność typu
+  `commercial_terms`/`tm_terms` egzekwowana złożonym kluczem obcym w bazie, nie walidacją aplikacji
+  — wiersz szczegółów niezgodnego `model_type` odrzucony przez bazę; (5) reguła i przychód
+  scenariusza spoza zasięgu wołającego → `404`, nieodróżnialne od nieistniejącego, także dla zapisu;
+  (6) zapis reguły do scenariusza `approved` odrzucony w tej samej instrukcji co zapis, dowiedziony
+  testem wyścigu dwóch połączeń, kontrast na `draft`; (7) kopiowanie scenariusza kopiuje
+  `commercial_terms` i `tm_terms` jednym wpisem agregatu w `SCENARIO_CHILD_COPIERS`, kopia dostaje
+  nowe identyfikatory — brak wiersza szczegółów na kopii jest regresją, nie stanem legalnym; (8)
+  zatwierdzenie zamraża TYLKO okna stawek czytane przez pozycje/miesiące scenariusza do nowej tabeli
+  `approved_snapshot_catalog_default_rate` (grupa 1 ADR-0004); kopia zatwierdzonego scenariusza ma
+  zero wierszy migawkowych (kanarek, obejmuje też tę nową tabelę); (9) AC-04/AC-10: edycja stawki w
+  katalogu po zatwierdzeniu nie zmienia ani jednej wartości przychodu zatwierdzonego scenariusza —
+  czytelnik migawki rozstrzyga per miesiąc tym samym predykatem co ścieżka żywa; (10) brak reguły
+  komercyjnej i brak stawki dla miesiąca nigdy nie dają przychodu `0` — nazwany stan, przychód
+  częściowy (suma z pominięciem miesięcy bez stawki) zakazany; (11) odpowiedź reguły/przychodu nie
+  niesie żadnego pola kosztowego (`default_cost_rate`, koszt, zysk, marża) — dowód przez równość
+  zbioru pól odpowiedzi; testy odmowy `COMMERCIAL_READ`/`COMMERCIAL_WRITE` (wołający z pozostałymi
+  uprawnieniami, bez tego jednego).
+  **Decyzje bramki 1 (2026-09-23, architect + analyst, zaakceptowane przez człowieka):** Issue #8
+  (cała Story F-06) zawężona do wyłącznie T&M — Fixed Price/Outcome-based/Story Points/reguły
+  wspólne F-06.5 odłożone jako przyszłe, osobne Issues na tym samym wzorcu (precedens: Issue #3 →
+  SC-1-05/06, reszta jako późniejsze zadania); blok 4 dowodzi WYŁĄCZNIE przychodu — koszt/zysk/marża
+  z AC-01 należą do bloków 5/7; stawka sprzedażowa WYŁĄCZNIE z katalogu (`catalog_default_rates`),
+  bez nadpisania na poziomie scenariusza (brak potrzeby biznesowej w MVP, łańcuch ADR-0012 odłożony
+  do zadania, które go zażąda); brak stawek dziennych w MVP (katalog wymusza `unit = 'hour'` w
+  bazie) — "hours in a billable day" (F-06.1) nie dostaje pola, ani reużycia
+  `working_calendar.standard_hours_per_day` (podstawa zdolności, nie warunek umowy); zmiana stawki w
+  trakcie miesiąca = nazwany stan "brak stawki" dla tego miesiąca, NIE stawka z pierwszego dnia
+  (unika cichego zastosowania starej stawki do całego miesiąca przejścia); brak `commercial_terms`
+  NIE wchodzi do gotowości scenariusza (`assess()`, F-01) w tym zadaniu — zmieniłoby wynik dla
+  każdego istniejącego scenariusza.
+  **Nowa/zmieniona decyzja architektoniczna: ADR-0003** przepisany i zawężony do reguły scenariusza
+  + T&M (poprzednia wersja nigdy nie miała statusu Accepted — to poprawka Draftu, nie aneks),
+  status **Accepted**; aneksy tego samego dnia do **ADR-0004** (grupa 2 dla `commercial_terms`/
+  `tm_terms`, nowa tabela migawkowa `approved_snapshot_catalog_default_rate` grupa 1), **ADR-0005**
+  (nowe uprawnienia `COMMERCIAL_READ`/`COMMERCIAL_WRITE`, bez koniunkcji z `PERSONNEL_COSTS_READ`) i
+  **ADR-0008** (`commercial_terms` wychodzi z listy tabel wzorca `EXCLUDE`/`valid_period` — jedna
+  reguła na scenariusz, wersjonowanie przez mechanizm ADR-0004, nie przez okno dat).
+  **Out of scope (explicit):** SC-4-02..05 (Fixed Price, Outcome-based, Story Points, reguły
+  wspólne F-06.5) — przyszłe, osobne Issues; encja fazy/workstreamu i mieszane modele per
+  faza/workstream (F-06 — encja nie istnieje); nadpisanie stawki na poziomie projektu/scenariusza;
+  limity godzin/budżetu, stawki nadgodzinowe/dyżurowe/poza godzinami, proporcja czasu
+  fakturowalnego (F-06.1 — pola `tm_terms` przy zadaniu, które ich zażąda); stawki per osoba (tylko
+  per rola/senioritet/lokalizacja/typ zaangażowania); stawki dzienne i ich przeliczenie; wiele walut
+  jednocześnie w jednej regule (nazwany stan "waluty niezgodne" zamiast konwersji); konsumpcja flag
+  `absence_type.generates_revenue`; przypisanie przychodu do okresów i termin płatności (F-06.5);
+  koszt, zysk, marża (blok 5/7); ekran (osobne zadanie frontend); `audit_log` (blok 8).
+  **Fundament nieudowodniony:** pierwszy konsument `catalog_default_rates.default_selling_rate` w
+  jakimkolwiek wyliczeniu i pierwsza migawka stawek w repozytorium — ustanawia wzorzec dla
+  przyszłych modeli komercyjnych i dla migawki kursów walut (ADR-0006). Podstawa: Issue #8,
+  `Wymagania/Requirements_EN.md` §4 F-06/F-06.1, §7 AC-01,
+  `docs/architecture/decisions/ADR-0003-model-modeli-komercyjnych.md`,
+  `ADR-0004-wersjonowanie-kalkulacji.md` (aneks SC-4-01), `ADR-0005-model-dostepu.md` (aneks
+  SC-4-01), `ADR-0008-przedzialy-obowiazywania.md` (aneks SC-4-01), `ADR-0001-trwalosc-danych.md`,
+  `ADR-0002-obsluga-pieniedzy.md`, `ADR-0007-wspolbiezna-edycja.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*

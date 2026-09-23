@@ -104,6 +104,27 @@ class Permission(StrEnum):
     while every caller is the one placeholder identity that holds everything; the closing condition
     is the authentication ADR, unchanged."""
 
+    COMMERCIAL_READ = "commercial:read"
+    """Reading a scenario's commercial rule **and the revenue derived from it** (F-06, SC-4-01).
+
+    New, from the action-granularity argument (ADR-0005, addendum 2026-09-23 SC-4-01, point 2):
+    commercial terms are routinely set by a different person than the one planning staffing. Like
+    `STAFFING_READ` it carries no authority over *which* rows — scope stays the `project_access`
+    filter, inherited through `scenario_id → scenarios.project_id`.
+
+    **Not conjoined with `PERSONNEL_COSTS_READ`** (point 3): a revenue and a selling rate are not
+    what a person costs. What makes that true is that the response carries no cost field at all —
+    proven by field-set equality (criterion K-11). **Named consequence** (point 4): through
+    `assumptions_used` this permission shows the selling rates and catalogue windows a scenario uses
+    and the aggregate of its billable hours, to a caller who may hold neither `CATALOG_READ` nor
+    `STAFFING_READ`."""
+
+    COMMERCIAL_WRITE = "commercial:write"
+    """Creating a scenario's commercial rule (SC-4-01). Split from `COMMERCIAL_READ` like every
+    other read/write pair, each with its own refusal test. Inherits the known widening of every
+    write permission here (point 6): the write answers with the rule and its revenue, so in
+    practice it reads them too."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:

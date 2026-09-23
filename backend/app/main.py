@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.catalog import router as catalog_router
+from app.api.commercial_terms import router as commercial_terms_router
 from app.api.deps import assert_identity_mechanism_allowed
 from app.api.health import router as health_router
 from app.api.projects import router as projects_router
@@ -39,3 +40,7 @@ app.include_router(staffing_router)
 # calculation, including tables SC-3-02 does not create), and it declares a different permission —
 # which a shared router would make look interchangeable with `STAFFING_WRITE`.
 app.include_router(scenarios_router)
+# Same nesting, fourth router (SC-4-01): the commercial rule declares `COMMERCIAL_READ`/`WRITE`
+# (ADR-0005, addendum 2026-09-23 SC-4-01), which a shared router would make look interchangeable
+# with the staffing or project permissions.
+app.include_router(commercial_terms_router)

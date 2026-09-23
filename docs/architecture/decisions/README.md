@@ -20,7 +20,7 @@ the same file — never a silent edit of the original text.
 |---|---|---|
 | [ADR-0001](ADR-0001-trwalosc-danych.md) | Trwałość danych backendu (PostgreSQL/SQLAlchemy/Alembic) | Accepted |
 | [ADR-0002](ADR-0002-obsluga-pieniedzy.md) | Obsługa pieniędzy: Decimal i jawne zaokrąglenia | Accepted |
-| [ADR-0003](ADR-0003-model-modeli-komercyjnych.md) | Model danych dla modeli komercyjnych (F-06) | Draft — pending approval |
+| [ADR-0003](ADR-0003-model-modeli-komercyjnych.md) | Model danych dla modeli komercyjnych: reguła scenariusza i T&M (F-06) | Accepted |
 | [ADR-0004](ADR-0004-wersjonowanie-kalkulacji.md) | Wersjonowanie i niemutowalność zatwierdzonych kalkulacji | Accepted |
 | [ADR-0005](ADR-0005-model-dostepu.md) | Model dostępu i uprawnień | Accepted |
 | [ADR-0006](ADR-0006-waluty-i-kursy.md) | Waluty i kursy wymiany | Accepted |

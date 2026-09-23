@@ -278,6 +278,15 @@ def test_k_16_no_snapshot_column_is_a_foreign_key_to_the_row_it_copied(
         "approved_snapshot_absence_budget.source_budget_id",
         "approved_snapshot_absence_budget.source_calendar_id",
         "approved_snapshot_absence_budget.source_engagement_type_id",
+        # SC-4-01's sixth snapshot table — the same deliberate canary growth (ADR-0004, addendum
+        # 2026-09-23 SC-4-01, point 2a: source ids are values). The assertion above still requires
+        # its only foreign key to point at `scenarios`.
+        "approved_snapshot_catalog_default_rate.source_rate_id",
+        "approved_snapshot_catalog_default_rate.source_role_id",
+        "approved_snapshot_catalog_default_rate.source_seniority_id",
+        "approved_snapshot_catalog_default_rate.source_location_id",
+        "approved_snapshot_catalog_default_rate.source_engagement_type_id",
+        "approved_snapshot_catalog_default_rate.source_vendor_id",
     }
 
 
@@ -380,6 +389,10 @@ def test_two_positions_in_one_location_freeze_that_calendar_once(
         # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
         # `tests/test_assumption_approval.py`.
         "organization_defaults": 0,
+        # The sixth counter, SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 2d): a
+        # deliberate canary growth. Zero because this fixture has no catalogue rate; the
+        # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
+        "catalog_default_rates": 0,
     }, (
         "the snapshot holds one row per position that reaches a thing instead of one row per "
         "thing. These rows are never updated or deleted, so the duplicates are permanent."
@@ -486,6 +499,10 @@ def test_two_locations_sharing_one_calendar_freeze_two_rows_and_one_set_of_days(
         # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
         # `tests/test_assumption_approval.py`.
         "organization_defaults": 0,
+        # The sixth counter, SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 2d): a
+        # deliberate canary growth. Zero because this fixture has no catalogue rate; the
+        # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
+        "catalog_default_rates": 0,
     }, (
         "the deduplication collapsed rows that differ: two locations are two calendar rows (they "
         "carry different source_location_id) and two absence types are two rows"
@@ -544,6 +561,10 @@ def test_k_17_approval_writes_no_snapshot_of_the_scenarios_own_absences(
         # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
         # `tests/test_assumption_approval.py`.
         "organization_defaults": 0,
+        # The sixth counter, SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 2d): a
+        # deliberate canary growth. Zero because this fixture has no catalogue rate; the
+        # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
+        "catalog_default_rates": 0,
     }, "the contrast is void: this approval snapshotted nothing"
 
     # The absence type is in.

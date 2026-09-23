@@ -54,6 +54,13 @@ from app.core.identity import CallerIdentity, Permission
 # with the authentication ADR. Note what this does **not** widen — scope: a caller holding these two
 # still sees only the projects their `project_access` rows name, because the staffing path inherits
 # that filter from `project_for_caller` (ADR-0001, addendum 2026-09-19).
+#
+# `COMMERCIAL_READ` and `COMMERCIAL_WRITE` join for the same reason and under the same reservation
+# (ADR-0005, addendum 2026-09-23 SC-4-01, point 5, which names this widening and only this one —
+# `PERSONNEL_COSTS_READ` still stays out). Without them the commercial-terms endpoints of SC-4-01
+# would be unreachable while every caller is this one placeholder; it is not a decision that
+# everyone
+# may set commercial terms. Scope is not widened: the path inherits `project_for_caller`.
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.PROJECT_READ,
@@ -65,6 +72,8 @@ PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.CATALOG_WRITE,
         Permission.STAFFING_READ,
         Permission.STAFFING_WRITE,
+        Permission.COMMERCIAL_READ,
+        Permission.COMMERCIAL_WRITE,
     }
 )
 

@@ -149,6 +149,10 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             Permission.CATALOG_WRITE,
             Permission.STAFFING_READ,
             Permission.STAFFING_WRITE,
+            # SC-4-01: ADR-0005's addendum of 2026-09-23 (point 5) names this widening and only
+            # this one — re-armed around the new set, not loosened.
+            Permission.COMMERCIAL_READ,
+            Permission.COMMERCIAL_WRITE,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS

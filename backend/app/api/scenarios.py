@@ -133,6 +133,7 @@ def approve(
             absence_types=result.absence_types,
             absence_budgets=result.absence_budgets,
             organization_defaults=result.organization_defaults,
+            catalog_default_rates=result.catalog_default_rates,
         ),
     )
 

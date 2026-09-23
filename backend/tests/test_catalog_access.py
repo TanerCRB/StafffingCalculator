@@ -486,12 +486,17 @@ def test_k_09_the_calendar_and_absence_type_dictionaries_are_the_sixth_and_seven
         Permission.CATALOG_WRITE,
         Permission.STAFFING_READ,
         Permission.STAFFING_WRITE,
+        # Re-armed in SC-4-01, not loosened: ADR-0005's addendum of 2026-09-23 (SC-4-01, point 2)
+        # adds this pair for the commercial rule — a table of a scenario, not of the catalogue — so
+        # the claim of this canary (the catalogue tables take no permission of their own) holds.
+        Permission.COMMERCIAL_READ,
+        Permission.COMMERCIAL_WRITE,
     }, (
         "the permission vocabulary changed in SC-3-02. ADR-0005's addendum of 2026-09-22 (point 3) "
         "decides that calendars and absence types are the sixth and seventh dictionaries of the "
         "catalogue and take no permission of their own."
     )
-    assert len(Permission) == 10
+    assert len(Permission) == 12
 
 
 def test_k_09_the_two_new_dictionaries_hold_a_caller_with_no_identity_out_as_well(
