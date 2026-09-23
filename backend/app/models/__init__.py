@@ -4,6 +4,7 @@ from app.models.approved_snapshot import (
     SNAPSHOT_TABLES,
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
 )
@@ -20,6 +21,7 @@ from app.models.catalog import (
     WorkingCalendarDay,
     WorkingCalendarDayKind,
 )
+from app.models.organization_defaults import OrganizationDefaults
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 from app.models.scenario import Scenario, ScenarioStatus
@@ -35,6 +37,7 @@ __all__ = [
     "AbsenceType",
     "ApprovedSnapshotAbsenceBudget",
     "ApprovedSnapshotAbsenceType",
+    "ApprovedSnapshotOrganizationDefaults",
     "ApprovedSnapshotWorkingCalendar",
     "ApprovedSnapshotWorkingCalendarDay",
     "CatalogDefaultRate",
@@ -43,6 +46,7 @@ __all__ = [
     "CatalogRole",
     "CatalogSeniority",
     "CatalogVendor",
+    "OrganizationDefaults",
     "Project",
     "ProjectAccess",
     "ProjectStatus",

@@ -13,11 +13,40 @@ from pydantic import (
     AwareDatetime,
     BaseModel,
     ConfigDict,
+    Field,
     StringConstraints,
     model_validator,
 )
 
 from app.api.schemas.common import DecimalString, Iso4217Code, NonEmptyName
+from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
+
+TargetMarginPercent = Annotated[
+    DecimalString, Field(max_digits=PERCENT_PRECISION, decimal_places=PERCENT_SCALE)
+]
+"""A target margin on the way in: exactly as precise as `NUMERIC(6, 3)` is, and no range rule.
+
+The precision bound for the reason `app.api.schemas.staffing.HoursAmount` gives: without
+`decimal_places` a fourth decimal would be rounded at write time, and without `max_digits` an
+oversized figure would reach PostgreSQL as SQLSTATE `22003` and come back as a `500`. No sign or
+range rule, in line with the column (ADR-0012, point 1): `0` is a legal margin."""
+
+OverloadThresholdPercent = Annotated[
+    DecimalString, Field(gt=0, max_digits=PERCENT_PRECISION, decimal_places=PERCENT_SCALE)
+]
+"""An overload threshold on the way in: strictly positive, as precise as the column (gate 1, G-2).
+
+`gt=0` is the error message, not the rule: the rule is the `overload_threshold_positive` CHECK on
+all three levels of the chain (criterion K-09), and two of those levels have no API path at all."""
+
+NULLABLE_EDIT_FIELDS: frozenset[str] = frozenset(
+    {"target_margin_percent", "overload_threshold_percent"}
+)
+"""The only fields of `PATCH /projects/{id}` for which an explicit `null` is legal (gate 1, G-1).
+
+`null` there means "remove this project's override and inherit from the organisation again" — the
+column is nullable and `NULL` is its "no override" state (ADR-0012, point 5). For every other field
+a `null` stays a `422`, exactly as before: those columns are `NOT NULL`."""
 
 ProjectStatusLabel = Literal["Active", "Archived"]
 ScenarioStatusLabel = Literal["Draft", "Approved"]
@@ -47,6 +76,11 @@ class ScenarioListItem(BaseModel):
     """False whenever an input is missing: an incomplete calculation is never presented as ready
     (F-01)."""
     target_margin_percent: DecimalString | None = None
+    """The scenario's **own** column, unchanged in meaning by SC-1-10: `null` when the scenario sets
+    no override, even if it inherits a margin from its project or the organisation. The resolved
+    value and its source are served by `GET …/scenarios/{id}/assumptions`; moving them into this
+    payload is a contract change for the frontend that SC-1-10 did not take (analyst, gap 4 / G-5).
+    `missing_inputs` above *does* use the resolved value (gate 1, Q-5)."""
 
 
 class ProjectListItem(BaseModel):
@@ -85,6 +119,21 @@ class ProjectDetail(ProjectListItem):
     On the detail read only. The list row does not carry it, because a token is useful exactly to
     whoever is about to edit *this* project, and the edit screen reads the project by id first.
     """
+
+    target_margin_percent: DecimalString | None
+    """The project's **own** override column, as stored — never the resolved value (SC-1-10, R-01).
+
+    `null` means "no override on this level, the project inherits from the organisation" — the same
+    meaning an explicit `null` has on the way in through `PATCH` (`NULLABLE_EDIT_FIELDS`, gate 1
+    G-1). Without this field the override would be write-only: `GET …/assumptions` needs a scenario
+    and answers the *resolved* value, which a scenario's own override shadows.
+
+    On the detail read only, for the reason `updated_at` gives: the list screen renders no
+    assumption, and the edit form that needs the stored override reads the project by id first."""
+
+    overload_threshold_percent: DecimalString | None
+    """The project's own overload-threshold override, as stored; `null` = inherits. See
+    `target_margin_percent` above."""
 
 
 class ProjectListResponse(BaseModel):
@@ -132,7 +181,9 @@ class ProjectEditRequest(BaseModel):
 
     Partial by design: "which fields did the caller send" is answered by `model_fields_set`, not
     by "which fields are not null". A field absent from the body is left alone; a field present
-    with `null` is a 422 (see the validator below), never a way to blank out a `NOT NULL` column.
+    with `null` is a 422 (see the validator below), never a way to blank out a `NOT NULL` column —
+    except for the two assumption overrides, where `null` means "inherit again"
+    (`NULLABLE_EDIT_FIELDS`, SC-1-10, gate 1 G-1).
 
     `extra="forbid"`, for the same reason as on `ProjectCreateRequest` and one more: `status` and
     `id` are not editable fields, and an ignored unknown key would make
@@ -154,20 +205,33 @@ class ProjectEditRequest(BaseModel):
     description: Annotated[str, StringConstraints(max_length=10_000)] | None = None
     reporting_currency: Iso4217Code | None = None
     delivery_period: DeliveryPeriod | None = None
+    # The project level of the assumption chain (SC-1-10, gate 1 Q-3 = A2). Group 2 of ADR-0004:
+    # refused with a 409 once a scenario of the project is approved. `null` removes the override
+    # (`NULLABLE_EDIT_FIELDS`), and is the one place this request accepts a `null` at all.
+    target_margin_percent: TargetMarginPercent | None = None
+    overload_threshold_percent: OverloadThresholdPercent | None = None
 
     @model_validator(mode="after")
     def _at_least_one_field_and_none_of_them_null(self) -> Self:
         """Two refusals that would otherwise both end as a 500 or a silent no-op.
 
-        An explicit `null` for any editable field would reach the `UPDATE` as `NULL` and violate
+        An explicit `null` for any `NOT NULL` field would reach the `UPDATE` as `NULL` and violate
         the column's `NOT NULL` — a 500 for what is a client mistake. A body carrying only the
         token asks for no change at all; accepted, it would bump `updated_at` and thereby
         invalidate every other client's token for nothing.
+
+        The two override fields of `NULLABLE_EDIT_FIELDS` are exempt from the first refusal, and
+        from nothing else: a `null` there is a change (back to inheriting), so it also counts as
+        "a field to change" for the second.
         """
         changed = self.__pydantic_fields_set__ - {"updated_at"}
         if not changed:
             raise ValueError("An edit must name at least one field to change.")
-        nulled = sorted(field for field in changed if getattr(self, field) is None)
+        nulled = sorted(
+            field
+            for field in changed - NULLABLE_EDIT_FIELDS
+            if getattr(self, field) is None
+        )
         if nulled:
             raise ValueError(f"These fields cannot be set to null: {', '.join(nulled)}")
         return self

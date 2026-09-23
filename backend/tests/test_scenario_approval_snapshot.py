@@ -375,6 +375,11 @@ def test_two_positions_in_one_location_freeze_that_calendar_once(
         # SC-3-03's fourth counter. Zero because this fixture has no budget row at all — the
         # deduplication of budgets has its own test, next to this one.
         "absence_budgets": 0,
+        # The fifth counter, SC-1-10 (ADR-0012, point 6). A deliberate canary growth, like the
+        # fourth: zero because this fixture configures no organisation defaults row (gate 1, P-D:
+        # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
+        # `tests/test_assumption_approval.py`.
+        "organization_defaults": 0,
     }, (
         "the snapshot holds one row per position that reaches a thing instead of one row per "
         "thing. These rows are never updated or deleted, so the duplicates are permanent."
@@ -476,6 +481,11 @@ def test_two_locations_sharing_one_calendar_freeze_two_rows_and_one_set_of_days(
         "absence_types": 2,
         # SC-3-03's fourth counter; this fixture carries no budget row.
         "absence_budgets": 0,
+        # The fifth counter, SC-1-10 (ADR-0012, point 6). A deliberate canary growth, like the
+        # fourth: zero because this fixture configures no organisation defaults row (gate 1, P-D:
+        # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
+        # `tests/test_assumption_approval.py`.
+        "organization_defaults": 0,
     }, (
         "the deduplication collapsed rows that differ: two locations are two calendar rows (they "
         "carry different source_location_id) and two absence types are two rows"
@@ -529,6 +539,11 @@ def test_k_17_approval_writes_no_snapshot_of_the_scenarios_own_absences(
         # SC-3-03's fourth counter; this fixture carries no budget row, and the criterion that
         # proves a budget *is* frozen is K-07, below.
         "absence_budgets": 0,
+        # The fifth counter, SC-1-10 (ADR-0012, point 6). A deliberate canary growth, like the
+        # fourth: zero because this fixture configures no organisation defaults row (gate 1, P-D:
+        # no migration seeds one). The proof that the row *is* frozen when it exists is K-05, in
+        # `tests/test_assumption_approval.py`.
+        "organization_defaults": 0,
     }, "the contrast is void: this approval snapshotted nothing"
 
     # The absence type is in.

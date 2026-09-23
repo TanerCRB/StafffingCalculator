@@ -15,10 +15,15 @@ addendum 2026-09-18), so there is nothing truthful to put in such a field, and a
 """
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel
 
+from app.api.schemas.common import DecimalString
 from app.api.schemas.project import ScenarioStatusLabel
+from app.core.money import NOT_APPLICABLE
+
+NotApplicableValue = Literal[NOT_APPLICABLE]
 
 
 class ApprovedSnapshotCounts(BaseModel):
@@ -42,6 +47,12 @@ class ApprovedSnapshotCounts(BaseModel):
     the regression point 2 of that addendum is about — so it is read against a contrast and never on
     its own (point 6)."""
 
+    organization_defaults: int
+    """The fifth table, from SC-1-10 (ADR-0012, point 6): `1` when the organisation had a defaults
+    row at the moment of approval and it is now frozen, `0` when it had none — in which case the
+    approved scenario keeps "no organisation default" for ever, whatever is configured later
+    (criterion K-06). The same deliberate canary growth as `absence_budgets`."""
+
 
 class ScenarioApproval(BaseModel):
     """The result of approving one scenario: its new status and what was frozen with it."""
@@ -53,3 +64,31 @@ class ScenarioApproval(BaseModel):
     one spelling of this status and not two."""
 
     snapshot: ApprovedSnapshotCounts
+
+
+class ResolvedAssumptionRead(BaseModel):
+    """One assumption of one scenario: value, state, and the level the value came from.
+
+    `value` is a fixed-point string when `state` is `"resolved"` and `"n/a"` when it is
+    `"no_value"` — never `0`, never `null` (ADR-0012, point 1; the `no_calendar` pattern of
+    SC-3-02). `source` names the level that supplied the value and is `null` exactly when there is
+    none.
+    """
+
+    value: DecimalString | NotApplicableValue
+    state: Literal["resolved", "no_value"]
+    source: Literal["scenario", "project", "organization"] | None
+
+
+class ScenarioAssumptions(BaseModel):
+    """`GET …/scenarios/{id}/assumptions` — the first reader of an approval snapshot (SC-1-10).
+
+    One field per assumption rather than a list or a map keyed by name: the set is fixed by
+    `app.domain.assumptions.RESOLVABLE_ASSUMPTIONS`, and a closed shape makes an assumption that
+    silently dropped out of the payload a validation error instead of a missing key.
+    """
+
+    id: uuid.UUID
+    status: ScenarioStatusLabel
+    target_margin_percent: ResolvedAssumptionRead
+    overload_threshold_percent: ResolvedAssumptionRead

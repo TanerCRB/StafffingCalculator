@@ -12,6 +12,11 @@ point 4):
    question in one statement. Zero rows means "there is no draft here to approve", which is the
    whole of criterion K-19: a second approval writes **nothing at all**, not even a snapshot row it
    would afterwards roll back.
+1a. `SELECT id FROM projects WHERE id = :project_id FOR SHARE` — the approving half of the P-C seam
+   (SC-1-10, `app.data.scenario_guard.approving_project_lock`). It serialises this approval against
+   an edit of any group-2 field of the scenario's project (`FROZEN_BY_APPROVED_SCENARIO`), which the
+   scenario lock above cannot do: an edit of `projects` never asks for it. Taken after the scenario
+   lock, never before — the order every path that locks both follows, so there is no cycle.
 2. the snapshot rows — **every table of them in one statement** (`_snapshot_statement`, S-01
    below), each table's rows inserted by an `INSERT ... SELECT … FROM scenarios WHERE id = :id AND
    status <> 'approved'` — the same child-write guard shape every other table of this scenario
@@ -92,9 +97,12 @@ always empty, written without an error.
 - **It does not decide scope.** `app.data.staffing.scenario_in_scope` (hence `project_for_caller`)
   does, before anything here runs, so a refusal built here can never be the answer that confirms a
   scenario exists (criterion K-21).
-- **It does not read the snapshot.** Nothing does, yet. This module proves the rows are written and
-  that editing the source afterwards does not move them (K-16); the first reader is the reproducible
-  report of plan block 8.
+- **It does not read the snapshot.** One table of it has a reader now, and it lives elsewhere:
+  `approved_snapshot_organization_defaults` is read by `app.data.organization_defaults` (SC-1-10,
+  gate 1 P-B — the first snapshot reader in the repository), which resolves an approved scenario's
+  assumptions from the frozen row and never from the live one. The other four tables still have no
+  reader; theirs is the reproducible report of plan block 8. This module proves the rows are written
+  and that editing the source afterwards does not move them (K-16).
 """
 
 import uuid
@@ -105,12 +113,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
-from app.data.scenario_guard import draft_scenario, unapproved_scenario
+from app.data.scenario_guard import (
+    approving_project_lock,
+    draft_scenario,
+    unapproved_scenario,
+)
 from app.data.staffing import scenario_in_scope
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.models.approved_snapshot import (
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
+    ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
 )
@@ -121,6 +134,7 @@ from app.models.catalog import (
     WorkingCalendar,
     WorkingCalendarDay,
 )
+from app.models.organization_defaults import OrganizationDefaults
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
     StaffingPosition,
@@ -203,6 +217,12 @@ class ApprovalResult:
     scenario reads" (a legal, named state) or "budgets existed and were not copied" (the regression
     point 2 is about) — so it is checked against a contrast, never on its own (point 6)."""
 
+    organization_defaults: int
+    """The fifth counter (SC-1-10, ADR-0012 point 6) — `1` or `0`, and both are facts: `1` means
+    the organisation had a defaults row and it is frozen; `0` means it had none, and the approved
+    scenario keeps "no organisation default" for ever (criterion K-06). The same deliberate canary
+    growth as the fourth counter."""
+
     @property
     def snapshot_rows(self) -> int:
         """Every snapshot row this approval wrote — what criterion K-18's contrast counts."""
@@ -211,6 +231,7 @@ class ApprovalResult:
             + self.working_calendar_days
             + self.absence_types
             + self.absence_budgets
+            + self.organization_defaults
         )
 
 
@@ -611,15 +632,58 @@ def _copy_absence_budgets(scenario_id: uuid.UUID) -> sa.Insert:
     )
 
 
+def _copy_organization_defaults(scenario_id: uuid.UUID) -> sa.Insert:
+    """Freeze the organisation's default assumptions — raw — for this scenario (SC-1-10).
+
+    **The raw row, not the scenario's resolved margin** (gate 1, P-A; ADR-0012, point 6): the chain
+    scenario → project → organisation is resolved when the snapshot is read, from this row plus the
+    scenario's and the project's own columns, which the write guards keep still. A copier that
+    stored "the value this scenario resolved to" and the level it came from would be a computed
+    figure inside a record of what was approved.
+
+    **Unconditional on the scenario's contents.** Unlike the four copiers above, this one does not
+    walk positions: a target margin applies to the calculation as a whole, so a scenario with
+    nothing planned in it still freezes the organisation's defaults. What it *is* conditional on is
+    the row existing — no row, nothing copied, and the absence of a frozen row is itself the frozen
+    fact (criterion K-06; the pattern of the statutory type in `_copy_absence_types`).
+
+    A CTE of `_snapshot_statement`, like the others, so it reads the organisation's defaults from
+    the same snapshot of the database as everything else this approval freezes (S-01). The source
+    is a singleton, so the `DISTINCT` of `_deduplicated_with_new_ids` removes nothing here; it is
+    used anyway because it is the one place a snapshot id is generated.
+    """
+    scenario_source = unapproved_scenario(scenario_id).subquery("open_scenario_defaults")
+    defaults = _deduplicated_with_new_ids(
+        sa.select(
+            scenario_source.c.id.label("scenario_id"),
+            OrganizationDefaults.target_margin_percent,
+            OrganizationDefaults.overload_threshold_percent,
+        )
+        .select_from(scenario_source)
+        .join(OrganizationDefaults, sa.true()),
+        "copied_organization_defaults",
+    )
+    return (
+        sa.insert(ApprovedSnapshotOrganizationDefaults.__table__)
+        .from_select(
+            ["id", "scenario_id", "target_margin_percent", "overload_threshold_percent"],
+            defaults,
+        )
+        .returning(ApprovedSnapshotOrganizationDefaults.__table__.c.id)
+    )
+
+
 def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
-    """Every snapshot insert as one statement: four data-modifying CTEs and a count of each (S-01).
+    """Every snapshot insert as one statement: five data-modifying CTEs and a count of each (S-01).
 
     Rendered, it is::
 
         WITH snapshot_calendars AS (INSERT INTO approved_snapshot_working_calendar … RETURNING id),
              snapshot_calendar_days AS (INSERT INTO approved_snapshot_working_calendar_day … ),
              snapshot_absence_types AS (INSERT INTO approved_snapshot_absence_type … ),
-             snapshot_absence_budgets AS (INSERT INTO approved_snapshot_absence_budget … )
+             snapshot_absence_budgets AS (INSERT INTO approved_snapshot_absence_budget … ),
+             snapshot_organization_defaults AS (INSERT INTO
+                 approved_snapshot_organization_defaults … )
         SELECT (SELECT count(*) FROM snapshot_calendars) AS working_calendars, …
 
     **Why one statement** is the module docstring's S-01 section: one statement is one snapshot of
@@ -647,6 +711,11 @@ def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
         "working_calendar_days": _copy_calendar_days(scenario_id).cte("snapshot_calendar_days"),
         "absence_types": _copy_absence_types(scenario_id).cte("snapshot_absence_types"),
         "absence_budgets": _copy_absence_budgets(scenario_id).cte("snapshot_absence_budgets"),
+        # The fifth (SC-1-10). Inside the one statement rather than after it: the defaults are
+        # organisational rows like the catalogue, edited by people who never ask for this lock.
+        "organization_defaults": _copy_organization_defaults(scenario_id).cte(
+            "snapshot_organization_defaults"
+        ),
     }
     return sa.select(
         *(
@@ -690,6 +759,11 @@ def approve_scenario(
                 "open a new version and change the copy."
             )
 
+        # The approving half of the P-C seam (SC-1-10, criterion K-08): held to the commit, it makes
+        # an edit of a group-2 field of this project wait for this approval — or this approval wait
+        # for an edit already in flight. `app.data.scenario_guard` has both orders.
+        session.execute(approving_project_lock(project_id))
+
         # One statement, not four (S-01): one snapshot of the catalogue for every snapshot table,
         # taken now — after the lock above was granted, so a child write committed while this
         # approval waited for it is in the copy. See `_snapshot_statement`.
@@ -720,4 +794,5 @@ def approve_scenario(
         working_calendar_days=counts.working_calendar_days,
         absence_types=counts.absence_types,
         absence_budgets=counts.absence_budgets,
+        organization_defaults=counts.organization_defaults,
     )

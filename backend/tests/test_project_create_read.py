@@ -64,6 +64,11 @@ def test_sc_1_01_01_created_project_is_retrievable_with_all_its_fields(
         # Every other key stays pinned, so a field that appears without being asked for still
         # fails this test.
         "updated_at": concurrency_token,
+        # Added to the detail contract by SC-1-10 (R-01): the project level's own assumption
+        # overrides, as stored. A freshly created project sets none, so both are pinned to `None`
+        # ("no override on this level, inherits") — a value here would be an override nobody set.
+        "target_margin_percent": None,
+        "overload_threshold_percent": None,
     }
     # The POST answered with the same representation it persisted — no "write shape" that
     # quietly differs from the "read shape".

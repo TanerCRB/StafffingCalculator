@@ -76,6 +76,11 @@ COPIED_SCENARIO_FIELDS: tuple[str, ...] = (
     "full_time_hours_per_week",
     "currency",
     "target_margin_percent",
+    # SC-1-10: the scenario level of the assumption chain. A deliberate canary growth — the drift
+    # guard below fired on the day the column joined, and the claim ("copied, value by value") is
+    # unchanged. The override travels with the copy; its *source* is derived from which level holds
+    # it, so carrying the value is carrying the source (ADR-0012, point 2).
+    "overload_threshold_percent",
 )
 """Scenario attributes the copy must carry over, written out by hand on purpose.
 
@@ -93,6 +98,9 @@ COPIED_PROJECT_FIELDS: tuple[str, ...] = (
     "delivery_period_end",
     "reporting_currency",
     "description",
+    # SC-1-10: the project level of the assumption chain — the same deliberate canary growth.
+    "target_margin_percent",
+    "overload_threshold_percent",
 )
 
 
@@ -107,6 +115,8 @@ def _fully_populated_scenario_inputs() -> dict[str, object]:
         "full_time_hours_per_week": Decimal("37.50"),
         "currency": "EUR",
         "target_margin_percent": Decimal("18.250"),
+        # SC-1-10 — set, so the copied value is compared against a value and not `None == None`.
+        "overload_threshold_percent": Decimal("90.000"),
     }
 
 

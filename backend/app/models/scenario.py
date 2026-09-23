@@ -73,6 +73,13 @@ class Scenario(Base):
     full_time_hours_per_week: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     target_margin_percent: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
+    # The scenario level of the assumption chain (F-02, ADR-0012): `NULL` on either of these two
+    # means "no override on this scenario — inherit from the project, then the organisation"
+    # (`app.domain.assumptions`). Read the *resolved* value through that module, never the column:
+    # the column alone cannot tell "inherits 18 %" from "has no value".
+    overload_threshold_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 3), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -90,4 +97,6 @@ class Scenario(Base):
             "end_date IS NULL OR start_date IS NULL OR end_date >= start_date",
             name="scenario_period_ordered",
         ),
+        # Strictly positive on every level of the chain (SC-1-10, K-09; gate 1, G-2).
+        CheckConstraint("overload_threshold_percent > 0", name="overload_threshold_positive"),
     )

@@ -1,8 +1,13 @@
-"""Scenario endpoints — approving a calculation (ADR-0004, F-12; SC-3-02).
+"""Scenario endpoints — approving a calculation (ADR-0004, F-12; SC-3-02) and reading its
+assumptions (F-02; SC-1-10).
 
-One endpoint: `POST /projects/{project_id}/scenarios/{scenario_id}/approve` — the one-way,
-human-performed step of ADR-0004, and the first path in this repository that ever sets
-`ScenarioStatus.APPROVED`.
+Two endpoints:
+
+- `POST /projects/{project_id}/scenarios/{scenario_id}/approve` — the one-way, human-performed step
+  of ADR-0004, and the first path in this repository that ever sets `ScenarioStatus.APPROVED`;
+- `GET /projects/{project_id}/scenarios/{scenario_id}/assumptions` — the scenario's resolved
+  assumptions with the level each came from (ADR-0012), and the first path that reads an approval
+  snapshot back (gate 1, P-B).
 
 **The address carries both identifiers**, like the staffing path and for the same reason (ADR-0001,
 addendum 2026-09-19): the scope predicate lives on the project, `project_for_caller` is the one
@@ -38,8 +43,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.schemas.scenario import ApprovedSnapshotCounts, ScenarioApproval
+from app.api.response_shaping import shape_scenario_assumptions
+from app.api.schemas.scenario import (
+    ApprovedSnapshotCounts,
+    ScenarioApproval,
+    ScenarioAssumptions,
+)
 from app.core.identity import CallerIdentity, Permission
+from app.data.assumptions import scenario_assumptions_for_caller
 from app.data.scenario_approval import (
     ScenarioApprovalRefused,
     ScenarioApprovalRejected,
@@ -121,5 +132,40 @@ def approve(
             working_calendar_days=result.working_calendar_days,
             absence_types=result.absence_types,
             absence_budgets=result.absence_budgets,
+            organization_defaults=result.organization_defaults,
         ),
     )
+
+
+@router.get(
+    "/assumptions",
+    response_model=ScenarioAssumptions,
+    summary="Read a scenario's resolved assumptions and the level each one came from",
+    responses={404: {"description": SCENARIO_NOT_FOUND_DETAIL}},
+)
+def read_assumptions(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioAssumptions:
+    """The target margin and the overload threshold of one scenario, resolved scenario → project →
+    organisation (ADR-0012), each with its value, its state and its source.
+
+    - **200** — for a **draft**, against the organisation's live defaults (gate 1, Q-1); for an
+      **approved** scenario, against the defaults frozen at its approval, never the live ones
+      (AC-04). A missing value is `"n/a"` with state `"no_value"` and no source — never `0`.
+    - **404** — the scenario is not the caller's, does not exist, or belongs to another project:
+      one answer for all three (ADR-0005), because the scenario is resolved through
+      `project_for_caller` and there is nothing here to tell them apart. Never `403` for a row.
+    - **403** — the permission dependency, before the database.
+
+    `PROJECT_READ`, the permission every other read of a project's contents declares: the values
+    are part of what a caller who may read the project may read.
+    """
+    view = scenario_assumptions_for_caller(session, caller, project_id, scenario_id)
+    if view is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL
+        )
+    return shape_scenario_assumptions(view)

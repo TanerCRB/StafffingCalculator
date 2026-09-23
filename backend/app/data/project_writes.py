@@ -23,7 +23,9 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.column_copy import values_to_copy
+from app.data.organization_defaults import organization_level_for
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.scenario_guard import project_group_two_lock
 from app.data.staffing import copy_staffing_positions
 from app.data.write_errors import WriteFailed, describe_without_values
 from app.models.project import Project, ProjectStatus
@@ -125,6 +127,9 @@ def create_project(
         user_id=caller.user_id,
         project=project,
         can_view_personnel_costs=grants_cost_visibility,
+        # A new project has no scenario, so only the live half of the level can ever be read; it is
+        # loaded anyway so that the view is complete by construction rather than by that fact.
+        organization_level=organization_level_for(session, project.scenarios),
     )
 
 
@@ -137,12 +142,29 @@ status of the project's scenarios. They are the report *header*, they enter no c
 approved version shows their current value — a named, accepted limit on header reproducibility."""
 
 FROZEN_BY_APPROVED_SCENARIO: frozenset[str] = frozenset(
-    {"reporting_currency", "delivery_period_start", "delivery_period_end"}
+    {
+        "reporting_currency",
+        "delivery_period_start",
+        "delivery_period_end",
+        # The project level of the assumption chain (SC-1-10, ADR-0012, point 5). Not frozen by
+        # the snapshot — the approval freezes only the organisation's raw defaults (gate 1, P-A) and
+        # a reader resolves an approved scenario against the *live* project row — so this refusal,
+        # together with `project_group_two_lock`, is the only thing keeping them still.
+        "target_margin_percent",
+        "overload_threshold_percent",
+    }
 )
 """Group 2 of the same addendum: inherited by the calculation or bounding it. Once any scenario of
 the project is `approved`, these stop being project fields and become part of that calculation, so
 editing them is refused here — in the data-access layer, by the same rule and in the same place as
 a write to an approved calculation (ADR-0004).
+
+**Serialised against a concurrent approval, for every field in this set at once** (SC-1-10, gate 1
+P-C; criterion K-08). The `NOT EXISTS (… approved)` predicate below excludes an approval that has
+already *committed*; on its own it does not exclude one committing *alongside* the write, because
+under `READ COMMITTED` it reads `scenarios` without a lock. `update_project` therefore takes
+`app.data.scenario_guard.project_group_two_lock` before its `UPDATE`, and the approval takes the
+conflicting `approving_project_lock` — see that module for the two orders and why each is safe.
 
 A new project column must be assigned to one of the two groups when it is added. The addendum
 says an unassigned column falls into group 1 by default, which is a silent AC-10 regression the
@@ -290,6 +312,13 @@ def update_project(
         .returning(Project.__table__.c.updated_at)
     )
     try:
+        if touches_frozen_fields:
+            # The P-C seam (SC-1-10): wait for any approval of this project's scenarios that is in
+            # flight, *then* let the `UPDATE` below — a new statement, hence a new snapshot under
+            # `READ COMMITTED` — evaluate `NOT EXISTS (… approved)`. The guard itself stays inside
+            # the `UPDATE`; this statement only decides *when* it is evaluated. Not a
+            # check-then-act: nothing is read here and acted upon later (`app.data.scenario_guard`).
+            session.execute(project_group_two_lock(project_id))
         applied = session.execute(statement).one_or_none()
         if applied is None:
             # Deliberately no `session.rollback()` here: the single statement above matched no
@@ -463,7 +492,12 @@ def copy_project(
         # contains (…)` — the whole row, owner's name included — out of the traceback (NF-11).
         raise ProjectWriteFailed(_describe_without_values(error)) from None
     return CallerProjectView(
-        user_id=caller.user_id, project=copy, can_view_personnel_costs=grants_cost_visibility
+        user_id=caller.user_id,
+        project=copy,
+        can_view_personnel_costs=grants_cost_visibility,
+        # Every copied scenario is a draft, so it reads the live defaults; no snapshot row is
+        # carried over (ADR-0004, addendum 2026-09-18, point 3), including the organisation's.
+        organization_level=organization_level_for(session, copy.scenarios),
     )
 
 

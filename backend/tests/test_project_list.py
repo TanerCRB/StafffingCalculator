@@ -106,6 +106,14 @@ def test_sc_1_05_03_drafts_report_their_own_missing_inputs_and_are_not_ready(
 
     Two drafts with different gaps must produce different lists; a single hardcoded list would
     make these two assertions contradict each other.
+
+    Since SC-1-10 (gate 1, Q-5) `target_margin_percent` is missing when the *resolved* margin is —
+    i.e. when it is absent on **all three** levels of the chain (scenario, project, organisation),
+    not merely when the scenario's column is `NULL`. The first draft's margin is absent on all
+    three: its project carries no override and no organisation defaults row exists, because no
+    migration seeds one (gate 1, P-D). The assertion is therefore unchanged and still literally
+    true; the contrast (a margin inherited from the organisation counts as present) is
+    `tests/test_assumption_readiness.py`.
     """
     project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
     make_scenario(
@@ -185,7 +193,10 @@ def test_sc_1_05_04_approved_scenario_is_listed_as_approved_and_ready(
     client: TestClient, db_session: Session
 ) -> None:
     """Supporting check for the status vocabulary: `Draft`/`Approved` on the scenario, not on
-    the project row (gate-1 decision 7)."""
+    the project row (gate-1 decision 7).
+
+    The margin is set on the scenario itself, so its resolved value (SC-1-10) comes from the
+    scenario level whatever the other two levels hold."""
     project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
     make_scenario(
         db_session,
@@ -217,6 +228,11 @@ def test_sc_1_05_03_approved_scenario_with_a_gap_is_still_reported_as_not_ready(
     An `approved` row missing an input should not exist — but if one does, the list says so
     (gap listed, `ready_for_approval` false) instead of letting the status vouch for it. F-01:
     incomplete results are never presented as ready.
+
+    "Missing" means absent on all three levels of the assumption chain since SC-1-10 (gate 1, Q-5):
+    the scenario sets no margin, its project no override, and — this scenario being approved — no
+    organisation defaults row was frozen for it (none exists: gate 1, P-D). The assertion is
+    unchanged and still literally true.
     """
     project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
     make_scenario(
@@ -229,7 +245,8 @@ def test_sc_1_05_03_approved_scenario_with_a_gap_is_still_reported_as_not_ready(
         working_calendar="PL-standard",
         full_time_hours_per_week=Decimal("40.00"),
         currency="EUR",
-        # target_margin_percent deliberately left unset
+        # target_margin_percent deliberately absent on all three levels of the chain (SC-1-10):
+        # not set here, no project override, no organisation defaults row frozen at approval
     )
 
     response = client.get("/projects", headers=as_caller(IN_SCOPE_USER))

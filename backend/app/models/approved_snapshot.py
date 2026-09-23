@@ -19,9 +19,10 @@ Four properties, each of them a decision with a mutation attached:
 3. **Values, not names to resolve later**: the calendar's name, its standard working day, its week
    pattern, every one of its exceptional days, the name and **three** flags of every absence type
    (SC-3-03 replaces "both flags" here — ADR-0004, addendum 2026-09-22 SC-3-03, point 8), and the
-   raw leave budget of every (calendar, engagement type) pair the scenario reads. Editing the source
-   calendar, type or budget after approval must not move a single figure here (AC-04, AC-10 —
-   criteria K-16 and K-07).
+   raw leave budget of every (calendar, engagement type) pair the scenario reads, and (SC-1-10) the
+   organisation's raw default assumptions. Editing the source calendar, type, budget or default
+   after approval must not move a single figure here (AC-04, AC-10 — criteria K-16 and K-07 of
+   SC-3-02/03, K-05 and K-06 of SC-1-10).
 4. **Write-once, and therefore no concurrency marker** (ADR-0007, addendum 2026-09-22, point 5).
    These rows are written inside the one transaction that approves a scenario and are never edited,
    so there are no two editors for a marker to arbitrate between.
@@ -69,14 +70,17 @@ from app.models.catalog import (
     WEEK_PATTERN_LENGTH,
     WorkingCalendarDayKind,
 )
+from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
 SNAPSHOT_TABLES: tuple[str, ...] = (
     "approved_snapshot_working_calendar",
     "approved_snapshot_working_calendar_day",
     "approved_snapshot_absence_type",
     "approved_snapshot_absence_budget",
+    "approved_snapshot_organization_defaults",
 )
-"""Every snapshot table, as data — three from SC-3-02 and the fourth from SC-3-03.
+"""Every snapshot table, as data — three from SC-3-02, the fourth from SC-3-03 and the fifth from
+SC-1-10 (the organisation's default assumptions, ADR-0012, point 6).
 
 Growing this tuple is a **deliberate** act and the canaries that compare against it are meant to
 fail on the day it changes (ADR-0004, addendum 2026-09-22 SC-3-03, point 4): a table added to the
@@ -329,3 +333,59 @@ class ApprovedSnapshotAbsenceBudget(_ApprovedSnapshotRow):
     # own `effective_from`/`effective_to`. The attribution is in the data; a date column would be a
     # fact about a clock that no reader of this table needs, and dropping it takes the last clock
     # read out of the approval path.
+
+
+class ApprovedSnapshotOrganizationDefaults(_ApprovedSnapshotRow):
+    """The organisation's default assumptions, frozen **raw** at approval (SC-1-10, ADR-0012).
+
+    The fifth snapshot table, and the first whose source is not reached through the scenario's
+    positions: a target margin applies to the whole calculation, so the approval freezes the one
+    `organization_defaults` row whatever the scenario contains.
+
+    **Raw values, not the result of the chain** (gate 1, P-A; ADR-0012, point 6). What is frozen is
+    what the organisation said at the moment of approval — not "the margin this scenario resolved
+    to" and not a `source` column naming the level that won. The chain is resolved when the snapshot
+    is *read* (`app.data.assumptions`), from this row, the scenario's own columns (frozen by the
+    write guard) and the project's (frozen by `FROZEN_BY_APPROVED_SCENARIO` and the lock of
+    `app.data.scenario_guard.project_group_two_lock`). A stored result would be a computed figure
+    inside a record of what was approved — the class of column SC-3-03's K-07 keeps out of
+    `approved_snapshot_absence_budget`.
+
+    **The presence of the row is the fact, the way it is for the statutory absence type**
+    (`ApprovedSnapshotAbsenceType`, stage D of SC-3-03): a row present → the organisation had
+    defaults at approval time, and each column says what they were (`NULL` → no default for that
+    one); **no row** → the organisation had no defaults row at all when this was approved, and that
+    stays the answer for ever, whatever is configured later (criterion K-06). A reader must never
+    "fill in" a missing row from the live table — that is the one mutation this shape exists to make
+    visible.
+
+    **No `source_*_id` column**, and that is not an omission: the source is a singleton with a
+    pinned key (`app.models.organization_defaults.SINGLETON_KEY`), so the id would carry no
+    information. Uniqueness per scenario is not a constraint either — for the reason
+    `ApprovedSnapshotWorkingCalendarDay` gives for not repeating its source's key: the source's own
+    singleton key is what makes a second row impossible to copy.
+    """
+
+    __tablename__ = "approved_snapshot_organization_defaults"
+
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(
+            "scenarios.id", name="fk_approved_snapshot_organization_defaults_scenario_id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    """The only foreign key a snapshot row is allowed to have — see
+    `ApprovedSnapshotWorkingCalendar.scenario_id`."""
+
+    target_margin_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(PERCENT_PRECISION, PERCENT_SCALE), nullable=True
+    )
+    overload_threshold_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(PERCENT_PRECISION, PERCENT_SCALE), nullable=True
+    )
+    """The two values as the organisation held them, in the source's own type. Nullable because the
+    source is — `NULL` here is "the organisation had no default for this one", frozen as such. **No
+    CHECK repeated** (the source refuses a non-positive threshold; a snapshot records what was
+    approved and does not re-judge it — the rule every other snapshot table follows)."""

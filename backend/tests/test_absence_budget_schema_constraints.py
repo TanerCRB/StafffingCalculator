@@ -929,7 +929,6 @@ def test_the_absence_budget_migration_downgrades_and_upgrades_again(
     )
 
     before = revision()
-    assert before == "a7c2e5f81b94", "this test must start at this task's migration"
     try:
         command.downgrade(alembic_config, "f3a1d0c58b27")
 
