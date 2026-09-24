@@ -167,3 +167,19 @@ pośrednią. Nieobecność pozycji (F-05, SC-3-02) jest trzecią tabelą tego sa
 5. **Czego ten aneks nie wprowadza: tabele `approved_snapshot_*` nie dostają znacznika
    współbieżności.** Są zapisywalne jednokrotnie, przy zatwierdzeniu — nie ma dwóch edytorów, przed
    którymi token miałby bronić (ADR-0004, aneks z tą samą datą, pkt 2).
+
+### 2026-09-23 — koszt dodatkowy: znacznik per wiersz kosztu (SC-5-05)
+
+Koszt dodatkowy (ADR-0014) nie jest trzecią tabelą agregatu pozycji obsady — różni się od
+nieobecności (pkt 1 wyżej): może istnieć bez pozycji (koszt na poziomie scenariusza), więc nie ma
+jednej wspólnej pozycji, na której mógłby siedzieć token.
+
+1. **Koszt dodatkowy dostaje własny `updated_at`**, z `onupdate`, jak każda nowa tabela własnych
+   danych scenariusza (nie organizacyjna — pkt 3 aneksu 2026-09-22 dotyczy słowników, nie danych
+   scenariusza). Jednostką edycji jest pojedynczy wiersz kosztu, nie cała pozycja ani cały
+   scenariusz — dwa koszty tej samej pozycji edytowane niezależnie nie kolidują ze sobą.
+2. **Ten sam kształt strażnika** co pkt 1 aneksu 2026-09-19: `UPDATE ... WHERE id = :id AND
+   updated_at = :expected AND NOT EXISTS (... approved ...)`, w tej samej instrukcji dla UPDATE i
+   DELETE (reguła Strażnika 7).
+3. **`updated_at` pozostaje znacznikiem czasu, nie kolumną podmiotową** — bez zmian wobec pkt 6
+   aneksu 2026-09-21.

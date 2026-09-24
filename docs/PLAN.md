@@ -1144,4 +1144,137 @@ history / this file's own change log, not as tracked product work.
   zmienną stawką sprzedażową (migawka bez ścieżki UPDATE, nazwane w aneksie ADR-0004 pkt 7). Zob.
   `docs/architecture/capabilities.md`.
 
+- [ ] **SC-5-05** — Koszty dodatkowe (F-08), zawężone na bramce 1 (2026-09-23, ADR-0014, Accepted):
+  kategorie kosztów o **kwocie stałej** (`CHECK amount > 0`, G-1), jednorazowych i cyklicznych,
+  przypisanych do scenariusza (poziom "projektu") albo pozycji obsady, z atrybutem `funding_source`
+  (`internal` / `rebilled_to_client`, bez wpływu na przychód w tym zadaniu) (Issue #10).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-10 (analyst, 2026-09-23; krzyżowo
+  odesłane do kontroli ADR-0014 D-1..D-10):
+  1. (K-01, D-1) Koszt jednorazowy pojawia się w wyniku dokładnie raz, w swoim miesiącu, niezależnie
+     od przypisania (scenariusz/pozycja); dowiedzione na dwóch scenariuszach tej samej krotki
+     (izolacja) i dwóch pozycjach z wieloma miesiącami alokacji (brak fan-out). Trzy niezależne
+     mutacje: złączenie z pozycjami/miesiącami alokacji zamiast wyłącznie z własnym wierszem kosztu;
+     filtr po projekcie zamiast po scenariuszu; koszt pozycji liczony podwójnie (pozycja + scenariusz).
+  2. (K-02, D-2) Koszt cykliczny: pełna kwota w każdym miesiącu domkniętego `[start, koniec]` i w
+     żadnym spoza — asercja na ZBIORZE miesięcy, nie tylko sumie. Miesiąc poza okresem dostawy
+     projektu i poza alokacją pozycji nadal liczony (bez obcinania). Cztery mutacje: koniec zakresu
+     wyłączny; kwota dzielona przez liczbę miesięcy; przecięcie z alokacją pozycji; obcięcie do
+     okresu dostawy.
+  3. (K-03, D-2/D-7/D-10) Kształt wiersza egzekwowany przez bazę, nie aplikację: zakres cykliczny bez
+     końca odrzucony; jednorazowy obejmujący >1 miesiąc odrzucony; koniec przed początkiem odrzucony;
+     pozycja spoza scenariusza kosztu odrzucona (asercja na `pg_constraint`, wzór SC-4-01 K-04);
+     `funding_source` poza `{internal, rebilled_to_client}` odrzucony; kwota `≤ 0` odrzucona (G-1);
+     `DELETE` kategorii wskazywanej przez jakikolwiek koszt odrzucony (bezpośrednio przez bazę — API
+     nie ma ścieżki DELETE słownika).
+  4. (K-04, D-3) Wejście do 4 miejsc po przecinku bez zaokrąglenia przy zapisie, 5 miejsc → `422`,
+     zero nowych wierszy; wynik zaokrąglony raz na końcu przez `round_money`. Cztery mutacje, każda
+     inna wartość wyniku: zaokrąglenie per koszt; per miesiąc; zaokrąglenie przy zapisie; `float` na
+     ścieżce.
+  5. (K-05, D-4) Dwa kształty wyniku: `calculated` / `currency_mismatch` (koszty w >1 walucie albo w
+     walucie innej niż `scenarios.currency`) / `no_cost_currency` (brak kosztów i brak waluty
+     scenariusza); brak kosztów z zadeklarowaną walutą → `calculated`, `0.00`. Zakaz sumy częściowej,
+     obie gałęzie `currency_mismatch` zabijane niezależnie.
+  6. (K-06, D-5) Zapis (INSERT/UPDATE/DELETE) kosztu pod scenariuszem `approved` odrzucony w tej samej
+     instrukcji co odczyt statusu; wyścig z zatwierdzeniem na dwóch połączeniach (obowiązkowy, nie
+     opcjonalny) nie zostawia wiersza; stary `updated_at` → `409` odróżnialne od `409 approved`;
+     znacznik per wiersz kosztu (edycja kosztu A nie unieważnia znacznika kosztu B tej samej
+     pozycji); nieistniejące id pod `approved` → `404`, nie `409`.
+  7. (K-07, D-6) Kopia scenariusza przenosi obie połowy kosztów (scenariusza i pozycji) z nowymi id;
+     koszt pozycji wskazuje skopiowaną pozycję, nigdy źródłową ani inną pozycję kopii; wynik kopii
+     równy wynikowi źródła; źródło niezmienione. Kanarek kompletności kaskady czerwony osobno dla
+     obu połowy (pominięcie w `SCENARIO_CHILD_COPIERS` vs. pominięcie w kopierze agregatu pozycji).
+  8. (K-08) Zasięg projektu: `404` nigdy `403` dla każdej operacji (odczyt/zapis/wynik), dowiedzione
+     przy wołającym z KOMPLETEM uprawnień (precedens SC-5-01 K-05); osobno dowiedzione pomylenie
+     ścieżki (id kosztu/pozycji obcego projektu na URL projektu w zasięgu → `404`/brak zapisu).
+  9. (K-09, ADR-0005 aneks SC-5-05) Uprawnienia: koszty pod `STAFFING_READ`/`STAFFING_WRITE` (bez
+     koniunkcji z `PERSONNEL_COSTS_READ`), kategoria pod `CATALOG_READ`/`CATALOG_WRITE`; wołający ze
+     `STAFFING_READ` bez `PERSONNEL_COSTS_READ` widzi koszt pozycji z `headcount = 1` (test nazwanego,
+     przyjętego ryzyka — nie luka). Kanarek równości `PLACEHOLDER_PERMISSIONS` zielony bez zmian.
+  10. (K-10, D-8/D-9) Koszt `rebilled_to_client` wchodzi do sumy kosztów dodatkowych (rośnie o dokładną
+      kwotę) i NIE zmienia odpowiedzi przychodu (bajt w bajt, na scenariuszu z przychodem policzonym
+      i niezerowym); test strukturalny grafu importów — moduł kosztów dodatkowych i ścieżka przychodu/
+      moduł kosztu osobowego się nie przecinają.
+
+  **Decyzje bramki 1 (2026-09-23, architekt + analityk, zaakceptowane przez człowieka):** Q-1 = A
+  (wyłącznie kwota stała); Q-2 = A (koszt "projektu" = koszt scenariusza bez pozycji, brak
+  współdzielonej tabeli); Q-3 = A (kwota cykliczna = kwota na miesiąc, bez dzielenia; miesiąc spoza
+  okresu dostawy/alokacji liczy się); Q-4 = A (kategoria to etykieta, bez migawki); Q-5 = A
+  (`funding_source` to wyłącznie atrybut, bez wpływu na przychód, świadome niedoszacowanie zysku do
+  bloku 7); Q-6 = A (koszt pozycji kopiowany w istniejącym kopierze agregatu pozycji, koszt
+  scenariusza dostaje własny wpis `SCENARIO_CHILD_COPIERS`); Q-7 = B (reużycie `STAFFING_*`, bez
+  nowego uprawnienia, ryzyko `headcount=1` nazwane); Q-8 = A (nowy **ADR-0014**, Accepted); G-1 = A
+  (kwota ściśle dodatnia, `CHECK amount > 0`). Pełne uzasadnienia: `docs/architecture/decisions/ADR-0014-koszty-dodatkowe.md`
+  + aneksy SC-5-05 w ADR-0004/0005/0007/0008.
+
+  **Out of scope (explicit):** koszty osobowe (F-07, blok SC-5-01..04); mechanizm rezerw ryzyka
+  (F-09); poziom fazy (encja nie istnieje, Issue #65); podstawa headcount/FTE/godziny/procent
+  (F-08 pkt 3, następcze zadania SC-5-07+ — SC-5-06 zajęte przez F-07/Issue #81); F-08 pkt 7
+  (nakładające się obciążenia/narzuty/rezerwy, F-09); wpływ `funding_source` na przychód/zysk/marżę
+  (blok 7, F-10); migawka nazwy kategorii; zasiew ośmiu kategorii migracją; przeliczenie walut
+  (ADR-0006); domyślne ceny kategorii; ekran i eksport (F-11); nowe uprawnienie lub koniunkcja z
+  `PERSONNEL_COSTS_READ` (ryzyko nazwane w ADR-0005 aneks SC-5-05); usunięcie pozycji/scenariusza z
+  przypisanymi kosztami (API nie ma dziś ścieżki DELETE dla żadnego z nich — nieosiągalne, nie
+  rozstrzygnięte).
+
+  **Fundament nieudowodniony, przyjęty świadomie:** pierwszy konsument tabeli kosztu dodatkowego i
+  kategorii; wyścig `DELETE` kategorii z równoległym `INSERT` kosztu (API nie ma ścieżki DELETE —
+  nieosiągalne w produkcji). Podstawa: Issue #10, `Wymagania/Requirements_EN.md` §4 F-08 (pkt 1–6),
+  §7 AC-03, `docs/architecture/decisions/ADR-0014-koszty-dodatkowe.md`, ADR-0003 pkt 1, ADR-0004
+  (aneks SC-5-05), ADR-0005 (aneksy SC-2-01, SC-3-01, SC-3-02, SC-5-05), ADR-0006, ADR-0007 (aneks
+  SC-5-05), ADR-0008 (pkt 6, aneks SC-5-05), `docs/PLAN.md` SC-1-03/SC-3-01/SC-3-02/SC-4-01
+  (fundament dowiedziony w `docs/architecture/capabilities.md`).
+
+- [ ] **SC-5-06** — Koszt nieobecności płatnych (F-07, F-05): koszt nieobecności flagowanych
+  `absence_type.generates_cost = true` jako osobna, nazwana składowa obok niezmienionego kosztu
+  bazowego SC-5-01; budżet urlopowy (`absence_budget_hours`, SC-3-03) wchodzi do kosztu wyłącznie
+  dopłatą ponad wpisy ręczne — budżet sam w sobie nie jest daną kosztową (ADR-0005 aneks SC-3-03
+  pkt 4), ale koszt z niego wyliczony już jest (Issue #81).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07 (analyst, 2026-09-23):
+  1. (K-01) Składowa liczy wyłącznie typy `generates_cost = true`, godziny dni roboczych, bez
+     `× headcount`, stawką kosztową miesiąca; koszt bazowy SC-5-01 nietknięty. Sześć mutacji do
+     zabicia (m.in. podstawa z `absence_day_equivalents` wszystkich typów, filtr po
+     `generates_revenue`, `× headcount`, stawka sprzedażowa, wmieszanie do kwoty bazowej).
+  2. (K-02) Urlop ustawowy w koszcie = wpisy ręczne typu ustawowego + dopłata budżetu
+     (`max(budżet, suma ręcznych)` z SC-3-03 przeniesione na koszt) — nigdy pełny budżet + wpisy
+     ręczne (błąd "46 zamiast 26" z SC-3-03 R-02).
+  3. (K-03) Koszt z budżetu podąża za `generates_cost` typu ustawowego; stan "budżet nie
+     zastosowany" jest nazwany (`no_budget`/`no_statutory_leave_type`), nigdy ciche `0`.
+  4. (K-04) Składowa nieobecności niepoliczalna (`no_calendar`, brak stawki miesiąca) jest stanem
+     nazwanym na poziomie składowej, nigdy `0`, nigdy suma częściowa całego kosztu pozycji.
+  5. (K-05) Kwota składowej (w tym część budżetowa) pod koniunkcją `PERSONNEL_COSTS_READ` ∧
+     `can_view_personnel_costs`; budżet jako liczba dni/godzin w odpowiedzi obsady/katalogu
+     zostaje poza nią (dowodzi ADR-0005 aneks SC-3-03 pkt 4 i aneks SC-3-02 pkt 7).
+  6. (K-06) Koszt nieobecności zatwierdzonego scenariusza identyczny przed/po zatwierdzeniu, nie
+     zmienia się po edycji katalogu (flaga typu, dni budżetu, stawka) — pierwszy czytelnik migawki
+     kalendarza/budżetu/typu nieobecności (ADR-0004 aneks 2026-09-23 SC-5-06).
+  7. (K-07) Odpowiedź przychodu SC-4-01 bajt w bajt bez zmian po dodaniu nieobecności płatnych i
+     niezależnie od `generates_revenue`.
+
+  **Decyzje bramki 1 (2026-09-23, analyst + architect, zaakceptowane przez człowieka):** G-1
+  poprawiono terminologię budżetu w Story (`absence_budget_hours`, nie `derived_capacity_hours`);
+  Q-1 składowa w istniejącym `PersonnelCostRead` — trzecia funkcja kształtująca, bez nowego aneksu
+  ADR-0005; istniejące testy porównujące `SCENARIO_COST_FIELDS`/K-03 SC-5-01 zbiorem pól
+  przezbrojone (nie osłabione); Q-2 `amount` SC-5-01 nietknięty, składowa nieobecności ma własny
+  stan nazwany, bez sumy łącznej kosztu osobowego w tym zadaniu (suma → blok 7); Q-3 koszt liczy
+  się tylko w miesiącach z wierszem alokacji, zakres migawki bez zmian; Q-4 koszt nieobecności
+  dolicza się zawsze, niezależnie od `planned_allocation_hours` — ryzyko podwójnego liczenia przy
+  nieodjętym urlopie z planu nazwane, nienaprawiane tu; Q-5 gałąź pozytywna `generates_cost`
+  nieosiągalna w produkcji przyjęta jak SC-5-01 (fixture/seed, `PLACEHOLDER_PERMISSIONS` bez
+  zmian); Q-6 `generates_revenue` poza zakresem, F-06 rozdziela koszt od przychodu.
+
+  **Out of scope (explicit):** narzuty (SC-5-02); kwota stała (SC-5-03); FTE (SC-5-04); stawki
+  dzienne/miesięczne; wpływ `generates_revenue` na przychód (druga połowa F-05, osobne zadanie);
+  suma łączna kosztu osobowego (blok 7); zapis/edycja `absence_type` (brak ścieżki HTTP, ADR-0005
+  aneks SC-3-02 pkt 10).
+
+  **Fundament nieudowodniony, przyjęty świadomie:** pierwszy czytelnik flag `generates_cost`/
+  `generates_revenue` (SC-3-02: "żadne wyliczenie kosztu/przychodu ich dziś nie czyta"); pierwszy
+  czytelnik migawki kalendarza, budżetu i typu nieobecności (SC-3-02: "nikt nie czyta migawki");
+  gałąź pozytywna koniunkcji kosztowej nieosiągalna w produkcji (B-01 dziedziczone z SC-5-01);
+  wyścig edycji katalogu z zatwierdzeniem (dziedziczone z SC-2-03/SC-5-01). Podstawa: Issue #81,
+  `Wymagania/Requirements_EN.md` §4 F-05, F-07; `docs/PLAN.md` SC-3-02, SC-3-03, SC-5-01;
+  `ADR-0004-wersjonowanie-kalkulacji.md` (aneks 2026-09-23 SC-5-06, nowy); `ADR-0005-model-dostepu.md`
+  (aneksy SC-3-02 pkt 7, SC-3-03 pkt 3–4/8, SC-5-01 pkt 4/5/7); `ADR-0008-przedzialy-obowiazywania.md`
+  (aneks SC-3-03 pkt 7–10); `ADR-0013-koszt-osobowy.md` (aneks 2026-09-23 SC-5-06, nowy).
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
