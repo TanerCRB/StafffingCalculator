@@ -11,6 +11,6 @@ current when a new sensitive area is created; the Architect maintains it, not ju
 | `backend/app/core/money.py`, `frontend/src/lib/money.ts` | ADR-0002, ADR-0006 | The only place `Decimal`/rounding and currency conversion are allowed to happen |
 | `backend/app/models/**` | ADR-0004, ADR-0007, ADR-0009 | Calculation versioning, concurrent-edit rules, write-from-UI contract |
 | `backend/app/api/**`, `frontend/src/api/contracts/**` | ADR-0005, ADR-0009 | Access model / permission pipeline, API surface contract |
-| `backend/app/domain/**` | ADR-0013, ADR-0014 | Personnel-cost and additional-cost calculation rules |
+| `backend/app/domain/**` | ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0013, ADR-0014 | Revenue/personnel-cost/additional-cost calculation rules; code combining amounts from more than one of these (e.g. profit/margin/markup, F-10) crosses money handling (ADR-0002), the revenue model (ADR-0003), snapshot-vs-live reading (ADR-0004) and the personnel-cost gate (ADR-0005) at once — row widened 2026-09-24, impact map SC-7-01 |
 | any new/changed public API endpoint, response field or event | ADR-0005, ADR-0009 | Public contract surface |
 | any new or upgraded dependency (package manifest, lock file) | — | Supply-chain surface, see `security-auditor.md` |

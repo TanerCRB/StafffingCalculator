@@ -491,6 +491,10 @@ def test_k_09_the_calendar_and_absence_type_dictionaries_are_the_sixth_and_seven
         # the claim of this canary (the catalogue tables take no permission of their own) holds.
         Permission.COMMERCIAL_READ,
         Permission.COMMERCIAL_WRITE,
+        # Re-armed again in SC-7-01, not loosened: ADR-0005's aneks of 2026-09-24 adds this one for
+        # the whole-scenario result — a composition over three already-permissioned calculations,
+        # not a catalogue table — so the claim of this canary holds unchanged.
+        Permission.RESULTS_READ,
         # Re-armed in SC-6-01 (Issue #11, gate 1 decision 2), not loosened: `SCENARIO_COPY` is a
         # scenario action, not a catalogue table, so this canary's claim is unaffected by it.
         Permission.SCENARIO_COPY,
@@ -499,7 +503,7 @@ def test_k_09_the_calendar_and_absence_type_dictionaries_are_the_sixth_and_seven
         "decides that calendars and absence types are the sixth and seventh dictionaries of the "
         "catalogue and take no permission of their own."
     )
-    assert len(Permission) == 13
+    assert len(Permission) == 14
 
 
 def test_k_09_the_two_new_dictionaries_hold_a_caller_with_no_identity_out_as_well(

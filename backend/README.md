@@ -116,3 +116,21 @@ everyone holding `CATALOG_READ` sees every subcontractor's price list. What does
 of the shaping layer is the personnel-cost gate: `app.api.response_shaping.shape_catalog_rate`
 removes `default_cost_rate` for a caller without `PERSONNEL_COSTS_READ` — for a vendor row exactly
 as for an internal one.
+
+### `RESULTS_READ` (SC-7-01)
+
+`GET /projects/{project_id}/scenarios/{scenario_id}/results` (F-10) declares `RESULTS_READ` — new,
+for the same reason `COMMERCIAL_READ`/`STAFFING_READ` are new (ADR-0005, aneks 2026-09-24): the
+result composes revenue, personnel cost and additional cost, each already read under its own
+permission, and folding it under any one of them would make it look like a read of that one
+calculation. Like the others it carries no scope of its own — `project_access` still decides which
+projects, inherited through `scenario_id → scenarios.project_id`.
+
+`profit`, `margin`, `markup` and `included_cost` are additionally gated field-by-field on the same
+conjunction SC-5-01 introduced (`PERSONNEL_COSTS_READ` ∧ `project_access.
+can_view_personnel_costs`), applied by `app.api.response_shaping._without_scenario_profitability` —
+a fourth field-removal function beside `_without_personnel_costs` (project payloads),
+`_without_catalog_personnel_costs` (catalogue rows) and `_without_scenario_personnel_costs` (a
+scenario's base personnel cost, reused unchanged for this endpoint's `personnel_cost` field).
+`revenue` and `additional_cost` are never gated: neither is a personnel cost by nature (SC-4-01,
+SC-5-05), and both stay visible even when the four aggregate fields are withheld.

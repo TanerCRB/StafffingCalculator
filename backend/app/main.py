@@ -8,6 +8,7 @@ from app.api.deps import assert_identity_mechanism_allowed
 from app.api.health import router as health_router
 from app.api.personnel_cost import router as personnel_cost_router
 from app.api.projects import router as projects_router
+from app.api.scenario_results import router as scenario_results_router
 from app.api.scenarios import router as scenarios_router
 from app.api.staffing import router as staffing_router
 from app.core.config import settings
@@ -55,3 +56,8 @@ app.include_router(personnel_cost_router)
 # with no cost conjunction (ADR-0014, point 11; ADR-0005, aneks 2026-09-23 SC-5-05). Not a verb on
 # the personnel-cost router: the two modules never import each other (ADR-0014, "Konsekwencje").
 app.include_router(additional_cost_router)
+# Same nesting, seventh router (SC-7-01): the scenario-wide profit, margin and markup declares
+# `RESULTS_READ` on the endpoint and gates four of its fields on `PERSONNEL_COSTS_READ` ∧
+# `can_view_personnel_costs` in response shaping (ADR-0005, aneks 2026-09-24) — a composition over
+# the three routers above, never a fourth independent calculation (F-06).
+app.include_router(scenario_results_router)

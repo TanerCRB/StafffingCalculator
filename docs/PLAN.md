@@ -1400,4 +1400,30 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, R-01, testy algorytmu nazewnictwa) — 701 testów backendowych zielono, 234
   frontendowych bez zmian. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-7-01** — Wylicz i udostępnij zysk, marżę i markup scenariusza jako sumę całościową
+  (F-10, część). Zarezerwowane, kryteria (K-01..K-06) i decyzje bramki 1 w Issue #12.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-06 (analyst 2026-09-24): (1) arytmetyka
+  zysku/marży/markupu na żywym endpointzie zgodna z AC-01; (2) przychód rozstrzygnięty jako zero →
+  zysk/strata liczbowe, marża `"n/a"` (AC-05), dowiedzione na żywym endpointzie, nie tylko na
+  `ratio_percent`; (3) scenariusz spoza zasięgu wołającego nieodróżnialny od nieistniejącego;
+  (4) trzy składowe `included_cost` (koszt bazowy SC-5-01, nieobecności płatne SC-5-06, koszt
+  dodatkowy fixed-amount SC-5-05) addytywne, żadna nie liczona dwa razy ani po cichu pominięta;
+  (5) składowa w stanie nazwanym niekalkulowalnym przenosi swoją własną nazwę stanu, nigdy nie
+  udaje liczby; (6) nowe uprawnienie `RESULTS_READ` bramkuje dostęp do endpointu, część wyniku
+  pochodząca z kosztu osobowego dodatkowo bramkowana koniunkcją `PERSONNEL_COSTS_READ` ∧
+  `can_view_personnel_costs` (czwarta funkcja kształtująca, ADR-0005 aneks 2026-09-24), koszt
+  dodatkowy wchodzi bez koniunkcji.
+  **Out of scope (explicit):** rozbicie na okresy raportowania (miesiące) — źródła nie niosą dziś
+  kwoty per miesiąc, warunek domknięcia: rozszerzenie źródeł jako osobne zadanie; planned hours/FTE
+  i billable ratio — brak dziś powierzchni API, osobne przyszłe zadanie; deviation from target
+  margin — wymaga marży z tego zadania, osobne zadanie zaraz potem; procentowe/headcount'owe
+  kategorie kosztu dodatkowego (F-08 reszta, SC-5-07+) — zobowiązanie naprzód: rozszerzają
+  `included_cost` w swoim PR; wykresy/eksport (F-11); ekran wyników (osobne zadanie frontendowe);
+  agregacja wielu scenariuszy jednego Projektu w jedną liczbę — "complete project" w F-10 rozumiane
+  tu jako pojedynczy scenariusz (ADR-0005 aneks 2026-09-24 pkt 6).
+  Podstawa: `Wymagania/Requirements_EN.md` §3, §4 F-10/F-13, §7 AC-01/AC-05;
+  `docs/architecture/decisions/ADR-0002-obsluga-pieniedzy.md` (aneks 2026-09-24);
+  `docs/architecture/decisions/ADR-0005-model-dostepu.md` (aneksy SC-5-01 pkt 4/5, SC-5-05 pkt 5,
+  aneks 2026-09-24); `docs/architecture/capabilities.md` (SC-4-01, SC-5-01, SC-5-05, SC-5-06).
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
