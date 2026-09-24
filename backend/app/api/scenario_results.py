@@ -38,17 +38,56 @@ exception's `revenue_source`/`cost_source` attributes.
 
 **Read only.** There is nothing to write: the three components are written under their own
 permissions (`COMMERCIAL_WRITE`, `STAFFING_WRITE`).
+
+## `GET /projects/{project_id}/scenarios/compare` — N scenarios of the same project, one call
+(SC-6-02, F-09 pkt 2; ADR-0001/ADR-0005, aneks 2026-09-24)
+
+**A comparison, not a new calculation.** `compare_scenario_results` calls
+`scenario_results_for_caller`/`shape_scenario_results` once per named `scenario_id`, unchanged —
+the same functions, the same gates, the same race guard `read_scenario_results` above already uses.
+Nothing here sums, nets or averages a field across the compared scenarios (ADR-0005 aneks SC-7-01
+pt.6, reconfirmed for this endpoint): the response is N independent rows.
+
+**Scope, by construction, never a second check.** `scenario_id` is repeated as a query parameter;
+each one is resolved by the *same* call this module already makes, which resolves scope through
+`project_for_caller`/`Project.scenarios` (ADR-0001, addendum 2026-09-19) via
+`app.data.staffing.scenario_in_scope`. A `scenario_id` from a project other than the one in the URL
+path is not even nameable in this request's scope — the collection it would have to appear in
+belongs to a different project — so it answers the same `404` as a nonexistent id, not a distinct
+code path.
+
+**All-or-nothing, both ways (gate-1 decision, not a partial-success shape).** The first named
+`scenario_id` that does not resolve for the caller refuses the *whole* response with `404`
+(`SCENARIO_RESULTS_NOT_FOUND_DETAIL`) — identical body to naming only that one id. The first named
+`scenario_id` whose composed read raises `ScenarioResultsRaceDetected` refuses the whole response
+with `409` — never a partial `200` with a per-row marker for either failure.
+
+**Zero or one `scenario_id`.** Neither is rejected specially: zero yields `{"results": []}`, one
+behaves exactly like the single-scenario endpoint's numbers wrapped in one row. The gate-1 decision
+deliberately does not mandate a minimum count.
+
+**Bounded above** (R-01, Reviewer and Security Auditor, independently, 2026-09-24 — the same shape
+of defect `MAX_ALLOCATION_MONTHS` fixes in `app.api.schemas.staffing`, one router over). Each named
+`scenario_id` costs `scenario_results_for_caller` three-or-more sequential round trips on the one
+`Session` this request holds (`commercial_terms_for_caller`, `scenario_cost_for_caller`,
+`additional_costs_for_caller`) — unbounded, a query string naming thousands of ids serialises
+thousands of round trips before any response is sent, on an endpoint `RESULTS_READ`'s placeholder
+membership (ADR-0005) makes reachable by any caller today. `scenario_id`'s `Query(...,
+max_length=MAX_COMPARE_SCENARIOS)` below refuses an over-length list the same way FastAPI/Pydantic
+already refuses one (`422`, `too_long`) before this module's handler — hence before the database
+round-trip loop — ever runs, the same division of labour `StaffingAllocationEntry`'s bound relies
+on.
 """
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.response_shaping import shape_scenario_results
-from app.api.schemas.scenario_results import ScenarioResults
+from app.api.schemas.scenario_results import ScenarioResults, ScenarioResultsComparison
 from app.core.identity import CallerIdentity, Permission
 from app.data.scenario_results import ScenarioResultsRaceDetected, scenario_results_for_caller
 from app.db.session import get_session
@@ -56,6 +95,24 @@ from app.db.session import get_session
 router = APIRouter(
     prefix="/projects/{project_id}/scenarios/{scenario_id}/results", tags=["scenario-results"]
 )
+
+MAX_COMPARE_SCENARIOS = 50
+"""The most `scenario_id`s one comparison request may name (R-01, Reviewer/Security Auditor,
+2026-09-24 — the same shape of bound as `app.api.schemas.staffing.MAX_ALLOCATION_MONTHS`).
+
+F-09 describes "≥3" as typical PM usage, not an API ceiling — this is not that number. It is a
+plausibility bound on work a client chooses the size of: a project's scenarios are variations of
+one plan, not an open-ended catalogue, so comparing a few dozen at once is already generous
+headroom over any real use this task's Issue describes, while keeping the per-request cost
+bounded — at three-or-more sequential round trips per id (`scenario_results_for_caller`), 50 ids is
+at most ~150 round trips, not an unbounded number chosen by whoever sends the request."""
+
+compare_router = APIRouter(
+    prefix="/projects/{project_id}/scenarios", tags=["scenario-results"]
+)
+"""A router of its own, not a route on `router` above: `router`'s prefix already carries
+`{scenario_id}/results`, a single-scenario address this endpoint's `/compare` is not — it names a
+*set* of scenarios via a repeated query parameter instead (gate-1 decision, SC-6-02)."""
 
 SCENARIO_RESULTS_NOT_FOUND_DETAIL = "Scenario not found."
 """The same wording as `app.api.scenarios.SCENARIO_NOT_FOUND_DETAIL`: the thing that may not exist
@@ -109,3 +166,85 @@ def read_scenario_results(
             status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_RESULTS_NOT_FOUND_DETAIL
         )
     return shape_scenario_results(view, caller)
+
+
+@compare_router.get(
+    "/compare",
+    response_model=ScenarioResultsComparison,
+    summary=(
+        "Compare the whole-life profit, margin and markup of several scenarios of the same "
+        "project, in one call"
+    ),
+    responses={
+        404: {
+            "description": "Refused: at least one named scenario_id is not the caller's, does "
+            "not exist, or belongs to another project. The whole response is refused, never a "
+            "partial result with the missing one marked."
+        },
+        409: {
+            "description": "Refused: at least one named scenario's approval status changed "
+            "while this endpoint was composing its result. Retry. The whole response is "
+            "refused, never a partial result with the racing one marked."
+        },
+        422: {
+            "description": f"Refused: more than {MAX_COMPARE_SCENARIOS} scenario_id values "
+            "named in one request (R-01) — refused by request validation, before any database "
+            "round trip."
+        },
+    },
+)
+def compare_scenario_results(
+    project_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+    scenario_id: Annotated[
+        list[uuid.UUID],
+        Query(
+            default_factory=list,
+            max_length=MAX_COMPARE_SCENARIOS,
+            description="Repeat to name each scenario to compare, e.g. "
+            "?scenario_id=<uuid>&scenario_id=<uuid>. All must belong to project_id; omitted "
+            "means an empty comparison, never 'every scenario of this project'. Refused "
+            f"(422) above {MAX_COMPARE_SCENARIOS} ids (R-01).",
+        ),
+    ],
+) -> ScenarioResultsComparison:
+    """N independent rows, one per named `scenario_id`, in request order — never an aggregate
+    across them (ADR-0005 aneks SC-7-01 pt.6).
+
+    Composes `app.data.scenario_results.scenario_results_for_caller` and
+    `app.api.response_shaping.shape_scenario_results` once per id, unchanged — the same functions,
+    same gates and same race guard `read_scenario_results` above uses for one scenario. No new
+    query, no new arithmetic (F-06, ADR-0002 not engaged — see module docstring).
+
+    - **200** — every named `scenario_id` resolved; `results` carries one `ScenarioResults` row per
+      id, each exactly what the single-scenario endpoint would answer for it, in the same order as
+      requested. Personnel-cost gating (K-06) is applied per row, independently — a caller without
+      `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` for this project sees `null` on
+      `profit`/`margin`/`markup`/`included_cost` on *every* row; `revenue`/`additional_cost` stay
+      visible on every row either way.
+    - **404** — the first named `scenario_id` that is not the caller's, does not exist, or belongs
+      to a project other than `project_id`: refuses the whole response with the same body a request
+      naming only that one id would get (`SCENARIO_RESULTS_NOT_FOUND_DETAIL`). Scenarios of another
+      project cannot be named at all in this request's scope by construction — path fixes
+      `project_id`, and scope resolves through that project's own `Project.scenarios` collection.
+    - **409** — the first named `scenario_id` whose composed read finds the scenario's approval
+      status disagreeing between its two internal reads (`ScenarioResultsRaceDetected`): refuses the
+      whole response, never a partial `200` with the racing scenario marked.
+    - **403** — the permission dependency (`RESULTS_READ`), before the database.
+    - **422** — more than `MAX_COMPARE_SCENARIOS` (R-01) named `scenario_id` values: refused by
+      request validation, before this function body — hence before the database round-trip loop —
+      ever runs.
+    """
+    rows: list[ScenarioResults] = []
+    for one_scenario_id in scenario_id:
+        try:
+            view = scenario_results_for_caller(session, caller, project_id, one_scenario_id)
+        except ScenarioResultsRaceDetected as race:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(race)) from None
+        if view is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_RESULTS_NOT_FOUND_DETAIL
+            )
+        rows.append(shape_scenario_results(view, caller))
+    return ScenarioResultsComparison(results=rows)
