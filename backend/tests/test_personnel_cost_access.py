@@ -263,7 +263,17 @@ def test_k_04_the_scenario_cost_fields_are_their_own_set_and_the_projects_stays_
     3): the amount and the rates, in a set of their own; `PERSONNEL_COST_FIELDS` of the project
     payload untouched and still empty (its own canary,
     `test_project_personnel_cost_visibility.py::test_k_06_…`, stays as it was)."""
-    assert SCENARIO_COST_FIELDS == frozenset({"amount", "assumptions_used"})
+    assert SCENARIO_COST_FIELDS == frozenset(
+        {
+            "amount",
+            "assumptions_used",
+            # SC-5-06 (gate 1, Q-1; ADR-0013 aneks 2026-09-23 SC-5-06, point 6): re-armed, still
+            # an equality — the paid-absence amount, its budget part and its assumptions.
+            "paid_absence_amount",
+            "paid_absence_budget_amount",
+            "paid_absence_assumptions_used",
+        }
+    )
     assert PERSONNEL_COST_FIELDS == frozenset()
 
 

@@ -18,6 +18,11 @@ project outside the caller's scope, a project that does not exist and a scenario
 project are one `404` (criterion K-05). A scenario whose cost cannot be stated is not one of them —
 it is a `200` with a named state.
 
+**Two components, never a total** (SC-5-06; ADR-0013, aneks 2026-09-23 SC-5-06): the base cost
+(`amount`) and, beside it, the cost of paid absences (`paid_absence_*`), each with its own state.
+The paid-absence amount, its budget part and its assumptions go through the same conjunction as the
+base amount; neither component is ever added to the other here (the total is plan block 7's).
+
 **Read only.** There is nothing to write: the inputs are the staffing grid (written under
 `STAFFING_WRITE`) and the catalogue (under `CATALOG_WRITE`).
 """
