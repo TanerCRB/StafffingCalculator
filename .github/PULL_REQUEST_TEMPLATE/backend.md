@@ -7,9 +7,12 @@ worse than empty, because it looks like it was checked.
 
 Backend (Python/FastAPI) version. The frontend variant has its own invariant list — see
 PULL_REQUEST_TEMPLATE-frontend.md in this directory.
+
+Refs, not Closes: merging this PR must leave the Issue open, waiting for gate 3
+(`state:evidence`). The gate-3 documentation PR is the one that says "Closes #<N>".
 -->
 
-Closes #
+Refs #
 
 ## What is changing and why
 

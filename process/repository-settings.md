@@ -1,5 +1,8 @@
 # Product repository settings
 
+> Generic kit template (`<owner>/<repo>` placeholders throughout) — not yet confirmed applied to
+> `TanerCRB/StafffingCalculator`. Run the `check` commands before trusting any row below.
+
 A list of things that must be the same in every production repository, and those that
 **deliberately** differ. A GitHub setting leaves no trace in the repository and can't be reviewed
 in a diff — that's why this document describes the **target state**, and the "check" column says

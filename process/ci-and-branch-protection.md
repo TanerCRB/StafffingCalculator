@@ -1,5 +1,8 @@
 # Branch protection and CI on pull request
 
+> Generic kit reference. This repository's actual settings, and where they deliberately differ,
+> are recorded in `process/repository-settings.md`.
+
 Concerns running CI on `pull_request` and (when the plan allows it) protecting the `main` branch.
 
 `tools/sync-github.mjs` deliberately does not touch the `workflows/` directory: changes there and

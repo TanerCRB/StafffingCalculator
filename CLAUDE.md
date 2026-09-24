@@ -29,9 +29,10 @@ output. Full mechanics: `.claude/commands/task.md` (drives one task end to end) 
 `.claude/commands/task-status.md` (read-only status report).
 
 Three human gates, never crossed by an agent: **1** scope/architecture before code,
-**2** merge into `main`, **3** raising status in `docs/PLAN.md` / capabilities registry. The
-`waiting-on-human` label marks all of them — `is:open label:waiting-on-human` finds everything
-stuck on you.
+**2** merge into `main`, **3** merge of the separate documentation PR (`Closes #N`) that raises
+status in `docs/PLAN.md` / capabilities registry — merging the code PR (`Refs #N`) only moves the
+Issue to `state:evidence`, it doesn't close it. The `waiting-on-human` label marks all three —
+`is:open label:waiting-on-human` finds everything stuck on you.
 
 ## Hard rules for every session in this repo
 

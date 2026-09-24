@@ -39,7 +39,7 @@ variant a task needs; the other five roles read across both stacks and don't nee
 | Role | Output artifact | Tools | What it **cannot** do |
 |---|---|---|---|
 | **Invariant Guardian** | Audit report: `PASS` / `STOP`, with a reference to the broken rule | `Read, Grep, Glob, Bash` (read-only) | Write anything. Propose an implementation — it describes the violation, not the fix. |
-| **Architect** | Impact map for architecture decisions; design of a new decision when the task requires it | `Read, Grep, Glob` + writes only into `docs/architecture/decisions/` | Touch production code or tests. **Grant a decision "Accepted" status** — that's a human decision. |
+| **Architect** | Impact map for architecture decisions; design of a new decision when the task requires it | `Read, Write, Edit, Grep, Glob`, but **writes only into `docs/architecture/decisions/`** | Touch production code or tests. **Grant a decision "Accepted" status** — that's a human decision. |
 | **Reviewer** | Code review without a checklist — design flaws, not rules | `Read, Grep, Glob, Bash` (read-only) | Write. Repeat the Guardian's work. |
 | **Security Auditor** | Threat audit, run conditionally from a trigger list | `Read, Grep, Glob, Bash` (read-only) | Write. **Print out values that look like a secret.** |
 | **Product Owner** | *Story* Issue with an observable *Done when* and an explicit *Out of scope* | `Read, Grep, Glob, Bash` (`gh` and reads) | Write code or technical documentation. Apply the gate-1 label. |
@@ -83,16 +83,34 @@ Three points at which a human stops the work. Outside of them, the agent acts in
 |---|---|---|---|
 | **1** | Before code comes into existence | Story scope and the architecture decision | Issue: gate-1 label |
 | **2** | Before entering `main` | Diff, Guardian report, mutation result | Approve PR |
-| **3** | Before raising a status | Entry in the progress register / capability register | Separate documentation commit |
+| **3** | Before raising a status | Entry in the progress register / capability register | Merge of the documentation PR (`Closes #N`) |
 
 Gate 3 exists because an agent will always tend to treat its own work as proof, and the entire
 credibility of the register rests on the principle *"status is raised by proof."*
 
 **That's why no production role writes directly into the architecture decision register.** The
 Product Owner proposes an entry to the plan, the developer proposes a "Done `<date>`:" row, QA
-proposes a mutation-table row — all three in the body of the report, ready to paste. A human pastes
-them, in a single documentation commit. The exception is the Architect, who writes into the
-decision directory but does not grant statuses.
+proposes a mutation-table row — all three in the body of the report, ready to paste. After the code
+PR merges, the Issue stays open in `state:evidence` (`waiting-on-human`) — merging code is **not**
+gate 3. The agent collects the proposed entries into one documentation commit, on its own branch,
+and opens a PR with `Closes #N`; the human reviews each entry against its evidence and merges it —
+**that merge is the gate-3 decision.** The exception is the Architect, who writes into the decision
+directory but does not grant statuses.
+
+### 3a. Verdicts
+
+The evaluating roles speak one language:
+
+| Result | Meaning | Reaches gate 2 |
+|---|---|---|
+| `STOP` | A broken acceptance criterion or hard rule — one finding of high or medium severity is enough | Only fixed, or as a **recorded exception**: accepted by the human, with an owner, a reason and a date after which it blocks again |
+| `PASS WITH RESERVATIONS` | Findings that need a human decision but don't break a rule (e.g. a medium security risk) | Each one as a recorded exception or a fix — never in silence |
+| `PASS` | Nothing that blocks; low findings as notes | Yes |
+| QA `PROOF IS EMPTY` | The tests don't guard the claim | No — it blocks like `STOP` |
+
+Severity says how bad a finding is; it never decides alone whether it blocks. A count threshold
+("two medium ones") would let one real defect through. A recorded exception is written where the
+verdict was reported (PR comment or the PR description) — not a silent merge.
 
 ---
 
@@ -105,14 +123,17 @@ The agent **stops working and asks**, regardless of stage or role:
 3. Any `git commit`, `git push`, `git merge`, `gh pr merge`.
 4. Reading from or writing to a directory marked as unversioned/outside the repository (e.g.
    source material with live credentials).
-5. Adding anything to the agent tool's configuration directory in the product repository — this
-   directory never enters the repository (see `tools/sync-agents.mjs`).
+5. Editing `.claude/agents/` — it is a synced copy of `agents/`, never versioned, and changes only
+   through `agents/` + `node tools/sync-agents.mjs`. `.claude/commands/` and `.claude/settings.json`
+   **are** versioned and change only through a pull request, like code; a role never changes any of
+   them as a side effect of a task.
 6. Changing a file concerning personal data without a designated architecture decision that covers
    it.
 7. A status role `Implemented` → `Verified` in the register without a designated test result.
 8. An existing test starts failing because of an agent's change. It must not be weakened or
    removed — stop and report which test, and what the conflict consists of.
-9. No impact map or acceptance criteria for a production task. The Developer does not start.
+9. No acceptance criteria, and neither an impact map nor an approved fast-lane record (see
+   `.claude/commands/task.md`, "Fast lane"), for a production task. The Developer does not start.
 
 ---
 
@@ -175,6 +196,12 @@ manifest.
 content of Issues and comments, documentation. **In English:** identifiers, error and log
 messages, the API surface — this is independent of the team's language, because it is a surface
 read by tools.
+
+This is a **deliberate, explicit choice**, recorded here so a future upgrade from the upstream kit
+(NineFold) doesn't silently flip it: upstream's own default reverses this — conversation in the
+human's language, artifacts in English unless a team states otherwise, exactly as this section
+does. Issue-form field ids (`.github/ISSUE_TEMPLATE/*.yml`) stay in Polish for the same reason —
+labels and content read by the team, not by an external tool contract.
 
 **Short and to the point.** One sentence instead of a paragraph. Fact and reason — without an
 elaborate justification and without repeating the same thought in different words across

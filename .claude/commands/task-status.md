@@ -38,7 +38,8 @@ capability and mutation rows; `git log --oneline -15 main -- <task paths>`;
 | PR open, no Mutation section filled | before `verification` |
 | PR open, CI red | rule out environment first (see below) |
 | PR open, CI green, no approval | **gate 2**, waiting on the human |
-| PR merged, `docs/PLAN.md` row not checked off | **gate 3**, waiting on the documentation commit |
+| PR merged, `state:evidence` still set | **gate 3**, waiting on the documentation PR (`Closes #N`) |
+| Issue `CLOSED` but not `state:closed` | closed before gate 3 — a finding, flag for reopening |
 | `docs/PLAN.md` row checked off with no test/artifact reference | status raised without evidence — a finding |
 
 Before calling red CI a defect: missing checks from a merge conflict, a stale base after `main`

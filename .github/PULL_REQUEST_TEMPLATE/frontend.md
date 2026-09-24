@@ -7,9 +7,12 @@ worse than empty, because it looks like it was checked.
 
 This is the version for `frontend/`. The backend has its own, in PULL_REQUEST_TEMPLATE.md, with an
 invariant list about money handling, access control, and migrations.
+
+Refs, not Closes: merging this PR must leave the Issue open, waiting for gate 3
+(`state:evidence`). The gate-3 documentation PR is the one that says "Closes #<N>".
 -->
 
-Closes #
+Refs #
 
 ## What is changing and why
 
