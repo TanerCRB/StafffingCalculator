@@ -69,10 +69,10 @@ potrzebne jest jedno miejsce, nie rozproszenie po ADR-0003/ADR-0008 zadanie po z
 
 Narzutów/premii/benefitów i kosztu w pełni obciążonego (SC-5-02); kwoty stałej jako podstawy
 (SC-5-03); podstawy FTE (SC-5-04); stawek kosztowych dziennych/miesięcznych (katalog dziś wymusza
-`unit = 'hour'` w bazie); kosztu nieobecności płatnych (`absence_type.generates_cost`, budżet
-urlopowy — inna podstawa godzin, własna reguła bramki ADR-0005 aneks SC-3-03 pkt 4); kosztów
-poddostawców na pozycji (pozycja nie ma dziś `vendor_id`); przeliczenia walut (niezgodność jest
-stanem nazwanym, nie kursem — ADR-0006 bez zmian).
+`unit = 'hour'` w bazie); kosztów poddostawców na pozycji (pozycja nie ma dziś `vendor_id`);
+przeliczenia walut (niezgodność jest stanem nazwanym, nie kursem — ADR-0006 bez zmian); kosztu
+nieobecności płatnych rozstrzyga aneks 2026-09-23 SC-5-06 niżej (dopłata budżetu, wpływ na
+przychód, `generates_revenue` — pozostają poza zakresem, patrz aneks).
 
 ## Konsekwencje
 
@@ -117,3 +117,43 @@ Pkt 2 w brzmieniu "okna tej samej krotki i miesiąca niezgodne walutą między s
 | W-1 | Zmiana samej waluty okna w trakcie miesiąca przy tej samej kwocie stawki kosztowej → `no_cost_rate`, nie `currency_mismatch`. |
 | W-2 | Dwie pozycje rozstrzygnięte w różnych walutach → `currency_mismatch`, obie waluty w `assumptions_used.currencies`; stawki w jednej walucie przy innej `scenarios.currency` → `currency_mismatch`; kontrast ze zgodną walutą → `calculated`. |
 | W-3 | Pusty plan: `scenarios.currency` zadeklarowana → `calculated`, `0.00` w tej walucie; brak → `no_cost_currency`, bez kwoty. |
+
+### 2026-09-23 — koszt nieobecności płatnych jako osobna składowa (SC-5-06)
+
+**Status:** Draft — pending approval
+
+1. Składowa "koszt nieobecności płatnych" jest osobna od kosztu bazowego z pkt 3. Pkt 4 ("worked
+   time = `planned_allocation_hours`") zostaje bez zmian, źródło godzin tej składowej jest inne i
+   nazwane osobno.
+2. Źródło godzin: (a) ręczne instancje nieobecności typu z `generates_cost = true`, liczone jak w
+   pojemności (SC-3-02); (b) dla typu `is_statutory_leave` z `generates_cost = true` dodatkowo
+   dopłata budżetu `BudgetShare.hours` (ADR-0008 aneks SC-3-03 pkt 9–10). Nigdy pełny budżet
+   dodany do wpisów ręcznych — urlop ustawowy w koszcie = wpisy ręczne + dopłata, nie ich suma z
+   pełnym uprawnieniem.
+3. Stawka: predykat z pkt 1 (bez zmian), rozstrzygana per (pozycja, miesiąc). Koszt nieobecności
+   liczy się wyłącznie w miesiącach z wierszem alokacji (zakres migawki, ADR-0004 aneks
+   2026-09-23 SC-5-06, bez zmian zakresu). Dolicza się niezależnie od wielkości
+   `planned_allocation_hours` — ryzyko podwójnego liczenia przy nieodjętym urlopie z planu
+   świadomie przyjęte, nienaprawiane tym zadaniem.
+4. Stany: `no_calendar`, `no_budget`, `no_statutory_leave_type` to stany nazwane **składowej**,
+   nigdy `0`. Kwota bazowa (pkt 3) i jej kształt (dwa kształty, zakaz sumy częściowej) pozostają
+   nietknięte — brak sumy łącznej kosztu osobowego w tym zadaniu (suma → blok 7). `no_budget` przy
+   zatwierdzonym scenariuszu (po aneksie ADR-0004 SC-5-06 pkt 5) oznacza wyłącznie "typ kosztowy
+   albo nienazwany i brak okna" — nigdy "typ nie został zamrożony" (typ ustawowy jest zamrażany
+   zawsze, gdy jest kalendarz).
+5. `cost_basis` składowej = `base` (stawka przed narzutami, pkt 5) — SC-5-02 obejmuje ją tak samo
+   jak koszt pracy.
+6. Kwota (i część budżetowa) podlega tej samej koniunkcji co pkt 7 (`PERSONNEL_COSTS_READ` ∧
+   `can_view_personnel_costs`), nowe pole w `SCENARIO_COST_FIELDS` — trzecia funkcja kształtująca
+   (aneks 2026-09-23 SC-5-01 pkt 4), bez nowego aneksu ADR-0005. Budżet jako liczba dni/godzin w
+   odpowiedzi obsady/katalogu zostaje poza koniunkcją (ADR-0005 aneks SC-3-03 pkt 4).
+7. Poza zakresem: `generates_revenue` (F-05 druga połowa, F-06 rozdziela koszt od przychodu);
+   zapis/edycja `absence_type` (brak ścieżki HTTP, ADR-0005 aneks SC-3-02 pkt 10 — gałąź pozytywna
+   `generates_cost` przyjęta nieosiągalna w produkcji jak SC-5-01, fixture/seed).
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| N-1 | Typ z `generates_cost=false` nie wnosi nic do składowej; kontrast z typem z `true` przy identycznych datach. |
+| N-2 | Urlop ustawowy w koszcie = wpisy ręczne + dopłata budżetu; mutacja "pełny budżet + wpisy ręczne" wywraca test. |
+| N-3 | Brak kalendarza, brak budżetu i brak typu ustawowego to stany nazwane składowej, nigdy `0`; kwota bazowa SC-5-01 nietknięta. |
+| N-4 | Moduł składowej nie importuje ścieżki przychodu (test strukturalny grafu importów, lustro C-5). |

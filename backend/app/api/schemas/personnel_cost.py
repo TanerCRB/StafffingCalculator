@@ -15,6 +15,11 @@ catalogue has no cost rate" and "you may not see the cost rate" one answer. The 
 
 **Money crosses the boundary as a fixed-point string** (`DecimalString`), never a JSON float
 (ADR-0002).
+
+**Since SC-5-06 the payload carries a second, named component** — the cost of paid absences
+(`paid_absence_*`, ADR-0013 aneks 2026-09-23 SC-5-06) — beside the base amount and never summed with
+it. Its amount, its budget part and its assumptions are personnel costs and join
+`SCENARIO_COST_FIELDS`; its state and currency do not.
 """
 
 import uuid
@@ -65,17 +70,76 @@ class CostAssumptionsRead(BaseModel):
     currencies: list[str]
 
 
+PaidAbsenceCostState = Literal[
+    "calculated",
+    "no_calendar",
+    "no_statutory_leave_type",
+    "no_budget",
+    "no_cost_rate",
+    "currency_mismatch",
+    "no_cost_currency",
+]
+"""The paid-absence component's states (ADR-0013, aneks 2026-09-23 SC-5-06, point 4) — the
+calendar's and the budget's own names first, then the base cost's."""
+
+
+class PaidAbsenceMonthHoursRead(BaseModel):
+    """The hours one (position, month) contributes to the paid-absence component."""
+
+    position_id: uuid.UUID
+    period_month: date
+    manual_hours: DecimalString
+    """Working-day hours of booked absences whose type generates cost — never `× headcount`."""
+    budget_hours: DecimalString
+    """The leave budget's top-up share of the month (`0.00` when the statutory type does not
+    generate cost — `budget_part` says which)."""
+    budget_part: Literal["applied", "statutory_leave_not_cost_generating"]
+
+
+class UnresolvedPaidAbsenceMonthRead(BaseModel):
+    """One (position, month) the component could not cost, and why."""
+
+    position_id: uuid.UUID
+    period_month: date
+    reason: Literal["no_calendar", "no_statutory_leave_type", "no_budget", "no_cost_rate"]
+
+
+class PaidAbsenceAssumptionsRead(BaseModel):
+    """What the paid-absence component depends on — gated with its amount. No cost rate here: the
+    rates are the base cost's, in `assumptions_used.rate_windows`."""
+
+    hours_source: Literal["paid_absences_and_leave_budget_top_up"]
+    months: list[PaidAbsenceMonthHoursRead]
+    unresolved_months: list[UnresolvedPaidAbsenceMonthRead]
+    currencies: list[str]
+
+
 class PersonnelCostRead(BaseModel):
-    """The base personnel cost of one scenario, or the named state that withholds it."""
+    """The base personnel cost of one scenario, or the named state that withholds it — and, beside
+    it, the paid-absence component (SC-5-06), never added to it."""
 
     state: PersonnelCostState
     cost_basis: Literal["base"]
-    """Always `"base"`: `default_cost_rate` before overheads (ADR-0013, point 5)."""
+    """Always `"base"`: `default_cost_rate` before overheads (ADR-0013, point 5) — for the base
+    amount and for the paid-absence component alike (aneks 2026-09-23 SC-5-06, point 5)."""
     amount: DecimalString | Literal[NOT_APPLICABLE] | None
     """A fixed-point string when `state` is `"calculated"`, `"n/a"` for a named state — and `null`
-    when the caller may not see personnel costs of this scenario's project."""
+    when the caller may not see personnel costs of this scenario's project. **The base cost only**:
+    the paid-absence component is never included in it (no total in SC-5-06)."""
     currency: str | None
     assumptions_used: CostAssumptionsRead | None
+    """`null` when the caller may not see personnel costs of this scenario's project."""
+
+    paid_absence_state: PaidAbsenceCostState
+    """The component's own state — independent of `state`. Shown to every caller, like `state`."""
+    paid_absence_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The whole component (manual paid absences + budget top-up) × the month's cost rate; `"n/a"`
+    for a named state; `null` when the caller may not see personnel costs."""
+    paid_absence_budget_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The part of `paid_absence_amount` that came from the leave budget's top-up — gated like the
+    amount (point 6)."""
+    paid_absence_currency: str | None
+    paid_absence_assumptions_used: PaidAbsenceAssumptionsRead | None
     """`null` when the caller may not see personnel costs of this scenario's project."""
 
 

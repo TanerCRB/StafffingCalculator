@@ -592,3 +592,40 @@ klauzulę (np. oś poddostawcy). Konsekwencja nazwana: zmiana w `app.data.rate_w
 jednocześnie koszt i przychód i wymaga zielonych testów obu ścieżek. Moduł nie może przyjąć żadnego
 argumentu ani kolumny stawki — dodanie tam predykatu "wyceniony" wymaga nowego aneksu. Pilnowane
 kontrolą C-5.
+
+**Aneks — pierwszy czytelnik migawki kalendarza, budżetu i typu nieobecności (2026-09-23, bramka
+1, SC-5-06).**
+
+1. Koszt nieobecności zatwierdzonego scenariusza czyta `approved_snapshot_working_calendar(_day)`,
+   `approved_snapshot_absence_budget` i `approved_snapshot_absence_type` (w tym `generates_cost` i
+   `is_statutory_leave`), nigdy tabele żywe. Te trzy migawki istnieją i się nie ruszają od SC-3-02/
+   SC-3-03 (dowiedzione), ale do tej pory nie miały czytelnika — SC-5-06 jest pierwszym.
+2. Okno budżetu dla zatwierdzonego scenariusza jest rozstrzygane per miesiąc tym samym predykatem
+   co ścieżka żywa (warunek pkt 7c aneksu SC-3-03 spełniony przez to zadanie).
+3. Zakres migawki bez zmian: koszt nieobecności liczy się wyłącznie w miesiącach z wierszem
+   alokacji, tak jak dziś pojemność i budżet (bramka 1, Q-3 = A) — bez rozszerzenia okien
+   kosztowych/budżetowych migawki, bez działania wstecz.
+4. Nazwane, nie naprawiane: siatka pojemności zatwierdzonego scenariusza nadal czyta żywy
+   kalendarz (SC-3-02, poza zakresem tej migawki), więc po edycji katalogu możliwy jest rozjazd
+   między godzinami pokazanymi w siatce obsady i kosztem nieobecności zatwierdzonego scenariusza
+   liczonym z migawki. Poza zakresem SC-5-06.
+5. **Zmiana kontraktu S-02 (`ApprovedSnapshotAbsenceType`, SC-3-03).** Typ oznaczony
+   `is_statutory_leave` jest zamrażany zawsze, gdy scenariusz ma wiersz alokacji w lokalizacji z
+   kalendarzem, niezależnie od zamrożenia budżetu i od rezerwacji jego instancji. Stary kontrakt
+   ("obecny ⇔ zamrożone budżety obowiązują", pkt 3 aneksu SC-3-03) powstał, gdy jedynym czytelnikiem
+   była pojemność, która używa typu ustawowego wyłącznie przez budżet. Składowa kosztu nieobecności
+   (SC-5-06) czyta `generates_cost` tego typu w KAŻDYM miesiącu z kalendarzem, niezależnie od
+   budżetu — z zasady pkt 3 aneksu SC-3-03 ("kopiuj to, co kalkulacja scenariusza faktycznie
+   czyta") wynika więc, że migawka musi go zamrażać szerzej. To zastosowanie pkt 3, nie wyjątek od
+   niego. Nowy kontrakt: "obecny ⇔ typ był nazwany w chwili zatwierdzenia i scenariusz ma alokację
+   w lokalizacji z kalendarzem". Para strażnika wyścigu S-01 "typ ustawowy ↔ budżety" przestaje
+   istnieć; w jej miejsce wchodzi para "typ ustawowy ↔ kalendarz lokalizacji", chronione tą samą
+   jedną instrukcją zapisu migawki. Bez działania wstecz: scenariusze zatwierdzone przed tym
+   aneksem, z typem nazwanym-niekosztowym i bez zamrożonego budżetu, zostają z `no_budget` w tej
+   składowej na zawsze (migawka nie ma ścieżki UPDATE) — nazwane, nie naprawiane.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| M-1 | Koszt nieobecności zatwierdzonego scenariusza identyczny tuż przed i po zatwierdzeniu; nie zmienia się po edycji kalendarza, budżetu, `generates_cost` ani przeniesieniu `is_statutory_leave` na inny typ. |
+| M-2 | Czytelnik migawki ograniczony do własnego `scenario_id` (kontrast: dwa zatwierdzone scenariusze tej samej krotki katalogu/kalendarza/budżetu, koszty się nie mieszają). |
+| M-3 | Typ ustawowy nazwany, niekosztowy, bez zamrożonego budżetu i bez rezerwowanej instancji — składowa kosztu identyczna tuż przed i po zatwierdzeniu (kontrast z brakiem kalendarza w lokalizacji: tam typ NIE jest zamrażany). |

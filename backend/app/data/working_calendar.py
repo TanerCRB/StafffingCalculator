@@ -15,8 +15,9 @@ of these tables.
 **What this module produces for the calculation is a value object, not an ORM row.**
 `app.domain.capacity.CalendarBasis` is what the capacity formula consumes, and it is deliberately
 the same shape whether it was assembled from the live tables (a `draft` scenario, here) or from an
-approval snapshot (`approved_snapshot_working_calendar`, a future reader). A calculation that took
-ORM rows would have to be rewritten the day it reads a snapshot instead.
+approval snapshot (`approved_snapshot_working_calendar`, read by `frozen_basis_by_location` since
+SC-5-06). A calculation that took ORM rows would have to be rewritten the day it reads a snapshot
+instead.
 """
 
 import uuid
@@ -26,6 +27,10 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session, selectinload
 
 from app.domain.capacity import CalendarBasis
+from app.models.approved_snapshot import (
+    ApprovedSnapshotWorkingCalendar,
+    ApprovedSnapshotWorkingCalendarDay,
+)
 from app.models.catalog import AbsenceType, CatalogLocation, WorkingCalendar
 
 
@@ -82,6 +87,50 @@ def basis_by_location(
     return {
         location_id: basis_of(calendar)
         for location_id, calendar in session.execute(statement).all()
+    }
+
+
+def frozen_basis_by_location(
+    session: Session, scenario_id: uuid.UUID
+) -> Mapping[uuid.UUID, CalendarBasis]:
+    """The calendar basis of each location **as one approved scenario froze it** — the snapshot's
+    counterpart of `basis_by_location`, and the first reader of `approved_snapshot_working_calendar`
+    and `approved_snapshot_working_calendar_day` (ADR-0004, aneks 2026-09-23 SC-5-06, point 1).
+
+    The same return shape as the live function, for the same reason: a location that had no
+    calendar at approval froze no row, so it is absent here and the caller produces the named
+    `no_calendar` state from the absence of a key — never a zero and never a lookup in the live
+    catalogue to fill it in.
+
+    **Only this scenario's rows, by `scenario_id`, in both statements** (control M-2): two approved
+    scenarios of one location may have frozen two different versions of one calendar, and a reader
+    that lost the scenario condition would merge their days into one mapping. The live tables are
+    not read at all; editing the calendar, its days or a location's `calendar_id` after the approval
+    moves nothing here (control M-1).
+    """
+    calendars = session.execute(
+        sa.select(ApprovedSnapshotWorkingCalendar).where(
+            ApprovedSnapshotWorkingCalendar.scenario_id == scenario_id
+        )
+    ).scalars().all()
+    if not calendars:
+        return {}
+    days: dict[uuid.UUID, dict] = {}
+    for row in session.execute(
+        sa.select(ApprovedSnapshotWorkingCalendarDay).where(
+            ApprovedSnapshotWorkingCalendarDay.scenario_id == scenario_id
+        )
+    ).scalars():
+        days.setdefault(row.source_calendar_id, {})[row.day] = row.kind
+    return {
+        calendar.source_location_id: CalendarBasis(
+            calendar_id=calendar.source_calendar_id,
+            name=calendar.name,
+            standard_hours_per_day=calendar.standard_hours_per_day,
+            week_pattern=calendar.week_pattern,
+            exceptional_days=days.get(calendar.source_calendar_id, {}),
+        )
+        for calendar in calendars
     }
 
 

@@ -42,7 +42,6 @@ from app.models import (
     ProjectAccess,
     ScenarioStatus,
     StaffingPosition,
-    WorkingCalendar,
     WorkingCalendarDayKind,
 )
 from tests.conftest import (
@@ -51,7 +50,6 @@ from tests.conftest import (
     STATUTORY_LEAVE_TYPE_NAME,
     approve_path,
     as_caller,
-    count_absence_budgets,
     count_snapshot_rows,
     make_absence,
     make_absence_budget,
@@ -464,13 +462,15 @@ def test_k_19_two_concurrent_approvals_of_one_draft_leave_one_snapshot_not_two(
 #
 # "The first statement, whichever tables it holds" rather than "the statement holding table X" is
 # what makes this catch *every* split, not only the historical one (R-01, 2026-09-23). The three
-# pairs that must agree — calendar ↔ days, calendar ↔ budgets, statutory type ↔ budgets — connect
-# all four tables, so any first statement that is not all of them separates at least one pair from
-# its partner, and the edit then lands between them. A hook keyed to one named table does not: in a
-# split whose *last* statement holds that table (types and budgets first, calendars and days
-# second), it fired after everything had been read, no race happened, and both runs passed on code
-# that had the defect back. Measured on every ordered split of the four copiers; see the report of
-# the R-01 round. `test_s_01_the_snapshot_is_written_by_one_statement` below says the same thing
+# pairs that must agree — calendar ↔ days, calendar ↔ budgets, statutory type ↔ location calendar
+# (the last replaced "statutory type ↔ budgets" in ADR-0004, aneks 2026-09-23 SC-5-06, point 5) —
+# connect all four tables, so any first statement that is not all of them separates at least one
+# pair from its partner, and the edit then lands between them. A hook keyed to one named table
+# does not: in a split whose *last* statement holds that table (types and budgets first, calendars
+# and days second), it fired after everything had been read, no race happened, and both runs passed
+# on code that had the defect back. Measured on every ordered split of the four copiers (R-01
+# round, with the budget pair; re-measured for the calendar pair in SC-5-06).
+# `test_s_01_the_snapshot_is_written_by_one_statement` below says the same thing
 # structurally, so that a split is named as a split and not only as its symptom.
 #
 # The last run (`…_waits_for_the_lock_is_in_the_snapshot`) is the other half of S-01: the one
@@ -647,34 +647,40 @@ def test_s_01_a_location_re_pointed_during_the_approval_cannot_split_a_calendar_
     )
 
 
-def test_s_01_a_budget_committed_during_the_approval_cannot_be_frozen_without_the_statutory_type(
+def test_s_01_a_location_given_a_calendar_during_the_approval_cannot_freeze_it_without_the_statutory_type(  # noqa: E501 — the name is the claim
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """S-01 — the statutory type and the budgets are frozen from **one** catalogue.
+    """S-01 — the statutory type and the location's calendar are frozen from **one** catalogue.
 
-    `ApprovedSnapshotAbsenceType`'s contract: a frozen row with `is_statutory_leave = true` present
-    means the frozen budget applies; absent means nobody had named a statutory type and it applies
-    to nothing. The type here **is** flagged, from the start. There is no budget yet. Right after
-    the approval's first statement that writes any snapshot row, another connection creates the
-    budget the scenario's month reads and commits.
+    The pair "statutory type ↔ location calendar" (ADR-0004, aneks 2026-09-23 SC-5-06, point 5),
+    which replaced SC-3-03's "statutory type ↔ budgets" together with the contract it guarded.
+    `ApprovedSnapshotAbsenceType`'s contract now: a frozen row with `is_statutory_leave = true` is
+    present **iff** a type was named and the scenario has an allocation row in a location with a
+    calendar. The type here **is** flagged, from the start. The planned location has **no**
+    calendar yet. Right after the approval's first statement that writes any snapshot row, another
+    connection points the location at a calendar and commits.
 
-    With one statement: no budget and no flagged type — the catalogue before the edit, and a
-    consistent answer ("no budget to apply"). With the types inserted as their own statement (the
-    code until 2026-09-23): no flagged type, because no budget existed when that statement read the
-    catalogue, and then **one** budget, because the next statement read it — a snapshot that says
-    "a 26-day entitlement, and no statutory type was ever named", i.e. deduct none of it, although
-    the type was named the whole time. Split the other way round (budgets first, types later) it is
-    no budget and a flagged type — (0, 1), outside the allowed set as well.
+    With one statement: no calendar and no flagged type — the catalogue before the edit, and a
+    consistent answer (the `no_calendar` state; nothing for the type to qualify). With the types
+    inserted as their own statement first: no flagged type, because the location had no calendar
+    when that statement read the catalogue, and then **one** calendar, read by a later statement —
+    a snapshot that costs months with a calendar and says "no statutory type was ever named",
+    although it was named the whole time. Split the other way round (calendars first, types later)
+    it is no calendar and a flagged type — (0, 1), outside the allowed set as well.
 
-    The assertion is the invariant — a frozen budget implies the frozen flagged type — plus the
-    contrast that the budget really was committed during the approval.
+    The budget-based predecessor of this test staged "a budget committed mid-approval"; under the
+    new contract a budget no longer decides whether the type is copied, so that race has no pair
+    left to split, and re-pointing the location is the edit that does.
+
+    The assertion is the invariant — a frozen calendar implies the frozen flagged type, and vice
+    versa — plus the contrast that the calendar really was set during the approval.
     """
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         calendar = make_working_calendar(
             setup, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
         )
         make_absence_type(setup, name=STATUTORY_LEAVE_TYPE_NAME, is_statutory_leave=True)
-        dimensions = make_dimension_tuple(setup, calendar=calendar)
+        dimensions = make_dimension_tuple(setup)
         project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
         scenario = make_scenario(setup, project, name="Baseline")
         position = make_staffing_position(
@@ -682,34 +688,36 @@ def test_s_01_a_budget_committed_during_the_approval_cannot_be_frozen_without_th
         )
         make_allocation(setup, position, period_month=MARCH)
         state = {"project_id": project.id, "scenario_id": scenario.id}
+        location_id, calendar_id = dimensions.location_id, calendar.id
         setup.commit()
 
-    def create_the_budget_the_scenario_reads() -> None:
-        with Session(bind=engine, expire_on_commit=False, future=True) as editor:
-            make_absence_budget(
-                editor,
-                editor.get(WorkingCalendar, calendar.id),
-                dimensions.engagement_type_id,
-                budget_days=Decimal("26.00"),
-                effective_from=date(2026, 1, 1),
-                effective_to=date(2026, 12, 31),
+    def give_the_location_a_calendar() -> None:
+        with engine.begin() as editor:
+            editor.execute(
+                sa.update(CatalogLocation)
+                .where(CatalogLocation.id == location_id)
+                .values(calendar_id=calendar_id)
             )
-            editor.commit()
 
     response, fired = _approval_pausing_after(
         committing_client,
         state,
-        catalogue_edit=create_the_budget_the_scenario_reads,
+        catalogue_edit=give_the_location_a_calendar,
     )
 
     assert fired, "the catalogue edit never ran — this run says nothing about the race"
     assert response.status_code == 200, response.text
     with engine.connect() as observer:
-        assert count_absence_budgets(observer) == 1, "the budget did not commit — no race happened"
-        frozen_budgets = observer.execute(
+        assert (
+            observer.execute(
+                sa.select(CatalogLocation.calendar_id).where(CatalogLocation.id == location_id)
+            ).scalar_one()
+            == calendar_id
+        ), "the edit did not commit — the race never happened"
+        frozen_calendars = observer.execute(
             sa.select(sa.func.count())
-            .select_from(ApprovedSnapshotAbsenceBudget)
-            .where(ApprovedSnapshotAbsenceBudget.scenario_id == state["scenario_id"])
+            .select_from(ApprovedSnapshotWorkingCalendar)
+            .where(ApprovedSnapshotWorkingCalendar.scenario_id == state["scenario_id"])
         ).scalar_one()
         frozen_statutory = observer.execute(
             sa.select(sa.func.count())
@@ -720,10 +728,11 @@ def test_s_01_a_budget_committed_during_the_approval_cannot_be_frozen_without_th
             )
         ).scalar_one()
 
-    assert (frozen_budgets, frozen_statutory) in {(0, 0), (1, 1)}, (
-        f"{frozen_budgets} frozen budget(s) and {frozen_statutory} frozen statutory type(s): the "
-        "snapshot says a budget applies to no named statutory type although one was flagged the "
-        "whole time — the types and the budgets were read from two different catalogues"
+    assert (frozen_calendars, frozen_statutory) in {(0, 0), (1, 1)}, (
+        f"{frozen_calendars} frozen calendar(s) and {frozen_statutory} frozen statutory type(s): "
+        "the snapshot costs a month with a calendar and names no statutory type although one was "
+        "flagged the whole time (or the reverse) — the types and the calendars were read from two "
+        "different catalogues"
     )
 
 

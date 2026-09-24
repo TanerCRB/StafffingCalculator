@@ -270,6 +270,26 @@ def _views_of(
     """
     bases = basis_by_location(session, [position.location_id for position in positions])
     statutory = statutory_leave_type(session)
+    keys, months = budget_keys_and_months(positions, bases)
+    budgets = budgets_for_months(session, keys, months)
+    return [
+        position_view(position, bases.get(position.location_id), budgets, statutory)
+        for position in positions
+    ]
+
+
+def budget_keys_and_months(
+    positions: Sequence[StaffingPosition], bases: Mapping[uuid.UUID, CalendarBasis]
+) -> tuple[list[BudgetKey], list[date]]:
+    """The (calendar, engagement type) pairs and the months whose budgets these positions read.
+
+    A position whose location names no calendar contributes nothing: it has no budget either
+    (ADR-0008, addendum 2026-09-22 SC-3-03, point 3a). Public since SC-5-06, because the
+    paid-absence cost (`app.data.paid_absence_cost`) asks the same question — of the live
+    catalogue for a draft, of the approval snapshot for an approved scenario — and a second
+    spelling of "which budgets does this grid read" is how the grid and the cost would come to
+    disagree about one month.
+    """
     keys: list[BudgetKey] = []
     months: list[date] = []
     for position in positions:
@@ -278,20 +298,22 @@ def _views_of(
             continue
         keys.append((basis.calendar_id, position.engagement_type_id))
         months.extend(allocation.period_month for allocation in position.allocations)
-    budgets = budgets_for_months(session, keys, months)
-    return [
-        _view_of(position, bases.get(position.location_id), budgets, statutory)
-        for position in positions
-    ]
+    return keys, months
 
 
-def _view_of(
+def position_view(
     position: StaffingPosition,
     basis: CalendarBasis | None,
     budgets: Mapping[tuple[BudgetKey, date], AbsenceBudget],
     statutory: StatutoryLeaveType | None,
 ) -> StaffingPositionView:
     """One position's view: its months, its absences and the capacity of each month.
+
+    **A pure function of what it is handed** — no `Session`, no query — and public since SC-5-06:
+    the paid-absence cost reads each month's `MonthCapacity.budget` from here, so the budget top-up
+    it costs is by construction the one the capacity subtracts (ADR-0013, aneks 2026-09-23 SC-5-06,
+    point 2b). For an approved scenario the inputs come from the approval snapshot
+    (`app.data.paid_absence_cost`); the rule applied to them is this one, not a copy.
 
     **Which absences count against the budget is decided here, once, from the flagged type** — the
     span carries a `bool` and the capacity formula never sees an absence type id (ADR-0008, addendum
@@ -598,7 +620,8 @@ def _position_by_id(session: Session, position_id: uuid.UUID) -> StaffingPositio
     disagree about the same row. Sessions here run with `expire_on_commit=False` (`app.db.session`),
     which is exactly why this cannot be left to the ORM's expiry.
 
-    The derived capacity goes through the same `_view_of` as the list path, so a write response and
+    The derived capacity goes through the same `position_view` as the list path, so a write
+    response and
     a read response cannot disagree about a figure neither of them stores (K-08).
     """
     statement = (

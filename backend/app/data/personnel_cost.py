@@ -43,12 +43,14 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
+from app.data.paid_absence_cost import paid_absence_months
 from app.data.rate_windows import (
     days_covered_in_month,
     frozen_windows_overlapping,
     internal_catalog_windows_overlapping,
 )
 from app.data.staffing import scenario_view_in_scope
+from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, paid_absence_cost
 from app.domain.personnel_cost import (
     APPROVED_SNAPSHOT,
     LIVE_CATALOG,
@@ -240,6 +242,9 @@ class ScenarioCostView:
     scenario: Scenario
     can_view_personnel_costs: bool
     cost: PersonnelCostAnswer
+    paid_absence: PaidAbsenceCostAnswer
+    """The paid-absence component (SC-5-06; ADR-0013, aneks 2026-09-23 SC-5-06) — beside `cost`,
+    never added to it. Carried on the same view so the same conjunction gates it (point 6)."""
 
 
 def scenario_cost_for_caller(
@@ -258,11 +263,20 @@ def scenario_cost_for_caller(
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
     source, months = _worked_months(session, scenario)
+    # The paid-absence component is costed at **these** rates — the base cost's resolution of each
+    # (position, month), live or frozen by the same status — and asks no predicate of its own
+    # (ADR-0013, aneks 2026-09-23 SC-5-06, point 3). Its hours are read from a different source,
+    # and its amount is never added to the base amount (point 4).
+    rates = {(month.position_id, month.period_month): month.rate for month in months}
     return ScenarioCostView(
         user_id=project_view.user_id,
         scenario=scenario,
         can_view_personnel_costs=project_view.can_view_personnel_costs,
         cost=base_personnel_cost(
             months, rate_source=source, scenario_currency=scenario.currency
+        ),
+        paid_absence=paid_absence_cost(
+            paid_absence_months(session, scenario, rates),
+            scenario_currency=scenario.currency,
         ),
     )

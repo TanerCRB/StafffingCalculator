@@ -45,10 +45,12 @@ snapshot that describes no state the catalogue was ever in:
   freezes calendar A with the days of calendar B;
 - **calendar ↔ budgets** (SC-3-02's pair, point 2 of the SC-3-03 addendum) — the same re-pointing
   freezes calendar A with the budget windows of calendar B;
-- **statutory type ↔ budgets** — a budget committed between the two inserts is frozen while the
-  type flagged `is_statutory_leave` is not, which the snapshot's own contract reads as "nobody had
-  named a statutory type" (`ApprovedSnapshotAbsenceType`): a whole year's entitlement not deducted,
-  for ever.
+- **statutory type ↔ location calendar** (ADR-0004, aneks 2026-09-23 SC-5-06, point 5, replacing
+  SC-3-03's "statutory type ↔ budgets") — a location re-pointed from `NULL` to a calendar between
+  the two inserts freezes the calendar while the type flagged `is_statutory_leave` is not, which
+  the snapshot's own contract reads as "nobody had named a statutory type"
+  (`ApprovedSnapshotAbsenceType`): the entitlement not deducted and the type's `generates_cost`
+  unknown to the paid-absence cost, for ever.
 
 PostgreSQL gives one statement one snapshot, *including every data-modifying `WITH` query inside
 it*. So the four inserts are four CTEs of one statement, issued after step 1 has the lock — which
@@ -105,8 +107,10 @@ always empty, written without an error.
   approved scenario's T&M revenue from the frozen windows, per month, with the same whole-month
   predicate the live read uses (ADR-0004, addendum 2026-09-23 SC-4-01, point 2e) — and, since
   SC-5-01, by `app.data.personnel_cost` too, which costs an approved scenario from the frozen
-  `default_cost_rate` with the cost predicate (aneks 2026-09-23 SC-5-01, point 4). The other four
-  tables still have no reader; theirs is the reproducible report of plan block 8. This module proves
+  `default_cost_rate` with the cost predicate (aneks 2026-09-23 SC-5-01, point 4). Since SC-5-06
+  the calendar, calendar-day, absence-type and absence-budget tables are read by
+  `app.data.paid_absence_cost` (ADR-0004, aneks 2026-09-23 SC-5-06, point 1) — the staffing
+  grid's capacity still reads the live calendar (point 4, named, not repaired). This module proves
   the rows are written and that editing the source afterwards does not move them (K-16).
 """
 
@@ -411,10 +415,12 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
     Criterion K-17's first mutation is adding a snapshot table for the instances, and this function
     is where it would go.
 
-    **The second source is the type flagged `is_statutory_leave`, copied whenever this approval
-    freezes a budget — whether or not the scenario booked anything against it** (reviewer, second
-    round, High). It closes a gap the first version of the R-02 fix opened, and the gap was in the
-    *data* rather than in any behaviour a live read could show:
+    **The second source is the type flagged `is_statutory_leave`, copied whenever the scenario has
+    an allocation row in a location with a calendar — whether or not this approval freezes a budget,
+    and whether or not the scenario booked anything against the type** (ADR-0004, aneks 2026-09-23
+    SC-5-06, point 5, which replaced the SC-3-03 condition "whenever a budget is frozen"). The
+    SC-3-03 version (reviewer, second round, High) closed a gap the first version of the R-02 fix
+    opened, and the gap was in the *data* rather than in any behaviour a live read could show:
 
     - **no type is flagged anywhere in the catalogue** → the budget is not applied at all, because
       nothing says which booked leave it already covers (`NO_STATUTORY_LEAVE_TYPE`);
@@ -428,23 +434,35 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
     repository's own green tests documented the contradiction side by side before anyone noticed it.
 
     With the second source, the presence of a row carrying `is_statutory_leave = true` **is** the
-    fact: present → the type was named and the frozen budget applies; absent → nobody had named one
-    when this was approved, and the frozen budget applies to nothing. How much of the entitlement
-    the scenario's own bookings absorbed is then counted by the reader from the live
-    `staffing_position_absence` rows, which are safe to read for exactly this purpose: they belong
-    to the approved scenario and are frozen by the write guard (ADR-0004, addendum 2026-09-22,
-    point 1).
+    fact (contract S-02 as amended by ADR-0004, aneks 2026-09-23 SC-5-06, point 5): **present ⇔
+    the type was named at approval and the scenario has an allocation in a location with a
+    calendar**. Present → the type was named; any frozen budget applies against it, and the
+    paid-absence cost reads its frozen `generates_cost` in every month with a calendar. Absent while
+    such an allocation exists → nobody had named one when this was approved, and the frozen budget
+    applies to nothing. How much of the entitlement the scenario's own bookings absorbed is then
+    counted by the reader from the live `staffing_position_absence` rows, which are safe to read for
+    exactly this purpose: they belong to the approved scenario and are frozen by the write guard
+    (ADR-0004, addendum 2026-09-22, point 1).
 
-    **It is conditioned on a budget being frozen, not on the scenario merely having positions.** A
-    scenario that freezes no budget — no calendar, or no month rows — has nothing for the flag to
-    qualify, and copying a dictionary entry it never reads would grow the snapshot with the
-    organisation instead of with the calculation (point 3).
+    **Why the condition is the calendar and no longer the budget.** Under SC-3-03 the only reader
+    was the capacity, which uses the statutory type only through a budget, so "a budget is frozen"
+    was exactly what the calculation read. The paid-absence cost (SC-5-06) reads the type's
+    `generates_cost` in every month with a calendar, budget or not — so by point 3 of the SC-3-03
+    addendum ("copy what the calculation actually reads") the copy must be wider. Every month with a
+    frozen budget is a month with a calendar, so the new condition is a superset of the old one and
+    the budget chain was replaced, not kept beside it. Bound on the other side as before: a scenario
+    with no allocation row in a location with a calendar — no calendar, or no month rows — reads no
+    month the flag could qualify, and copying a dictionary entry it never reads would grow the
+    snapshot with the organisation instead of with the calculation (point 3). Scenarios approved
+    before the aneks keep the snapshot they got (no `UPDATE` path) — named, not repaired.
 
-    **The second source and `_copy_absence_budgets` must read the same catalogue**, or the contract
-    above breaks in the one direction nobody would see: a budget committed between the two reads is
-    frozen while the flagged type is not, and the snapshot then says "no statutory type was named".
-    That is why both are CTEs of one statement (`_snapshot_statement`, S-01) and why this function
-    returns the statement instead of executing it.
+    **The second source and `_copy_calendars` must read the same catalogue**, or the contract
+    above breaks: a location re-pointed from `NULL` to a calendar between the two reads freezes the
+    calendar while the flagged type is not, and the snapshot then says "no statutory type was named"
+    for a month it costs. That pair — "statutory type ↔ location calendar" — replaced the SC-3-03
+    pair "statutory type ↔ budgets" (point 5), and it is guarded the same way: both are CTEs of one
+    statement (`_snapshot_statement`, S-01), which is why this function returns the statement
+    instead of executing it.
     """
     booked_source = unapproved_scenario(scenario_id).subquery("open_scenario_types")
     # One row per absence *type*, however many absences of it the scenario holds — the dictionary
@@ -469,10 +487,14 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
     )
 
     statutory_source = unapproved_scenario(scenario_id).subquery("open_scenario_statutory")
-    # The same chain `_copy_absence_budgets` walks — positions, their months, the calendar of their
-    # location, the budget window covering each month — and then the flagged type, joined on the
-    # flag alone. At most one row can carry it (`uq_absence_type_statutory_leave`), so this join
-    # adds one row per frozen budget and the deduplication below collapses them into one.
+    # Positions, their months, the location of each and **the calendar that location points at** —
+    # an allocation row in a location with a calendar is exactly a month the paid-absence cost reads
+    # (ADR-0004, aneks 2026-09-23 SC-5-06, point 5) — and then the flagged type, joined on the flag
+    # alone. No budget in the chain: the budget window is a subset of these months, so the budget
+    # chain this replaced is subsumed rather than kept beside it. The inner join on
+    # `working_calendar` is what drops a location whose `calendar_id` is `NULL` (control M-3,
+    # contrast). At most one row can carry the flag (`uq_absence_type_statutory_leave`), so this
+    # join adds one row per allocation month and the deduplication below collapses them into one.
     statutory = (
         sa.select(
             statutory_source.c.id.label("scenario_id"),
@@ -489,16 +511,7 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
             StaffingPositionAllocation.position_id == StaffingPosition.id,
         )
         .join(CatalogLocation, CatalogLocation.id == StaffingPosition.location_id)
-        .join(
-            AbsenceBudget,
-            sa.and_(
-                AbsenceBudget.calendar_id == CatalogLocation.calendar_id,
-                AbsenceBudget.engagement_type_id == StaffingPosition.engagement_type_id,
-                AbsenceBudget.valid_period.bool_op("@>")(
-                    StaffingPositionAllocation.period_month
-                ),
-            ),
-        )
+        .join(WorkingCalendar, WorkingCalendar.id == CatalogLocation.calendar_id)
         # `is_(True)` rather than the bare column: an onclause that mentions only the table being
         # joined leaves SQLAlchemy inferring the left side from it, and it then tries to join
         # `absence_type` to itself. Spelled as a boolean expression, the left side is the join chain
@@ -822,7 +835,8 @@ def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
 
     **Why one statement** is the module docstring's S-01 section: one statement is one snapshot of
     the catalogue, taken after `draft_scenario` has the lock, so the three pairs (calendar ↔ days,
-    calendar ↔ budgets, statutory type ↔ budgets) are read from one state rather than from four.
+    calendar ↔ budgets, statutory type ↔ location calendar) are read from one state rather than
+    from four.
     Splitting this back into separate `session.execute` calls — in any grouping and any order of
     the four copiers — is the regression `tests/test_scenario_approval.py::test_s_01_…` exists to
     catch, by count and by the race it reopens (R-01, 2026-09-23) — and it would look like a
