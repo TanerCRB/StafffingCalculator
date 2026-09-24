@@ -1526,4 +1526,66 @@ history / this file's own change log, not as tracked product work.
   (F-09 pkt 3, wariant 1/4 analizy wrażliwości). Zarezerwowane, kryteria i decyzje bramki 1 w
   Issue #88, nowa decyzja architektoniczna ADR-0015 (Draft — pending approval).
 
+- [x] **SC-7-02** — Pokaż zysk, marżę, markup i koszt scenariusza na ekranie (F-10, część,
+  frontend). Konsument API dostarczonego przez SC-7-01 (`GET .../scenarios/{id}/results`) — ekran
+  świadomie odłożony przy SC-7-01, wzorem podziału SC-4-01/SC-4-06 (Issue #94).
+  *Done when:* `frontend/src` (vitest) dowodzi kryteriów K-01..K-06 (analyst, gate 1 zaakceptowane
+  2026-09-24):
+  1. (K-01) Kwoty i procenty renderują się wyłącznie przez `frontend/src/lib/money.ts`, nigdy
+     `Number()`/`toFixed()` w miejscu wywołania.
+  2. (K-02) `null` bramki kosztu osobowego i `"n/a"` niepoliczalnego źródła nigdy nie renderują się
+     jako to samo, także w przypadku pierwszeństwa gdy oba nakładają się na jedno pole naraz
+     (bramka zamknięta I źródło niepoliczalne → generyczne "niedostępne", nigdy "n/a").
+  3. (K-03) Każde z trzech złożonych źródeł (`revenue`/`personnel_cost`/`additional_cost`) niesie
+     własny nazwany stan niepoliczalny, bez wspólnego sentinela między źródłami.
+  4. (K-04) `403` i `404` renderują się IDENTYCZNIE — świadoma rozbieżność względem SC-4-06,
+     rozszerzenie SC-7-01 K-03 na warstwę renderu.
+  5. (K-05) `409` (rozjazd stanu scenariusza) to osobny, nazwany, ponawialny stan błędu.
+  6. (K-06) Sekcja montuje się bez akcji użytkownika; odmowa/awaria na niej nigdy nie usuwa nazwy
+     ani statusu karty (izolacja renderu).
+
+  **Decyzje bramki 1 (2026-09-24, analyst + architect, zaakceptowane przez człowieka):** sekcja
+  karty scenariusza obok `ScenarioCommercialTermsSection`, brak nowego routera (Q1 = opcja A,
+  wzorem D-2 SC-4-06); komunikat stanu `null` generyczny "niedostępne", bez ujawniania powodu (Q2
+  = opcja b, spójne z ostrożnością security-auditor przy SC-7-01 wobec ryzyka B-01). Architect:
+  FITS WITHIN THE ARCHITECTURE — brak bramki architektonicznej; wiersz
+  `architecture-sensitive-paths.md` dla `frontend/src/features/projects/**` renderujących
+  `RESULTS_READ`/dane bramkowane kosztem osobowym.
+
+  **Runda weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawki.** QA: proof
+  holds — jeden test pierwszeństwa K-02 dewelopera nie wymuszał prawdziwego konfliktu (`state:
+  "calculated"` nigdy nie trafiał w gałąź stanu niezależnie od kolejności sprawdzeń) — QA dopisała
+  przypadek `state: "no_cost_rate", amount: null`, mutacja dopiero wtedy zabita; reszta mutacji
+  (formatter, wspólny sentinel trzech źródeł, odwrócenie scalenia 403/404, scalenie 409 z
+  `failed`, osłabienie sprawdzenia kształtu pola bramkowanego) zabita za pierwszym razem. Invariant
+  Guardian: PASS (trzy przebiegi). Reviewer: PASS WITH RESERVATIONS → poprawki → PASS. Reviewer
+  znalazł R-01 (Medium): brak walidacji krzyżowej `revenue.state` vs. pola zbiorcze — złamanie
+  kontraktu backendu (pole zbiorcze realną liczbą przy `revenue` innym niż `"calculated"`)
+  renderowałoby się jako kwota z pustą walutą zamiast błędu — naprawione: `isScenarioResultsShape`
+  odrzuca taki payload jako nieczytelny, tym samym mechanizmem co każdy inny zniekształcony
+  payload. R-02 (Low): brak zarezerwowanej wysokości sekcji podczas ładowania (skok layoutu) —
+  naprawione częściowo i uczciwie nazwane jako częściowe (`min-height` na stan ładowania, nie na
+  pełny stan `ready`). Security-auditor: PASS — bramka kosztu osobowego nie poszerzona (ryzyko
+  B-01 z SC-7-01 nierozszerzone), gaszone pola faktycznie `null` na przewodzie (nie ukrywane po
+  stronie klienta), zero side-channel dla rozróżnienia 403/404, zero wartości kosztu osobowego w
+  logu/DOM/URL.
+
+  **Out of scope (explicit):** rozbicie na okresy raportowania, planned hours/FTE, billable ratio,
+  deviation from target margin — brak powierzchni API na backendzie (SC-7-01); wykresy/eksport
+  (F-11); porównanie/agregacja wielu scenariuszy (Issue #87 — SC-6-02 dostarczyło później własny
+  endpoint porównania, nieużywany przez ten ekran); nowy ogólny mechanizm routingu/stanu wybranego
+  projektu-scenariusza (ta sama decyzja D-2 co SC-4-06); edycja/zapis z tego ekranu (API tylko do
+  odczytu); mobile/responsive (NF-09, wzorzec SC-4-06); backend (zero zmian, SC-7-01 już
+  zamknięte).
+
+  Podstawa: `Wymagania/Requirements_EN.md` §3, §4 F-10/F-13, §7 AC-01/AC-05; `docs/PLAN.md`
+  SC-7-01 (Issue #12, PR #91), SC-4-01/SC-4-06 (precedens podziału); `ADR-0002-obsluga-pieniedzy.md`
+  (aneks 2026-09-24); `ADR-0005-model-dostepu.md` (aneksy SC-5-01 pkt 4/5, SC-5-05 pkt 5, aneks
+  2026-09-24); `ADR-0010-awaria-renderu-frontendu.md`; `docs/architecture/capabilities.md`
+  (SC-4-01, SC-5-01, SC-5-05, SC-5-06, SC-7-01, dowiedzione).
+  **Done 2026-09-24:** PR #99 (scalone `ad7e4d1`, w tym scalenie konfliktu z SC-6-03 na tej samej
+  karcie scenariusza, `25ebc95`). Dowód: `frontend/src/features/projects/ScenarioResults.test.tsx`
+  (K-01..K-06, R-01 — 17 testów) — 262 testy frontendowe zielono łącznie z SC-6-03. Zob.
+  `docs/architecture/capabilities.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
