@@ -1101,14 +1101,14 @@ def test_k_07_a_scenario_whose_location_has_no_calendar_freezes_neither_a_calend
     the organisation": with a budget row in the database that this scenario does not read, the count
     stays zero.
 
-    **And it is what defends "the flagged type is copied only when a budget is actually frozen"**
-    (invariant-guardian, third round — a gap in the proof rather than in the code). The catalogue
-    below therefore names a statutory type: the scenario has a position, so a copy conditioned on
-    *positions* rather than on *a frozen budget* would put that type into the snapshot, and the
-    existing "zero snapshot rows" assertion catches it. Without the flagged row the mutation that
-    drops the whole budget chain from the statutory branch of `_copy_absence_types` passes every
-    test in this repository, because nothing else ever approves a scenario that has positions and
-    freezes no budget while a flagged type exists.
+    **And it is what defends "the flagged type is copied only when a planned location has a
+    calendar"** (invariant-guardian, third round, for the then budget condition; the condition is
+    now the calendar — ADR-0004, aneks 2026-09-23 SC-5-06, point 5). The catalogue below therefore
+    names a statutory type: the scenario has a position and an allocation row, so a copy
+    conditioned on *allocation rows* rather than on *a calendar behind their location* would put
+    that type into the snapshot, and the "zero snapshot rows" assertion catches it — the mutation
+    "drop the join to `working_calendar` from the statutory branch of `_copy_absence_types`".
+    `test_k_07_m_3_…` below carries the same contrast next to its positive half.
     """
     calendar = make_working_calendar(
         db_session, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
@@ -1144,8 +1144,8 @@ def test_k_07_a_scenario_whose_location_has_no_calendar_freezes_neither_a_calend
     )
     assert count_snapshot_rows(db_session, scenario.id) == 0, (
         "this approval froze something although its position has no calendar, and therefore no "
-        "budget and nothing for the statutory type to qualify. The likely row is that type: it is "
-        "copied when a budget is frozen, not whenever the scenario has a position."
+        "budget and no month for the statutory type to qualify. The likely row is that type: it is "
+        "copied when a planned location has a calendar, not whenever the scenario has a position."
     )
 
 
@@ -1360,8 +1360,10 @@ def test_the_snapshot_distinguishes_a_named_statutory_type_from_none_even_with_n
     approved one for ever. The defect was found by comparing two green tests of this repository
     that describe the same case in opposite terms.
 
-    The fix copies the flagged type **unconditionally** whenever a budget is frozen — not through
-    the bookings — so the presence of a row with `is_statutory_leave = true` *is* the fact. Both
+    The fix copies the flagged type **unconditionally** — not through the bookings — whenever the
+    scenario plans a month in a location with a calendar (since ADR-0004, aneks 2026-09-23 SC-5-06,
+    point 5; under SC-3-03 it was "whenever a budget is frozen", and both scenarios here satisfy
+    either), so the presence of a row with `is_statutory_leave = true` *is* the fact. Both
     halves are asserted here, in one test, because either alone is satisfied by a wrong
     implementation: "always copy the flagged type" passes the first, "never copy it" passes the
     second.
@@ -1422,30 +1424,31 @@ def test_the_snapshot_distinguishes_a_named_statutory_type_from_none_even_with_n
     )
 
 
-def test_k_07_a_flagged_type_is_not_frozen_by_a_budget_this_scenario_does_not_read(
+def test_k_07_m_3_the_flagged_type_is_frozen_by_the_location_calendar_not_by_a_frozen_budget(
     client: TestClient, db_session: Session
 ) -> None:
-    """The flagged type follows the **frozen** budget, not any budget on the scenario's calendar.
+    """The flagged type follows **the calendar of the planned location**, not the frozen budget.
 
-    The second source of `_copy_absence_types` walks the same chain as `_copy_absence_budgets` —
-    calendar, engagement type, and the window covering a planned month — so it copies the flagged
-    type exactly when a budget is frozen. The no-calendar test above defends only the first link of
-    that chain; with a calendar present, dropping the engagement-type condition or the window
-    condition from the statutory branch alone passed every test in this repository. Found while
-    re-verifying the reviewer's second-round High finding: the proof of the state "flagged type, no
-    budget frozen" was one link deep.
+    Contract S-02 as amended by ADR-0004, aneks 2026-09-23 SC-5-06, point 5 (control M-3): the
+    type flagged `is_statutory_leave` is frozen whenever the scenario has an allocation row in a
+    location with a calendar — independently of whether a budget is frozen. Until that aneks this
+    test asserted the opposite for its first scenario ("no budget frozen → no flagged type"), which
+    was the SC-3-03 contract; the paid-absence cost reads the type's `generates_cost` in every
+    month with a calendar, so the aneks widened the copy, and this test now encodes the new
+    contract rather than the old one.
 
-    The fixture puts both decoys on the scenario's own calendar: a budget for **its** engagement
-    type whose window lies outside every planned month, and a budget covering the planned month for
-    an engagement type **no position uses**. The live read applies neither, the budget copy freezes
-    neither, and the flagged type must not be frozen either — the snapshot would otherwise claim
-    that a budget applies while holding none, and it would grow with the organisation instead of
-    with the calculation (ADR-0004, addendum 2026-09-22 SC-3-03, point 3).
+    Three scenarios in one catalogue, one flagged type:
 
-    **The contrast is a second scenario in the same catalogue**, approved after the one missing
-    budget — the scenario's own pair, covering its planned month — is added: that approval freezes
-    one budget and exactly one flagged type. Without it this test would be satisfied by a
-    `_copy_absence_types` that never copies the flagged type at all.
+    1. **calendar, no applicable budget** — both budget decoys sit on the scenario's own calendar
+       (its engagement type in a window outside every planned month; the planned month's window for
+       an engagement type no position uses). The budget copy freezes neither, and the flagged type
+       **is** frozen. Kills the mutation "back to the budget condition" (the SC-3-03 chain).
+    2. **no calendar** — a position in a location with `calendar_id IS NULL` in the same catalogue:
+       nothing frozen at all, the flagged type included. Kills the mutation "drop the join to
+       `working_calendar`", which would copy the type for any allocation row. Without this half the
+       test is satisfied by "always copy the flagged type".
+    3. **calendar and its own budget** — the flagged type is frozen once, alongside the budget: the
+       new condition is a superset of the old one, and the `UNION` does not duplicate it.
     """
     calendar = make_working_calendar(
         db_session, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
@@ -1472,11 +1475,12 @@ def test_k_07_a_flagged_type_is_not_frozen_by_a_budget_this_scenario_does_not_re
     )
     make_absence_type(db_session, name=STATUTORY_LEAVE_TYPE_NAME, is_statutory_leave=True)
     project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+    no_calendar = make_dimension_tuple(db_session, suffix=" (remote)")
 
-    def approve_a_scenario_planning_march(name: str):
+    def approve_a_scenario_planning_march(name: str, dimensions=planned):
         scenario = make_scenario(db_session, project, name=name)
         position = make_staffing_position(
-            db_session, scenario, planned, headcount=1, start_date=MARCH
+            db_session, scenario, dimensions, headcount=1, start_date=MARCH
         )
         make_allocation(db_session, position, period_month=MARCH)
         response = client.post(
@@ -1485,21 +1489,38 @@ def test_k_07_a_flagged_type_is_not_frozen_by_a_budget_this_scenario_does_not_re
         assert response.status_code == 200, response.text
         return scenario, response.json()["snapshot"]
 
-    unread, counts = approve_a_scenario_planning_march("Nothing applies")
+    # 1. Calendar, no budget this scenario reads.
+    unbudgeted, counts = approve_a_scenario_planning_march("Calendar, no budget")
 
     assert counts["working_calendars"] == 1, (
-        "the contrast is void: the calendar was not reached, so the chain below it was never walked"
+        "the premise is void: the calendar was not reached, so this is not the 'calendar without "
+        f"a budget' case: {counts}"
     )
     assert counts["absence_budgets"] == 0, (
         f"a budget this scenario does not read was frozen: {counts}"
     )
-    assert _frozen_statutory_types(db_session, unread.id) == [], (
-        "the flagged type was frozen although no budget was — the statutory branch of "
-        "_copy_absence_types matches budgets by calendar alone, without the engagement type or the "
-        "window the plan reads"
+    assert _frozen_statutory_types(db_session, unbudgeted.id) == [STATUTORY_LEAVE_TYPE_NAME], (
+        "the flagged type was not frozen although the scenario plans a month in a location with a "
+        "calendar — the statutory branch of _copy_absence_types is still conditioned on a frozen "
+        "budget (the SC-3-03 contract), which the paid-absence cost cannot read: it needs the "
+        "type's generates_cost in every month with a calendar (ADR-0004, aneks SC-5-06, point 5)"
     )
-    assert counts["absence_types"] == 0, counts
+    assert counts["absence_types"] == 1, counts
 
+    # 2. No calendar in the planned location — the contrast.
+    remote, remote_counts = approve_a_scenario_planning_march(
+        "No calendar", dimensions=no_calendar
+    )
+
+    assert remote_counts["working_calendars"] == 0, remote_counts
+    assert _frozen_statutory_types(db_session, remote.id) == [], (
+        "the flagged type was frozen for a scenario whose only location has no calendar — the "
+        "statutory branch no longer requires a calendar behind the location, so it copies the type "
+        "for any allocation row and grows the snapshot with the organisation"
+    )
+    assert count_snapshot_rows(db_session, remote.id) == 0, remote_counts
+
+    # 3. Calendar and the scenario's own budget.
     make_absence_budget(
         db_session,
         calendar,
@@ -1512,5 +1533,6 @@ def test_k_07_a_flagged_type_is_not_frozen_by_a_budget_this_scenario_does_not_re
 
     assert read_counts["absence_budgets"] == 1, read_counts
     assert _frozen_statutory_types(db_session, read.id) == [STATUTORY_LEAVE_TYPE_NAME], (
-        "the contrast is void: a scenario that does freeze a budget did not freeze the flagged type"
+        "a scenario that freezes a budget did not freeze the flagged type exactly once — the "
+        "calendar condition must cover every month the budget condition covered"
     )

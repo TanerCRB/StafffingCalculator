@@ -24,7 +24,9 @@ because "the most recent window that has started" is the mutation criterion K-06
 
 **What this module produces for the calculation is a value object, not an ORM row**
 (`app.domain.absence_budget.AbsenceBudget`), for the reason `app.data.working_calendar` gives: the
-same shape has to come out of the live table and, later, out of the approval snapshot.
+same shape has to come out of the live table and out of the approval snapshot — the latter since
+SC-5-06 (`frozen_budgets_for_months`, `frozen_statutory_leave_type`), the first reader of those
+frozen rows.
 """
 
 import uuid
@@ -39,7 +41,11 @@ from sqlalchemy.orm import Session
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.domain.absence_budget import AbsenceBudget as BudgetValue
 from app.domain.absence_budget import StatutoryLeaveType
-from app.models.catalog import AbsenceBudget, AbsenceType
+from app.models.approved_snapshot import (
+    ApprovedSnapshotAbsenceBudget,
+    ApprovedSnapshotAbsenceType,
+)
+from app.models.catalog import VALID_PERIOD_EXPRESSION, AbsenceBudget, AbsenceType
 
 BudgetKey = tuple[uuid.UUID, uuid.UUID]
 """`(calendar_id, engagement_type_id)` — the key of a budget, as Python.
@@ -168,6 +174,118 @@ def budgets_for_months(
     return {
         ((row.calendar_id, row.engagement_type_id), period_month): value_of(row)
         for period_month, row in session.execute(statement).all()
+    }
+
+
+def frozen_statutory_leave_type(
+    session: Session, scenario_id: uuid.UUID
+) -> StatutoryLeaveType | None:
+    """The statutory type **as one approved scenario froze it** — the snapshot's counterpart of
+    `statutory_leave_type` (ADR-0004, aneks 2026-09-23 SC-5-06, point 1).
+
+    The snapshot's own contract (`app.models.approved_snapshot.ApprovedSnapshotAbsenceType`, S-02 of
+    SC-3-03 as amended by ADR-0004, aneks 2026-09-23 SC-5-06, point 5): a frozen row with
+    `is_statutory_leave = true` is present **iff** a type was named when the scenario was approved
+    and the scenario has an allocation row in a location with a calendar — budget or no budget.
+    Every month this answer is consulted for with a calendar therefore sees the named type if there
+    was one, so `None` is the frozen `no_statutory_leave_type` and never "the type was named but
+    not frozen" (control M-3). It stays that answer whatever the catalogue flags later — moving the
+    flag to another type after the approval moves nothing here (control M-1). The flags returned
+    (`generates_cost` included) are the frozen values, never the live ones. The one exception is
+    historical and named in the aneks: a scenario approved before it, with a named non-costing type
+    and no frozen budget, reads `None` here for ever.
+
+    `one_or_none()` holds because the approval copies the type from one snapshot of a catalogue in
+    which a partial unique index allows one flagged row, and deduplicates the copy.
+    """
+    row = session.execute(
+        sa.select(ApprovedSnapshotAbsenceType).where(
+            ApprovedSnapshotAbsenceType.scenario_id == scenario_id,
+            ApprovedSnapshotAbsenceType.is_statutory_leave,
+        )
+    ).scalars().one_or_none()
+    if row is None:
+        return None
+    return StatutoryLeaveType(
+        absence_type_id=row.source_absence_type_id,
+        name=row.name,
+        generates_cost=row.generates_cost,
+        generates_revenue=row.generates_revenue,
+    )
+
+
+def frozen_budgets_for_months(
+    session: Session, scenario_id: uuid.UUID, keys: Sequence[BudgetKey], months: Sequence[date]
+) -> Mapping[tuple[BudgetKey, date], BudgetValue]:
+    """The frozen budget in force for each (key, month) — the snapshot's counterpart of
+    `budgets_for_months`, **resolved per month by the same predicate** (ADR-0004, aneks 2026-09-22
+    SC-3-03, point 7c; aneks 2026-09-23 SC-5-06, point 2).
+
+    The live read asks `valid_period @> month` of the generated column; the frozen table has no
+    generated column (its column set is fixed by SC-3-03 K-07), so the window's range is built here
+    from **the same expression the generated column is defined by** —
+    `app.models.catalog.VALID_PERIOD_EXPRESSION`, applied to the frozen `effective_from` /
+    `effective_to` — and asked the same `@>`. One spelling of "which window covers this month", not
+    a Python comparison and not a second SQL one.
+
+    Only this scenario's rows (control M-2), and only rows of the keys asked about. A month no
+    frozen window covers is absent from the result — the frozen `no_budget`, including the case the
+    addendum names (point 7e): a month planned beyond the last window the catalogue had at approval
+    stays without a budget, never an extrapolation of the last known one.
+    """
+    if not keys or not months:
+        return {}
+    month_values = sa.values(
+        sa.column("period_month", sa.Date), name="requested_frozen_months"
+    ).data([(month,) for month in sorted(set(months))])
+    frozen = (
+        sa.select(
+            ApprovedSnapshotAbsenceBudget.source_budget_id,
+            ApprovedSnapshotAbsenceBudget.source_calendar_id,
+            ApprovedSnapshotAbsenceBudget.source_engagement_type_id,
+            ApprovedSnapshotAbsenceBudget.budget_days,
+            ApprovedSnapshotAbsenceBudget.unit,
+            ApprovedSnapshotAbsenceBudget.source,
+            ApprovedSnapshotAbsenceBudget.effective_from,
+            ApprovedSnapshotAbsenceBudget.effective_to,
+        )
+        .where(
+            ApprovedSnapshotAbsenceBudget.scenario_id == scenario_id,
+            sa.tuple_(
+                ApprovedSnapshotAbsenceBudget.source_calendar_id,
+                ApprovedSnapshotAbsenceBudget.source_engagement_type_id,
+            ).in_(sorted(set(keys))),
+        )
+        .subquery("frozen_budget")
+    )
+    # The generated column's own expression, over the frozen dates. Its column names are unqualified
+    # in the constant, and the only relation in this `FROM` is `frozen_budget`, so they resolve to
+    # the frozen row's dates and to nothing else.
+    with_period = (
+        sa.select(
+            *frozen.c,
+            sa.literal_column(VALID_PERIOD_EXPRESSION).label("valid_period"),
+        )
+        .select_from(frozen)
+        .subquery("frozen_budget_period")
+    )
+    statement = (
+        sa.select(month_values.c.period_month, with_period)
+        .select_from(month_values)
+        .join(with_period, with_period.c.valid_period.op("@>")(month_values.c.period_month))
+    )
+    return {
+        ((row.source_calendar_id, row.source_engagement_type_id), row.period_month): BudgetValue(
+            budget_id=row.source_budget_id,
+            calendar_id=row.source_calendar_id,
+            engagement_type_id=row.source_engagement_type_id,
+            budget_days=row.budget_days,
+            unit=row.unit,
+            source=row.source,
+            effective_from=row.effective_from,
+            effective_to=row.effective_to,
+        )
+        for row in session.execute(statement).all()
     }
 
 

@@ -602,7 +602,20 @@ def test_k_03_an_empty_plan_is_zero_in_the_scenarios_currency_or_a_named_state_w
 
 
 RESPONSE_FIELDS = {"scenario_id", "scenario_status", "personnel_cost"}
-COST_FIELDS = {"state", "cost_basis", "amount", "currency", "assumptions_used"}
+COST_FIELDS = {
+    "state",
+    "cost_basis",
+    "amount",
+    "currency",
+    "assumptions_used",
+    # SC-5-06 (gate 1, Q-1: the component lives in `PersonnelCostRead`, and this equality is
+    # re-armed with it — still an equality, so any other field added later fails here as before).
+    "paid_absence_state",
+    "paid_absence_amount",
+    "paid_absence_budget_amount",
+    "paid_absence_currency",
+    "paid_absence_assumptions_used",
+}
 ASSUMPTIONS_FIELDS = {
     "hours_source",
     "vendor_axis",

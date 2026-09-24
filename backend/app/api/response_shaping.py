@@ -72,9 +72,12 @@ from app.api.schemas.commercial_terms import (
 from app.api.schemas.personnel_cost import (
     CostAssumptionsRead,
     CostRateWindowRead,
+    PaidAbsenceAssumptionsRead,
+    PaidAbsenceMonthHoursRead,
     PersonnelCostRead,
     ScenarioPersonnelCost,
     UnresolvedCostMonthRead,
+    UnresolvedPaidAbsenceMonthRead,
 )
 from app.api.schemas.project import (
     DeliveryPeriod,
@@ -109,6 +112,7 @@ from app.domain.additional_cost import CALCULATED as ADDITIONAL_COST_CALCULATED
 from app.domain.additional_cost import AdditionalCostResult
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
+from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
 from app.domain.personnel_cost import CALCULATED as COST_CALCULATED
 from app.domain.personnel_cost import PersonnelCostResult
 from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
@@ -138,8 +142,21 @@ tests kill: a caller without `PERSONNEL_COSTS_READ` would start receiving the co
 A rate's *currency* and *selling* rate are not in here: F-13/AC-06 protect what a person costs, and
 removing the selling rate would make a commercial figure that every planner needs invisible."""
 
-SCENARIO_COST_FIELDS: frozenset[str] = frozenset({"amount", "assumptions_used"})
-"""Fields of a scenario's base personnel cost that carry a personnel cost (SC-5-01).
+SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
+    {
+        "amount",
+        "assumptions_used",
+        # SC-5-06 (ADR-0013, aneks 2026-09-23 SC-5-06, point 6): the paid-absence component's
+        # amount, **its budget part** and its assumptions. The budget part is a cost although the
+        # budget is not (ADR-0005, aneks SC-3-03, point 4): days × a cost rate is what a person's
+        # leave costs, while the same days in the staffing and catalogue payloads stay outside this
+        # set, as they were.
+        "paid_absence_amount",
+        "paid_absence_budget_amount",
+        "paid_absence_assumptions_used",
+    }
+)
+"""Fields of a scenario's base personnel cost that carry a personnel cost (SC-5-01, SC-5-06).
 
 A third set, next to `PERSONNEL_COST_FIELDS` (project payloads — still empty, and deliberately left
 so: ADR-0005, aneks 2026-09-23 SC-5-01, point 3) and `CATALOG_PERSONNEL_COST_FIELDS` (catalogue
@@ -151,9 +168,10 @@ same figure one multiplication away (criterion K-04). The *sum* is gated exactly
 although F-13 speaks of "individual" costs: with one position of `headcount = 1` the scenario's sum
 **is** one person's cost (point 5 — overpaid protection, accepted on purpose).
 
-Not in here: `state`, `cost_basis` and `currency`. None of them is a figure a person costs, and a
-refused caller still learns that a cost exists and why it may not be stateable — the refusal is of
-the *field*, never of the scenario (point 1)."""
+Not in here: `state`, `cost_basis` and `currency` — nor, since SC-5-06, `paid_absence_state` and
+`paid_absence_currency`. None of them is a figure a person costs, and a refused caller still learns
+that a cost exists and why it may not be stateable — the refusal is of the *field*, never of the
+scenario (point 1)."""
 
 _PROJECT_STATUS_LABELS = {
     ProjectStatus.ACTIVE: "Active",
@@ -797,8 +815,9 @@ def _without_scenario_personnel_costs(
       that returned the scenario (`app.data.staffing.scenario_view_in_scope`); nothing here
       queries.
 
-    A denial of the *field*: same `200`, same scenario, `state` and `cost_basis` intact, `amount`
-    and `assumptions_used` `null` (point 1). Never a `403` or a `404`.
+    A denial of the *field*: same `200`, same scenario, `state` and `cost_basis` intact, every
+    member of `SCENARIO_COST_FIELDS` `null` (point 1) — since SC-5-06 the paid-absence amount, its
+    budget part and its assumptions too. Never a `403` or a `404`.
 
     The same identity check as `_without_personnel_costs`, for the same reason: `view` and `caller`
     are two arguments, and shaping user A's flag with user B's permission set would widen the gate
@@ -815,6 +834,56 @@ def _without_scenario_personnel_costs(
     if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
         return item
     return item.model_copy(update=dict.fromkeys(SCENARIO_COST_FIELDS))
+
+
+def _paid_absence_fields(answer: PaidAbsenceCostAnswer) -> dict[str, Any]:
+    """The paid-absence component (SC-5-06) as the five `paid_absence_*` fields of the payload.
+
+    Spread into `PersonnelCostRead` rather than built as a nested object, so the component's gated
+    fields are members of `SCENARIO_COST_FIELDS` by name and go through the one
+    `_without_scenario_personnel_costs` below — a nested object would need a second field set and a
+    second removal, i.e. a second gate (ADR-0013, aneks 2026-09-23 SC-5-06, point 6: "the same
+    conjunction", not a new one). Nothing is decided here: the state, both amounts and the hours
+    arrive from `app.domain.paid_absence_cost`, rounded there once, not re-rounded here.
+    """
+    assumptions = answer.assumptions_used
+    assumptions_read = PaidAbsenceAssumptionsRead(
+        hours_source=assumptions.hours_source,
+        months=[
+            PaidAbsenceMonthHoursRead(
+                position_id=month.position_id,
+                period_month=month.period_month,
+                manual_hours=month.manual_hours,
+                budget_hours=month.budget_hours,
+                budget_part=month.budget_part,
+            )
+            for month in assumptions.months
+        ],
+        unresolved_months=[
+            UnresolvedPaidAbsenceMonthRead(
+                position_id=month.position_id,
+                period_month=month.period_month,
+                reason=month.reason,
+            )
+            for month in assumptions.unresolved_months
+        ],
+        currencies=list(assumptions.currencies),
+    )
+    if isinstance(answer, PaidAbsenceCostResult):
+        return {
+            "paid_absence_state": COST_CALCULATED,
+            "paid_absence_amount": answer.cost,
+            "paid_absence_budget_amount": answer.budget_cost,
+            "paid_absence_currency": answer.currency,
+            "paid_absence_assumptions_used": assumptions_read,
+        }
+    return {
+        "paid_absence_state": answer.reason,
+        "paid_absence_amount": NOT_APPLICABLE,
+        "paid_absence_budget_amount": NOT_APPLICABLE,
+        "paid_absence_currency": None,
+        "paid_absence_assumptions_used": assumptions_read,
+    }
 
 
 def shape_scenario_personnel_cost(
@@ -852,6 +921,7 @@ def shape_scenario_personnel_cost(
         ],
         currencies=list(assumptions.currencies),
     )
+    paid_absence = _paid_absence_fields(view.paid_absence)
     if isinstance(answer, PersonnelCostResult):
         cost = PersonnelCostRead(
             state=COST_CALCULATED,
@@ -859,6 +929,7 @@ def shape_scenario_personnel_cost(
             amount=answer.cost,
             currency=answer.currency,
             assumptions_used=assumptions_read,
+            **paid_absence,
         )
     else:
         cost = PersonnelCostRead(
@@ -867,6 +938,7 @@ def shape_scenario_personnel_cost(
             amount=NOT_APPLICABLE,
             currency=None,
             assumptions_used=assumptions_read,
+            **paid_absence,
         )
     return ScenarioPersonnelCost(
         scenario_id=view.scenario.id,

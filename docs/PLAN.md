@@ -1224,4 +1224,76 @@ history / this file's own change log, not as tracked product work.
   SC-5-05), ADR-0008 (pkt 6, aneks SC-5-05), `docs/PLAN.md` SC-1-03/SC-3-01/SC-3-02/SC-4-01
   (fundament dowiedziony w `docs/architecture/capabilities.md`).
 
+- [ ] **SC-5-06** — Koszt nieobecności płatnych (F-07, F-05): koszt nieobecności flagowanych
+  `absence_type.generates_cost = true` jako osobna, nazwana składowa obok niezmienionego kosztu
+  bazowego SC-5-01; budżet urlopowy (`absence_budget_hours`, SC-3-03) wchodzi do kosztu wyłącznie
+  dopłatą ponad wpisy ręczne — budżet sam w sobie nie jest daną kosztową (ADR-0005 aneks SC-3-03
+  pkt 4), ale koszt z niego wyliczony już jest (Issue #81).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07 (analyst, 2026-09-23):
+  1. (K-01) Składowa liczy wyłącznie typy `generates_cost = true`, godziny dni roboczych, bez
+     `× headcount`, stawką kosztową miesiąca; koszt bazowy SC-5-01 nietknięty. Sześć mutacji do
+     zabicia (m.in. podstawa z `absence_day_equivalents` wszystkich typów, filtr po
+     `generates_revenue`, `× headcount`, stawka sprzedażowa, wmieszanie do kwoty bazowej).
+  2. (K-02) Urlop ustawowy w koszcie = wpisy ręczne typu ustawowego + dopłata budżetu
+     (`max(budżet, suma ręcznych)` z SC-3-03 przeniesione na koszt) — nigdy pełny budżet + wpisy
+     ręczne (błąd "46 zamiast 26" z SC-3-03 R-02).
+  3. (K-03) Koszt z budżetu podąża za `generates_cost` typu ustawowego; stan "budżet nie
+     zastosowany" jest nazwany (`no_budget`/`no_statutory_leave_type`), nigdy ciche `0`.
+  4. (K-04) Składowa nieobecności niepoliczalna (`no_calendar`, brak stawki miesiąca) jest stanem
+     nazwanym na poziomie składowej, nigdy `0`, nigdy suma częściowa całego kosztu pozycji.
+  5. (K-05) Kwota składowej (w tym część budżetowa) pod koniunkcją `PERSONNEL_COSTS_READ` ∧
+     `can_view_personnel_costs`; budżet jako liczba dni/godzin w odpowiedzi obsady/katalogu
+     zostaje poza nią (dowodzi ADR-0005 aneks SC-3-03 pkt 4 i aneks SC-3-02 pkt 7).
+  6. (K-06, M-1, M-3) Koszt nieobecności zatwierdzonego scenariusza identyczny przed/po
+     zatwierdzeniu, nie zmienia się po edycji katalogu (flaga typu, dni budżetu, stawka) —
+     pierwszy czytelnik migawki kalendarza/budżetu/typu nieobecności (ADR-0004 aneks 2026-09-23
+     SC-5-06). Typ ustawowy nazwany-niekosztowy bez zamrożonego budżetu przeżywa zatwierdzenie
+     (M-3, poprawka bramki 2 — zob. niżej).
+  7. (K-07) Odpowiedź przychodu SC-4-01 bajt w bajt bez zmian po dodaniu nieobecności płatnych i
+     niezależnie od `generates_revenue`.
+
+  **Decyzje bramki 1 (2026-09-23, analyst + architect, zaakceptowane przez człowieka):** G-1
+  poprawiono terminologię budżetu w Story (`absence_budget_hours`, nie `derived_capacity_hours`);
+  Q-1 składowa w istniejącym `PersonnelCostRead` — trzecia funkcja kształtująca, bez nowego aneksu
+  ADR-0005; istniejące testy porównujące `SCENARIO_COST_FIELDS`/K-03 SC-5-01 zbiorem pól
+  przezbrojone (nie osłabione); Q-2 `amount` SC-5-01 nietknięty, składowa nieobecności ma własny
+  stan nazwany, bez sumy łącznej kosztu osobowego w tym zadaniu (suma → blok 7); Q-3 koszt liczy
+  się tylko w miesiącach z wierszem alokacji, zakres migawki bez zmian; Q-4 koszt nieobecności
+  dolicza się zawsze, niezależnie od `planned_allocation_hours` — ryzyko podwójnego liczenia przy
+  nieodjętym urlopie z planu nazwane, nienaprawiane tu; Q-5 gałąź pozytywna `generates_cost`
+  nieosiągalna w produkcji przyjęta jak SC-5-01 (fixture/seed, `PLACEHOLDER_PERMISSIONS` bez
+  zmian); Q-6 `generates_revenue` poza zakresem, F-06 rozdziela koszt od przychodu.
+
+  **Poprawka bramki 2 (2026-09-23/24, invariant-guardian + reviewer, zaakceptowana przez
+  człowieka).** Weryfikacja znalazła High/Medium: zatwierdzenie scenariusza mogło cicho i trwale
+  zmienić składową z `calculated` na `no_budget`, gdy typ ustawowy nie generuje kosztu i scenariusz
+  nie zamraża żadnego okna budżetu (żadna instancja zarezerwowana, żaden budżet w oknie planu).
+  Naprawiono u źródła: zmieniono kontrakt S-02 migawki typu ustawowego (ADR-0004 aneks SC-5-06 pkt
+  5) — typ jest teraz zamrażany zawsze, gdy scenariusz ma alokację w lokalizacji z kalendarzem,
+  niezależnie od budżetu. Dwa istniejące testy przepisane na nowy kontrakt (nie osłabione — kontrakt
+  się zmienił decyzją architektoniczną): `test_scenario_approval_snapshot.py::test_k_07_m_3_…`,
+  `test_scenario_approval.py::test_s_01_a_location_given_a_calendar_during_the_approval_…`. Nowy
+  test regresyjny: `test_paid_absence_cost.py::test_r_01_m_1_a_named_non_costing_statutory_type_without_a_frozen_budget_survives_approval`.
+  Drugie znalezisko (R-02, Medium, transient): dwa niezależne odczyty siatki w jednym `GET` mogą
+  przy współbieżnej edycji szkicu dać przejściowy fałszywy `no_cost_rate` — nie dotyczy zatwierdzonych
+  scenariuszy, nazwane w docstringu `app/data/paid_absence_cost.py`, nienaprawiane (koszt naprawy
+  wysoki, efekt przejściowy).
+
+  **Out of scope (explicit):** narzuty (SC-5-02); kwota stała (SC-5-03); FTE (SC-5-04); stawki
+  dzienne/miesięczne; wpływ `generates_revenue` na przychód (druga połowa F-05, osobne zadanie);
+  suma łączna kosztu osobowego (blok 7); zapis/edycja `absence_type` (brak ścieżki HTTP, ADR-0005
+  aneks SC-3-02 pkt 10).
+
+  **Fundament nieudowodniony, przyjęty świadomie:** pierwszy czytelnik flag `generates_cost`/
+  `generates_revenue` (SC-3-02: "żadne wyliczenie kosztu/przychodu ich dziś nie czyta"); pierwszy
+  czytelnik migawki kalendarza, budżetu i typu nieobecności (SC-3-02: "nikt nie czyta migawki");
+  gałąź pozytywna koniunkcji kosztowej nieosiągalna w produkcji (B-01 dziedziczone z SC-5-01,
+  rozszerzone o tę składową — ADR-0005 nota B-01); wyścig edycji katalogu z zatwierdzeniem
+  (dziedziczone z SC-2-03/SC-5-01); R-02 (odczyt siatki szkicu, przejściowy, opisany wyżej).
+  Podstawa: Issue #81, `Wymagania/Requirements_EN.md` §4 F-05, F-07; `docs/PLAN.md` SC-3-02,
+  SC-3-03, SC-5-01; `ADR-0004-wersjonowanie-kalkulacji.md` (aneks 2026-09-23 SC-5-06, nowy);
+  `ADR-0005-model-dostepu.md` (aneksy SC-3-02 pkt 7, SC-3-03 pkt 3–4/8, SC-5-01 pkt 4/5/7, nota
+  B-01 rozszerzona); `ADR-0008-przedzialy-obowiazywania.md` (aneks SC-3-03 pkt 7–10);
+  `ADR-0013-koszt-osobowy.md` (aneks 2026-09-23 SC-5-06, nowy).
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*

@@ -212,15 +212,24 @@ class ApprovedSnapshotAbsenceType(_ApprovedSnapshotRow):
     module docstring). The flags are organisational configuration that can be edited after the
     approval, which is exactly the class of value AC-04/AC-10 require to be frozen.
 
-    **The contract a reader of this table relies on** (S-02, invariant-guardian, SC-3-03): for one
-    scenario, *a row with `is_statutory_leave = true` is present* **if and only if** *the frozen
-    budgets (`approved_snapshot_absence_budget`) apply*. Present → a type was named when the
-    scenario was approved, the frozen budget is deducted, and the scenario's own bookings of that
-    type count against it. Absent → nobody had named one, and the frozen budget applies to nothing
-    (the frozen counterpart of the live `NO_STATUTORY_LEAVE_TYPE` state). The absence of the row is
-    therefore data, not a gap: it is why the flagged type is copied whenever a budget is frozen,
-    whether or not the scenario booked anything against it — without that, "deduct the whole
-    entitlement" and "deduct none of it" would freeze identical rows. The writer that keeps this
+    **The contract a reader of this table relies on** (S-02, invariant-guardian, SC-3-03; amended by
+    ADR-0004, aneks 2026-09-23 SC-5-06, point 5): for one scenario, *a row with
+    `is_statutory_leave = true` is present* **if and only if** *a type was named when the scenario
+    was approved and the scenario has an allocation row in a location with a calendar* —
+    independently of whether any budget was frozen and of whether the scenario booked the type.
+    Present → a type was named: any frozen budget (`approved_snapshot_absence_budget`) is deducted
+    against it, the scenario's own bookings of that type count against it, and the paid-absence
+    cost reads its frozen `generates_cost` in every month with a calendar. Absent while such an
+    allocation exists → nobody had named one, and the frozen budget applies to nothing (the frozen
+    counterpart of the live `NO_STATUTORY_LEAVE_TYPE` state). The absence of the row is therefore
+    data, not a gap — without the unconditional copy, "deduct the whole entitlement" and "deduct
+    none of it" would freeze identical rows, and so would "the named type costs nothing" and "no
+    type was named".
+
+    The SC-3-03 wording ("present ⇔ the frozen budgets apply") was right while the capacity was the
+    only reader; it is superseded, not extended. Scenarios approved before the aneks keep the rows
+    they got — a named, non-costing type without a frozen budget is absent from their snapshot for
+    ever (no `UPDATE` path), named in the aneks rather than repaired. The writer that keeps this
     contract is `app.data.scenario_approval._copy_absence_types`, which carries the full reasoning.
     """
 
