@@ -1344,4 +1344,7 @@ history / this file's own change log, not as tracked product work.
   siatki w jednym `GET` szkicu, przejściowy rozjazd przy współbieżnej edycji, nie dotyczy
   zatwierdzonych scenariuszy). Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-6-01** — Duplikuj scenariusz niezależnie od źródła (F-09 pkt 1, AC-02). Zarezerwowane,
+  kryteria i decyzje bramki 1 w Issue #11.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
