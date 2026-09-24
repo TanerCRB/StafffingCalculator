@@ -125,6 +125,19 @@ class Permission(StrEnum):
     write permission here (point 6): the write answers with the rule and its revenue, so in
     practice it reads them too."""
 
+    SCENARIO_COPY = "scenario:copy"
+    """Duplicating a scenario into its own project (F-09 pt.1, AC-02; SC-6-01, Issue #11, gate 1
+    decision 2) — its own permission, distinct from `PROJECT_COPY`. The two copy a different unit
+    (one scenario vs. a whole project with every one of its scenarios) and are plausibly different
+    people's rights, the same action-granularity argument that splits `PROJECT_EDIT`, `PROJECT_COPY`
+    and `PROJECT_ARCHIVE` into three permissions rather than one (ADR-0005, addendum 2026-09-18,
+    point 1). Carries no authority over *which* scenarios: scope stays the `project_access` filter,
+    inherited through `scenario_id → scenarios.project_id` exactly as `STAFFING_WRITE` and
+    `COMMERCIAL_WRITE` are — the duplicate's target project is always the source's own, so there is
+    no second project for scope to be about. Inherits the known widening of every write permission
+    here (point 6 above): the endpoint answers with the duplicate's own representation, so in
+    practice this also reads it."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:

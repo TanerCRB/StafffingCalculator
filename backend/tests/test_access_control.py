@@ -135,6 +135,11 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     widenings **and says in the same breath that `PERSONNEL_COSTS_READ` still does not belong
     here**. So the canary is re-armed around the new set, not loosened — and the assertion below
     stays a set equality, which is the only form that can tell a widening apart from the status quo.
+
+    It grew once more by `SCENARIO_COPY` (SC-6-01, Issue #11, gate 1 decision 2): without it
+    `POST …/scenarios/{id}/duplicate` would be unreachable while every caller is this one
+    placeholder. Re-armed around the new set, not loosened — the formal ADR-0005 addendum for this
+    widening is pending gate 3; this canary states the code's actual set either way.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
@@ -153,6 +158,8 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             # this one — re-armed around the new set, not loosened.
             Permission.COMMERCIAL_READ,
             Permission.COMMERCIAL_WRITE,
+            # SC-6-01 (Issue #11, gate 1 decision 2) — re-armed around the new set, not loosened.
+            Permission.SCENARIO_COPY,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS

@@ -1,13 +1,17 @@
-"""Scenario endpoints — approving a calculation (ADR-0004, F-12; SC-3-02) and reading its
-assumptions (F-02; SC-1-10).
+"""Scenario endpoints — approving a calculation (ADR-0004, F-12; SC-3-02), reading its
+assumptions (F-02; SC-1-10), and duplicating it into its own project (F-09 pt.1, AC-02; SC-6-01).
 
-Two endpoints:
+Three endpoints:
 
 - `POST /projects/{project_id}/scenarios/{scenario_id}/approve` — the one-way, human-performed step
   of ADR-0004, and the first path in this repository that ever sets `ScenarioStatus.APPROVED`;
 - `GET /projects/{project_id}/scenarios/{scenario_id}/assumptions` — the scenario's resolved
   assumptions with the level each came from (ADR-0012), and the first path that reads an approval
-  snapshot back (gate 1, P-B).
+  snapshot back (gate 1, P-B);
+- `POST /projects/{project_id}/scenarios/{scenario_id}/duplicate` — the second of ADR-0004's three
+  entry points into `app.data.project_writes.copy_scenario` (the first is
+  `POST /projects/{id}/copy`, SC-1-03), the one that copies a scenario into its **own** project
+  instead of a new one (SC-6-01, Issue #11).
 
 **The address carries both identifiers**, like the staffing path and for the same reason (ADR-0001,
 addendum 2026-09-19): the scope predicate lives on the project, `project_for_caller` is the one
@@ -43,7 +47,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.response_shaping import shape_scenario_assumptions
+from app.api.response_shaping import shape_duplicated_scenario, shape_scenario_assumptions
+from app.api.schemas.project import ScenarioListItem
 from app.api.schemas.scenario import (
     ApprovedSnapshotCounts,
     ScenarioApproval,
@@ -51,10 +56,16 @@ from app.api.schemas.scenario import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.assumptions import scenario_assumptions_for_caller
+from app.data.organization_defaults import organization_level_for
 from app.data.scenario_approval import (
     ScenarioApprovalRefused,
     ScenarioApprovalRejected,
     approve_scenario,
+)
+from app.data.scenario_duplication import (
+    NoAvailableDuplicateName,
+    ScenarioDuplicationRefused,
+    duplicate_scenario,
 )
 from app.db.session import get_session
 
@@ -170,3 +181,71 @@ def read_assumptions(
             status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL
         )
     return shape_scenario_assumptions(view)
+
+
+@router.post(
+    "/duplicate",
+    response_model=ScenarioListItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Duplicate one scenario into the same project as its source",
+    responses={
+        404: {"description": SCENARIO_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: no unused name could be generated for the duplicate, or a "
+            "concurrent duplicate took the chosen name first. Nothing was written."
+        },
+    },
+)
+def duplicate(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.SCENARIO_COPY))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioListItem:
+    """Duplicate a scenario into its own project (F-09 pt.1, AC-02; SC-6-01) — never into a new
+    one, which is what `POST /projects/{id}/copy` (SC-1-03) is for.
+
+    **No request body**, like `POST /projects/{id}/archive` and `POST /projects/{id}/copy`: there
+    is nothing to configure. In particular the duplicate's name is never taken from the client —
+    `scenarios` carries `UniqueConstraint("project_id", "name")`, the target project already holds
+    a scenario named exactly `source.name` (the source itself), and a client-supplied name would
+    just move the collision from this endpoint's naming logic to the caller's screen. Instead the
+    name is generated: `"<source.name> (copy)"`, then `"(copy 2)"`, `"(copy 3)"`, … — the first not
+    already used by a sibling scenario of the same project (`app.data.scenario_duplication`,
+    gate 1 decision 1).
+
+    - **201** — the duplicate, shaped exactly like a scenario row of `ProjectDetail.scenarios`. It
+      is always `draft` (K-02), whatever the source's status, and the source's own row — name,
+      status, every child table — is untouched.
+    - **404** — the scenario is not the caller's, does not exist, or belongs to a different
+      project than `project_id` names: one answer for all three (ADR-0005), because the scenario
+      is resolved through `scenario_in_scope` → `project_for_caller`, exactly as `approve` and
+      `read_assumptions` above resolve theirs, and there is nothing here to tell them apart. This
+      runs, and fails closed, **before** any candidate name is computed — a 404-vs-409 precedence
+      that is structural rather than a rule to remember, the same shape ADR-0004's approval
+      endpoint already has (K-21 there; the analogous ordering is required here at gate 1).
+    - **409** — either `NoAvailableDuplicateName` (every generated candidate was already taken —
+      the pathological case named in `app.data.scenario_duplication`) or a `WriteRefused` from the
+      database (a concurrent duplicate committed the same candidate name first). Both leave the
+      source and every previously existing scenario untouched.
+    - **403** — the permission dependency, before the database. `SCENARIO_COPY`, not `PROJECT_COPY`
+      (gate 1 decision 2): duplicating one scenario and copying a whole project are different
+      actions, plausibly different people's rights.
+    """
+    try:
+        copy = duplicate_scenario(session, caller, project_id, scenario_id)
+    except NoAvailableDuplicateName as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except ScenarioDuplicationRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if copy is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL
+        )
+    # A fresh `draft` copy is never itself `approved`, so this only ever reads the organisation's
+    # live defaults (`organization_level_for`) — the same helper `create_project` and `copy_project`
+    # use for the same reason.
+    organization_level = organization_level_for(session, [copy])
+    return shape_duplicated_scenario(copy, copy.project, organization_level)
