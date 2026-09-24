@@ -705,6 +705,11 @@ na polu, które nie jest zastępcze.
    pierwszej połowy koniunkcji. Warunek ponownego otwarcia: ADR uwierzytelniania musi rozstrzygnąć,
    czy `PERSONNEL_COSTS_READ` globalne ma w ogóle współistnieć z odczytem katalogu/obsady bez
    flagi projektu — inaczej pierwszy wołający z tym uprawnieniem odziedziczy lukę.
+   **Rozszerzone (security-auditor, weryfikacja SC-5-06, 2026-09-23):** dotyczy też składowej
+   `paid_absence_*` — nieobecności i `absence_budget_hours` z `GET .../staffing-positions`
+   (`STAFFING_READ`) plus `generates_cost`/stawka z katalogu (`CATALOG_READ`) dają ten sam
+   przeliczalny wynik. Wektor odziedziczony, nie rozszerzony — wszystkie dane wejściowe były
+   widoczne pod tymi uprawnieniami już od SC-3-02/SC-3-03. Wciąż uśpione z tego samego powodu.
 6. **Gałąź pozytywna nadal nieosiągalna w produkcji, bez zmiany placeholdera.** Jak w aneksie
    2026-09-19 (SC-1-08) i aneksie SC-2-01 pkt 3 — dowód wyłącznie przez
    `app.dependency_overrides[get_caller_identity]` w teście, `can_view_personnel_costs=true` ustawione
@@ -722,3 +727,40 @@ na polu, które nie jest zastępcze.
    wewnętrzną — informacja o danych referencyjnych, nie o koszcie osoby (F-13). Zobowiązanie
    naprzód: każda przyszła wartość `state` lub `cost_basis`, z której da się wywnioskować kwotę lub
    stawkę, przechodzi do `SCENARIO_COST_FIELDS` w zadaniu, w którym powstaje.
+
+**Aneks — koszty dodatkowe SC-5-05 (2026-09-23, bramka 1, kierunki zaakceptowane przez człowieka,
+ADR-0014, Q-2/Q-4/Q-7).**
+1. **Bez koniunkcji kosztowej.** Koszt dodatkowy pod istniejącymi `STAFFING_READ`/`STAFFING_WRITE`,
+   bez `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` i bez nowego uprawnienia. Różni się od
+   kosztu osobowego (pkt 5 wyżej): koszty dodatkowe (sprzęt, licencje, chmura, ...) nie są z natury
+   wynagrodzeniem, więc nie dziedziczą klasy wrażliwości F-13 domyślnie — czwarta funkcja
+   kształtująca (pkt 4 wyżej: "trzecia, ostatnia dopuszczona bez nowego aneksu") pozostaje
+   niewykorzystana, ten aneks jej nie zużywa.
+2. **Ryzyko nazwane, przyjęte świadomie:** koszt DOWOLNEJ kategorii przypisany do pozycji, nie tylko
+   rekrutacji/szkolenia (security-auditor, bramka 2, 2026-09-24 — zakres szerszy niż pierwotnie
+   nazwany), pośrednio wskazuje jedną osobę przy `headcount = 1` i jest widoczny każdemu z
+   `STAFFING_READ`, wraz z pełnym rozkładem miesięcznym, bez ochrony analogicznej do kosztu
+   osobowego. Ten sam kompromis co aneks SC-3-02 pkt 11 (dane nieobecności). Warunek ponownego
+   otwarcia: skarga/ADR uwierzytelniania nazywający tę klasę kosztu jako personnel data wprost, LUB
+   pierwsze zadanie łączące pozycję obsady z osobą imienną (F-13, Issue #31) — od tego momentu
+   koszt przy pozycji wskazuje osobę wprost, nie pośrednio.
+3. **Kategoria kosztu — szósty słownik organizacyjny (po `catalog_vendors`), nie szósty mechanizm**
+   (wzorem SC-2-01 pkt 1/2, "piąty słownik katalogu, nie piąty mechanizm" 2026-09-21 pkt 2), bez
+   zasięgu projektu, `CATALOG_READ`/`CATALOG_WRITE`.
+4. **Zasięg projektu bez nowej decyzji** — `404`, nigdy `403`, na odczycie i na zapisie (aneks
+   SC-3-01 pkt 1, pkt 4), dowiedzione przy wołającym mającym wszystkie uprawnienia (precedens SC-5-01
+   K-05).
+5. **Zobowiązanie naprzód niezmienione:** blok 7 (zysk/marża) dziedziczy koniunkcję kosztu osobowego
+   z pkt 5 wyżej dla TEJ części sumy, która pochodzi z kosztu osobowego; suma kosztów dodatkowych
+   wchodzi do tej samej metryki bez koniunkcji, bo sama nie jest nią objęta — blok 7 musi to
+   rozróżnić pole-po-polu, nie jedną bramką na cały koszt.
+6. **Nazwane skrzyżowanie, przyjęte świadomie (bramka 2, security-auditor H-01, 2026-09-24):**
+   `category_name` (etykieta wolnego tekstu, słownik pkt 3) dociera do każdego wołającego ze
+   `STAFFING_READ`, nawet bez `CATALOG_READ` — przez rozkład kosztu w odpowiedzi scenariusza, nie
+   przez sam endpoint słownika (który pozostaje pod `CATALOG_READ`). Ten sam wzorzec co
+   `COMMERCIAL_READ` (SC-4-01 pkt 4). Zaakceptowane: etykieta to dana organizacyjna grupy 1 (Q-4),
+   nie dana osobowa F-13 — ryzyko dotyczy nadużycia treści etykiety przez administratora
+   (`CATALOG_WRITE`), nie ścieżki dostępnej atakującemu. **Warunek ponownego otwarcia:** skarga,
+   albo — szerzej niż w pkt 2 — pierwsze zadanie łączące pozycję obsady z osobą imienną (F-13,
+   Issue #31), po którym koszt przy pozycji przestaje pośrednio wskazywać osobę i zaczyna wskazywać
+   ją wprost.
