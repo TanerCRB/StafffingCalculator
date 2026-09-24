@@ -1400,7 +1400,7 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, R-01, testy algorytmu nazewnictwa) — 701 testów backendowych zielono, 234
   frontendowych bez zmian. Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-7-01** — Wylicz i udostępnij zysk, marżę i markup scenariusza jako sumę całościową
+- [x] **SC-7-01** — Wylicz i udostępnij zysk, marżę i markup scenariusza jako sumę całościową
   (F-10, część). Zarezerwowane, kryteria (K-01..K-06) i decyzje bramki 1 w Issue #12.
   *Done when:* `backend/tests` dowodzą kryteriów K-01..K-06 (analyst 2026-09-24): (1) arytmetyka
   zysku/marży/markupu na żywym endpointzie zgodna z AC-01; (2) przychód rozstrzygnięty jako zero →
@@ -1425,5 +1425,34 @@ history / this file's own change log, not as tracked product work.
   `docs/architecture/decisions/ADR-0002-obsluga-pieniedzy.md` (aneks 2026-09-24);
   `docs/architecture/decisions/ADR-0005-model-dostepu.md` (aneksy SC-5-01 pkt 4/5, SC-5-05 pkt 5,
   aneks 2026-09-24); `docs/architecture/capabilities.md` (SC-4-01, SC-5-01, SC-5-05, SC-5-06).
+  **Done 2026-09-24:** PR #91 (scalone `98d0bc5`). Dowód: `backend/tests/test_scenario_results.py`
+  (K-01, K-02, K-04 ×4, K-05 ×4, test strukturalny reguły 10), `backend/tests/test_scenario_results_access.py`
+  (K-03, K-06 ×5), `backend/tests/test_scenario_results_race.py` (R-01, 3 testy ze współbieżnością
+  dwóch połączeń, wzorem `test_project_group_two_race.py`) — 21 nowych testów, 722 testy backendowe
+  zielono na CI po scaleniu z SC-6-01 (main przesunął się w trakcie pracy nad tym zadaniem). Runda
+  weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawki: **R-01 (High,
+  reviewer)** — `scenario_results_for_caller` składał trzy niezależne odczyty (`commercial_terms_for_caller`,
+  `scenario_cost_for_caller`, `additional_costs_for_caller`), z których dwa gałęzią na
+  `scenario.status`; przy zatwierdzeniu scenariusza commitującym MIĘDZY tymi dwoma odczytami
+  (`READ COMMITTED`, brak podniesienia izolacji w stosie) przychód liczył się live sprzed
+  zatwierdzenia a koszt z migawki po nim, w jedno `profit` bez żadnego oznaczenia — deweloper
+  odtworzył defekt deterministycznie (cofnięcie strażnika → odpowiedź `200` z rozjechanymi
+  `rate_source` i błędnym `scenario_status`), naprawione porównaniem `assumptions_used.rate_source`
+  obu odczytów i `409` przy rozjeździe zamiast cichego zmieszania danych; **R-02 (Low, reviewer)**
+  — treść błędu `409` ujawniała dosłowne `rate_source` niezależnie od `PERSONNEL_COSTS_READ` —
+  naprawione generycznym komunikatem, oba mutation-checked (cofnięcie poprawki → czerwono na obu
+  wariantach uprawnień → przywrócenie → zielono). QA: PROOF HOLDS, 6/7 mutacji zabitych czysto w
+  runda 1 + mutacje R-01/R-02 w rundzie 2. Invariant Guardian: PASS (dwie rundy). Security-auditor:
+  PASS (ryzyko B-01 rozszerzone jakościowo, nie szerzej niż nazwane — koszt osobowy widoczny wprost
+  w tym samym payloadzie przy spełnionej koniunkcji, arytmetyczne odtworzenie nic nie dodaje).
+  Reviewer: PASS WITH RESERVATIONS → poprawki → PASS. **Zaakceptowane, nienaprawione:** mutacja
+  "wspólny sentinel" dla K-05 nie zabija w izolacji dla wariantu `additional_cost`/
+  `currency_mismatch` (jedyny literał wspólny trzem typom `Literal` zbiega z oczekiwaną wartością
+  tego wariantu) — cały parametrized test i tak czerwienieje przez pozostałe dwa warianty, CI to
+  wykrywa; porównanie `rate_source` nie wykrywa rozjazdu dwóch odczytów "live" różniących się
+  generacją cennika przy edycji aktywnego okna stawki w trakcie odczytu (węższe, rzadsze ryzyko niż
+  R-01, nazwane wprost w docstringu `app/data/scenario_results.py`); trzy złożone odczyty pozostają
+  trzema osobnymi round-tripami, nie jednym zapytaniem (zaakceptowany kompromis architekta, R-01
+  ogranicza tylko konkretny, wykryty przypadek rozjazdu). Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
