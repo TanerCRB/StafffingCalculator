@@ -1253,7 +1253,7 @@ history / this file's own change log, not as tracked product work.
   `DELETE` kategorii z równoległym `INSERT` kosztu nieosiągalny w produkcji (brak ścieżki DELETE w
   API). Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-5-06** — Koszt nieobecności płatnych (F-07, F-05): koszt nieobecności flagowanych
+- [x] **SC-5-06** — Koszt nieobecności płatnych (F-07, F-05): koszt nieobecności flagowanych
   `absence_type.generates_cost = true` jako osobna, nazwana składowa obok niezmienionego kosztu
   bazowego SC-5-01; budżet urlopowy (`absence_budget_hours`, SC-3-03) wchodzi do kosztu wyłącznie
   dopłatą ponad wpisy ręczne — budżet sam w sobie nie jest daną kosztową (ADR-0005 aneks SC-3-03
@@ -1324,5 +1324,24 @@ history / this file's own change log, not as tracked product work.
   `ADR-0005-model-dostepu.md` (aneksy SC-3-02 pkt 7, SC-3-03 pkt 3–4/8, SC-5-01 pkt 4/5/7, nota
   B-01 rozszerzona); `ADR-0008-przedzialy-obowiazywania.md` (aneks SC-3-03 pkt 7–10);
   `ADR-0013-koszt-osobowy.md` (aneks 2026-09-23 SC-5-06, nowy).
+  **Done 2026-09-24:** PR #82 (scalone `a4c7c71`). Dowód: `backend/tests/test_paid_absence_cost.py`
+  (K-01..K-07, N-1..N-4, M-1..M-3), `backend/tests/test_scenario_approval_snapshot.py::test_k_07_m_3_*`,
+  `backend/tests/test_scenario_approval.py::test_s_01_a_location_given_a_calendar_*` — 631 testów
+  backendowych zielono (było 629), 234 frontendowych bez zmian. Runda weryfikacji (QA, Invariant
+  Guardian, reviewer, security-auditor) + poprawka: reviewer i Invariant Guardian niezależnie
+  znaleźli, że zatwierdzenie mogło cicho i trwale zmienić składową z `calculated` na `no_budget`
+  (typ ustawowy niekosztowy, brak zamrożonego budżetu) — naprawione zmianą kontraktu S-02 migawki
+  typu ustawowego (ADR-0004 aneks SC-5-06 pkt 5, zaakceptowane przez człowieka), dwa istniejące
+  testy przepisane na nowy kontrakt (nie osłabione). QA: dowód trzymał się, dopisany 1 test
+  kontrastowy (`test_m_2_the_frozen_calendar_days_are_read_from_the_own_snapshot_only`). Invariant
+  Guardian: PASS (druga runda po poprawce, zero regresji na 130 testach zakresu migawki/budżetu).
+  Reviewer: PASS (STOP → poprawka → PASS). Security-auditor: PASS WITH RESERVATIONS — nota B-01
+  rozszerzona o tę składową (ADR-0005), bez nowego ryzyka, uśpione z tego samego powodu co SC-5-01.
+  **Zaakceptowane, nienaprawione:** brak proporcji kosztu nieobecności do `planned_allocation_hours`
+  (ryzyko podwójnego liczenia przy nieodjętym urlopie z planu); brak sumy łącznej kosztu osobowego
+  (blok 7); scenariusze zatwierdzone przed tym PR z typem nazwanym-niekosztowym i bez zamrożonego
+  budżetu zostają z `no_budget` na zawsze (migawka bez ścieżki UPDATE); R-02 (dwa niezależne odczyty
+  siatki w jednym `GET` szkicu, przejściowy rozjazd przy współbieżnej edycji, nie dotyczy
+  zatwierdzonych scenariuszy). Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
