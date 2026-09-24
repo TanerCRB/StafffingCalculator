@@ -61,6 +61,12 @@ from app.core.identity import CallerIdentity, Permission
 # would be unreachable while every caller is this one placeholder; it is not a decision that
 # everyone
 # may set commercial terms. Scope is not widened: the path inherits `project_for_caller`.
+#
+# `SCENARIO_COPY` joins for the same reason and under the same reservation (SC-6-01, Issue #11,
+# gate 1 decision 2): without it, `POST …/scenarios/{id}/duplicate` would be unreachable while every
+# caller is this one placeholder. Not a decision that everyone may duplicate a scenario — the role
+# dimension arrives with the authentication ADR. Scope is not widened: the duplicate's target is
+# always the source's own project, resolved through `scenario_in_scope`/`project_for_caller`.
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.PROJECT_READ,
@@ -74,6 +80,7 @@ PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.STAFFING_WRITE,
         Permission.COMMERCIAL_READ,
         Permission.COMMERCIAL_WRITE,
+        Permission.SCENARIO_COPY,
     }
 )
 

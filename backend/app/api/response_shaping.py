@@ -201,6 +201,19 @@ def _shape_scenario(
     )
 
 
+def shape_duplicated_scenario(
+    scenario: Scenario, project: Project, organization_level: OrganizationLevel
+) -> ScenarioListItem:
+    """The response of `POST …/scenarios/{id}/duplicate` (SC-6-01, F-09 pt.1) — the same shape a
+    scenario has inside `ProjectDetail.scenarios`, built by the same `_shape_scenario` so the two
+    payloads cannot drift into disagreeing about what a scenario row looks like. A thin public name
+    for a private helper: every other reader of a scenario row goes through this module and this
+    one is no exception, even though the duplicate is a freshly created `draft` with nothing yet
+    planned in it.
+    """
+    return _shape_scenario(scenario, project, organization_level)
+
+
 def shape_scenario_assumptions(view: ScenarioAssumptionsView) -> ScenarioAssumptions:
     """One scenario's resolved assumptions as the API returns them (SC-1-10).
 
