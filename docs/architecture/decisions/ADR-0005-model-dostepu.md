@@ -764,3 +764,28 @@ ADR-0014, Q-2/Q-4/Q-7).**
    albo — szerzej niż w pkt 2 — pierwsze zadanie łączące pozycję obsady z osobą imienną (F-13,
    Issue #31), po którym koszt przy pozycji przestaje pośrednio wskazywać osobę i zaczyna wskazywać
    ją wprost.
+
+**Aneks — nowe uprawnienie `SCENARIO_COPY` (2026-09-24, bramka 1, SC-6-01, F-09 pkt 1, AC-02).**
+
+1. **`SCENARIO_COPY`, nowe — nie reużycie `PROJECT_COPY`.** Wzorzec ziarnistości akcji z aneksu
+   2026-09-18 pkt 1 ("`PROJECT_EDIT`, `PROJECT_COPY`, `PROJECT_ARCHIVE` — ziarnistość odpowiadająca
+   temu, że archiwizacja bywa uprawnieniem innej osoby niż edycja") uzasadnia dedykowane
+   uprawnienie per akcja-na-encji, nie po mechanizmie współdzielonym. `copy_scenario` będąc tą samą
+   funkcją danych co `copy_project` (ADR-0004, aneks SC-6-01 pkt 1) nie czyni "duplikuj jeden
+   scenariusz" i "utwórz cały nowy projekt" tą samą akcją w tym sensie — autor kalkulacji rutynowo
+   chce rozgałęzić wariant scenariusza; nie każdy taki autor powinien móc zakładać nowe,
+   klientowskie projekty. Reużycie `PROJECT_COPY` powtórzyłoby rozbieżność nazwa/mechanizm, którą
+   ten dokument już dwukrotnie odrzucił (SC-2-01 pkt 2, SC-2-03 pkt 3).
+2. **`PLACEHOLDER_PERMISSIONS` rośnie o `SCENARIO_COPY`, i tylko o nie.** Kanarek równości zbiorów
+   przezbrojony (`backend/tests/test_access_control.py`, `test_absence_budget_access.py`,
+   `test_additional_cost_access.py`, `test_catalog_access.py`), nie poluzowany — wciąż asercja
+   równości zbioru, nie samo `in`. Granica bez zmian: `APP_ALLOW_PLACEHOLDER_IDENTITY`,
+   środowiska `development`/`test`.
+3. **Nazwane skrzyżowanie, przyjęte świadomie (security-auditor, weryfikacja SC-6-01,
+   2026-09-24):** odpowiedź `201` tego endpointu niesie nazwę duplikatu (`"<nazwa źródła> (copy)"`),
+   więc wołający z samym `SCENARIO_COPY` (bez `PROJECT_READ`) poznaje przy okazji nazwę scenariusza
+   ŹRÓDŁOWEGO, nie tylko duplikatu — węższy wariant już nazwanego wzorca "uprawnienie zapisu w
+   praktyce czyta cały zasób" (`STAFFING_WRITE`/`COMMERCIAL_WRITE`). Dziś nieeksploatowalne
+   (placeholder daje każdemu wołającemu wszystkie uprawnienia naraz). **Warunek ponownego
+   otwarcia:** ten sam co dla wzorca ogólnego — ADR uwierzytelniania rozdzielający uprawnienia
+   między realne osoby.
