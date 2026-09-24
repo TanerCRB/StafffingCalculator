@@ -148,6 +148,49 @@ węższe niż litera powyższej decyzji:
   między odczytem a zapisem — wyścig, capabilities.md w.156) zostaje w kodzie i musi mieć własny,
   osobno dowiedziony test — nie wolno jej uznać za martwą dlatego, że kontrolka zwykle jest ukryta.
 
+## Aneks 2026-09-24 (Issue #95, SC-6-03 — bramka 1)
+
+Drugi przypadek zawężenia punktu 3 (pierwszy: aneks 2026-09-23, SC-4-06). `POST
+/projects/{project_id}/scenarios/{scenario_id}/duplicate` (backend scalony w SC-6-01; SC-6-03
+dodaje pierwszego wołającego z przeglądarki) jest formularzem zapisującym w rozumieniu tego ADR,
+mimo braku ciała żądania — pytanie P-3a ("skąd pochodzi wiersz na ekranie po `201`") obowiązuje
+niezależnie od tego, czy żądanie niosło jakiekolwiek pole.
+
+- **Zawężenie pkt 3, uzasadnienie silniejsze niż w aneksie SC-4-06.** Odpowiedź `201` tego
+  endpointu ma kształt `ScenarioListItem` — dokładnie ten, którym `GET /projects` już renderuje
+  każdy wiersz scenariusza, zbudowany przez tę samą funkcję kształtującą (`_shape_scenario`,
+  wywołaną przez `shape_duplicated_scenario`, ADR-0004 aneks SC-6-01). Ten kształt nigdy nie niósł
+  pola kosztowego — bramka kosztowa, przed którą chroni reguła pkt 3, nie ma tu przedmiotu w
+  ogóle, nie tylko jest nieaktywna jak w przypadku reguły komercyjnej (SC-4-06). Endpoint nie
+  przyjmuje ciała żądania (ADR-0004 aneks SC-6-01 pkt 2 — "endpoint zostaje bez ciała żądania"),
+  więc "echo formularza", przed którym broni reguła pkt 3 w brzmieniu pierwotnym, jest tu
+  strukturalnie niemożliwe: nie ma czego echować.
+- **Warunek ten sam co w aneksie SC-4-06.** Ciało `201` przechodzi tę samą walidację kształtu
+  (`isScenarioListItemShape`, już istniejącą w `frontend/src/api/client.ts` dla `GET /projects`)
+  co odpowiedź odczytu, zanim cokolwiek na ekranie się zmieni — jeden zapis, jedno żądanie, żadnego
+  ponownego odczytu listy.
+- **Miejsce wstawienia wiersza — doprecyzowanie, którego aneks SC-4-06 nie potrzebował, bo tamten
+  zapis modyfikował wiersz już obecny na ekranie.** Duplikat jest NOWYM elementem tablicy
+  `scenarios` projektu, którego `project_id` żądania sam nazywa (ADR-0004 aneks SC-6-01: duplikat
+  zawsze we własnym projekcie źródła) — ekran wstawia go do `scenarios` dokładnie tego projektu,
+  nigdy przez dopasowanie po pozycji/indeksie w drzewie stanu. Dowód wymaga kontrastu: dwa
+  projekty, każdy z własnym scenariuszem, duplikacja w jednym nie rusza tablicy drugiego.
+- **`409` (wyczerpanie kandydatów nazwy albo kolizja współbieżna) zostawia listę bez zmian** —
+  zgodnie z pkt 6 decyzji bazowej ("odmowa nie wzbogaca się o wpisane wartości"); tu nie ma
+  wartości wpisanych przez człowieka, więc odmowa nie wzbogaca się o nic — ekran pokazuje nazwany
+  stan odmowy i nie wstawia żadnego wiersza, próbnego ani ostatecznego.
+- **`403` i `404` rozróżnialne bez nowego mechanizmu.** Wzorzec z `getScenarioCommercialTerms`
+  (ta sama zasada, SC-4-06 K-04) stosuje się wprost: `ApiError.status` niesie oba kody osobno, a
+  ekran nie miesza "brak uprawnienia `SCENARIO_COPY`" z "scenariusz poza zasięgiem/nieistniejący".
+  To nie jest odstępstwo od reguły nieodróżnialności ADR-0005: ta reguła zamyka wyłącznie
+  przestrzeń powodów WEWNĄTRZ `404`; `403` uprawnienia jest osobną, zawsze rozróżnialną osią,
+  egzekwowaną jako zależność FastAPI przed jakimkolwiek odczytem zasobu (`backend/app/api/scenarios.py`,
+  docstring `duplicate`: "403 — the permission dependency, before the database").
+- **Zasięg precedensu wąski, jak w aneksie SC-4-06.** Ten aneks nie rozstrzyga niczego dla
+  przyszłego formularza o innym kształcie odpowiedzi — w szczególności dla żadnego przyszłego
+  zapisu niosącego pole kosztowe. Pierwsze takie zadanie odtwarza pytanie punktu 3 samodzielnie i
+  wraca tu własnym, datowanym wpisem, zgodnie z pkt 7 decyzji bazowej.
+
 ## Powiązane wymagania
 
 NF-05, NF-07, NF-08, NF-11, AC-06, F-03, NF-10; ADR-0002 (kierunek wejścia kwoty — aneks SC-2-04),
