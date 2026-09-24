@@ -25,6 +25,14 @@ import type {
   ScenarioListItem,
   ScenarioStatus,
 } from "./contracts/projects";
+import {
+  ADDITIONAL_COST_STATES,
+  PERSONNEL_COST_STATES,
+  RESULTS_NOT_APPLICABLE,
+  type AdditionalCostSource,
+  type PersonnelCostSource,
+  type ScenarioResults,
+} from "./contracts/scenarioResults";
 
 const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -810,4 +818,163 @@ export async function editCatalogRate(
   body: CatalogRateEditRequest,
 ): Promise<CatalogRate> {
   return write(`/catalog/rates/${rateId}`, "PATCH", body, isCatalogRateShape);
+}
+
+// --- A scenario's whole-life profit, margin and markup (SC-7-02, consuming SC-7-01) ------------
+
+/**
+ * Whether a value is one of the shapes `GatedResultField` promises: a fixed-point decimal string, the
+ * literal `"n/a"`, or `null` — and nothing else. `null` (the personnel-cost gate) and `"n/a"` (not
+ * computable) are read as the two different values they are; neither is folded into the other here,
+ * and a payload that says something else again (a JSON number, an empty string) is not admissible —
+ * it would reach `formatMoneyString`/`formatPercentString` and throw mid render (ADR-0010, point 2;
+ * Issue #94, K-01/K-02).
+ */
+function isGatedResultFieldShape(value: unknown): boolean {
+  if (value === null) {
+    return true;
+  }
+  if (typeof value !== "string") {
+    return false;
+  }
+  if (value === RESULTS_NOT_APPLICABLE) {
+    return true;
+  }
+  return isDecimalString(value);
+}
+
+/**
+ * Whether a value has the shape `PersonnelCostSource` promises.
+ *
+ * `amount`/`currency` are read independently of `state` (Issue #94, Architect's impact map): the
+ * personnel-cost gate can null the amount while `state` still says `"calculated"`, and a `state` that
+ * names a cause can sit beside a gate that is open (`amount: "n/a"`). Both combinations are legal;
+ * what is not legal is a `"calculated"` state paired with the `"n/a"` sentinel, or any other state
+ * paired with a real decimal amount — the same pairing rule `isRevenueShape` already enforces for
+ * revenue, applied here to its cost counterpart.
+ */
+function isPersonnelCostSourceShape(value: unknown): value is PersonnelCostSource {
+  if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES)) {
+    return false;
+  }
+  const amount = value.amount;
+  if (amount === null) {
+    return isRequiredNullableString(value.currency);
+  }
+  if (typeof amount !== "string") {
+    return false;
+  }
+  if (amount === RESULTS_NOT_APPLICABLE) {
+    return value.state !== "calculated" && isRequiredNullableString(value.currency);
+  }
+  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string";
+}
+
+/**
+ * Whether a value has the shape `AdditionalCostSource` promises — the same pairing rule as
+ * `isPersonnelCostSourceShape`, without the gate: `additional_cost` is never gated (ADR-0014,
+ * point 11), so `amount` is never `null`.
+ */
+function isAdditionalCostSourceShape(value: unknown): value is AdditionalCostSource {
+  if (!isRecord(value) || !isOneOf(value.state, ADDITIONAL_COST_STATES)) {
+    return false;
+  }
+  const amount = value.amount;
+  if (typeof amount !== "string") {
+    return false;
+  }
+  if (amount === RESULTS_NOT_APPLICABLE) {
+    return value.state !== "calculated" && isRequiredNullableString(value.currency);
+  }
+  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string";
+}
+
+/**
+ * Whether a `GatedResultField` value is a real number — neither the gate's `null` nor the `"n/a"`
+ * sentinel. Used only to enforce the pairing rule below; `isGatedResultFieldShape` above still owns
+ * the field's own shape.
+ */
+function isRealGatedResultValue(value: unknown): boolean {
+  return typeof value === "string" && value !== RESULTS_NOT_APPLICABLE;
+}
+
+/**
+ * Whether a response is the `ScenarioResults` *of the scenario that was asked about* — the same
+ * `scenario_id` discipline `isScenarioCommercialTermsShape` already applies (SC-4-06, K-07).
+ *
+ * One more pairing rule, on top of each field's own shape: the backend's documented invariant
+ * (`backend/app/api/schemas/scenario_results.py`, not enforced by any schema validator on that side
+ * either) is that `included_cost`/`profit`/`margin`/`markup` can only be real numbers when
+ * `revenue.state === "calculated"` — `isRevenueShape` already guarantees a non-`"calculated"` revenue
+ * always carries the `"n/a"` sentinel, so this reads `revenue.state` straight off the now-checked
+ * `value.revenue`. A payload that pairs a real value in any of the four with a withheld revenue is
+ * not admissible (Reviewer R-01, Issue #94): treated as shape-invalid, same as any other malformed
+ * payload, so `getScenarioResults` throws before `ScenarioResultsSection` ever derives a currency
+ * from a `null` revenue and hands a real number to `GatedMoneyLine` with no currency to show it in.
+ */
+function isScenarioResultsShape(value: unknown, scenarioId: string): value is ScenarioResults {
+  if (
+    !isRecord(value) ||
+    value.scenario_id !== scenarioId ||
+    !isOneOf(value.scenario_status, SCENARIO_STATUSES) ||
+    !isRevenueShape(value.revenue) ||
+    !isPersonnelCostSourceShape(value.personnel_cost) ||
+    !isAdditionalCostSourceShape(value.additional_cost) ||
+    !isGatedResultFieldShape(value.included_cost) ||
+    !isGatedResultFieldShape(value.profit) ||
+    !isGatedResultFieldShape(value.margin) ||
+    !isGatedResultFieldShape(value.markup)
+  ) {
+    return false;
+  }
+  const revenue = value.revenue;
+  if (isRecord(revenue) && revenue.state !== "calculated") {
+    return (
+      !isRealGatedResultValue(value.included_cost) &&
+      !isRealGatedResultValue(value.profit) &&
+      !isRealGatedResultValue(value.margin) &&
+      !isRealGatedResultValue(value.markup)
+    );
+  }
+  return true;
+}
+
+function scenarioResultsPath(projectId: string, scenarioId: string): string {
+  return `/projects/${projectId}/scenarios/${scenarioId}/results`;
+}
+
+/**
+ * A scenario's whole-life profit, margin and markup, next to the revenue, personnel cost and
+ * additional cost they are built from (`GET …/scenarios/{scenario_id}/results`, SC-7-01). Read only.
+ *
+ * `403` and `404` both stay on the `ApiError`'s `status` — this screen renders them identically
+ * (Issue #94, K-04: unlike `getScenarioCommercialTerms`, which distinguishes them), so the mapping to
+ * one rendered state happens in the screen, not by collapsing the status here. `409` (the rate-source
+ * race, SC-7-01) stays distinguishable from every other failure for the same reason.
+ *
+ * `signal`, when given, ends the read early — the card that asked for it has unmounted, or asked
+ * again (ADR-0010, point 7).
+ */
+export async function getScenarioResults(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+): Promise<ScenarioResults> {
+  const path = scenarioResultsPath(projectId, scenarioId);
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isScenarioResultsShape(payload, scenarioId)) {
+        throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
 }
