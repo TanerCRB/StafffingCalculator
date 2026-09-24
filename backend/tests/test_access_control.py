@@ -141,6 +141,11 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     belong here — so the deny path for `profit`/`margin`/`markup`/`included_cost`
     (`app.api.response_shaping._without_scenario_profitability`) is the real one for every caller
     the running system has, and its positive branch stays reachable from a test only.
+
+    It grew once more by `SCENARIO_COPY` (SC-6-01, Issue #11, gate 1 decision 2): without it
+    `POST …/scenarios/{id}/duplicate` would be unreachable while every caller is this one
+    placeholder. Re-armed around the new set, not loosened — the formal ADR-0005 addendum for this
+    widening is pending gate 3; this canary states the code's actual set either way.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
@@ -161,6 +166,8 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             Permission.COMMERCIAL_WRITE,
             # SC-7-01: ADR-0005's aneks of 2026-09-24 names this widening and only this one.
             Permission.RESULTS_READ,
+            # SC-6-01 (Issue #11, gate 1 decision 2) — re-armed around the new set, not loosened.
+            Permission.SCENARIO_COPY,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS

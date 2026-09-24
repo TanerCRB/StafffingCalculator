@@ -1344,8 +1344,61 @@ history / this file's own change log, not as tracked product work.
   siatki w jednym `GET` szkicu, przejściowy rozjazd przy współbieżnej edycji, nie dotyczy
   zatwierdzonych scenariuszy). Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-6-01** — Duplikuj scenariusz niezależnie od źródła (F-09 pkt 1, AC-02). Zarezerwowane,
-  kryteria i decyzje bramki 1 w Issue #11.
+- [x] **SC-6-01** — Duplikuj scenariusz niezależnie od źródła (F-09 pkt 1, AC-02). Nowy entry point
+  do istniejącego mechanizmu kopiowania (`copy_scenario`/`SCENARIO_CHILD_COPIERS`, ADR-0004) —
+  `into_project=source.project` zamiast nowego projektu (SC-1-03 zawsze tworzył nowy).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-06 (analyst, gate 1 zaakceptowane
+  2026-09-24):
+  1. (K-01) Duplikat trafia do TEGO SAMEGO projektu, nigdy nowego — kontrast z `POST /projects/{id}/copy`
+     (SC-1-03), który zawsze zwiększa liczbę projektów.
+  2. (K-02) Duplikat zawsze `draft`, niezależnie od statusu źródła (`draft`/`approved`); status
+     źródła nietknięty.
+  3. (K-03) AC-02 przez ten entry point dla wszystkich tabel w `SCENARIO_CHILD_COPIERS` (obsada +
+     alokacje + nieobecności, reguła komercyjna + T&M, koszt dodatkowy obie połówki) — obie
+     kierunki (edycja duplikatu nie rusza źródła i odwrotnie).
+  4. (K-04) Scenariusz spoza zasięgu wołającego → `404`, nigdy `403`, zero zapisanych wierszy.
+  5. (K-05) Brak uprawnienia `SCENARIO_COPY` (nowe, gate 1 — architect, nie reużycie `PROJECT_COPY`:
+     ziarnistość per akcja-na-encji, nie po mechanizmie) → `403`, zero zapisanych wierszy, mimo
+     zasięgu.
+  6. (K-06) `scenario_id` istnieje pod INNYM `project_id` niż w ścieżce → `404`.
+
+  **Decyzje bramki 1 (2026-09-24, analyst + architect, zaakceptowane przez człowieka):** nazwa
+  duplikatu generowana przez backend (sufiks `(copy)`/`(copy N)`, retry na kolizję) zamiast
+  przyjmowana w ciele żądania — endpoint zostaje bez ciała, zgodnie z konwencją siostrzanych akcji
+  (`copy_project`/`archive`/`approve`); wynika z `UniqueConstraint(project_id, name)` na
+  `scenarios`, którego `copy_scenario` nigdy dotąd nie zderzał (każde wcześniejsze wywołanie szło
+  do nowego projektu). Nowe uprawnienie `SCENARIO_COPY`.
+
+  **Runda weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawka.** QA:
+  proof holds — 1 lukę pokrycia (porządek 404-przed-409 dla kolizji nazwy w projekcie spoza
+  zasięgu) domknęła własnym testem kontrastowym; 3 mutacje (regresja K-01, off-by-one sufiksu,
+  "moved not copied" w kopierze stafingu) — wszystkie killed. Invariant Guardian: PASS (źródło
+  tylko czytane `FOR SHARE`, nigdy zapisywane; deny-by-default; kaskada niezmieniona
+  strukturalnie). Security-auditor: PASS (autoryzacja, brak nadmiarowej ekspozycji odpowiedzi,
+  brak nowej zależności/migracji, dyscyplina NF-11). Reviewer: PASS WITH RESERVATIONS →
+  poprawka → PASS. Reviewer znalazł R-01 (Medium): łańcuchowe duplikowanie duplikatu wydłuża
+  nazwę bez kolizji (sufiks `(copy)` zawsze wolny), po ~27-28 skokach przekracza `String(200)` →
+  `DataError` niezmapowany → surowy, permanentny `500`. Naprawione: `_bounded_base_name` obcina
+  bazę do budżetu kolumny PRZED generowaniem kandydatów — łańcuch dowiedziony jako zbiegający do
+  stałego punktu (fixed point), nie tylko obserwacyjnie nienaprawiony. Reviewer zweryfikował
+  naprawę ponownie: PASS.
+
+  **Out of scope (explicit):** porównanie ≥3 scenariuszy i analiza wrażliwości (F-09 pkt 2-3) —
+  Issues #87, #88; widoczność rezerw ryzyka i podwójna reprezentacja (F-09 pkt 4-5, mechanizm
+  rezerw nie istnieje jeszcze w F-08) — Issue #89; nowa wersja po zatwierdzeniu jako nazwana akcja
+  (F-12, blok 8); `audit_log` (blok 8); idempotencja (zaakceptowany koszt jak SC-1-03); frontend
+  (zadanie czysto backendowe); realny wyścig współbieżny na nazwie (ścieżka odmowy `409`
+  okablowana, niećwiczona współbieżnie, ten sam zaakceptowany wzorzec co SC-1-03).
+
+  **Fundament nieudowodniony, przyjęty świadomie:** K-03 dla `commercial_terms`/`tm_terms` dowodzi
+  niezależność przez rozłączne identyfikatory, nie przez edycję — router nie ma ścieżki
+  edycji/usuwania dla tej tabeli (nazwane w module docstring testu). Podstawa: Issue #11,
+  `Wymagania/Requirements_EN.md` §4 F-09 pkt 1, §7 AC-02; `docs/PLAN.md` SC-1-03, SC-3-01, SC-3-02,
+  SC-3-03, SC-4-01, SC-5-05; `ADR-0004-wersjonowanie-kalkulacji.md` (aneks SC-6-01);
+  `ADR-0005-model-dostepu.md` (aneks SC-6-01, nowe uprawnienie `SCENARIO_COPY`).
+  **Done 2026-09-24:** PR #90 (scalone `df3c174`). Dowód: `backend/tests/test_scenario_duplication.py`
+  (K-01..K-06, R-01, testy algorytmu nazewnictwa) — 701 testów backendowych zielono, 234
+  frontendowych bez zmian. Zob. `docs/architecture/capabilities.md`.
 
 - [ ] **SC-7-01** — Wylicz i udostępnij zysk, marżę i markup scenariusza jako sumę całościową
   (F-10, część). Zarezerwowane, kryteria (K-01..K-06) i decyzje bramki 1 w Issue #12.

@@ -426,7 +426,9 @@ copying an archived project is for. Descriptive fields, including `name`, are co
 renaming is the edit action (SC-1-02), not a side effect of copying."""
 
 
-def copy_scenario(session: Session, source: Scenario, *, into_project: Project) -> Scenario:
+def copy_scenario(
+    session: Session, source: Scenario, *, into_project: Project, name: str | None = None
+) -> Scenario:
     """Copy one scenario into `into_project` as a fresh `draft`, with its child rows.
 
     The single copy mechanism ADR-0004 requires (addendum, point 1). Copying a project calls it
@@ -434,7 +436,7 @@ def copy_scenario(session: Session, source: Scenario, *, into_project: Project) 
     approved one (F-12) will call it with `into_project=source.project`. Nothing about this
     function is specific to the project-copy entry point.
 
-    Two deliberate properties:
+    Three deliberate properties:
 
     - **The status is not a parameter.** Every copy is a `draft`, whatever the source was. A
       parameter would make "copy an approved scenario and keep it approved" expressible, and that
@@ -445,16 +447,28 @@ def copy_scenario(session: Session, source: Scenario, *, into_project: Project) 
       its own approval. This is a named consequence against F-12, not an omission — and it is
       also why the source's `approved` row is only ever read here, never written: the copy is a
       new row, so the immutability of the approved source is untouched.
+    - **`name` overrides the copied scenario's name; `None` (the default) keeps it exactly as
+      reflected from the source.** SC-1-03 (`copy_project`) never passes it, because a scenario
+      copied into a brand-new project never collides with a sibling. `app.data.scenario_duplication`
+      (SC-6-01, F-09 pt.1) is the one caller that does: duplicating into the *source's own* project
+      collides with `UniqueConstraint("project_id", "name")` on every call otherwise, because the
+      target already holds a scenario named exactly `source.name` — the source itself (gate 1,
+      Issue #11, decision 1). Passed through as a plain override of the one reflected value, not as
+      a new decision about copying — the cascade below, the lock above and every other column are
+      unchanged whether or not it is given.
     """
     # The source row, `FOR SHARE`, before anything of it is read (SC-5-05, reviewer R-01; ADR-0014,
     # point 10): no child write of the source can commit between the copiers' separate statements,
     # so every pass below reads one state. See `app.data.scenario_guard.copying_source_scenario`.
     session.execute(copying_source_scenario(source.id))
+    copied_values = values_to_copy(source, excluded=SCENARIO_COLUMNS_NOT_COPIED)
+    if name is not None:
+        copied_values["name"] = name
     copy = Scenario(
         id=uuid.uuid4(),
         project=into_project,
         status=ScenarioStatus.DRAFT,
-        **values_to_copy(source, excluded=SCENARIO_COLUMNS_NOT_COPIED),
+        **copied_values,
     )
     session.add(copy)
     # Flush before the children so the copy has a row for them to point at; the enclosing
