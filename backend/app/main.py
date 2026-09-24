@@ -8,6 +8,7 @@ from app.api.deps import assert_identity_mechanism_allowed
 from app.api.health import router as health_router
 from app.api.personnel_cost import router as personnel_cost_router
 from app.api.projects import router as projects_router
+from app.api.scenario_results import compare_router as scenario_results_compare_router
 from app.api.scenario_results import router as scenario_results_router
 from app.api.scenarios import router as scenarios_router
 from app.api.staffing import router as staffing_router
@@ -61,3 +62,8 @@ app.include_router(additional_cost_router)
 # `can_view_personnel_costs` in response shaping (ADR-0005, aneks 2026-09-24) — a composition over
 # the three routers above, never a fourth independent calculation (F-06).
 app.include_router(scenario_results_router)
+# Same nesting, an eighth router (SC-6-02): comparing several scenarios of the same project in one
+# call — a composition over `scenario_results_router` above (same `RESULTS_READ`, same functions,
+# same gates), never a new calculation. A router of its own because its path
+# (`/projects/{project_id}/scenarios/compare`) does not carry `{scenario_id}/results`.
+app.include_router(scenario_results_compare_router)

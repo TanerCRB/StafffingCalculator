@@ -65,3 +65,23 @@ class ScenarioResults(BaseModel):
     markup: DecimalString | Literal[NOT_APPLICABLE] | None
     """`profit / included_cost × 100`, via `app.core.money.ratio_percent` — `"n/a"` only when
     `included_cost` is exactly `0.00`, independently of `margin`."""
+
+
+class ScenarioResultsComparison(BaseModel):
+    """`GET …/scenarios/compare` — the same seven fields `ScenarioResults` already carries, once per
+    named `scenario_id`, in request order (SC-6-02, F-09 pkt 2; ADR-0001/ADR-0005, aneks
+    2026-09-24).
+
+    **A set of independent rows, never an aggregate.** No field here sums, nets or averages
+    `revenue`/`profit`/etc. across the compared scenarios (ADR-0005 aneks SC-7-01 pt.6, reconfirmed
+    for this endpoint) — each `ScenarioResults` row is exactly what `GET
+    …/scenarios/{scenario_id}/results` would answer for that one scenario, unchanged. Perturbing one
+    scenario's input changes only its own row; the others are byte-identical to before (K-01).
+
+    **All-or-nothing, never partial.** This type is only ever constructed once every named
+    `scenario_id` has resolved for the caller — a `scenario_id` outside scope, or belonging to
+    another project, refuses the whole request before this type is built (`404`,
+    `SCENARIO_RESULTS_NOT_FOUND_DETAIL`), and a race on any one of them refuses it with `409`. There
+    is no row-shaped "not found" or "conflict" marker here on purpose (gate-1 decision, SC-6-02)."""
+
+    results: list[ScenarioResults]
