@@ -1526,4 +1526,59 @@ history / this file's own change log, not as tracked product work.
   (F-09 pkt 3, wariant 1/4 analizy wrażliwości). Zarezerwowane, kryteria i decyzje bramki 1 w
   Issue #88, nowa decyzja architektoniczna ADR-0015 (Draft — pending approval).
 
+- [x] **SC-6-03** — Duplikuj scenariusz z interfejsu (F-09 pkt 1, frontend). Konsument API
+  dostarczonego przez SC-6-01 (`POST .../scenarios/{id}/duplicate`) — ekran świadomie odłożony przy
+  SC-6-01, wzorem podziału backend/frontend SC-4-01/SC-4-06 (Issue #95).
+  *Done when:* `frontend/src` (vitest) dowodzi kryteriów K-01..K-06 (analyst, gate 1 zaakceptowane
+  2026-09-24):
+  1. (K-01) Udany zapis (`201`) dodaje nowy wiersz scenariusza w tym samym projekcie, zbudowany
+     wyłącznie z ciała odpowiedzi, bez ponownego odczytu listy.
+  2. (K-02) Kontrolka "Duplicate" dostępna na scenariuszu w OBU stanach, `draft` i `approved` — nie
+     ukrywana na `approved`, w odróżnieniu od kontrolki "Set Time & Material" (SC-4-06):
+     duplikowanie nie jest zapisem do źródła (ADR-0004 aneks SC-6-01).
+  3. (K-03) Po duplikowaniu zatwierdzonego scenariusza: wiersz źródłowy pozostaje `Approved` bez
+     zmian, nowy wiersz zawsze `Draft`, wzięty z ciała odpowiedzi, nigdy nie dziedziczony ze
+     źródła po stronie klienta.
+  4. (K-04) `403` i `404` kończą się dwoma osobnymi, nazwanymi, tekstowo rozróżnialnymi stanami
+     odmowy, nigdy generycznym "failed" ani cichym brakiem reakcji.
+  5. (K-05) `409` (brak wolnej nazwy/przegrany wyścig o nazwę) zostawia listę dokładnie taką, jaka
+     była — zero widmowego wiersza, nazwany komunikat konfliktu odróżnialny od 403/404/failed.
+  6. (K-06) Nowy wiersz trafia do tablicy scenariuszy WŁAŚCIWEGO projektu (po `project_id`), nigdy
+     do nowego projektu ani po pozycji/indeksie w tablicy.
+
+  **Decyzje bramki 1 (2026-09-24, analyst + architect, zaakceptowane przez człowieka):** kontrolka
+  jako nowy przycisk na istniejącej karcie scenariusza (Q1 = opcja A, brak nowego
+  routera/mechanizmu, wzorem D-2 SC-4-06); render nowego wiersza z ciała `201` natychmiast, bez
+  refetchu (Q2, spójne z ADR-0009). Architect: FITS WITHIN THE ARCHITECTURE, jeden aneks do
+  ADR-0009 (render-from-201 dla zapisu bez ciała żądania, wstawianie po `project_id`) — nie bramka.
+
+  **Runda weryfikacji (QA, Invariant Guardian, reviewer) + poprawka.** QA: proof holds — 8 mutacji
+  uruchomionych, wszystkie zabite za pierwszym razem (w tym własny wariant QA dla K-02: kontrolka
+  zamontowana, ale `disabled` zamiast ukryta — realistyczny odpowiednik pomyłki z SC-4-06).
+  Invariant Guardian: PASS (dwie rundy). Reviewer: PASS WITH RESERVATIONS → poprawka → PASS.
+  Reviewer znalazł R-01 (Low): udany duplikat nie dawał żadnego odróżnialnego potwierdzenia ani
+  przesunięcia fokusu, w odróżnieniu od każdego innego zapisu w tym repozytorium — naprawione:
+  nowy stan `"duplicated"`, komunikat `role="status"`, fokus tym samym mechanizmem co `"saved"` w
+  `ScenarioCommercialTermsSection`. Security-auditor: nieuruchomiony (brak nowej powierzchni
+  auth/danych osobowych — czysta konsumpcja już zamkniętego, audytowanego endpointu).
+
+  **Out of scope (explicit):** duplikowanie do innego projektu (`POST /projects/{id}/copy`,
+  SC-1-03, osobny ekran); zmiana nazwy duplikatu przez PM (backend generuje sam, brak ciała
+  żądania — decyzja bramki 1 SC-6-01); usuwanie/cofanie duplikatu (brak endpointu usuwania
+  scenariusza w ogóle); nowy ogólny mechanizm routingu/stanu wybranego projektu-scenariusza (ta
+  sama decyzja D-2 co SC-4-06); realny test współbieżnego wyścigu o nazwę (backend już zaakceptował
+  jako okablowany-nieskwiczony, SC-6-01); podwójne kliknięcie = dwa duplikaty na poziomie backendu
+  (odziedziczony, zaakceptowany koszt); porównanie ≥3 scenariuszy (Issue #87); wykresy/eksport
+  (F-11); mobile/responsive (NF-09, wzorzec SC-4-06); backend (zero zmian, SC-6-01 już zamknięte).
+
+  Podstawa: `Wymagania/Requirements_EN.md` §4 F-09 pkt 1, §7 AC-02; `docs/PLAN.md` SC-6-01 (Issue
+  #11, PR #90); `ADR-0004-wersjonowanie-kalkulacji.md` (aneks SC-6-01);
+  `ADR-0005-model-dostepu.md` (aneks SC-6-01, uprawnienie `SCENARIO_COPY`);
+  `ADR-0009-zapis-z-interfejsu.md` (aneks 2026-09-24, Issue #95, SC-6-03);
+  `docs/architecture/capabilities.md` (SC-6-01, dowiedzione).
+  **Done 2026-09-24:** PR #98 (scalone `a107118`). Dowód:
+  `frontend/src/features/projects/DuplicateScenario.test.tsx` (K-01..K-06, R-01 — 11 testów) — 245
+  testów frontendowych zielono po tym zadaniu (było 234), 262 po scaleniu z SC-7-02 (PR #99). Zob.
+  `docs/architecture/capabilities.md`.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
