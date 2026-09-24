@@ -1144,7 +1144,7 @@ history / this file's own change log, not as tracked product work.
   zmienną stawką sprzedażową (migawka bez ścieżki UPDATE, nazwane w aneksie ADR-0004 pkt 7). Zob.
   `docs/architecture/capabilities.md`.
 
-- [ ] **SC-5-05** — Koszty dodatkowe (F-08), zawężone na bramce 1 (2026-09-23, ADR-0014, Accepted):
+- [x] **SC-5-05** — Koszty dodatkowe (F-08), zawężone na bramce 1 (2026-09-23, ADR-0014, Accepted):
   kategorie kosztów o **kwocie stałej** (`CHECK amount > 0`, G-1), jednorazowych i cyklicznych,
   przypisanych do scenariusza (poziom "projektu") albo pozycji obsady, z atrybutem `funding_source`
   (`internal` / `rebilled_to_client`, bez wpływu na przychód w tym zadaniu) (Issue #10).
@@ -1223,6 +1223,35 @@ history / this file's own change log, not as tracked product work.
   (aneks SC-5-05), ADR-0005 (aneksy SC-2-01, SC-3-01, SC-3-02, SC-5-05), ADR-0006, ADR-0007 (aneks
   SC-5-05), ADR-0008 (pkt 6, aneks SC-5-05), `docs/PLAN.md` SC-1-03/SC-3-01/SC-3-02/SC-4-01
   (fundament dowiedziony w `docs/architecture/capabilities.md`).
+  **Done 2026-09-24:** PR #83 (scalone `bdc82b3`). Dowód: `backend/tests/test_additional_cost.py`
+  (K-01, K-02, K-04, K-05, K-10, R-02), `test_additional_cost_schema.py` (K-03),
+  `test_additional_cost_guards.py` (K-06, w tym 3 wyścigi na dwóch połączeniach),
+  `test_additional_cost_copy.py` (K-07, R-01), `test_additional_cost_access.py` (K-08, K-09) — 689
+  testów backendowych zielono (było 610), 234 frontendowych bez zmian, ruff i lint czyste. Runda
+  weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawki: QA domknęła realną
+  lukę dowodu — test strukturalny K-10 czytał tylko bezpośrednie importy, dwie mutacje (import
+  `app.domain.revenue` w `scenario_guard.py`, import `app.domain.additional_cost` w
+  `write_errors.py`, oba łączące koszt dodatkowy z przychodem przechodnio przez `app.data.staffing`)
+  przeżyły pierwotny test — zabite nowym `test_k_10_no_import_path_at_any_depth_...` (chodzi cały
+  graf importów). Invariant Guardian: PASS, zero wysokich/średnich, dwie uwagi niskie (obie
+  domknięte w rundzie). Reviewer: STOP, dwa Medium naprawione w tym PR — **R-01**: koszt dodatkowy
+  jest pierwszą tabelą-dzieckiem rozdzieloną między dwa kopiery (pozycji i scenariusza) po
+  edytowalnej kolumnie `position_id`; bez blokady źródła kopia mogła zdublować albo zgubić koszt
+  przy równoczesnym `PATCH` w oknie między przebiegami — naprawione `copying_source_scenario`
+  (`FOR SHARE` na źródłowym scenariuszu, trzymane do commitu kopii, mirror `unapproved_scenario`).
+  **R-02**: brak limitu zakresu kosztu cyklicznego (jeden `POST` do ~36k miesięcy czynił każdy
+  późniejszy odczyt/kopię scenariusza nieograniczenie dużym) — naprawione `MAX_RECURRING_MONTHS =
+  MAX_ALLOCATION_MONTHS` (60) w schemacie, mirror istniejącego precedensu. Security-auditor: PASS
+  WITH RESERVATIONS — **H-01** (Low, nowe): `category_name` dociera do każdego `STAFFING_READ` bez
+  `CATALOG_READ`, szerzej niż pierwotnie nazwane ryzyko (dowolna kategoria, nie tylko
+  rekrutacja/szkolenie) — zaakceptowane i nazwane wprost w ADR-0005 aneks SC-5-05 pkt 6 (wzorem
+  `COMMERCIAL_READ`, SC-4-01 pkt 4), etykieta grupy 1, nie dana F-13. **Zaakceptowane, nienaprawione:**
+  R-04 (Low, reviewer) — brak idempotencji `POST` (baza nie odrzuca duplikatu, ADR-0014 pkt 4 świadomie
+  bez `EXCLUDE`), nazwane w ADR-0014, warunek zamknięcia: pierwsze zadanie frontendowe budujące
+  formularz zapisu (F-11); `PATCH` niosący tylko jeden koniec zakresu cyklicznego omija limit 60
+  miesięcy (uniknięcie check-then-act, ten sam wzorzec co precedens `MAX_ALLOCATION_MONTHS`); wyścig
+  `DELETE` kategorii z równoległym `INSERT` kosztu nieosiągalny w produkcji (brak ścieżki DELETE w
+  API). Zob. `docs/architecture/capabilities.md`.
 
 - [x] **SC-5-06** — Koszt nieobecności płatnych (F-07, F-05): koszt nieobecności flagowanych
   `absence_type.generates_cost = true` jako osobna, nazwana składowa obok niezmienionego kosztu
