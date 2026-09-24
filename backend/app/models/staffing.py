@@ -116,6 +116,11 @@ the same three names out, and a test asks the migrated database whether all thre
 which is what would catch a truncation returning by the back door."""
 
 
+POSITION_ID_SCENARIO_UNIQUE = "uq_staffing_position_id_scenario_id"
+"""`UNIQUE (id, scenario_id)` on the position — added by SC-5-05 so that an additional cost can
+point at "this position **of this scenario**" with a composite foreign key (ADR-0014, point 1)."""
+
+
 class StaffingPosition(Base):
     """One anonymous staffing position of one scenario: a dimension tuple, a headcount, a period.
 
@@ -239,6 +244,12 @@ class StaffingPosition(Base):
         CheckConstraint(
             "end_date IS NULL OR end_date >= start_date", name="position_period_ordered"
         ),
+        # The parent half of `app.models.additional_cost.POSITION_SAME_SCENARIO_FOREIGN_KEY`
+        # (SC-5-05, ADR-0014 point 1). Redundant as a uniqueness claim — `id` alone is the primary
+        # key — and required anyway: PostgreSQL accepts a foreign key only against a unique
+        # constraint on exactly the referenced columns. The same construction as
+        # `uq_commercial_terms_id_model_type` (SC-4-01).
+        UniqueConstraint("id", "scenario_id", name=POSITION_ID_SCENARIO_UNIQUE),
     )
 
 

@@ -39,6 +39,14 @@ here that removes a real personnel-cost figure inside a project context. `PERSON
 from collections.abc import Sequence
 from typing import Any
 
+from app.api.schemas.additional_cost import (
+    AdditionalCostAssumptionsRead,
+    AdditionalCostPeriodRead,
+    AdditionalCostRead,
+    AdditionalCostSpreadRead,
+    AdditionalCostTotalRead,
+    ScenarioAdditionalCosts,
+)
 from app.api.schemas.catalog import (
     AbsenceBudgetEntry,
     AbsenceBudgetList,
@@ -90,6 +98,7 @@ from app.api.schemas.staffing import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.core.money import NOT_APPLICABLE
+from app.data.additional_cost import AdditionalCostRow, ScenarioAdditionalCostView
 from app.data.assumptions import ScenarioAssumptionsView
 from app.data.catalog import DimensionRow
 from app.data.commercial_terms import ScenarioCommercialView
@@ -99,6 +108,8 @@ from app.data.project_reads import CallerProjectView
 from app.data.staffing import StaffingPositionView
 from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, StatutoryLeaveType
 from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
+from app.domain.additional_cost import CALCULATED as ADDITIONAL_COST_CALCULATED
+from app.domain.additional_cost import AdditionalCostResult
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
 from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
@@ -933,6 +944,91 @@ def shape_scenario_personnel_cost(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
         personnel_cost=_without_scenario_personnel_costs(cost, view, caller),
+    )
+
+
+# --- a scenario's additional costs (SC-5-05) -----------------------------------------------------
+# No gate, and no fourth shaping function with one (ADR-0005, aneks 2026-09-23 SC-5-05, point 1):
+# additional costs are not personnel costs by nature, so the "fourth shaping function" that point
+# 4 of the SC-5-01 addendum reserves stays unused. What makes that true is the absence of a
+# `caller` argument below — there is nothing to decide per caller.
+
+
+def shape_additional_cost(row: AdditionalCostRow) -> AdditionalCostRead:
+    """One cost row as the API returns it — from the list, the create and the edit paths alike.
+
+    **No `caller` argument, and that absence is the statement** (the one `shape_staffing_position`
+    makes): nothing on this row is gated, under Q-7 = B of ADR-0014. The named risk that decision
+    accepted — a cost on a `headcount = 1` position is indirectly about one person — is recorded in
+    ADR-0005, aneks SC-5-05, point 2, not hidden here.
+    """
+    cost = row.cost
+    return AdditionalCostRead(
+        id=cost.id,
+        category_id=cost.category_id,
+        category_name=row.category_name,
+        position_id=cost.position_id,
+        amount=cost.amount,
+        currency=cost.currency,
+        cost_type=cost.cost_type,
+        start_month=cost.start_month,
+        end_month=cost.end_month,
+        funding_source=cost.funding_source,
+        updated_at=cost.updated_at,
+    )
+
+
+def shape_scenario_additional_costs(view: ScenarioAdditionalCostView) -> ScenarioAdditionalCosts:
+    """One scenario's additional costs and their sum (SC-5-05).
+
+    Nothing is decided here: the state, the amount and the spread arrive resolved from
+    `app.data.additional_cost`; the amount was rounded once, through `app.core.money.round_money`,
+    in `app.domain.additional_cost`, and is not re-rounded on the way out.
+    """
+    answer = view.total
+    assumptions = answer.assumptions_used
+    assumptions_read = AdditionalCostAssumptionsRead(
+        costs=[
+            AdditionalCostSpreadRead(
+                cost_id=spread.line.cost_id,
+                position_id=spread.line.position_id,
+                category_id=spread.line.category_id,
+                category_name=spread.line.category_name,
+                funding_source=spread.line.funding_source,
+                cost_type=spread.line.cost_type,
+                amount=spread.line.amount,
+                currency=spread.line.currency,
+                months=list(spread.months),
+            )
+            for spread in assumptions.costs
+        ],
+        periods=[
+            AdditionalCostPeriodRead(
+                period_month=period.period_month, cost_ids=list(period.cost_ids)
+            )
+            for period in assumptions.periods
+        ],
+        currencies=list(assumptions.currencies),
+    )
+    if isinstance(answer, AdditionalCostResult):
+        total = AdditionalCostTotalRead(
+            state=ADDITIONAL_COST_CALCULATED,
+            amount=answer.amount,
+            currency=answer.currency,
+            assumptions_used=assumptions_read,
+        )
+    else:
+        total = AdditionalCostTotalRead(
+            state=answer.reason,
+            amount=NOT_APPLICABLE,
+            currency=None,
+            assumptions_used=assumptions_read,
+        )
+    return ScenarioAdditionalCosts(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        costs=[shape_additional_cost(row) for row in view.costs],
+        additional_cost=total,
     )
 
 

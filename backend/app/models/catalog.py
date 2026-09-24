@@ -31,6 +31,10 @@ amount — the decision that it is organisational data rather than cost data is 
 addendum, and the boundary that comes with it is point 4: the *computed cost* of a budget is a cost
 field and goes back through the SC-1-08 conjunction. Nothing in SC-3-03 computes one.
 
+**SC-5-05 adds one more dictionary, `catalog_cost_categories`** (ADR-0014, point 2; ADR-0005, aneks
+2026-09-23 SC-5-05, point 3): the categories of an additional cost, built on the same base as the
+five below and served by the same pair of endpoints — another dictionary, not another mechanism.
+
 The five dictionaries are **data, not code** (NF-10): no `StrEnum` anywhere restricts which roles,
 seniorities, locations, engagement types or vendors may exist, so adding "Site Reliability Engineer"
 is an `INSERT`, not a migration. The five *kinds* are code, because they are five columns of the
@@ -285,6 +289,31 @@ class CatalogVendor(_CatalogDimension):
             f"id <> '{VENDOR_KEY_SENTINEL}'::uuid", name="id_is_not_the_exclude_sentinel"
         ),
     )
+
+
+class CatalogCostCategory(_CatalogDimension):
+    """A category of additional cost — recruitment, hardware, licences, cloud… (F-08, SC-5-05).
+
+    **Another dictionary, not another mechanism** (ADR-0014, point 2; ADR-0005, aneks 2026-09-23
+    SC-5-05, point 3): the same id/name/timestamps base, the same normalised-name index, the same
+    shared pair of endpoints (`app.data.catalog.DIMENSION_MODELS`) and the same
+    `CATALOG_READ`/`CATALOG_WRITE` gates as the other dictionaries. No project, user or tenant
+    column, so the catalogue's scope exception holds for it unchanged.
+
+    **A label and nothing else** (ADR-0014, point 2, Q-4 = A): no amount, no default price, no
+    snapshot. Renaming a category after an approval renames it on the approved scenario too — the
+    accepted limitation of ADR-0004's group 1 (aneks SC-5-05, point 2). A default price per category
+    would be a consumer of ADR-0008 and needs its own decision (ADR-0008, aneks SC-5-05, point 3).
+
+    **Not deletable while any cost points at it**: `additional_cost.category_id` is a foreign key
+    with no `ON DELETE` action (`NO ACTION`), and no endpoint deletes a dictionary entry anyway.
+
+    **Not seeded** by the migration that creates it (ADR-0014, point 2; the precedent of ADR-0012,
+    point 3): the eight categories F-08 lists are data an organisation enters, not code.
+    """
+
+    __tablename__ = "catalog_cost_categories"
+    __table_args__ = _dimension_table_args("catalog_cost_categories")
 
 
 RATE_DIMENSION_COLUMNS: tuple[str, ...] = (
