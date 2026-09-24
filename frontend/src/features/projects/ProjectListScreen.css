@@ -330,3 +330,11 @@
   gap: var(--sc-space-2);
   margin-top: var(--sc-space-2);
 }
+
+/* SC-6-03 — the "Duplicate" control, below the commercial-terms section. Colour comes from
+   `.scenario-card__metric` / `.scenario-card__gaps` above, same as the section it follows. */
+.duplicate-scenario {
+  margin-top: var(--sc-space-3);
+  padding-top: var(--sc-space-3);
+  border-top: 1px solid var(--sc-color-border);
+}
