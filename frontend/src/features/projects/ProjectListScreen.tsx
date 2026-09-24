@@ -6,6 +6,7 @@ import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
 import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
 import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
+import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { missingInputLabel } from "./scenarioInputLabels";
 import "./ProjectListScreen.css";
 
@@ -335,6 +336,14 @@ function ScenarioDetails({ project }: { project: ProjectListItem }) {
             {/* SC-4-06: its own read, its own failure states, its own write. Keyed by the card, so
                 switching projects unmounts it and aborts its read (ADR-0010, point 7). */}
             <ScenarioCommercialTermsSection
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioName={scenario.name}
+            />
+            {/* SC-7-02: a second, independent read on the same card — its own state machine, its
+                own abort on unmount/re-select (ADR-0010, point 7). Q1 = option A: no new router, no
+                new screen. */}
+            <ScenarioResultsSection
               projectId={project.id}
               scenarioId={scenario.id}
               scenarioName={scenario.name}
