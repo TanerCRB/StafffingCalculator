@@ -651,3 +651,32 @@ samej pozycji/scenariusza) i tabela kategorii kosztu wchodzą w istniejący podz
 | M-1 | Koszt nieobecności zatwierdzonego scenariusza identyczny tuż przed i po zatwierdzeniu; nie zmienia się po edycji kalendarza, budżetu, `generates_cost` ani przeniesieniu `is_statutory_leave` na inny typ. |
 | M-2 | Czytelnik migawki ograniczony do własnego `scenario_id` (kontrast: dwa zatwierdzone scenariusze tej samej krotki katalogu/kalendarza/budżetu, koszty się nie mieszają). |
 | M-3 | Typ ustawowy nazwany, niekosztowy, bez zamrożonego budżetu i bez rezerwowanej instancji — składowa kosztu identyczna tuż przed i po zatwierdzeniu (kontrast z brakiem kalendarza w lokalizacji: tam typ NIE jest zamrażany). |
+
+**Aneks — duplikacja scenariusza we własnym projekcie, drugi punkt wejścia (2026-09-24, bramka 1,
+SC-6-01, F-09 pkt 1, AC-02).**
+
+1. Duplikowanie scenariusza (F-09) i tworzenie nowej wersji po zatwierdzeniu (F-12) to ten sam
+   mechanizm kopiowania na poziomie danych (`copy_scenario`, `SCENARIO_CHILD_COPIERS`) — jedna
+   funkcja, dwa punkty wejścia (nazwane już w sekcji Decyzja/Konsekwencje tego dokumentu). SC-6-01
+   dodaje pierwszy rzeczywisty wywołujący z `into_project=source.project` — każde wcześniejsze
+   wywołanie (SC-1-03) szło do świeżo utworzonego projektu, gdzie kolizja nazwy scenariusza była
+   strukturalnie niemożliwa.
+2. **Kolizja nazwy jest realna, nie hipotetyczna.** `scenarios` niesie
+   `UniqueConstraint(project_id, name)`, a `copy_scenario` kopiuje `name` dosłownie — wywołanie z
+   `into_project=source.project` zderza się z samym źródłem (ten sam projekt, ta sama nazwa) za
+   każdym razem, gdyby nazwa nie była zmieniana. Rozstrzygnięcie (bramka 1, opcja B): backend
+   generuje nazwę duplikatu automatycznie (sufiks `(copy)`/`(copy N)`, retry na kolizję), endpoint
+   zostaje bez ciała żądania — zgodnie z konwencją siostrzanych akcji (`copy_project`, `archive`,
+   `approve`), które celowo nie przyjmują ciała.
+3. Generowana nazwa jest obcinana do budżetu kolumny (`scenarios.name`, `String(200)`, minus
+   najdłuższy możliwy sufiks) PRZED wygenerowaniem kandydatów — łańcuchowe duplikowanie duplikatu
+   (dozwolony, oczekiwany przypadek użycia F-09: "duplikuj i modyfikuj niezależnie", powtarzalnie)
+   zbiega do stałej długości zamiast dryfować do przepełnienia kolumny (poprawka R-01 rundy
+   weryfikacji SC-6-01).
+4. Status duplikatu nie jest parametrem — zawsze `draft`, niezależnie od statusu źródła (istniejąca
+   reguła `copy_scenario`, tu tylko potwierdzona dla nowego wywołującego). Źródło jest wyłącznie
+   czytane (`FOR SHARE`), nigdy zapisywane — niezmienność zatwierdzonych kalkulacji (sekcja
+   Decyzja) obowiązuje identycznie jak dla SC-1-03.
+5. Duplikacja scenariusza generuje kolejne zdarzenie pod odłożonym warunkiem `audit_log` (F-12) —
+   dołącza do SC-1-02..04, SC-3-02, SC-4-01, SC-5-05 jako kolejne zadanie z tym samym, powtórzonym
+   zamknięciem (aneks 2026-09-18 "historia zmian… odłożona").
