@@ -4,6 +4,10 @@ argument-hint: <Issue link or #N or a plan task identifier>
 allowed-tools: Read, Grep, Glob, Bash
 ---
 
+> Generic kit template — not the command that runs. This repository's adapted, versioned copy is
+> `.claude/commands/task-status.md`; it can drift ahead of this file. If they disagree,
+> `task-status.md` governs.
+
 > Template to adapt — remove this quote before use. The equivalent of `/zadanie_stan` from
 > `FrameworkDoc.md`, section 4 — a read-only command that maps a submission's state to a single
 > point in the lifecycle. Lives next to `task-command.md` in the same product repository.

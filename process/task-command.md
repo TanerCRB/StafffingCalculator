@@ -4,6 +4,10 @@ argument-hint: <Issue link or #N> [phase: analysis|code|verification|pr|closure]
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, TodoWrite
 ---
 
+> Generic kit template — not the command that runs. This repository's adapted, versioned copy is
+> `.claude/commands/task.md`; it can drift ahead of this file. If they disagree, `task.md`
+> governs.
+
 > Template to adapt — remove this quote before use. This is the **full content** of the command
 > that drives one task through the whole lifecycle — the equivalent of `/zadanie_be` / `/zadanie_fe`
 > from `FrameworkDoc.md`, section 4. It lives in the product repository, in your agent

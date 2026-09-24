@@ -4,6 +4,9 @@
 > here fail silently — it looks set up and lets things through. This is an instruction, not a
 > story: the reasons why particular things look exactly the way they do are written down only
 > where omitting them ends in undoing work.
+>
+> Generic kit reference, already run once for this repository — `TEAM-CONTRACT.md` and
+> `.claude/commands/` are the result and the source of truth, not this guide.
 
 **Time:** half a day for a smooth run, excluding the section on a self-hosted runner (see
 section 5) — that one tends to be the longest, not because it's hard, but because every

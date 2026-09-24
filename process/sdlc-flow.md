@@ -21,7 +21,8 @@ stateDiagram-v2
     qa --> implementation : negative test found a defect
     qa --> merge : mutation executed, Invariant Guardian PASS
     merge --> implementation : 🔒 PR feedback
-    merge --> closed : 🔒 merged, status raised
+    merge --> evidence : 🔒 merged
+    evidence --> closed : 🔒 documentation PR merged, status raised
     closed --> [*]
 ```
 
@@ -35,7 +36,12 @@ stateDiagram-v2
 | `state:implementation` | Developer | PR open, full test suite green |
 | `state:qa` | QA, Invariant Guardian | Contrast test, mutation recorded, audit verdict |
 | `state:merge` 🔒 | **You** | PR merged |
+| `state:evidence` 🔒 | **You** | Documentation PR (`Closes #N`) merged |
 | `state:closed` | — | Status raised in the register |
+
+The code PR (`Refs #N`, never `Closes #N`) leaves the Issue open. Merging it moves the Issue to
+`state:evidence`, not `state:closed` — the register entries still need the human's gate-3 review
+(`TEAM-CONTRACT.md` §3). Only the separate documentation PR (`Closes #N`) closes it.
 
 ## One filter that's enough
 

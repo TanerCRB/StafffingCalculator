@@ -3,6 +3,9 @@
 > A method template for adaptation. Don't copy the examples verbatim — build your own calibration
 > set grounded in your own project's reality. Philosophical context: `../FrameworkDoc.md`, section 6
 > ("Calibrating roles: the same mechanism applied to the agents themselves").
+>
+> Not yet adapted or run for this project — until it is, treat any evaluating role's `PASS` as
+> unconfirmed at gate 2 (kit's own rule, see `process/task-command.md`'s recalibration notes).
 
 An evaluating role (Invariant Guardian, Reviewer, QA, and any other role whose sole output is a
 verdict on someone else's work) is verified the same way a test is verified by mutation: it is run
