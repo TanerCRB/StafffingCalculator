@@ -1455,7 +1455,71 @@ history / this file's own change log, not as tracked product work.
   trzema osobnymi round-tripami, nie jednym zapytaniem (zaakceptowany kompromis architekta, R-01
   ogranicza tylko konkretny, wykryty przypadek rozjazdu). Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-6-02** — Porównaj ≥3 scenariusze tego samego projektu (F-09 pkt 2). Zarezerwowane,
-  kryteria i decyzje bramki 1 w Issue #87.
+- [x] **SC-6-02** — Porównaj scenariusze tego samego projektu (F-09 pkt 2). `GET
+  /projects/{project_id}/scenarios/compare?scenario_id=...` (powtórzony query param), składa N razy
+  istniejący mechanizm `scenario_results_for_caller`/`shape_scenario_results` (SC-7-01), bez nowej
+  kalkulacji.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-05 (analyst, gate 1 zaakceptowane
+  2026-09-24):
+  1. (K-01) Metryki zestawienia N scenariuszy tożsame z niezależnym odczytem każdego z osobna, bez
+     mieszania składowych między scenariuszami — kontrast: zmiana jednego wejścia zmienia tylko
+     jeden wiersz.
+  2. (K-02) Bramka kosztu osobowego (koniunkcja `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`)
+     aplikowana identycznie na KAŻDYM wierszu, nigdy raz dla całej odpowiedzi.
+  3. (K-03) Scenariusz spoza zasięgu wołającego nazwany w żądaniu porównania → CAŁA odpowiedź
+     `404`, nieodróżnialna od żądania z tym samym id jako jedynym argumentem (all-or-nothing, gate
+     1 decyzja 2 — bez partial-success).
+  4. (K-04) Scenariusze z dwóch różnych projektów w jednym żądaniu → odrzucone, wymuszone
+     strukturalnie przez `Project.scenarios` (nie drugi, niezależny lookup) — dowiedzione WŁASNYM
+     testem tego zadania, nie odziedziczone z K-03 (QA: mutacja przeżyła 21 testów pojedynczego
+     endpointu, zabita wyłącznie przez K-04).
+  5. (K-05) Stan nazwany niepoliczalny jednego scenariusza nie zawala całego zestawienia, nie
+     zwija się do wspólnego sentinela — pozostałe wiersze niezależne.
+
+  **Decyzje bramki 1 (2026-09-24, analyst + architect, zaakceptowane przez człowieka, aneksy
+  ADR-0001/ADR-0005, commit 53932f9):** żądanie jako zbiór `scenario_id` (powtórzony query param,
+  bez ciała, wzorem `GET /catalog/rates`); all-or-nothing `404`/`409` (żaden partial-success —
+  jeden zły/rasujący id blanki całą odpowiedź, zaakceptowany kompromis); `RESULTS_READ` bez zmian
+  (ta sama akcja N razy, nie nowa); **obsada POZA zakresem metryk tego zadania** — żadna wartość
+  skalarna (peak headcount / suma osobo-miesięcy / FTE) nie istnieje dziś w kodzie ani nie ma
+  jednoznacznej definicji w Requirements_EN.md (F-10 "Planned hours and FTE" niezbudowane, F-11
+  sugeruje że to seria/timeline, nie liczba jak reszta czterech metryk) — odłożone do zadania po
+  zbudowaniu F-10.
+
+  **Runda weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawka.** QA: proof
+  holds — 5 mutacji (reorder wyścigu, 404→continue, default-to-all, cross-project scope, gate
+  cached z pierwszego wiersza); 4 zabite oryginalnymi testami, 1 (gate cached) niewykrywalna
+  black-box z powodu gate-1 decyzji 7 (jeden projekt na żądanie) — zamknięta nowym testem
+  białoskrzynkowym (`test_k_02_the_gate_verdict_is_never_cached_from_the_first_row_onto_later_rows`,
+  monkeypatch wymuszający rozbieżne werdykty). Invariant Guardian: PASS (brak nowej arytmetyki,
+  deny-by-default, zasięg strukturalny, bramka per wiersz potwierdzona w kodzie nie tylko w
+  testach). Security-auditor: PASS WITH RESERVATIONS → poprawka → PASS. Reviewer: PASS WITH
+  RESERVATIONS → poprawka → PASS. Oboje niezależnie znaleźli R-01 (Medium): nielimitowany
+  powtarzany `scenario_id` = nielimitowana liczba sekwencyjnych round-tripów DB na jednym
+  połączeniu (N=1000 → 3000+ round-tripów), realne wyczerpanie poola, dziś bez uwierzytelniania więc
+  dotyczy każdego wołającego. Naprawione: `MAX_COMPARE_SCENARIOS=50` (`Query(max_length=...)`,
+  wzorem `MAX_ALLOCATION_MONTHS` ze `staffing.py`), odmowa `422` przed jakimkolwiek dostępem do
+  bazy — dowiedzione spy'em, który zawaliłby test gdyby DB zostało dotknięte. Oboje zweryfikowali
+  naprawę ponownie: PASS.
+
+  **Out of scope (explicit):** obsada jako metryka (patrz decyzje bramki 1 wyżej); analiza
+  wrażliwości (Issue #88), widoczność rezerw ryzyka (Issue #89); walidacja minimalnej liczby
+  scenariuszy — Issue opisuje typowy workflow PM-a, nie wymóg API; duplikaty `scenario_id` w jednym
+  żądaniu (nieszkodliwe, nietestowane osobno); real-concurrency dla wyścigu przez ten endpoint
+  (dowiedzione monkeypatchem — podstawowy mechanizm już dowiedziony realną współbieżnością w
+  SC-7-01); rate limiting/throttling per wołający (`MAX_COMPARE_SCENARIOS` ogranicza koszt JEDNEGO
+  żądania, nie liczbę żądań — kontencja poola przy wielu równoległych wołających nazwana przez
+  reviewera, osobna kwestia infrastrukturalna); frontend (zadanie czysto backendowe).
+
+  **Fundament nieudowodniony, przyjęty świadomie:** precedencja między 404-powodującym a
+  409-powodującym id w tym samym żądaniu przy różnych pozycjach — implementacja: pierwszy
+  terminalny wynik w kolejności żądania wygrywa, niezdecydowane wprost na bramce 1, sprawdzone
+  przez QA jako niepowodujące wycieku informacji o pozostałych id. Podstawa: Issue #87,
+  `Wymagania/Requirements_EN.md` §4 F-09 pkt 2; `docs/PLAN.md` SC-7-01, SC-4-01, SC-5-01, SC-5-05,
+  SC-1-03; `ADR-0001-trwalosc-danych.md` (aneks SC-6-02); `ADR-0005-model-dostepu.md` (aneks
+  SC-6-02).
+  **Done 2026-09-24:** PR #96 (scalone `fdc4653`). Dowód: `backend/tests/test_scenario_results_compare.py`
+  (K-01..K-05, R-01 — 15 testów) — 737 testów backendowych zielono, 234 frontendowych bez zmian.
+  Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
