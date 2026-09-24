@@ -42,12 +42,14 @@ from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     AbsenceBudget,
     AbsenceType,
+    AdditionalCost,
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
     ApprovedSnapshotCatalogDefaultRate,
     ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
+    CatalogCostCategory,
     CatalogDefaultRate,
     CatalogEngagementType,
     CatalogLocation,
@@ -221,6 +223,11 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             # The absence rows join the grandchildren (SC-3-02), and the snapshot rows have to go
             # before `scenarios` for the same reason a position does: their only foreign key points
             # there and carries no `ON DELETE` action, deliberately.
+            #
+            # SC-5-05: the additional costs before everything they point at — a position (the
+            # composite `fk_additional_cost_position_same_scenario`), a scenario and a category, all
+            # three with no `ON DELETE` action.
+            connection.execute(sa.delete(AdditionalCost))
             connection.execute(sa.delete(StaffingPositionAbsence))
             connection.execute(sa.delete(StaffingPositionAllocation))
             connection.execute(sa.delete(StaffingPosition))
@@ -261,6 +268,8 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
                 # may still reference a vendor, and `fk_catalog_default_rates_vendor_id` carries no
                 # `ON DELETE` action (SC-2-03).
                 CatalogVendor,
+                # SC-5-05: referenced only by `additional_cost.category_id`, emptied above.
+                CatalogCostCategory,
             ):
                 connection.execute(sa.delete(dimension))
             connection.execute(sa.delete(WorkingCalendarDay))
@@ -1103,3 +1112,82 @@ def make_commercial_terms(
         session.add(TmTerms(commercial_terms_id=terms.id, model_type="time_and_material"))
         session.flush()
     return terms
+
+
+# --- additional costs (F-08, SC-5-05) -----------------------------------------------------------
+
+
+def additional_costs_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    """The address of one scenario's additional costs — the project id carries the scope."""
+    return f"/projects/{project_id}/scenarios/{scenario_id}/additional-costs"
+
+
+def additional_cost_path(
+    project_id: uuid.UUID, scenario_id: uuid.UUID, cost_id: uuid.UUID
+) -> str:
+    return f"{additional_costs_path(project_id, scenario_id)}/{cost_id}"
+
+
+def make_cost_category(session: Session, *, name: str = "Licences") -> CatalogCostCategory:
+    """Insert one cost category directly — the migration seeds none (ADR-0014, point 2)."""
+    category = CatalogCostCategory(id=uuid.uuid4(), name=name)
+    session.add(category)
+    session.flush()
+    return category
+
+
+def make_additional_cost(
+    session: Session,
+    scenario: Scenario,
+    category: CatalogCostCategory,
+    *,
+    amount: Decimal,
+    start_month: date,
+    end_month: date | None = None,
+    cost_type: str | None = None,
+    position: StaffingPosition | None = None,
+    currency: str = "EUR",
+    funding_source: str = "internal",
+) -> AdditionalCost:
+    """Insert one additional cost directly — no endpoint, no request schema.
+
+    Bypasses `AdditionalCostCreateRequest` for the reason `make_allocation` does: the constraints
+    under test are claims about the *database*. `cost_type` defaults from the shape of the period —
+    `one_off` without an end month, `recurring` with one — so a test states the period and the type
+    follows, unless the test is about the two disagreeing.
+    """
+    cost = AdditionalCost(
+        id=uuid.uuid4(),
+        scenario_id=scenario.id,
+        position_id=None if position is None else position.id,
+        category_id=category.id,
+        amount=amount,
+        currency=currency,
+        cost_type=cost_type or ("one_off" if end_month is None else "recurring"),
+        start_month=start_month,
+        end_month=end_month,
+        funding_source=funding_source,
+    )
+    session.add(cost)
+    session.flush()
+    return cost
+
+
+def additional_cost_payload(category_id: uuid.UUID, **overrides: object) -> dict[str, object]:
+    """A valid `POST …/additional-costs` body: a one-off scenario-level cost, amount as a string."""
+    body: dict[str, object] = {
+        "category_id": str(category_id),
+        "amount": "1200.0000",
+        "currency": "EUR",
+        "cost_type": "one_off",
+        "start_month": "2026-03-01",
+        "funding_source": "internal",
+    }
+    return body | overrides
+
+
+def count_additional_costs(session: Session | sa.Connection) -> int:
+    """Cost rows visible to that connection — used to prove a refused write wrote nothing."""
+    return session.execute(
+        sa.select(sa.func.count()).select_from(AdditionalCost)
+    ).scalar_one()

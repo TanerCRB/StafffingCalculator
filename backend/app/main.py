@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.additional_cost import router as additional_cost_router
 from app.api.catalog import router as catalog_router
 from app.api.commercial_terms import router as commercial_terms_router
 from app.api.deps import assert_identity_mechanism_allowed
@@ -50,3 +51,7 @@ app.include_router(commercial_terms_router)
 # shaping (ADR-0005, aneks 2026-09-23 SC-5-01). Not a verb on the commercial router — cost and
 # revenue are independent calculations (F-06) under different permissions.
 app.include_router(personnel_cost_router)
+# Same nesting, sixth router (SC-5-05): a scenario's additional costs, under `STAFFING_READ`/`WRITE`
+# with no cost conjunction (ADR-0014, point 11; ADR-0005, aneks 2026-09-23 SC-5-05). Not a verb on
+# the personnel-cost router: the two modules never import each other (ADR-0014, "Konsekwencje").
+app.include_router(additional_cost_router)

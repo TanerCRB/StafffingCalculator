@@ -136,6 +136,36 @@ def draft_scenario(scenario_id: uuid.UUID) -> sa.Select[tuple[uuid.UUID]]:
     )
 
 
+def copying_source_scenario(scenario_id: uuid.UUID) -> sa.Select[tuple[uuid.UUID]]:
+    """`SELECT id FROM scenarios WHERE id = :id FOR SHARE` — the copy's lock on its source.
+
+    Taken by `app.data.project_writes.copy_scenario` as its first statement and held to the copy's
+    commit (SC-5-05, gate 2 reviewer R-01; ADR-0014, point 10). Every child write here embeds
+    `unapproved_scenario`, i.e. `FOR UPDATE` on the same row, and the two modes conflict — so no
+    child write of the source can commit **between** the copiers' separate `SELECT`s:
+
+    - **the copy first** → a write to the source waits until the copy has committed, then goes
+      ahead against the source (the copy holds the state before it);
+    - **the write first** → the copy waits for its commit, and every copier then reads the state
+      after it (under `READ COMMITTED` each later statement takes a fresh snapshot).
+
+    Why it became necessary: `additional_cost` is the first child table split between two copiers
+    by a column a user can edit (`position_id` — `copy_staffing_positions` takes the attached costs,
+    `copy_scenario_additional_costs` the rest). An edit moving a cost across that line between the
+    two passes would copy it twice or not at all. The lock covers every child table at once, as the
+    approval's closure does, rather than the one table that exposed the window.
+
+    `FOR SHARE`, not `FOR UPDATE`: the copy changes nothing on the source, and two copies of one
+    scenario need not queue behind each other. It does queue behind — and hold back — an approval
+    (`draft_scenario` is `FOR UPDATE`), which is the same serialisation, not a new one.
+    """
+    return (
+        sa.select(_SCENARIOS.c.id)
+        .where(_SCENARIOS.c.id == scenario_id)
+        .with_for_update(read=True)
+    )
+
+
 # --- the project row: group-2 fields against an approval (SC-1-10, gate 1 P-C) ------------------
 #
 # The same window as above, one table up. `app.data.project_writes.update_project` refuses an edit

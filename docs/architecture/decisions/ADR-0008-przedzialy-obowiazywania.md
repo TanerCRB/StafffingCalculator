@@ -452,3 +452,20 @@ Rozstrzygnięcie bramki 1 SC-4-01 (P-1, ADR-0003 w wersji z 2026-09-23) zmienia 
 3. **Warunek ponownego rozpatrzenia:** reguły na poziomie fazy/workstreamu albo reguła
    obowiązująca tylko w części okresu scenariusza — wtedy przedział obowiązywania na
    `commercial_terms` wraca jako własny, datowany wpis tutaj.
+
+### 2026-09-23 — koszt dodatkowy nie jest konsumentem tego wzorca (SC-5-05, ADR-0014)
+
+1. **Brak `EXCLUDE`.** Wzorzec rozstrzyga *który jeden wiersz spośród wielu* obowiązuje daną krotkę
+   w danym dniu (reguła Strażnika 13, pierwsza połowa — wyszukiwanie po dacie). Koszty dodatkowe nie
+   mają tej semantyki: dwa koszty tej samej kategorii w tym samym miesiącu (np. dwie licencje) są
+   oba prawdziwe naraz i oba wchodzą do sumy — nie ma "który wygrywa".
+2. **Jeden element wzorca zostaje przyjęty przez analogię: zakres zawsze domknięty.** Jak budżet
+   urlopowy (pkt 10b wyżej), koszt cykliczny ma obowiązkowy koniec (`CHECK effective_to IS NOT
+   NULL` na wierszu kosztu cyklicznego) — koszt bez końca nie ma skończonej sumy do policzenia.
+   Powód jest inny niż proracji budżetu (tu nie ma mianownika do podzielenia), ale konsekwencja ta
+   sama: koszt bezterminowy to założenie, nie dane, i ma zostać nazwany wprost przy zapisie, nie
+   przyjęty cicho.
+3. **Warunek ponownego rozpatrzenia:** organizacyjne domyślne ceny per kategoria (poza zakresem
+   SC-5-05, ADR-0014 "Czego ten dokument nie rozstrzyga") byłyby pełnym konsumentem tego wzorca —
+   rozstrzyganie "która domyślna cena obowiązuje dany dzień" wraca wtedy jako własny, datowany wpis
+   tutaj.

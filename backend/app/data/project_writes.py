@@ -22,11 +22,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
+from app.data.additional_cost import copy_scenario_additional_costs
 from app.data.column_copy import values_to_copy
 from app.data.commercial_terms import CommercialTermsNotCopyable, copy_commercial_terms
 from app.data.organization_defaults import organization_level_for
 from app.data.project_reads import CallerProjectView, project_for_caller
-from app.data.scenario_guard import project_group_two_lock
+from app.data.scenario_guard import copying_source_scenario, project_group_two_lock
 from app.data.staffing import copy_staffing_positions
 from app.data.write_errors import WriteFailed, describe_without_values
 from app.models.project import Project, ProjectStatus
@@ -361,6 +362,11 @@ SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (
     # SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b): the commercial rule and its
     # details row — one entry for one aggregate, like the staffing entry above.
     copy_commercial_terms,
+    # SC-5-05 (ADR-0014, point 10, Q-6 = A; ADR-0004, aneks SC-5-05, point 4): the additional costs
+    # with **no position**. The costs attached to a position are not here — they are the fourth
+    # pass of `copy_staffing_positions`, which holds the old-to-new position ids. Two halves, two
+    # places, and a canary for each (`tests/test_additional_cost_copy.py`, criterion K-07).
+    copy_scenario_additional_costs,
 )
 """The cascade, as data rather than as prose (ADR-0004, addendum, point 4).
 
@@ -379,8 +385,12 @@ longer literally true, it is "one entry per aggregate whose root is a child of t
 future completeness test over this registry has to know the difference or the next grandchild table
 will look registered while it is not.
 
-Still absent, and owed by the tasks that create them: scenario-level rate overrides, cost rows and
-the details tables of the other commercial models (ADR-0003, "Odłożone" — each joins the
+Three entries since SC-5-05: the scenario-level additional costs (ADR-0014, point 10) joined as an
+entry of their own, while the position-attached ones joined the staffing entry — the first child
+table of `scenarios` whose rows are split between two copiers, by `position_id IS NULL`.
+
+Still absent, and owed by the tasks that create them: scenario-level rate overrides and the details
+tables of the other commercial models (ADR-0003, "Odłożone" — each joins the
 commercial-rule copier, not the registry). The approval snapshot is absent on purpose — the third
 group, never copied. The company catalogue is **not** absent by omission — a catalogue
 row belongs to the organisation and not to a scenario, so it has no entry here on purpose (ADR-0004,
@@ -436,6 +446,10 @@ def copy_scenario(session: Session, source: Scenario, *, into_project: Project) 
       also why the source's `approved` row is only ever read here, never written: the copy is a
       new row, so the immutability of the approved source is untouched.
     """
+    # The source row, `FOR SHARE`, before anything of it is read (SC-5-05, reviewer R-01; ADR-0014,
+    # point 10): no child write of the source can commit between the copiers' separate statements,
+    # so every pass below reads one state. See `app.data.scenario_guard.copying_source_scenario`.
+    session.execute(copying_source_scenario(source.id))
     copy = Scenario(
         id=uuid.uuid4(),
         project=into_project,

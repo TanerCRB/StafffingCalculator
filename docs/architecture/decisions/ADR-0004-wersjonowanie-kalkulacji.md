@@ -593,6 +593,28 @@ jednocześnie koszt i przychód i wymaga zielonych testów obu ścieżek. Moduł
 argumentu ani kolumny stawki — dodanie tam predykatu "wyceniony" wymaga nowego aneksu. Pilnowane
 kontrolą C-5.
 
+**Aneks — koszty dodatkowe SC-5-05 (2026-09-23, bramka 1, kierunki zaakceptowane przez człowieka,
+ADR-0014).** Nowa tabela kosztu dodatkowego (`scenario_id NOT NULL`, opcjonalny `position_id` tej
+samej pozycji/scenariusza) i tabela kategorii kosztu wchodzą w istniejący podział grup:
+1. **Koszt dodatkowy — grupa 2** (dana własna scenariusza, strażnik zapisu, nie migawka). Różni się
+   od kosztu osobowego SC-5-01 (grupa "dziedziczona" — czyta stawkę katalogu): kwota kosztu
+   dodatkowego jest wpisywana wprost do scenariusza, nic spoza scenariusza jej nie zmienia, więc nie
+   ma czego zamrażać przy zatwierdzeniu.
+2. **Kategoria kosztu — grupa 1** (słownik organizacyjny, bez migawki, etykieta). Zmiana nazwy
+   kategorii po zatwierdzeniu scenariusza zmienia nazwę widoczną na zatwierdzonym scenariuszu —
+   zaakceptowane ograniczenie, ten sam wzorzec co pola opisowe Projektu (aneks 2026-09-18, grupa 1).
+3. **Strażnik zapisu obejmuje INSERT, UPDATE i DELETE** kosztu dodatkowego pod scenariuszem
+   `approved`, w tej samej instrukcji co odczyt statusu — ten sam wzorzec co pkt 7 aneksu SC-3-01 i
+   reguła Strażnika 7. Wyścig z zatwierdzeniem dowiedziony na dwóch połączeniach jak dla każdej
+   pozostałej tabeli-dziecka (aneks SC-3-02 pkt 5).
+4. **Kopiowanie (aneks 2026-09-18 pkt 4, kaskada `SCENARIO_CHILD_COPIERS`).** Koszt przypisany do
+   pozycji obsady kopiowany wewnątrz istniejącego kopiera agregatu pozycji (ma mapowanie starego-na-
+   nowe id pozycji, aneksy SC-3-01/SC-3-02); koszt bez pozycji (poziom scenariusza) dostaje własny
+   wpis w `SCENARIO_CHILD_COPIERS`. Kanarek kompletności kaskady musi pokryć obie ścieżki niezależnie.
+5. **Brak osobnej tabeli projektowej.** "Koszt projektu" z F-08 = koszt scenariusza bez pozycji;
+   nie istnieje mechanizm współdzielenia jednego kosztu między scenariuszami tego samego projektu w
+   tym zadaniu (SC-5-05) — świadomie, każdy scenariusz niesie go z osobna, kopiowanie go replikuje.
+
 **Aneks — pierwszy czytelnik migawki kalendarza, budżetu i typu nieobecności (2026-09-23, bramka
 1, SC-5-06).**
 

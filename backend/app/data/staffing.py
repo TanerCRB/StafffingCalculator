@@ -87,6 +87,7 @@ from app.domain.capacity import (
     absence_day_equivalents_between,
     month_capacity,
 )
+from app.models.additional_cost import AdditionalCost
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
     HOURS_COLUMNS,
@@ -1131,6 +1132,24 @@ The accompanying drift guard asserts that every mapped attribute of the absence 
 by reflection or named here (criterion K-14), so a column added later forces the decision instead of
 being silently dropped from every copy."""
 
+ADDITIONAL_COST_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
+    {"id", "scenario_id", "position_id", "created_at", "updated_at"}
+)
+"""Additional-cost attributes a copy does **not** inherit (SC-5-05), for both halves of the copy —
+the position-attached costs in `copy_staffing_positions` and the scenario-level ones in
+`app.data.additional_cost.copy_scenario_additional_costs`, which imports this set from here (it
+already depends on this module for its scope; the reverse import would be a cycle).
+
+- `id` — a copy is a new row (AC-02).
+- `scenario_id` — the copy's own scenario.
+- `position_id` — the *copied* position's id (from `new_position_ids`), or `NULL` for a
+  scenario-level cost; never the source's value.
+- `created_at` / `updated_at` — the copy is created now, and its ADR-0007 marker is its own.
+
+Everything else — category, amount, currency, type, period, funding — is copied by reflection, and a
+drift guard asserts every mapped attribute is on one side or the other
+(`tests/test_additional_cost_copy.py`)."""
+
 
 def copy_staffing_positions(session: Session, source: Scenario, copy: Scenario) -> None:
     """Copy one scenario's staffing positions, their month rows **and their absences** (AC-02).
@@ -1145,6 +1164,10 @@ def copy_staffing_positions(session: Session, source: Scenario, copy: Scenario) 
     table" stops being literally true and becomes "one entry per aggregate whose root is a child of
     the scenario". A completeness test over that registry, if one is ever written, has to know the
     difference, or the next grandchild table will look registered while it is not.
+
+    **Since SC-5-05 a fourth pass copies the additional costs attached to a position** (ADR-0014,
+    point 10, Q-6 = A): they need `new_position_ids` exactly as the months and absences do. The
+    costs with no position are not this function's — they have their own registry entry.
 
     **What is deliberately not copied: the approval snapshot.** `approved_snapshot_*` rows are the
     third group of scenario children (ADR-0004, addendum 2026-09-22, point 2) — written once at
@@ -1224,6 +1247,34 @@ def copy_staffing_positions(session: Session, source: Scenario, copy: Scenario) 
                 id=uuid.uuid4(),
                 position_id=new_position_ids[absence.position_id],
                 **values_to_copy(absence, excluded=ABSENCE_COLUMNS_NOT_COPIED),
+            )
+        )
+    session.flush()
+
+    # Fourth pass: the additional costs attached to a position (F-08, SC-5-05). Here and not in a
+    # registry entry of their own, because this is the one place holding `new_position_ids`
+    # (ADR-0014, point 10, Q-6 = A; ADR-0004, aneks SC-5-05, point 4). `position_id` comes from the
+    # mapping, never from the source row — a copied cost pointing at the *source's* position would
+    # be refused by `fk_additional_cost_position_same_scenario` anyway, and pointing it at another
+    # position of the copy would silently move the cost. The costs **without** a position are the
+    # other half, copied by `app.data.additional_cost.copy_scenario_additional_costs` through its
+    # own entry in `SCENARIO_CHILD_COPIERS`; neither pass touches the other's rows.
+    position_costs = list(
+        session.execute(
+            sa.select(AdditionalCost)
+            .where(AdditionalCost.position_id.in_(new_position_ids))
+            .order_by(AdditionalCost.start_month, AdditionalCost.id)
+        )
+        .scalars()
+        .all()
+    )
+    for cost in position_costs:
+        session.add(
+            AdditionalCost(
+                id=uuid.uuid4(),
+                scenario_id=copy.id,
+                position_id=new_position_ids[cost.position_id],
+                **values_to_copy(cost, excluded=ADDITIONAL_COST_COLUMNS_NOT_COPIED),
             )
         )
     session.flush()
