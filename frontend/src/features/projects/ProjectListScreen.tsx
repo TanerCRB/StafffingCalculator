@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 
 import { ApiError, RequestTimeoutError, getProjects } from "../../api/client";
-import type { ProjectListItem } from "../../api/contracts/projects";
+import type { ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
 import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
+import { DuplicateScenarioControl } from "./DuplicateScenarioControl";
 import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { missingInputLabel } from "./scenarioInputLabels";
@@ -113,6 +114,29 @@ export function ProjectListScreen() {
 
   const projects = state.kind === "ready" ? state.projects : [];
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+
+  /**
+   * SC-6-03 — the `201` body of a successful duplicate, inserted into the scenario array of the
+   * project it belongs to and nothing else. Matched by `project.id`, never by position in
+   * `projects`: the array a `.map` walks does not promise the duplicated project is first, and an
+   * insertion keyed by index would land the new row on the wrong project as soon as it is not
+   * (K-06; ADR-0009, addendum 2026-09-24). No `GET /projects` runs here (gate 1, Q2).
+   */
+  function addDuplicatedScenario(projectId: string, scenario: ScenarioListItem) {
+    setState((previous) => {
+      if (previous.kind !== "ready") {
+        return previous;
+      }
+      return {
+        kind: "ready",
+        projects: previous.projects.map((project) =>
+          project.id === projectId
+            ? { ...project, scenarios: [...project.scenarios, scenario] }
+            : project,
+        ),
+      };
+    });
+  }
 
   return (
     <section className="project-list" aria-labelledby="project-list-heading">
@@ -241,7 +265,7 @@ export function ProjectListScreen() {
             {selectedProject === undefined ? (
               <p className="project-list__details-empty">Select a project to see its scenarios.</p>
             ) : (
-              <ScenarioDetails project={selectedProject} />
+              <ScenarioDetails project={selectedProject} onScenarioDuplicated={addDuplicatedScenario} />
             )}
           </section>
         )}
@@ -290,7 +314,12 @@ function ListToolbar() {
   );
 }
 
-function ScenarioDetails({ project }: { project: ProjectListItem }) {
+interface ScenarioDetailsProps {
+  readonly project: ProjectListItem;
+  readonly onScenarioDuplicated: (projectId: string, scenario: ScenarioListItem) => void;
+}
+
+function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps) {
   if (project.scenarios.length === 0) {
     return (
       <>
@@ -347,6 +376,14 @@ function ScenarioDetails({ project }: { project: ProjectListItem }) {
               projectId={project.id}
               scenarioId={scenario.id}
               scenarioName={scenario.name}
+            />
+            {/* SC-6-03: available regardless of scenario.status — duplication never writes to the
+                source, so it is not subject to the approved-immutability hiding rule above (K-02). */}
+            <DuplicateScenarioControl
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioName={scenario.name}
+              onDuplicated={onScenarioDuplicated}
             />
           </li>
         ))}

@@ -767,6 +767,42 @@ export async function createCatalogRate(body: CatalogRateCreateRequest): Promise
   return write("/catalog/rates", "POST", body, isCatalogRateShape);
 }
 
+// --- Duplicating a scenario (SC-6-03, consuming SC-6-01) ----------------------------------------
+
+function scenarioDuplicatePath(projectId: string, scenarioId: string): string {
+  return `/projects/${projectId}/scenarios/${scenarioId}/duplicate`;
+}
+
+/**
+ * Duplicate one scenario within its own project
+ * (`POST /projects/{project_id}/scenarios/{scenario_id}/duplicate`, SC-6-01). No request body.
+ *
+ * The `201` body is a `ScenarioListItem` — the identical shape `GET /projects` already sends per
+ * scenario row, built by the same server-side shaping function (ADR-0009, addendum 2026-09-24).
+ * `isScenarioListItemShape` is reused unchanged rather than written a second time, and the body is
+ * what the caller renders: no refetch of `GET /projects` after a successful duplicate (ADR-0009,
+ * addendum 2026-09-24, narrowing point 3). This endpoint takes no request body, so there is no form
+ * to echo, and the source scenario is read-only on the server (`FOR SHARE`) — nothing here writes
+ * to it.
+ *
+ * `error.status` on a thrown `ApiError` stays `403` (missing `SCENARIO_COPY`, enforced before the
+ * database) or `404` (out of the caller's scope or nonexistent — one answer for both, ADR-0005)
+ * without merging the two, the same distinction `getScenarioCommercialTerms` already keeps for its
+ * sibling read. A `409` (no free name left among the candidate suffixes, or a lost naming race)
+ * writes nothing; the caller decides what that means, this function only carries the status.
+ */
+export async function duplicateScenario(
+  projectId: string,
+  scenarioId: string,
+): Promise<ScenarioListItem> {
+  return write(
+    scenarioDuplicatePath(projectId, scenarioId),
+    "POST",
+    undefined,
+    isScenarioListItemShape,
+  );
+}
+
 /**
  * Correct one default rate window (`PATCH /catalog/rates/{rate_id}`).
  *
