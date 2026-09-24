@@ -705,11 +705,6 @@ na polu, które nie jest zastępcze.
    pierwszej połowy koniunkcji. Warunek ponownego otwarcia: ADR uwierzytelniania musi rozstrzygnąć,
    czy `PERSONNEL_COSTS_READ` globalne ma w ogóle współistnieć z odczytem katalogu/obsady bez
    flagi projektu — inaczej pierwszy wołający z tym uprawnieniem odziedziczy lukę.
-   **Rozszerzone (security-auditor, weryfikacja SC-5-06, 2026-09-23):** dotyczy też składowej
-   `paid_absence_*` — nieobecności i `absence_budget_hours` z `GET .../staffing-positions`
-   (`STAFFING_READ`) plus `generates_cost`/stawka z katalogu (`CATALOG_READ`) dają ten sam
-   przeliczalny wynik. Wektor odziedziczony, nie rozszerzony — wszystkie dane wejściowe były
-   widoczne pod tymi uprawnieniami już od SC-3-02/SC-3-03. Wciąż uśpione z tego samego powodu.
 6. **Gałąź pozytywna nadal nieosiągalna w produkcji, bez zmiany placeholdera.** Jak w aneksie
    2026-09-19 (SC-1-08) i aneksie SC-2-01 pkt 3 — dowód wyłącznie przez
    `app.dependency_overrides[get_caller_identity]` w teście, `can_view_personnel_costs=true` ustawione
