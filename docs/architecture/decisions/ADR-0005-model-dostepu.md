@@ -764,3 +764,45 @@ ADR-0014, Q-2/Q-4/Q-7).**
    albo — szerzej niż w pkt 2 — pierwsze zadanie łączące pozycję obsady z osobą imienną (F-13,
    Issue #31), po którym koszt przy pozycji przestaje pośrednio wskazywać osobę i zaczyna wskazywać
    ją wprost.
+
+**Aneks — wyniki scenariusza: zysk/marża/markup, `RESULTS_READ`, czwarta funkcja kształtująca
+(2026-09-24, bramka 1, SC-7-01, decyzja człowieka).**
+
+1. **Zobowiązanie z aneksu SC-5-01 pkt 5 i SC-5-05 pkt 5 utrzymane, nie odwrócone.** Rozważany był
+   wariant bez koniunkcji — nowe, niezależne `RESULTS_READ` bez żadnej zależności od
+   `PERSONNEL_COSTS_READ` — odrzucony na bramce 1: `markup = profit / included_cost` oddaje wprost
+   mianownik kosztowy, szerszy wyciek niż istniejące ryzyko B-01 przy `COMMERCIAL_READ` (tam
+   ujawniana jest wyłącznie figura rozliczeniowa, z której nic nie da się wyprowadzić o koszcie).
+   Przyjęty wariant: `RESULTS_READ` (nowe uprawnienie) bramkuje wyłącznie *dostęp do endpointu*
+   wyników; część `profit`/`margin`/`markup` pochodząca z kosztu osobowego podlega dodatkowo tej
+   samej koniunkcji `caller.has(PERSONNEL_COSTS_READ)` ∧ `project_access.can_view_personnel_costs`
+   co suma kosztu scenariusza (aneks SC-5-01 pkt 2/5) — odmowa **pola**, nie całego zasobu.
+2. **Czwarta funkcja kształtująca, zużyta świadomie.** Pkt 4 aneksu SC-5-01 zastrzegł, że czwarta
+   funkcja usuwająca pole wymaga własnej decyzji — to ona. Odpowiedź wyników dostaje własną funkcję
+   kształtującą, czwartą obok `_without_personnel_costs` (projekt), `_without_catalog_personnel_costs`
+   (katalog), funkcji kosztu scenariusza (SC-5-01) — nie rozszerzenie żadnej z nich, bo odpowiedź
+   wyników nie jest ani payloadem projektu, ani katalogu, ani samego kosztu scenariusza.
+3. **Koszty dodatkowe bez koniunkcji, wzorem aneksu SC-5-05 pkt 1/5.** Wkład kosztów dodatkowych
+   (fixed-amount, SC-5-05) do `included_cost` NIE podlega koniunkcji — SC-5-05 świadomie wyłączył
+   je spod klasy wrażliwości F-13. `included_cost` tego zadania jest więc bramkowany pole-po-polu:
+   część z kosztu osobowego (bazowy + nieobecności płatne) koniunkcją, część z kosztu dodatkowego
+   bez niej — dokładnie zobowiązanie z aneksu SC-5-05 pkt 5 ("blok 7 musi to rozróżnić pole-po-polu,
+   nie jedną bramką na cały koszt").
+4. **Ryzyko B-01 rozszerza się jakościowo, nie tylko dziedziczy.** Jak w aneksie SC-5-01 pkt 5
+   (security-auditor, B-01): ochrona koniunkcji działa tylko wobec wołającego bez globalnego
+   `PERSONNEL_COSTS_READ`; wołający z globalnym `PERSONNEL_COSTS_READ`, ale bez
+   `can_view_personnel_costs` na projekcie, nie widzi kwoty kosztu wprost, ale MOŻE ją odtworzyć
+   arytmetycznie z `revenue` i `margin`/`profit`, jeśli oba są widoczne pod samym `RESULTS_READ`.
+   To zadanie nie poszerza grupy wołających objętych B-01 (ta sama luka, ten sam brakujący warunek),
+   ale czyni odtworzenie praktycznie łatwiejsze: wcześniej wymagało dostępu do rozkładu miesięcznego
+   lub katalogu, teraz wystarczą `COMMERCIAL_READ` + `RESULTS_READ`. Zaakceptowane świadomie na
+   bramce 1. Warunek ponownego otwarcia: jak w aneksie 2026-09-19 pkt 5 — pierwsze zadanie nadania
+   uprawnień/zarządzania rolami.
+5. **Gałąź pozytywna koniunkcji nadal nieosiągalna w produkcji**, bez zmiany placeholdera (jak w
+   każdym poprzednim aneksie tej rodziny) — dowód wyłącznie przez `dependency_overrides` w teście.
+6. **Zakres "complete project" w F-10 = pojedynczy scenariusz, nie agregacja wielu scenariuszy
+   Projektu** (decyzja bramki 1, 2026-09-24, bez sprzeciwu na bramce 1) — spójne z tym, że każda
+   dotychczasowa capability finansowa (przychód, koszt) jest scenariuszowa, nigdy wielo-scenariuszowa.
+   Agregacja przez scenariusze Projektu, jeśli kiedyś potrzebna, jest osobnym zadaniem — scenariusze
+   to niezależne alternatywy tego samego projektu, sumowanie ich zysków nie ma dziś nazwanego sensu
+   biznesowego.

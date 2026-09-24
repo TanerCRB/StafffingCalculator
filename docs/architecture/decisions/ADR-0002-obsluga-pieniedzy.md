@@ -99,3 +99,25 @@ którym kwota idzie w drugą stronę: z formularza do API, na dodawaniu i na edy
    jednostki, nie przez udawany wybór.
 5. **Warunek zamknięcia z aneksu 2026-09-19 pkt 4 bez zmian:** pierwsza waluta, której jednostka minor
    nie ma dwóch miejsc, wymaga zmiany `round_money` i frontu razem i wraca tu nowym wpisem.
+
+### 2026-09-24 — stan złożony przy kompozycji kilku źródeł (SC-7-01)
+
+Reguła n/a przy zerowym mianowniku (wyżej) dotyczy dokładnie jednego dzielenia. SC-7-01 (zysk/
+marża/markup scenariusza) jest pierwszym zadaniem składającym więcej niż jedno niezależnie
+nazwane źródło stanu — przychód (`RevenueState`), koszt osobowy (`PersonnelCostState`/
+`PaidAbsenceCostState`), koszt dodatkowy (`AdditionalCostState`) — w jedną odpowiedź; żaden z
+tych trzech enumów nie jest tym samym typem, choć część nazw pokrywa się przypadkowo (np.
+`currency_mismatch` znaczy co innego w każdym).
+
+1. **Rozstrzygnięcie (bramka 1, 2026-09-24, decyzja człowieka na rekomendację Analityka):** gdy
+   więcej niż jedno źródło jest jednocześnie w stanie nazwanym niekalkulowalnym (nie rozstrzygniętym
+   zerem), odpowiedź nazywa stan KAŻDEGO źródła osobno — nie zwija się do jednego wspólnego
+   sentinela (np. uniwersalne `"n/a"`) i nie wybiera jednego reprezentanta wg priorytetu. `profit`/
+   `margin`/`markup` nie udają liczby w żadnym z tych przypadków.
+2. **Kształt pola pozostaje decyzją Developera, nie tej decyzji.** Kryterium akceptacji (K-05,
+   Analyst SC-7-01) jest neutralne wobec tego, czy odpowiedź niesie jedno pole zbiorcze zdolne
+   nazwać źródło+przyczynę, czy trzy pola per źródło — wiążąca jest wyłącznie zasada "nazwij
+   źródło, nie zwijaj".
+3. **Warunek ponownego otwarcia:** pierwsze zadanie, które musi zwrócić jedną nazwę stanu dla
+   całej odpowiedzi (np. UI potrzebujący jednego komunikatu zamiast trzech) — wymaga wtedy osobnej
+   decyzji o priorytetyzacji źródeł, nie rozszerzenia tego punktu przez milczenie.
