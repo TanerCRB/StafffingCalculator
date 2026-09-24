@@ -61,6 +61,15 @@ from app.core.identity import CallerIdentity, Permission
 # would be unreachable while every caller is this one placeholder; it is not a decision that
 # everyone
 # may set commercial terms. Scope is not widened: the path inherits `project_for_caller`.
+#
+# `RESULTS_READ` joins for the same reason and under the same reservation (ADR-0005, aneks
+# 2026-09-24 SC-7-01, the widening it names and only it — `PERSONNEL_COSTS_READ` still stays out).
+# Without it the results endpoint of SC-7-01 would be unreachable while every caller is this one
+# placeholder; it is not a decision that everyone may read a scenario's profit, margin and markup.
+# Scope is not widened: the path inherits `project_for_caller`. `PERSONNEL_COSTS_READ` still being
+# absent from this set is what keeps `profit`/`margin`/`markup`/`included_cost` refused for every
+# caller of the running system — the field-level gate's positive branch stays reachable from a test
+# only, exactly as for the base personnel cost (SC-5-01).
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.PROJECT_READ,
@@ -74,6 +83,7 @@ PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.STAFFING_WRITE,
         Permission.COMMERCIAL_READ,
         Permission.COMMERCIAL_WRITE,
+        Permission.RESULTS_READ,
     }
 )
 

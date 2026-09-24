@@ -322,12 +322,14 @@ def test_k_09_the_placeholder_permission_set_is_unchanged_and_no_permission_was_
     """K-09 — no new permission (Q-7 = B) and no widening of the placeholder: the same set the
     existing canary (`test_access_control.py::
     test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity`) asserts, and the
-    same twelve members of `Permission` (`test_catalog_access.py`, `test_absence_budget_access.py`).
-    Repeated here so this task's own suite states its claim rather than borrowing it."""
-    assert len(Permission) == 12
+    same thirteen members of `Permission` (`test_catalog_access.py`,
+    `test_absence_budget_access.py`) since SC-7-01 added `RESULTS_READ` — a permission of its own
+    scenario-results endpoint, not of this task's additional-cost tables. Repeated here so this
+    task's own suite states its claim rather than borrowing it."""
+    assert len(Permission) == 13
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
     assert {Permission.STAFFING_READ, Permission.STAFFING_WRITE} <= PLACEHOLDER_PERMISSIONS
-    assert len(PLACEHOLDER_PERMISSIONS) == 11
+    assert len(PLACEHOLDER_PERMISSIONS) == 12
 
 
 def test_a_request_body_carrying_an_unknown_field_is_a_422_and_writes_nothing(

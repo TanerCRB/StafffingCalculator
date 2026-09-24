@@ -87,6 +87,7 @@ from app.api.schemas.project import (
     ScenarioListItem,
 )
 from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
+from app.api.schemas.scenario_results import ScenarioResults
 from app.api.schemas.staffing import (
     AbsenceBudgetSource,
     DerivedCapacitySource,
@@ -105,19 +106,21 @@ from app.data.commercial_terms import ScenarioCommercialView
 from app.data.organization_defaults import OrganizationLevel
 from app.data.personnel_cost import ScenarioCostView
 from app.data.project_reads import CallerProjectView
+from app.data.scenario_results import ScenarioResultsView
 from app.data.staffing import StaffingPositionView
 from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, StatutoryLeaveType
 from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
 from app.domain.additional_cost import CALCULATED as ADDITIONAL_COST_CALCULATED
-from app.domain.additional_cost import AdditionalCostResult
+from app.domain.additional_cost import AdditionalCostResult, AdditionalCostUnavailable
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
 from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
 from app.domain.personnel_cost import CALCULATED as COST_CALCULATED
 from app.domain.personnel_cost import PersonnelCostResult
 from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
-from app.domain.revenue import RevenueResult
+from app.domain.revenue import RevenueResult, RevenueUnavailable
 from app.domain.scenario_readiness import assess
+from app.domain.scenario_results import scenario_profitability
 from app.models.catalog import (
     AbsenceBudget,
     AbsenceType,
@@ -172,6 +175,25 @@ Not in here: `state`, `cost_basis` and `currency` — nor, since SC-5-06, `paid_
 `paid_absence_currency`. None of them is a figure a person costs, and a refused caller still learns
 that a cost exists and why it may not be stateable — the refusal is of the *field*, never of the
 scenario (point 1)."""
+
+SCENARIO_PROFITABILITY_FIELDS: frozenset[str] = frozenset(
+    {"profit", "margin", "markup", "included_cost"}
+)
+"""Fields of a scenario's whole-life result that mix a personnel cost into one number (SC-7-01,
+ADR-0005 aneks 2026-09-24).
+
+A fourth set, next to `PERSONNEL_COST_FIELDS` (project payloads), `CATALOG_PERSONNEL_COST_FIELDS`
+(catalogue rows) and `SCENARIO_COST_FIELDS` (a scenario's base personnel cost). Applied by
+`_without_scenario_profitability` to `ScenarioResults`, which is otherwise gated exactly like
+`PersonnelCostRead` — the same conjunction, on the same `ScenarioCostView` — so the two never
+disagree about whether this caller may see this scenario's personnel costs.
+
+**Not `revenue` and not `additional_cost`.** Neither one is a personnel cost by itself (SC-4-01,
+point 3; SC-5-05, point 1), and each keeps answering under `RESULTS_READ` alone. What earns a place
+in this set is that `profit`, `margin`, `markup` and `included_cost` cannot be split back into a
+personnel and a non-personnel part after they are computed — a caller who may not see the personnel
+cost may not be handed a profit either, because a profit and a personnel cost one subtraction apart
+is the same leak `SCENARIO_COST_FIELDS` exists to close."""
 
 _PROJECT_STATUS_LABELS = {
     ProjectStatus.ACTIVE: "Active",
@@ -738,13 +760,40 @@ def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCom
     precedent is `default_selling_rate` staying outside `CATALOG_PERSONNEL_COST_FIELDS`). What makes
     that true is the schema, which has no cost field to remove — asserted by equality of the whole
     field set (criterion K-11). The first task adding profit or margin here grows a `caller`
-    argument *and* the SC-1-08 conjunction.
+    argument *and* the SC-1-08 conjunction — the results endpoint (SC-7-01) is that task, and it
+    answers by adding a *different* payload (`ScenarioResults`) rather than a field here: this
+    schema's field set is unchanged.
 
     Nothing is decided here: the state, the amount and the windows arrive resolved from
     `app.data.commercial_terms`; the amount was rounded once, through `app.core.money.round_money`,
     in `app.domain.revenue_time_and_material`, and is not re-rounded on the way out.
     """
-    answer = view.revenue
+    revenue = _revenue_read_of(view.revenue)
+    terms = view.terms
+    return ScenarioCommercialTerms(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        commercial_terms=(
+            None
+            if terms is None
+            else CommercialTermsRead(
+                id=terms.id, model_type=terms.model_type, updated_at=terms.updated_at
+            )
+        ),
+        revenue=revenue,
+    )
+
+
+def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
+    """Build one revenue payload from its answer — shared by `shape_scenario_commercial_terms`
+    above (SC-4-01) and the results endpoint (SC-7-01, `shape_scenario_results`), so the two cannot
+    drift into different readings of the same `RevenueAnswer` (a second copy is how one figure ends
+    up stated differently on two endpoints).
+
+    Nothing is decided here: the state, the amount and the windows arrive resolved from
+    `app.data.commercial_terms`; the amount was rounded once, through `app.core.money.round_money`,
+    in `app.domain.revenue_time_and_material`, and is not re-rounded on the way out.
+    """
     assumptions = answer.assumptions_used
     assumptions_read = RevenueAssumptionsRead(
         model_type=assumptions.model_type,
@@ -768,31 +817,17 @@ def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCom
         currencies=list(assumptions.currencies),
     )
     if isinstance(answer, RevenueResult):
-        revenue = RevenueRead(
+        return RevenueRead(
             state=REVENUE_CALCULATED,
             amount=answer.revenue,
             currency=answer.currency,
             assumptions_used=assumptions_read,
         )
-    else:
-        revenue = RevenueRead(
-            state=answer.reason,
-            amount=NOT_APPLICABLE,
-            currency=None,
-            assumptions_used=assumptions_read,
-        )
-    terms = view.terms
-    return ScenarioCommercialTerms(
-        scenario_id=view.scenario.id,
-        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
-        commercial_terms=(
-            None
-            if terms is None
-            else CommercialTermsRead(
-                id=terms.id, model_type=terms.model_type, updated_at=terms.updated_at
-            )
-        ),
-        revenue=revenue,
+    return RevenueRead(
+        state=answer.reason,
+        amount=NOT_APPLICABLE,
+        currency=None,
+        assumptions_used=assumptions_read,
     )
 
 
@@ -886,16 +921,18 @@ def _paid_absence_fields(answer: PaidAbsenceCostAnswer) -> dict[str, Any]:
     }
 
 
-def shape_scenario_personnel_cost(
-    view: ScenarioCostView, caller: CallerIdentity
-) -> ScenarioPersonnelCost:
-    """One scenario's base personnel cost as this caller may see it (SC-5-01).
+def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
+    """Build one **ungated** base-cost payload from a `ScenarioCostView` — shared by
+    `shape_scenario_personnel_cost` below (SC-5-01/SC-5-06) and the results endpoint (SC-7-01,
+    `shape_scenario_results`). The gate (`_without_scenario_personnel_costs`) is applied by each
+    caller separately, never inside this function, so there is exactly one place that decides
+    whether the amount and the rates are shown and it stays that way as this function grows a
+    second caller.
 
-    Nothing is decided here but the gate: the state, the amount and the windows arrive resolved
-    from `app.data.personnel_cost`; the amount was rounded once, through
+    Nothing is decided here but the payload's shape: the state, the amount and the windows arrive
+    resolved from `app.data.personnel_cost`; the amount was rounded once, through
     `app.core.money.round_money`, in `app.domain.personnel_cost`, and is not re-rounded on the way
-    out. Every representation goes through `_without_scenario_personnel_costs` — there is no path
-    out of this function that skips it.
+    out.
     """
     answer = view.cost
     assumptions = answer.assumptions_used
@@ -923,7 +960,7 @@ def shape_scenario_personnel_cost(
     )
     paid_absence = _paid_absence_fields(view.paid_absence)
     if isinstance(answer, PersonnelCostResult):
-        cost = PersonnelCostRead(
+        return PersonnelCostRead(
             state=COST_CALCULATED,
             cost_basis=answer.basis,
             amount=answer.cost,
@@ -931,15 +968,26 @@ def shape_scenario_personnel_cost(
             assumptions_used=assumptions_read,
             **paid_absence,
         )
-    else:
-        cost = PersonnelCostRead(
-            state=answer.reason,
-            cost_basis=answer.basis,
-            amount=NOT_APPLICABLE,
-            currency=None,
-            assumptions_used=assumptions_read,
-            **paid_absence,
-        )
+    return PersonnelCostRead(
+        state=answer.reason,
+        cost_basis=answer.basis,
+        amount=NOT_APPLICABLE,
+        currency=None,
+        assumptions_used=assumptions_read,
+        **paid_absence,
+    )
+
+
+def shape_scenario_personnel_cost(
+    view: ScenarioCostView, caller: CallerIdentity
+) -> ScenarioPersonnelCost:
+    """One scenario's base personnel cost as this caller may see it (SC-5-01).
+
+    Nothing is decided here but the gate: the payload comes from `_personnel_cost_read_of`. Every
+    representation goes through `_without_scenario_personnel_costs` — there is no path out of this
+    function that skips it.
+    """
+    cost = _personnel_cost_read_of(view)
     return ScenarioPersonnelCost(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
@@ -978,14 +1026,17 @@ def shape_additional_cost(row: AdditionalCostRow) -> AdditionalCostRead:
     )
 
 
-def shape_scenario_additional_costs(view: ScenarioAdditionalCostView) -> ScenarioAdditionalCosts:
-    """One scenario's additional costs and their sum (SC-5-05).
+def _additional_cost_total_read_of(
+    answer: AdditionalCostResult | AdditionalCostUnavailable,
+) -> AdditionalCostTotalRead:
+    """Build one sum payload from its answer — shared by `shape_scenario_additional_costs` below
+    (SC-5-05) and the results endpoint (SC-7-01, `shape_scenario_results`); this one carries no
+    gate to share, since none applies to it (module note above the additional-costs section).
 
     Nothing is decided here: the state, the amount and the spread arrive resolved from
     `app.data.additional_cost`; the amount was rounded once, through `app.core.money.round_money`,
     in `app.domain.additional_cost`, and is not re-rounded on the way out.
     """
-    answer = view.total
     assumptions = answer.assumptions_used
     assumptions_read = AdditionalCostAssumptionsRead(
         costs=[
@@ -1011,19 +1062,26 @@ def shape_scenario_additional_costs(view: ScenarioAdditionalCostView) -> Scenari
         currencies=list(assumptions.currencies),
     )
     if isinstance(answer, AdditionalCostResult):
-        total = AdditionalCostTotalRead(
+        return AdditionalCostTotalRead(
             state=ADDITIONAL_COST_CALCULATED,
             amount=answer.amount,
             currency=answer.currency,
             assumptions_used=assumptions_read,
         )
-    else:
-        total = AdditionalCostTotalRead(
-            state=answer.reason,
-            amount=NOT_APPLICABLE,
-            currency=None,
-            assumptions_used=assumptions_read,
-        )
+    return AdditionalCostTotalRead(
+        state=answer.reason,
+        amount=NOT_APPLICABLE,
+        currency=None,
+        assumptions_used=assumptions_read,
+    )
+
+
+def shape_scenario_additional_costs(view: ScenarioAdditionalCostView) -> ScenarioAdditionalCosts:
+    """One scenario's additional costs and their sum (SC-5-05).
+
+    Nothing is decided here: the sum's payload comes from `_additional_cost_total_read_of`.
+    """
+    total = _additional_cost_total_read_of(view.total)
     return ScenarioAdditionalCosts(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
@@ -1049,3 +1107,81 @@ def shape_catalog_rate_list(
     return CatalogRateList(
         rates=[shape_catalog_rate(rate, caller) for rate in rates], total=total
     )
+
+
+# --- a scenario's whole-life profit, margin and markup (SC-7-01) --------------------------------
+# The fourth shaping function with its own gate (ADR-0005, aneks 2026-09-24): not an extension of
+# `_without_scenario_personnel_costs` (this payload also carries `revenue` and `additional_cost`,
+# neither of which that function's field set may touch) nor of `_without_personnel_costs` or
+# `_without_catalog_personnel_costs` (neither payload here is a project row or a bare catalogue
+# row). `personnel_cost` inside this payload goes through the existing SC-5-01/SC-5-06 gate
+# unchanged, on the same `ScenarioCostView` — this section adds a gate for the four aggregate
+# fields only, and does not touch any of the other three.
+
+
+def _without_scenario_profitability(
+    item: ScenarioResults, view: ScenarioCostView, caller: CallerIdentity
+) -> ScenarioResults:
+    """Remove `SCENARIO_PROFITABILITY_FIELDS` unless *both* halves of the SC-1-08 conjunction say
+    yes — the same conjunction, and the same `ScenarioCostView`, `_without_scenario_personnel_costs`
+    already applies to this payload's `personnel_cost` field.
+
+    - `caller.has(PERSONNEL_COSTS_READ)` — may this caller see personnel costs at all;
+    - `view.can_view_personnel_costs` — is this caller's `project_access` row **for the project this
+      scenario belongs to** one that allows it.
+
+    A denial of the *four fields*: same `200`, same scenario, `revenue`, `additional_cost` and
+    `personnel_cost.state` intact — `profit`, `margin`, `markup` and `included_cost` become `null`.
+    Never a `403` or a `404` (point 1 of the SC-5-01 gate, unchanged here).
+
+    The same identity check as `_without_scenario_personnel_costs`, for the same reason: `view` and
+    `caller` are two arguments, and shaping one caller's aggregate with another caller's permission
+    set would widen the gate silently. Raised explicitly, so `python -O` cannot remove it, and
+    before the conjunction reads a flag that may belong to somebody else.
+    """
+    if view.user_id != caller.user_id:
+        raise AssertionError(
+            "A scenario cost view built for one user is being shaped with another user's "
+            "identity: the profitability gate would combine one caller's assignment flag with "
+            "another caller's permission set. Build the view through app.data.scenario_results "
+            "for the caller the response is for."
+        )
+    if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
+        return item
+    return item.model_copy(update=dict.fromkeys(SCENARIO_PROFITABILITY_FIELDS))
+
+
+def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) -> ScenarioResults:
+    """One scenario's whole-life profit, margin and markup, next to the three components they are
+    built from (SC-7-01).
+
+    `revenue` and `additional_cost` are built by the same functions their own endpoints use
+    (`_revenue_read_of`, `_additional_cost_total_read_of`) — never re-derived here — and
+    `personnel_cost` by `_personnel_cost_read_of`, then gated by the existing
+    `_without_scenario_personnel_costs` exactly as SC-5-01 gates it. The aggregate itself is
+    `app.domain.scenario_results.scenario_profitability`'s answer, computed from the three
+    *answers* (`view.revenue`, `view.cost_view.cost`, `view.cost_view.paid_absence`,
+    `view.additional_cost`) — never from the already-gated `PersonnelCostRead`, so the arithmetic
+    cannot accidentally run on a `null` the gate produced.
+    """
+    cost_view = view.cost_view
+    revenue = _revenue_read_of(view.revenue)
+    personnel_cost = _without_scenario_personnel_costs(
+        _personnel_cost_read_of(cost_view), cost_view, caller
+    )
+    additional_cost = _additional_cost_total_read_of(view.additional_cost)
+    profitability = scenario_profitability(
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+    )
+    result = ScenarioResults(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        revenue=revenue,
+        personnel_cost=personnel_cost,
+        additional_cost=additional_cost,
+        included_cost=profitability.included_cost,
+        profit=profitability.profit,
+        margin=profitability.margin,
+        markup=profitability.markup,
+    )
+    return _without_scenario_profitability(result, cost_view, caller)

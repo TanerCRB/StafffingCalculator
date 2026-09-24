@@ -135,6 +135,12 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     widenings **and says in the same breath that `PERSONNEL_COSTS_READ` still does not belong
     here**. So the canary is re-armed around the new set, not loosened — and the assertion below
     stays a set equality, which is the only form that can tell a widening apart from the status quo.
+
+    It grew once more on 2026-09-24, by `RESULTS_READ` (SC-7-01): ADR-0005's aneks of that date
+    names this widening and only this one, and repeats that `PERSONNEL_COSTS_READ` still does not
+    belong here — so the deny path for `profit`/`margin`/`markup`/`included_cost`
+    (`app.api.response_shaping._without_scenario_profitability`) is the real one for every caller
+    the running system has, and its positive branch stays reachable from a test only.
     """
     from app.api.deps import PLACEHOLDER_PERMISSIONS
 
@@ -153,6 +159,8 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             # this one — re-armed around the new set, not loosened.
             Permission.COMMERCIAL_READ,
             Permission.COMMERCIAL_WRITE,
+            # SC-7-01: ADR-0005's aneks of 2026-09-24 names this widening and only this one.
+            Permission.RESULTS_READ,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS

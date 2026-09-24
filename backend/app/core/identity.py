@@ -125,6 +125,25 @@ class Permission(StrEnum):
     write permission here (point 6): the write answers with the rule and its revenue, so in
     practice it reads them too."""
 
+    RESULTS_READ = "results:read"
+    """Reading a scenario's whole-scenario profit, margin and markup (F-10, SC-7-01; ADR-0005,
+    aneks 2026-09-24).
+
+    New, for the reason `COMMERCIAL_READ` and `STAFFING_READ` are new: the result is a composition
+    over revenue, personnel cost and additional cost, each already read under its own permission,
+    and folding this endpoint under any one of them would make it look like a read of that one
+    calculation rather than of all three together. Like the others it carries no authority over
+    *which* rows — scope stays the `project_access` filter, inherited through
+    `scenario_id → scenarios.project_id`.
+
+    **Not itself conjoined with `PERSONNEL_COSTS_READ`.** The conjunction is applied field by field,
+    in `app.api.response_shaping._without_scenario_profitability`: `revenue` and the additional-cost
+    amount are visible under `RESULTS_READ` alone, while `profit`, `margin`, `markup` and
+    `included_cost` additionally need `PERSONNEL_COSTS_READ` ∧ `project_access.
+    can_view_personnel_costs` — because they mix a personnel cost into one number that cannot be
+    split back apart after the fact. `personnel_cost` itself goes through the existing SC-5-01/
+    SC-5-06 gate unchanged."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:
