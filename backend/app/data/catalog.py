@@ -49,6 +49,7 @@ from app.data.write_errors import (
     refusal_by_condition,
 )
 from app.models.catalog import (
+    CatalogCostCategory,
     CatalogDefaultRate,
     CatalogEngagementType,
     CatalogLocation,
@@ -58,7 +59,12 @@ from app.models.catalog import (
 )
 
 DimensionRow = (
-    CatalogRole | CatalogSeniority | CatalogLocation | CatalogEngagementType | CatalogVendor
+    CatalogRole
+    | CatalogSeniority
+    | CatalogLocation
+    | CatalogEngagementType
+    | CatalogVendor
+    | CatalogCostCategory
 )
 """One row of any of the five dictionaries. Named `…Row` rather than `…Entry` so it cannot be
 confused with `app.api.schemas.catalog.DimensionEntry`, which is the payload, not the row."""
@@ -71,8 +77,12 @@ DIMENSION_MODELS: dict[str, DimensionModel] = {
     "locations": CatalogLocation,
     "engagement-types": CatalogEngagementType,
     "vendors": CatalogVendor,
+    # SC-5-05 (ADR-0014, point 2; ADR-0005, aneks 2026-09-23 SC-5-05, point 3): the categories of
+    # an additional cost join as an entry here and nothing else — another dictionary, not another
+    # mechanism, exactly as `"vendors"` joined in SC-2-03.
+    "cost-categories": CatalogCostCategory,
 }
-"""The five dictionaries, keyed by the path segment that addresses them.
+"""The dictionaries, keyed by the path segment that addresses them.
 
 As data rather than as five pairs of endpoints: the permission dependency is then declared once per
 verb instead of ten times, so a dictionary cannot be the one that was added without a guard. The

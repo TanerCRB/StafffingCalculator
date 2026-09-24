@@ -1346,9 +1346,20 @@ def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
     assert vendors._VENDOR_KEY_EXPRESSION == catalog_models.VENDOR_KEY_EXPRESSION
     assert vendors._EXCLUDE_KEY == catalog_models.RATE_EXCLUDE_KEY
     assert vendors._NO_OVERLAP_CONSTRAINT == catalog_models.NO_OVERLAP_CONSTRAINT
-    assert (*migration._DIMENSION_TABLES, vendors._VENDOR_TABLE) == tuple(
-        model.__tablename__ for model in DIMENSION_MODELS.values()
+    # SC-5-05 re-armed this, not loosened it: the cost-category dictionary (ADR-0005, aneks
+    # SC-5-05, point 3) comes from a third migration, which repeats the name key as well.
+    cost_categories = _load_migration_module(
+        "a3d9e6f20c71_create_additional_costs_and_cost_categories.py", "sc_5_05_migration"
     )
+    assert (
+        cost_categories._DIMENSION_NAME_KEY_EXPRESSION
+        == catalog_models.DIMENSION_NAME_KEY_EXPRESSION
+    )
+    assert (
+        *migration._DIMENSION_TABLES,
+        vendors._VENDOR_TABLE,
+        cost_categories._CATEGORY_TABLE,
+    ) == tuple(model.__tablename__ for model in DIMENSION_MODELS.values())
 
     # The paging index of the gate-2 review (R-01) is the third copied schema fact on this table:
     # `app.models.catalog` declares it so the model keeps describing the database, and migration
