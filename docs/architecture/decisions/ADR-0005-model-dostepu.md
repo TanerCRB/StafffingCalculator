@@ -831,3 +831,24 @@ ADR-0014, Q-2/Q-4/Q-7).**
    (placeholder daje każdemu wołającemu wszystkie uprawnienia naraz). **Warunek ponownego
    otwarcia:** ten sam co dla wzorca ogólnego — ADR uwierzytelniania rozdzielający uprawnienia
    między realne osoby.
+
+**Aneks — porównanie scenariuszy: `RESULTS_READ` bez zmian, bramka per wiersz, B-01 rozszerzony
+(2026-09-24, bramka 1, SC-6-02, F-09 pkt 2, decyzje człowieka).**
+
+1. **`RESULTS_READ` wystarcza bez zmian** — bramkuje dostęp do endpointu porównania tak samo jak
+   pojedynczego wyniku (aneks SC-7-01 pkt 1); nie jest to nowa akcja o innym kręgu uprawnionych, tylko
+   ten sam odczyt zastosowany N razy. Bez nowego uprawnienia.
+2. **Koniunkcja `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` (`_without_scenario_profitability`)
+   aplikowana PER SCENARIUSZ w odpowiedzi porównania, nigdy raz dla całego payloadu.** Wzorzec z
+   `shape_project_list`: "lista jest miejscem, gdzie skrót per-wołający byłby niewidoczny" — z N=1
+   dostępnym scenariuszem błąd tej klasy jest niewidoczny w najmniejszym teście, stąd wymóg wprost.
+3. **B-01 (ADR-0005 aneks SC-5-01 pkt 5, rozszerzony SC-7-01 pkt 4) rozszerzony po raz drugi:**
+   porównanie udostępnia odtworzenie ukrytego kosztu z `revenue`/`margin` dla N scenariuszy jednym
+   żądaniem zamiast jednego — ten sam, dziś uśpiony gap (placeholder nigdy nie nadaje
+   `PERSONNEL_COSTS_READ`, aneks 2026-09-19 pkt 5), szerszy promień. Zaakceptowane świadomie na
+   bramce 1, ten sam warunek ponownego otwarcia co poprzednie rozszerzenia (ADR uwierzytelniania).
+4. **Semantyka częściowego niepowodzenia i wyścigu — patrz ADR-0001, aneks 2026-09-24 SC-6-02 pkt
+   3-4** (all-or-nothing `404`/`409`, nie partial-success) — decyzja dotyczy zarówno izolacji
+   projektowej (ADR-0001), jak i tego, co odpowiedź ujawnia (ADR-0005): oba dokumenty muszą się
+   zgadzać, że pojedynczy zły/rasujący `scenario_id` nie zostawia częściowego payloadu ujawniającego
+   które z pozostałych N-1 były w zasięgu/gotowe, tylko jednolitą odmowę bez różnicowania przyczyny.

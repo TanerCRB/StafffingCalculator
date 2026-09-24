@@ -159,3 +159,34 @@ dokładnie tym dryfem, przed którym broni zasada aneksów. Stąd ten wpis.
 4. **Tabele migawkowe (`approved_snapshot_*`) dziedziczą zasięg scenariusza** i nie dostają własnej
    funkcji odczytu — czytane wyłącznie przez tę samą ścieżkę co reszta danych scenariusza, mimo że
    treść pochodzi z tabeli bez zasięgu (kalendarz, słownik typów).
+
+### 2026-09-24 — porównanie scenariuszy jako zbiór, nie pojedynczy zasób (SC-6-02, bramka 1)
+
+1. **Żądanie nazywa zbiór `scenario_id` jako powtórzony query param** (`GET
+   /projects/{project_id}/scenarios/compare?scenario_id=...&scenario_id=...`), nie ciało żądania —
+   ten sam wzorzec co `GET /catalog/rates` (odczyt, bez ciała). Wołający wybiera podzbiór, endpoint
+   nie zwraca automatycznie wszystkich scenariuszy projektu.
+2. **Sprawdzenie zasięgu N-krotne, ten sam mechanizm co dla jednego zasobu, nie nowy.**
+   Przynależność każdego `scenario_id` sprawdzana względem już wczytanej kolekcji
+   `Project.scenarios` (aneks 2026-09-19, SC-3-01) — `scenario_id` z INNEGO projektu niż ten w
+   ścieżce nie jest nawet nazywalny w zakresie tego żądania (ścieżka ustala `project_id` z góry),
+   więc "po cichu zestawione międzyprojektowo" jest strukturalnie niemożliwe, nie tylko sprawdzane.
+3. **Semantyka częściowego niepowodzenia: all-or-nothing, nie partial-success.** Jeden `scenario_id`
+   spoza zasięgu/nieistniejący wśród kilku → CAŁA odpowiedź `404`, nieodróżnialna od żądania z tym
+   samym id jako jedynym argumentem. Bez nowego kształtu odpowiedzi (marker per pozycja) — decyzja
+   bramki 1, nie tylko brak czasu na zaprojektowanie alternatywy.
+4. **Wyścig przy N złożonych odczytach: całościowy `409`, nie per-scenariusz marker.** Jeśli
+   KTÓRYKOLWIEK z N wywołań `scenario_results_for_caller` rzuci `ScenarioResultsRaceDetected`, cała
+   odpowiedź porównania odmawia `409` — spójne z pkt 1 aneksu SC-7-01 (ADR-0005/ADR-0004: "nigdy nie
+   miesza dwóch momentów tego samego scenariusza"), rozszerzone na "nigdy nie miesza wyniku jednego
+   rasującego scenariusza z resztą w tej samej odpowiedzi 200". Nazwany kompromis: jeden zajęty
+   scenariusz blokuje porównanie pozostałych N-1, które nie rasowały — zaakceptowane, nie naprawiane
+   w tym zadaniu.
+5. **"Obsada" (F-09 pkt 2) POZA zakresem metryk liczbowych tego zadania.** Żadna wartość skalarna
+   (peak headcount / suma osobo-miesięcy / FTE) nie istnieje dziś w kodzie ani nie ma jednoznacznej
+   definicji w `Requirements_EN.md` — F-10 ("Planned hours and FTE") to osobne, niezbudowane
+   zadanie, F-11 sugeruje, że obsada w naturze jest serią (staffing timeline), nie pojedynczą
+   liczbą jak pozostałe cztery metryki. SC-6-02 porównuje wyłącznie
+   `revenue`/`personnel_cost`/`additional_cost`/`included_cost`/`profit`/`margin`/`markup` (kształt
+   `GET .../results`, SC-7-01) — obsada jako metryka porównania odłożona do zadania po zbudowaniu
+   F-10.

@@ -1455,4 +1455,7 @@ history / this file's own change log, not as tracked product work.
   trzema osobnymi round-tripami, nie jednym zapytaniem (zaakceptowany kompromis architekta, R-01
   ogranicza tylko konkretny, wykryty przypadek rozjazdu). Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-6-02** — Porównaj ≥3 scenariusze tego samego projektu (F-09 pkt 2). Zarezerwowane,
+  kryteria i decyzje bramki 1 w Issue #87.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
