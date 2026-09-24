@@ -157,3 +157,17 @@ Pkt 2 w brzmieniu "okna tej samej krotki i miesiąca niezgodne walutą między s
 | N-2 | Urlop ustawowy w koszcie = wpisy ręczne + dopłata budżetu; mutacja "pełny budżet + wpisy ręczne" wywraca test. |
 | N-3 | Brak kalendarza, brak budżetu i brak typu ustawowego to stany nazwane składowej, nigdy `0`; kwota bazowa SC-5-01 nietknięta. |
 | N-4 | Moduł składowej nie importuje ścieżki przychodu (test strukturalny grafu importów, lustro C-5). |
+
+**Aneks — granica reużycia dla przeliczenia bez zapisu, cztery miejsca nie dwa (2026-09-24, bramka
+1, SC-6-04, ADR-0015).**
+
+"Jedna funkcja, trzy miejsca" (pkt 6 wyżej: live/kopier/migawka) staje się **jedna funkcja, cztery
+miejsca** — mechanizm what-if (ADR-0015) jako czwarty wywołujący `_worked_months` i
+`base_personnel_cost`, na podstawionym, nigdy nie zapisanym zestawie stawek. `paid_absence_cost`
+liczy z DOSŁOWNIE tego samego słownika stawek per-(pozycja, miesiąc) co `base_personnel_cost` —
+podstawienie musi nastąpić raz, na współdzielonej strukturze, przed wywołaniem obu konsumentów,
+nigdy osobno. `rate_source` (pkt niżej w tym dokumencie, zamknięty dwuelementowy zbiór
+`LIVE_CATALOG`/`APPROVED_SNAPSHOT`) przestaje być zamknięty — ADR-0015 dodaje trzecią wartość,
+`WHAT_IF_HYPOTHETICAL`, z wymogiem audytu każdego porównania przez równość (w szczególności
+strażnika wyścigu `ScenarioResultsRaceDetected`), żeby trzecia wartość nigdy nie wyciekła do
+kompozycji zaprojektowanej dla dwóch stanów. Pełne uzasadnienie: ADR-0015.

@@ -1522,4 +1522,8 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-05, R-01 — 15 testów) — 737 testów backendowych zielono, 234 frontendowych bez zmian.
   Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-6-04** — Pokaż wpływ hipotetycznej podwyżki wynagrodzeń na koszt i zysk scenariusza
+  (F-09 pkt 3, wariant 1/4 analizy wrażliwości). Zarezerwowane, kryteria i decyzje bramki 1 w
+  Issue #88, nowa decyzja architektoniczna ADR-0015 (Draft — pending approval).
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
