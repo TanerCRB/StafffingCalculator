@@ -2066,7 +2066,7 @@ history / this file's own change log, not as tracked product work.
   `/results`); wyścig "live–live" (edycja okna katalogu) — nazwana luka.
   Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
+- [x] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
   F-06.4, frontend): konsument istniejącego API, zamyka ograniczenie D-9 SC-4-03 (ADR-0003 aneks
   SC-4-03 pkt 8) i nienazwaną dotąd degradację po SC-4-04 — scenariusz Outcome-based i Story Points
   był błędem odczytu obu sekcji karty, bo kontrakt frontendu znał tylko wartości T&M (Issue #125).
@@ -2107,5 +2107,18 @@ history / this file's own change log, not as tracked product work.
   AC-05, AC-08, AC-09; `ADR-0003-model-modeli-komercyjnych.md` (aneksy SC-4-03, SC-4-04, SC-4-07);
   `ADR-0005-model-dostepu.md`; `ADR-0002-obsluga-pieniedzy.md`; `ADR-0010-awaria-renderu-frontendu.md`;
   `docs/PLAN.md` SC-4-03, SC-4-04, SC-4-06, SC-7-02.
+  **Done 2026-09-25:** PR #131 (scalone `1bffd21`, zintegrowany z SC-5-02 i SC-7-03). Dowód:
+  `frontend/src/features/projects/ScenarioCommercialModels.test.tsx` (K-01..K-07, R-01, R-03, R-04),
+  `ScenarioCommercialModels.qa.test.tsx` (QA, dwie rundy),
+  `backend/tests/test_story_points_revenue.py::test_r_01_sc_4_07_*` — 327 testów frontendu i 953
+  backendu zielono, CI zielone. QA: dwie rundy, dowód trzyma (mutacje, które przeżyły testy
+  dewelopera, zabite testami kontrastowymi QA; mutacje równoważne nazwane). Invariant Guardian: PASS.
+  Security-auditor: PASS (Q-A=B potwierdzone). Reviewer: PASS WITH RESERVATIONS ×2 — R-01..R-06 i
+  F06 naprawione decyzjami człowieka, w tym jednoliniowa poprawka backendu (R-01, odejście od
+  "backend: zero zmian") i zmiana wyłącznie danych fixture'ów istniejących testów (Q4, R-03).
+  Zaakceptowane, nienaprawione: ekspozycja przychodu oczekiwanego i kategorii w `/results` pod
+  `RESULTS_READ` (B-01, ADR-0005 aneks SC-4-03 — ukrycie w UI to wybór prezentacji); ścieżka otwartej
+  bramki kosztu osobowego dowiedziona tylko na fixture (`PLACEHOLDER_PERMISSIONS`). Zob.
+  `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
