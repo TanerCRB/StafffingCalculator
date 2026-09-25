@@ -81,12 +81,13 @@ from app.data.paid_absence_cost import paid_absence_months
 from app.data.personnel_cost import ScenarioCostView, _worked_months, scenario_cost_for_caller
 from app.data.scenario_results import ScenarioResultsRaceDetected
 from app.domain.additional_cost import AdditionalCostAnswer
-from app.domain.paid_absence_cost import paid_absence_cost
+from app.domain.paid_absence_cost import fully_loaded_paid_absence_cost, paid_absence_cost
 from app.domain.personnel_cost import (
     WHAT_IF_HYPOTHETICAL,
     MonthCostRate,
     WorkedMonth,
     base_personnel_cost,
+    fully_loaded_personnel_cost,
 )
 from app.domain.revenue import RevenueAnswer
 from app.models.scenario import Scenario, ScenarioStatus
@@ -116,7 +117,15 @@ def _raised_rate(rate: MonthCostRate | None, multiplier: Decimal) -> MonthCostRa
     """One (position, month)'s resolved rate, raised — or `None`, unchanged, when the month was
     never resolved: an unresolved month stays unresolved under any raise (K-01's mixed-state
     contrast). `dataclasses.replace`, never a `MonthCostRate` built field by field: every field this
-    type carries but `cost_rate` (the currency, every window's id and dates) survives untouched.
+    type carries but `cost_rate` (the currency, every window's id and dates, and — since SC-5-02 —
+    `surcharge_percent`/`includes_surcharge`) survives untouched.
+
+    **This is the whole of SC-5-02's criterion K-07.** `surcharge_percent` is a *percentage of*
+    `cost_rate` (ADR-0013, aneks 2026-09-25, Q4), so raising `cost_rate` here and leaving
+    `surcharge_percent` exactly as `replace` already leaves every field it is not told to change is
+    what makes the fully loaded cost's surcharge amount rise proportionally with the base, with no
+    line added to this function and no new substitution path in this module (ADR-0015, aneks
+    2026-09-25 SC-5-02).
     """
     if rate is None:
         return None
@@ -194,12 +203,22 @@ def scenario_what_if_salary_raise_for_caller(
     _source, months = _worked_months(session, scenario)
     raised_months = _raised_months(list(months), multiplier)
     raised_rates = _raised_rates_by_month(raised_months)
+    raised_absence_months = paid_absence_months(session, scenario, raised_rates)
     hypothetical_cost = base_personnel_cost(
         raised_months, rate_source=WHAT_IF_HYPOTHETICAL, scenario_currency=scenario.currency
     )
     hypothetical_paid_absence = paid_absence_cost(
-        paid_absence_months(session, scenario, raised_rates),
-        scenario_currency=scenario.currency,
+        raised_absence_months, scenario_currency=scenario.currency
+    )
+    # The third and fourth consumers of the raised rate dictionary (SC-5-02, criterion K-07):
+    # `fully_loaded_personnel_cost`/`fully_loaded_paid_absence_cost` read `surcharge_percent` off
+    # the identical, already-raised `MonthCostRate` objects above — no separate substitution, no
+    # second read of the catalogue (`_raised_rate`'s docstring carries the full argument).
+    hypothetical_fully_loaded_cost = fully_loaded_personnel_cost(
+        raised_months, rate_source=WHAT_IF_HYPOTHETICAL, scenario_currency=scenario.currency
+    )
+    hypothetical_fully_loaded_paid_absence = fully_loaded_paid_absence_cost(
+        raised_absence_months, scenario_currency=scenario.currency
     )
     hypothetical_cost_view = ScenarioCostView(
         user_id=cost_view.user_id,
@@ -207,6 +226,8 @@ def scenario_what_if_salary_raise_for_caller(
         can_view_personnel_costs=cost_view.can_view_personnel_costs,
         cost=hypothetical_cost,
         paid_absence=hypothetical_paid_absence,
+        fully_loaded_cost=hypothetical_fully_loaded_cost,
+        fully_loaded_paid_absence=hypothetical_fully_loaded_paid_absence,
     )
     return ScenarioWhatIfView(
         scenario=scenario,

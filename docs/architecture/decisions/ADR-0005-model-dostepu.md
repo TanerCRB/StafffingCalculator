@@ -893,6 +893,17 @@ nie ujawnia kwoty bez stawki bazowej, która jest już bramkowana osobno".
    czytelnik migawkowego procentu (przyszłe zadanie kosztu w pełni obciążonego zatwierdzonego
    scenariusza) podlega tej samej koniunkcji co dziś `default_cost_rate` migawkowe (ADR-0005, aneks
    2026-09-23 SC-5-01 pkt 2) — SC-5-02 sam nie musi wystawiać żadnej ścieżki, która to pole zwraca.
+4. **B-01 (aneks 2026-09-23 SC-5-01 pkt 5, uśpione, zaakceptowane) rozszerza się jakościowo o
+   PEŁNY ładunek, nie tylko dziedziczy — nazwane wprost tu, nie odkryte później (security-auditor,
+   weryfikacja diffu SC-5-02, 2026-09-25).** Wołający z globalnym `PERSONNEL_COSTS_READ`, bez flagi
+   `can_view_personnel_costs` na projekcie, już przed SC-5-02 mógł odtworzyć koszt BAZOWY konkretnej
+   osoby (`headcount = 1`) przeliczeniem `default_cost_rate` (ścieżka katalogowa jednoczynnikowa,
+   pkt 2 wyżej) razem z krotką wymiarów widoczną przez `STAFFING_READ`. Ten sam wołający ma dziś
+   (od SC-5-02) na tej samej krotce katalogowej także `surcharge_percent`/`includes_surcharge` —
+   wystarczy do przeliczenia kosztu W PEŁNI OBCIĄŻONEGO, nie tylko bazowego, dokładnie tej samej
+   osoby. Warunek dormant (`PLACEHOLDER_PERMISSIONS` bez `PERSONNEL_COSTS_READ`) i warunek ponownego
+   otwarcia (ADR uwierzytelniania) bez zmian — rozszerza się wyłącznie WYPŁATA uśpionego ryzyka, nie
+   jego uśpienie.
 4. **`PLACEHOLDER_PERMISSIONS` bez zmian.** `CATALOG_READ` jest w zestawie od aneksu 2026-09-19
    (SC-2-01) pkt 6; ten punkt nie dodaje nowego uprawnienia, tylko klasyfikuje nowe pole pod istniejące.
 5. **Warunek ponownego otwarcia — bez zmian wobec zobowiązania z aneksu 2026-09-22 SC-3-03 pkt 4/5.**

@@ -71,10 +71,12 @@ from app.domain.capacity import (
 )
 from app.domain.personnel_cost import (
     COST_BASIS_BASE,
+    COST_BASIS_FULLY_LOADED,
     CURRENCY_MISMATCH,
     NO_COST_CURRENCY,
     NO_COST_RATE,
     MonthCostRate,
+    surcharge_fraction,
 )
 
 # --- the named states of the component (aneks SC-5-06, point 4) ---------------------------------
@@ -267,25 +269,18 @@ def month_paid_absence_hours(month: PaidAbsenceMonth) -> PaidAbsenceMonthHours |
     )
 
 
-def paid_absence_cost(
+_ResolvedPaidAbsenceMonths = list[tuple[PaidAbsenceMonthHours, MonthCostRate]]
+
+
+def _resolve_paid_absence_months(
     months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
-) -> PaidAbsenceCostAnswer:
-    """The paid-absence component of one scenario, or the named state that withholds it.
+) -> tuple[PaidAbsenceAssumptionsUsed, _ResolvedPaidAbsenceMonths, str | None, str | None]:
+    """The three checks `paid_absence_cost` and `fully_loaded_paid_absence_cost` share (SC-5-02),
+    extracted once so the two cannot silently disagree about which months resolve.
 
-    The order of the checks:
-
-    1. **Any month whose hours or rate cannot be established → a named state for the whole
-       component**, naming every (position, month) and its reason. The component's state is the
-       first reason of `STATE_ORDER` present. Never the sum of the months that did resolve, never
-       `0` for the missing ones (criterion K-04). A month with no paid absence still needs its
-       rate — "is this month costed" is a question about the catalogue, as for the base cost.
-    2. **More than one currency among the months, or one other than the scenario's →
-       `currency_mismatch`**. Nothing is converted.
-    3. **No allocation row at all** — `0.00` in the scenario's currency when it declares one,
-       otherwise `no_cost_currency` (the base cost's rule, so the two cannot disagree about an
-       empty plan).
-    4. Otherwise the sums, exact `Decimal` all the way, rounded **once** each through
-       `app.core.money.round_money` — never per month, never per position.
+    Returns `(assumptions, resolved, currency, reason)` — `resolved` is always the months whose
+    hours and rate both resolved, whatever `reason` says (a caller checks `reason is not None`
+    first, exactly as `paid_absence_cost` always has, and never reads `resolved` before that check).
     """
     resolved: list[tuple[PaidAbsenceMonthHours, MonthCostRate]] = []
     unresolved: list[UnresolvedPaidAbsenceMonth] = []
@@ -317,14 +312,42 @@ def paid_absence_cost(
     if unresolved:
         reasons = {month.reason for month in unresolved}
         reason = next(state for state in STATE_ORDER if state in reasons)
-        return PaidAbsenceCostUnavailable(reason=reason, assumptions_used=assumptions)
+        return assumptions, resolved, None, reason
     if len(currencies) > 1 or (
         scenario_currency is not None and currencies and currencies != (scenario_currency,)
     ):
-        return PaidAbsenceCostUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
+        return assumptions, resolved, None, CURRENCY_MISMATCH
     currency = currencies[0] if currencies else scenario_currency
     if currency is None:
-        return PaidAbsenceCostUnavailable(reason=NO_COST_CURRENCY, assumptions_used=assumptions)
+        return assumptions, resolved, None, NO_COST_CURRENCY
+    return assumptions, resolved, currency, None
+
+
+def paid_absence_cost(
+    months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
+) -> PaidAbsenceCostAnswer:
+    """The paid-absence component of one scenario, or the named state that withholds it.
+
+    The order of the checks (`_resolve_paid_absence_months`):
+
+    1. **Any month whose hours or rate cannot be established → a named state for the whole
+       component**, naming every (position, month) and its reason. The component's state is the
+       first reason of `STATE_ORDER` present. Never the sum of the months that did resolve, never
+       `0` for the missing ones (criterion K-04). A month with no paid absence still needs its
+       rate — "is this month costed" is a question about the catalogue, as for the base cost.
+    2. **More than one currency among the months, or one other than the scenario's →
+       `currency_mismatch`**. Nothing is converted.
+    3. **No allocation row at all** — `0.00` in the scenario's currency when it declares one,
+       otherwise `no_cost_currency` (the base cost's rule, so the two cannot disagree about an
+       empty plan).
+    4. Otherwise the sums, exact `Decimal` all the way, rounded **once** each through
+       `app.core.money.round_money` — never per month, never per position.
+    """
+    assumptions, resolved, currency, reason = _resolve_paid_absence_months(
+        months, scenario_currency=scenario_currency
+    )
+    if reason is not None:
+        return PaidAbsenceCostUnavailable(reason=reason, assumptions_used=assumptions)
 
     total = sum(
         ((hours.manual_hours + hours.budget_hours) * rate.cost_rate for hours, rate in resolved),
@@ -336,6 +359,70 @@ def paid_absence_cost(
     return PaidAbsenceCostResult(
         cost=round_money(total),
         budget_cost=round_money(budget_total),
+        currency=currency,
+        assumptions_used=assumptions,
+    )
+
+
+# --- the fully loaded paid-absence cost (SC-5-02, F-07; ADR-0013, aneks 2026-09-25 pt 5) ---------
+
+
+@dataclass(frozen=True)
+class FullyLoadedPaidAbsenceCostResult:
+    """The component's fully loaded cost: the same hours as `PaidAbsenceCostResult`, at the same
+    rate plus its surcharge — never a different rate and never a different hours source."""
+
+    cost: Decimal
+    surcharge_amount: Decimal
+    currency: str
+    assumptions_used: PaidAbsenceAssumptionsUsed
+    basis: str = COST_BASIS_FULLY_LOADED
+
+
+@dataclass(frozen=True)
+class FullyLoadedPaidAbsenceCostUnavailable:
+    """A named state, for the identical reason the base component cannot be stated
+    (`_resolve_paid_absence_months` is shared) — never a reason of its own."""
+
+    reason: str
+    assumptions_used: PaidAbsenceAssumptionsUsed
+    basis: str = COST_BASIS_FULLY_LOADED
+
+
+FullyLoadedPaidAbsenceCostAnswer = (
+    FullyLoadedPaidAbsenceCostResult | FullyLoadedPaidAbsenceCostUnavailable
+)
+
+
+def fully_loaded_paid_absence_cost(
+    months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
+) -> FullyLoadedPaidAbsenceCostAnswer:
+    """The paid-absence component's fully loaded cost (ADR-0013, aneks 2026-09-23 SC-5-06 pt 5,
+    applied by SC-5-02's aneks of 2026-09-25): "the paid-absence component gets the surcharge the
+    same way the base cost does" — the same `surcharge_fraction` of the same `MonthCostRate`, the
+    same (manual + budget) hours `paid_absence_cost` already sums, never a fraction of a different
+    figure.
+
+    Exactly `paid_absence_cost`'s three checks (shared via `_resolve_paid_absence_months`); the sum
+    is one unrounded pass over hours × rate × (1 + surcharge fraction), for the reason
+    `fully_loaded_personnel_cost` gives its own single pass.
+    """
+    assumptions, resolved, currency, reason = _resolve_paid_absence_months(
+        months, scenario_currency=scenario_currency
+    )
+    if reason is not None:
+        return FullyLoadedPaidAbsenceCostUnavailable(reason=reason, assumptions_used=assumptions)
+
+    base_total = Decimal("0")
+    surcharge_total = Decimal("0")
+    for hours, rate in resolved:
+        base_amount = (hours.manual_hours + hours.budget_hours) * rate.cost_rate
+        base_total += base_amount
+        surcharge_total += base_amount * surcharge_fraction(rate)
+
+    return FullyLoadedPaidAbsenceCostResult(
+        cost=round_money(base_total + surcharge_total),
+        surcharge_amount=round_money(surcharge_total),
         currency=currency,
         assumptions_used=assumptions,
     )

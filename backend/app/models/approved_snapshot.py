@@ -496,6 +496,33 @@ class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
     nullable — an open-ended source window is frozen as open-ended — and the reader never compares
     it: it asks `valid_period` below."""
 
+    surcharge_percent: Mapped[Decimal] = mapped_column(
+        Numeric(PERCENT_PRECISION, PERCENT_SCALE), nullable=False
+    )
+    includes_surcharge: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    """The two new columns of SC-5-02 (ADR-0004, aneks 2026-09-25 SC-5-02; ADR-0013/ADR-0005, same
+    date): frozen on the **same row**, in the **same transaction**, as `default_cost_rate` — one
+    decision to freeze, not a second bramka for a second column of one source row (point 2 of that
+    aneks). `NOT NULL` with **no default here** on the model, unlike the source column
+    (`app.models.catalog.CatalogDefaultRate`): the migration backfills a scenario approved before
+    this column existed with the honest value for it (`0`/`false` — no surcharge concept existed at
+    the moment of that approval, the same reasoning `a7c2e5f81b94` used for
+    `approved_snapshot_absence_type.is_statutory_leave`), and then drops the server default, so no
+    later `INSERT … SELECT` can silently omit the column and have the database invent a value nobody
+    read from the source (module docstring, "no default on any of them").
+
+    **Read back by the existing reader, symmetrically with `default_cost_rate`** — corrected during
+    SC-5-02's own QA review, 2026-09-25: an earlier version of this task named a literal `0`/`false`
+    in `app.data.personnel_cost.costed_month_windows`'s approval-snapshot branch instead of this
+    column, reading the ADR-0013 aneks's "SC-5-02 sam nie musi wystawiać żadnej ścieżki, która
+    zwraca tę kolumnę" (SC-5-02 does not *have to* expose a path returning it) as "must not". That
+    left an approved scenario's fully loaded cost frozen at "no surcharge" regardless of what was
+    configured at the moment of approval — a silent regression on approval with no catalogue edit
+    involved, not a deferred feature. `costed_month_windows` is the *existing* reader of this table
+    for the base cost (SC-5-01, unchanged); reading two more columns off the same row through the
+    same branch completes the freeze this class exists for rather than building a new reader, and
+    applies the identical SC-1-08 conjunction `default_cost_rate` already carries."""
+
     valid_period: Mapped[Range[date]] = mapped_column(
         DATERANGE,
         Computed(VALID_PERIOD_EXPRESSION, persisted=True),

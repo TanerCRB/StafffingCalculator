@@ -116,9 +116,18 @@ from app.domain.additional_cost import CALCULATED as ADDITIONAL_COST_CALCULATED
 from app.domain.additional_cost import AdditionalCostResult, AdditionalCostUnavailable
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
-from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
+from app.domain.paid_absence_cost import (
+    FullyLoadedPaidAbsenceCostAnswer,
+    FullyLoadedPaidAbsenceCostResult,
+    PaidAbsenceCostAnswer,
+    PaidAbsenceCostResult,
+)
 from app.domain.personnel_cost import CALCULATED as COST_CALCULATED
-from app.domain.personnel_cost import PersonnelCostResult
+from app.domain.personnel_cost import (
+    FullyLoadedPersonnelCostAnswer,
+    FullyLoadedPersonnelCostResult,
+    PersonnelCostResult,
+)
 from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
 from app.domain.revenue import RevenueResult, RevenueUnavailable
 from app.domain.scenario_readiness import assess
@@ -159,9 +168,17 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
         "paid_absence_amount",
         "paid_absence_budget_amount",
         "paid_absence_assumptions_used",
+        # SC-5-02 (Issue #77, K-01/K-03/K-05; ADR-0013 aneks 2026-09-25): the fully loaded cost and
+        # its surcharge, for the base component and for the paid-absence component — the identical
+        # conjunction as `amount`/`paid_absence_amount`, through this same set (K-03), never a
+        # second mechanism for a second money figure.
+        "fully_loaded_amount",
+        "surcharge_amount",
+        "paid_absence_fully_loaded_amount",
+        "paid_absence_surcharge_amount",
     }
 )
-"""Fields of a scenario's base personnel cost that carry a personnel cost (SC-5-01, SC-5-06).
+"""Fields of a scenario's personnel cost that carry a personnel cost (SC-5-01, SC-5-06, SC-5-02).
 
 A third set, next to `PERSONNEL_COST_FIELDS` (project payloads — still empty, and deliberately left
 so: ADR-0005, aneks 2026-09-23 SC-5-01, point 3) and `CATALOG_PERSONNEL_COST_FIELDS` (catalogue
@@ -586,6 +603,13 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
             default_selling_rate=rate.default_selling_rate,
             currency=rate.currency,
             unit=rate.unit,
+            # Passed through for every caller, exactly like `vendor_id` above and for the identical
+            # reason (SC-5-02, criterion K-04): a percentage/flag that only multiplies an
+            # already-gated `default_cost_rate` is an organisational parameter classified under
+            # `CATALOG_READ` alone (ADR-0005, aneks 2026-09-25, Q4) — never added to
+            # `CATALOG_PERSONNEL_COST_FIELDS`, which stays the one-element set it always was.
+            surcharge_percent=rate.surcharge_percent,
+            includes_surcharge=rate.includes_surcharge,
             effective_from=rate.effective_from,
             effective_to=rate.effective_to,
             # ADR-0007's concurrency marker (SC-2-04), on every representation of the row and for
@@ -936,6 +960,33 @@ def _paid_absence_fields(answer: PaidAbsenceCostAnswer) -> dict[str, Any]:
     }
 
 
+def _fully_loaded_fields(answer: FullyLoadedPersonnelCostAnswer) -> dict[str, Any]:
+    """The base cost's fully loaded pair (SC-5-02, K-01/K-02) as the two `PersonnelCostRead`
+    fields — `fully_loaded_amount`/`surcharge_amount`, spread the same way `_paid_absence_fields`
+    is, and gated through the same `SCENARIO_COST_FIELDS`/`_without_scenario_personnel_costs`
+    mechanism, never a second gate for a second money figure."""
+    if isinstance(answer, FullyLoadedPersonnelCostResult):
+        return {"fully_loaded_amount": answer.cost, "surcharge_amount": answer.surcharge_amount}
+    return {"fully_loaded_amount": NOT_APPLICABLE, "surcharge_amount": NOT_APPLICABLE}
+
+
+def _paid_absence_fully_loaded_fields(
+    answer: FullyLoadedPaidAbsenceCostAnswer,
+) -> dict[str, Any]:
+    """The paid-absence component's fully loaded pair (SC-5-02, K-05) — the mirror of
+    `_fully_loaded_fields`, on `paid_absence_fully_loaded_amount`/
+    `paid_absence_surcharge_amount`."""
+    if isinstance(answer, FullyLoadedPaidAbsenceCostResult):
+        return {
+            "paid_absence_fully_loaded_amount": answer.cost,
+            "paid_absence_surcharge_amount": answer.surcharge_amount,
+        }
+    return {
+        "paid_absence_fully_loaded_amount": NOT_APPLICABLE,
+        "paid_absence_surcharge_amount": NOT_APPLICABLE,
+    }
+
+
 def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
     """Build one **ungated** base-cost payload from a `ScenarioCostView` — shared by
     `shape_scenario_personnel_cost` below (SC-5-01/SC-5-06) and the results endpoint (SC-7-01,
@@ -962,6 +1013,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
                 effective_to=window.effective_to,
                 default_cost_rate=window.cost_rate,
                 currency=window.currency,
+                surcharge_percent=window.surcharge_percent,
+                includes_surcharge=window.includes_surcharge,
             )
             for window in assumptions.rate_windows
         ],
@@ -974,6 +1027,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         currencies=list(assumptions.currencies),
     )
     paid_absence = _paid_absence_fields(view.paid_absence)
+    fully_loaded = _fully_loaded_fields(view.fully_loaded_cost)
+    paid_absence_fully_loaded = _paid_absence_fully_loaded_fields(view.fully_loaded_paid_absence)
     if isinstance(answer, PersonnelCostResult):
         return PersonnelCostRead(
             state=COST_CALCULATED,
@@ -982,6 +1037,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             currency=answer.currency,
             assumptions_used=assumptions_read,
             **paid_absence,
+            **fully_loaded,
+            **paid_absence_fully_loaded,
         )
     return PersonnelCostRead(
         state=answer.reason,
@@ -990,6 +1047,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         currency=None,
         assumptions_used=assumptions_read,
         **paid_absence,
+        **fully_loaded,
+        **paid_absence_fully_loaded,
     )
 
 
