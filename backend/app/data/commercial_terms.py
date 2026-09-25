@@ -413,17 +413,30 @@ class ScenarioCommercialView:
     scenario: Scenario
     terms: CommercialTerms | None
     revenue: RevenueAnswer
+    status_at_read: ScenarioStatus
+    """The scenario's status **as this read saw it**, copied into an immutable value right after
+    this read's own `session.refresh` (SC-7-03, Issue #118; ADR-0015, aneks SC-7-03, point 3).
+
+    Never `scenario.status` read later: `scenario` is an identity-mapped object that a later read
+    in the same session (`app.data.personnel_cost.scenario_cost_for_caller`) refreshes again, so its
+    `.status` stops being a record of *this* read the moment that call runs. This value does not
+    move. It is what `app.data.scenario_results`/`app.data.scenario_what_if` compare to detect an
+    approval landing between the revenue and the cost read — never `revenue.assumptions_used.
+    rate_source`, whose vocabulary depends on the commercial model (`story_points_terms` has no
+    status in it at all; ADR-0003, aneks SC-7-03)."""
 
 
 def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
     # Refreshed, not trusted from the identity map: the status decides live-versus-snapshot, and an
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
+    status_at_read = scenario.status
     rule = _rule_of(session, scenario.id)
     return ScenarioCommercialView(
         scenario=scenario,
         terms=None if rule is None else rule.terms,
         revenue=revenue_of(session, scenario, rule),
+        status_at_read=status_at_read,
     )
 
 

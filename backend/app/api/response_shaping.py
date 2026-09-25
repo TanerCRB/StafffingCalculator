@@ -1220,8 +1220,11 @@ def shape_scenario_what_if_salary_raise(
     `_additional_cost_total_read_of`, `_without_scenario_profitability`,
     `app.domain.scenario_results.scenario_profitability`) — never `shape_scenario_results` itself:
     that function's own `ScenarioResultsView` is documented as built only by
-    `scenario_results_for_caller`, from two reads of the scenario that are known to agree about its
-    real status. A `ScenarioWhatIfView` makes no such claim about the *hypothetical* cost view it
+    `scenario_results_for_caller`, from the three reads that refresh the scenario (revenue,
+    personnel cost, additional cost), whose frozen `status_at_read` values are known to agree — any
+    further read that refreshes the scenario must join that comparison (ADR-0015, aneks SC-7-03,
+    point 8).
+    A `ScenarioWhatIfView` makes no such claim about the *hypothetical* cost view it
     carries, so this is its own, small composition rather than a call that would misrepresent what
     it was handed (ADR-0015, point 4).
     """

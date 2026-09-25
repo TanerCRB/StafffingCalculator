@@ -15,8 +15,10 @@ additional-cost answers and the race guard — the same three calls
 function itself (ADR-0015, point 4): it would build a `ScenarioResultsView`, whose documented
 invariant ("`revenue` and `cost_view.cost` agree on the scenario's real status") a *hypothetical*
 cost view does not represent. This composition reads the same real sources separately and applies
-`app.data.scenario_results.ScenarioResultsRaceDetected` the same way, only *after* which does it
-touch a rate.
+`app.data.scenario_results.ScenarioResultsRaceDetected` the same way — the status each of the three
+real reads froze right after its own refresh (`status_at_read`), never `rate_source` and never the
+shared `Scenario`'s `.status` (SC-7-03, Issue #118; ADR-0015, aneks SC-7-03) — only *after* which
+does it touch a rate.
 
 **Zero persistence, structurally** (ADR-0015, point 2). `WorkedMonth`, `MonthCostRate`,
 `CostRateWindow` are plain `@dataclass(frozen=True)` (`app.domain.personnel_cost`), never
@@ -49,15 +51,27 @@ imports (F-06; rule 10 of the Invariant Guardian).
 **Scope: `draft` only** (ADR-0015, point 5). A scenario that is, or becomes mid-request, `approved`
 answers `None` here — the same "no such scenario for this caller" every scope failure in this
 module already answers with, never a distinct error. The check runs *after* the inherited race
-guard and *before* any substitution: an approval landing between the revenue and the cost read
-below is still caught by `ScenarioResultsRaceDetected` first, exactly as
-`scenario_results_for_caller` catches it (a `409`, `app.api.scenario_what_if`); a scenario that was
-already `approved` throughout falls through to the status check instead, because both of its
-`rate_source` reads agree (`approved_snapshot` twice) and the guard has nothing to catch.
+guard and *before* any substitution: an approval landing between any two of the three real reads
+below (revenue, cost, additional cost — each refreshes the same `Scenario`) is still caught by
+`ScenarioResultsRaceDetected` first, exactly as `scenario_results_for_caller` catches it (a `409`,
+`app.api.scenario_what_if`); a scenario that was already `approved` throughout falls through to
+the status check instead, because all three reads saw `approved` (their `status_at_read` values
+agree) and the guard has nothing to catch (ADR-0015, aneks SC-7-03, points 5 and 8).
+
+**The additional-cost read runs before the guard, on purpose** (SC-7-03, reviewer R-01; ADR-0015,
+aneks SC-7-03, point 8). It is the last of the three `session.refresh(scenario)` calls on this path.
+Called after the guard (as before SC-7-03), an approval landing between the cost read and it left
+the two compared statuses agreeing on `draft` while its refresh flipped the shared `Scenario` to
+`approved` — and `_worked_months(session, scenario)` below then branched on that live `approved`
+and served a hypothesis computed on the approval snapshot. With the third status frozen and
+compared, and no `session.refresh(scenario)` anywhere after it (`_worked_months` and
+`paid_absence_months` issue plain reads that never load `Scenario`), every branch on
+`scenario.status` below sees the status all three reads agreed on.
 
 **What "never" means here, precisely.** The *real*, unsubstituted revenue and cost —
-`commercial.revenue` and `cost_view.cost`, the same figures that caller's own `GET …/results` would
-show them for this scenario — are already read and computed in-process by the two calls above
+`commercial.revenue`, `cost_view.cost` and the additional cost, the same figures that caller's own
+`GET …/results` would show them for this scenario — are already read and computed in-process by the
+three calls above
 *before* this status check runs, approved-snapshot rates included when the scenario turns out to be
 approved: refusing scope earlier, before either read, would cost this module a second statement
 duplicating `scenario_in_scope`. What never happens for a non-`draft` scenario is the
@@ -167,27 +181,33 @@ def scenario_what_if_salary_raise_for_caller(
     cost_view = scenario_cost_for_caller(session, caller, project_id, scenario_id)
     if cost_view is None:  # pragma: no cover — scope agrees with the call above by construction
         return None
-    revenue_source = commercial.revenue.assumptions_used.rate_source
-    cost_source = cost_view.cost.assumptions_used.rate_source
-    if revenue_source != cost_source:
-        # Inherited unchanged from `scenario_results_for_caller` (ADR-0015, point 5): an approval
-        # landing between the two real reads above is still a race, whatever this endpoint goes on
-        # to compute from a hypothetical rate. Both sources are still real here (`live_catalog` /
-        # `approved_snapshot`) — the raise has not been applied yet, so `WHAT_IF_HYPOTHETICAL` can
-        # never reach this comparison.
-        raise ScenarioResultsRaceDetected(revenue_source=revenue_source, cost_source=cost_source)
+    # Before the guard, not after it: its refresh is the last one on this path (aneks SC-7-03,
+    # point 8), so its status has to be frozen and compared before anything branches on it.
+    additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
+    if additional is None:  # pragma: no cover — scope agrees with the two calls above
+        return None
+    if not (
+        commercial.status_at_read == cost_view.status_at_read == additional.status_at_read
+    ):
+        # Inherited from `scenario_results_for_caller` (ADR-0015, point 5; aneks SC-7-03): an
+        # approval landing between any two of the three real reads above is still a race, whatever
+        # this endpoint goes on to compute from a hypothetical rate. Compared on the status each
+        # read froze right after its own refresh — never `rate_source` (model-dependent: Story
+        # Points reports `story_points_terms`) and never `cost_view.scenario.status`, which is the
+        # same identity-mapped object every one of the three reads refreshes.
+        raise ScenarioResultsRaceDetected(
+            revenue_status=commercial.status_at_read,
+            cost_status=cost_view.status_at_read,
+            additional_cost_status=additional.status_at_read,
+        )
 
     scenario = cost_view.scenario
     if scenario.status != ScenarioStatus.DRAFT:
-        # Already `approved` throughout (both reads agreed on `approved_snapshot`, so the guard
-        # above had nothing to catch) — refused the same way as out of scope, never a distinct
+        # Already `approved` throughout (all three reads froze `approved`, so the guard above had
+        # nothing to catch) — refused the same way as out of scope, never a distinct
         # error and never a SERVED compute against a substituted rate (ADR-0015, point 5): the
         # real revenue/cost above were read in-process (the module docstring's "what 'never'
         # means" note), but the hypothetical substitution below this line never runs.
-        return None
-
-    additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
-    if additional is None:  # pragma: no cover — scope agrees with the two calls above
         return None
 
     multiplier = Decimal("1") + salary_raise_percent / Decimal("100")
@@ -207,6 +227,7 @@ def scenario_what_if_salary_raise_for_caller(
         can_view_personnel_costs=cost_view.can_view_personnel_costs,
         cost=hypothetical_cost,
         paid_absence=hypothetical_paid_absence,
+        status_at_read=cost_view.status_at_read,
     )
     return ScenarioWhatIfView(
         scenario=scenario,

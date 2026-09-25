@@ -295,3 +295,24 @@ istniejące wiersze (`backend/migrations/**`, `backend/app/models/**`, `backend/
 `backend/app/domain/**`, "any new/changed public API endpoint, response field or event") już
 pokrywają te ścieżki generycznie. D-1/D-4/D-5/D-6 rozstrzygnięte 2026-09-25 (opcja A wszędzie) —
 ten aneks jest teraz wiążący dla migracji tworzącej `story_points_terms`.
+
+### 2026-09-25 — `rate_source` przychodu to deskryptor zależny od modelu, nie świadek statusu (SC-7-03, Issue #118, bramka 1, Q3/B)
+
+Punkt 9 mówi o "źródle stawek (żywy katalog albo migawka)"; aneks SC-4-04 nie odnotował, że
+kontrakt przychodu (`backend/app/api/schemas/commercial_terms.py`, `assumptions_used.rate_source`)
+ma już trzecią wartość `story_points_terms`. Rejestr tego dokumentu rozjechał się z kontraktem, a
+brak tego zapisu był przyczyną błędu #118: strażnik wyścigu porównywał `rate_source` przychodu z
+`rate_source` kosztu tak, jakby oba były tym samym słownikiem.
+
+1. `assumptions_used.rate_source` przychodu to deskryptor F-06.5 **zależny od modelu**: T&M zgłasza
+   `live_catalog` / `approved_snapshot` (stawka sprzedażowa z katalogu albo migawki, pkt 4–5), Story
+   Points zgłasza `story_points_terms` (dana własna reguły, bez katalogu i bez migawki). Każdy kolejny
+   model (Fixed Price #66, Outcome-based #67) dopisuje tu swoją wartość w tym samym zadaniu, w którym
+   rozszerza kontrakt.
+2. Słownik `rate_source` przychodu i słownik `rate_source` kosztu (ADR-0013, ADR-0015 pkt 4) to **dwa
+   odrębne słowniki**, które przypadkiem dzielą dwie wartości. Porównywanie ich ze sobą nie ma sensu
+   dziedzinowego i nie może sterować logiką — wykrycie wyścigu odczytu opiera się na statusie
+   scenariusza (ADR-0015, aneks SC-7-03).
+3. Reguła 10 Strażnika bez zmian: poprawka strażnika nie może skłonić przychodu modelu niezależnego od
+   katalogu do czytania statusu ani stawek katalogu tylko po to, by zgłosić wartość porównywalną z
+   kosztem.

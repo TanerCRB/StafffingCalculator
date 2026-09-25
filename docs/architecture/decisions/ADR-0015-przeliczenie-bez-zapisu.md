@@ -129,3 +129,75 @@ ADR-0013 definiuje formułę kosztu osobowego i zamknięty słownik `rate_source
 `ADR-0004-wersjonowanie-kalkulacji.md` (niemutowalność, strażnik wyścigu); `ADR-0005-model-dostepu.md`
 (koniunkcja kosztu osobowego, B-01); `ADR-0013-koszt-osobowy.md` (formuła, słownictwo
 `rate_source`); Issue #88 (SC-6-04).
+
+## Aneksy
+
+### 2026-09-25 — strażnik wyścigu porównuje status scenariusza, nie `rate_source` (SC-7-03, Issue #118, bramka 1)
+
+> Rozstrzygnięcia człowieka (bramka 1, 2026-09-25): **Q1 (A), Q2 (A), Q3 (B), Q4 (A), Q5 (A)** —
+> zgodnie z rekomendacją analityka i architekta. Aneks uchyla mechanizm z pkt 4 i 5 w opisanym niżej
+> zakresie; tekst tych punktów zostaje bez zmian jako zapis decyzji z 2026-09-24.
+
+**Uzasadnienie.** Pkt 5 wiąże strażnika z porównaniem "PRAWDZIWYCH `rate_source` obu stron". Ukryte
+założenie — `rate_source` przychodu i kosztu to funkcja tego samego faktu (status w chwili odczytu)
+w jednym słowniku — było prawdziwe tylko dla T&M. SC-4-04 (PR #115) dodał do słownika przychodu
+`story_points_terms`; audyt z pkt 4 obejmował tylko słownik kosztu. Skutek: `…/results`,
+`…/compare` i what-if dla Story Points odpowiadają `409` bez wyścigu; to samo czeka Fixed Price (#66)
+i Outcome-based (#67).
+
+**Decyzja.**
+
+1. Wykrywany fakt bez zmian: status scenariusza zmienił się między odczytem przychodu a odczytem
+   kosztu. Zmienia się świadek: status odczytany przez każde z dwóch wywołań (ten, który wybrał
+   źródło stawek), nie `assumptions_used.rate_source`. `rate_source` przestaje sterować jakąkolwiek
+   logiką; pozostaje deskryptorem F-06.5.
+2. Równoważność dla T&M: tam `rate_source = f(status)` i `f` jest różnowartościowa na
+   `{draft, approved}` (ADR-0004: dwa statusy, przejście jednokierunkowe) — zbiór wykrywanych
+   przeplotów identyczny. Dla modeli, których przychód nie zależy od statusu (SP; przyszłe FP/OB),
+   stary strażnik był zawsze fałszywie dodatni; nowy odmawia dokładnie przy zmianie statusu —
+   **jednolicie dla każdego modelu** (Q4/A: bez gałęzi zależnej od modelu; koszt i tak zależy od
+   statusu, więc wynik z dwóch momentów pozostaje wynikiem niespójnym).
+3. **Warunek wiążący: status to wartość zamrożona w chwili każdego odczytu.** `commercial.scenario`
+   i `cost_view.scenario` bywają jednym obiektem identity mapy, odświeżanym (`session.refresh`) przez
+   późniejsze wywołanie; porównanie `.status` tego obiektu po obu wywołaniach porównuje wartość samą
+   ze sobą i wyłącza strażnika bez sygnału.
+4. Kolejność i kształt odmowy bez zmian: po zasięgu (`404` przed `409`), przed kształtowaniem i
+   bramkami kosztu; w what-if przed sprawdzeniem `draft` i przed podstawieniem stawek. Treść `409`
+   generyczna (SC-7-01, R-02) — bez `rate_source` i bez statusu. Atrybuty wyjątku
+   `ScenarioResultsRaceDetected` są wyłącznie wewnątrzprocesowe (nie trafiają do odpowiedzi ani
+   logu); Q2/A — zastąpione statusami z obu odczytów, bez zmiany API.
+5. **Q5/A — uzgodnienie pkt 5 z kodem.** Scenariusz zatwierdzony *w trakcie* żądania what-if (między
+   odczytem przychodu a kosztu) dostaje `409` (wyścig), nie `404`; `404` dostaje scenariusz, który
+   był `approved` przez oba odczyty. Tak zachowywał się kod od SC-6-04; ten punkt poprawia tekst
+   pkt 5, nie kod.
+6. Bez zmian: słowniki `rate_source` w kontrakcie (przychód `live_catalog | approved_snapshot |
+   story_points_terms`; koszt `live_catalog | approved_snapshot | what_if_hypothetical` — dwa
+   odrębne słowniki, ADR-0003 aneks SC-7-03), nazwana luka "dwa żywe odczyty przy edycji okna
+   katalogu", zakres `draft` z pkt 5.
+7. Pkt 4: wymóg audytu porównań przez równość przestaje dotyczyć strażnika wyścigu, ale obowiązuje
+   dla każdego innego porównania — odtąd dla OBU słowników `rate_source`, nie tylko kosztu.
+8. **Strażnik obejmuje wszystkie odczyty odświeżające scenariusz, nie tylko dwa pierwsze (bramka 2,
+   reviewer R-01, decyzja człowieka 2026-09-25, opcja A).** Złożony odczyt ma trzy wywołania
+   odświeżające ten sam obiekt `Scenario` (przychód, koszt, koszt dodatkowy —
+   `additional_costs_for_caller`). Zatwierdzenie między drugim a trzecim nie zmieniało żadnego z dwóch
+   porównywanych statusów, a trzeci `session.refresh` przestawiał współdzielony obiekt na `approved`:
+   what-if liczył wtedy hipotezę na migawce zatwierdzonego scenariusza i serwował `200`, a `/results`
+   zwracał `scenario_status: "Approved"` obok `rate_source: live_catalog`. Wada istniała przed SC-7-03
+   (SC-6-04, SC-7-01). Każde wywołanie odświeżające scenariusz zamraża własny status, a strażnik
+   odmawia `409`, jeśli którekolwiek dwa się różnią. Po ostatnim zamrożonym odczycie żadna instrukcja
+   nie odświeża już scenariusza, więc każde dalsze rozgałęzienie na `scenario.status` (w tym
+   `_worked_months` w what-if) i pole `scenario_status` odpowiedzi widzą status, który przeszedł przez
+   strażnika. Każde przyszłe wywołanie dokładające `session.refresh(scenario)` do złożonego odczytu
+   musi wejść do tego porównania.
+
+**Kontrole.**
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| A15-1 | `…/results`, `…/compare` i what-if dla scenariusza `draft` z regułą Story Points bez współbieżnego zatwierdzenia odpowiadają `200`. |
+| A15-2 | Zatwierdzenie wprowadzone realną współbieżnością dwóch połączeń między odczytem przychodu a kosztu nadal daje `409` z niezmienioną generyczną treścią. |
+| A15-3 | Mutacja porównująca status ze współdzielonego obiektu ORM po obu wywołaniach jest zabijana przez co najmniej jeden test. |
+| A15-4 | Odpowiedzi T&M `…/results`, `…/compare` i what-if bajt w bajt identyczne przed i po zmianie. |
+| A15-5 | Treść `409` na trzech ścieżkach nie zawiera wartości `rate_source` ani statusu, niezależnie od bramki kosztu wołającego. |
+| A15-6 | Rozbieżność samych `rate_source` przy zgodnym statusie nie daje `409`. |
+| A15-7 | Zatwierdzenie wprowadzone realną współbieżnością między odczytem kosztu a odczytem kosztu dodatkowego daje `409` na `…/results` i what-if — nigdy `200` z hipotezą na migawce ani z `scenario_status` niezgodnym z odczytami. |

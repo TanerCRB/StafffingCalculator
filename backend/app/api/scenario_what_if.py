@@ -21,11 +21,11 @@ a distinct error shape, and never a **served** compute against a substituted, hy
 real revenue and cost are read in-process before this refusal (the same figures that caller's own
 `GET …/results` already shows them for this scenario), but the raise is never applied and no
 response is ever built from them (`app.data.scenario_what_if`, "what 'never' means here"). A status
-flip landing *between* the revenue and the cost read this endpoint composes is caught first by the
-inherited race guard (`app.data.scenario_results.ScenarioResultsRaceDetected`, the same `409`
-`GET …/results` already answers with); a scenario that was `approved` throughout falls through to
-this endpoint's own status refusal instead, because the race guard's two reads agree and have
-nothing to catch.
+flip landing *between* any two of the three real reads this endpoint composes (revenue, cost,
+additional cost) is caught first by the inherited race guard
+(`app.data.scenario_results.ScenarioResultsRaceDetected`, the same `409` `GET …/results` already
+answers with); a scenario that was `approved` throughout falls through to this endpoint's own
+status refusal instead, because the race guard's three reads agree and have nothing to catch.
 
 **Read only.** There is nothing to write: `app.data.scenario_what_if` never calls
 `Session.add`/`flush`/`merge`/`commit` (ADR-0015, point 2) — a mutation to this module that added
