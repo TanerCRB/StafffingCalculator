@@ -1709,7 +1709,7 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, R-01 — 17 testów) — 262 testy frontendowe zielono łącznie z SC-6-03. Zob.
   `docs/architecture/capabilities.md`.
 
-- [ ] **SC-1-11** — Wprowadź encję fazy dostawy / workstreamu (F-02, F-06), warunek wstępny dla
+- [x] **SC-1-11** — Wprowadź encję fazy dostawy / workstreamu (F-02, F-06), warunek wstępny dla
   SC-4-05 (reguły wspólne mieszanych umów komercyjnych, F-06.5).
   *Done when:* `backend/` (pytest) dowodzi kryteriów K-01..K-09 (analyst + architect, gate 1
   zaakceptowane 2026-09-25), każde z zarejestrowanym przebiegiem mutacyjnym; K-03 ograniczone
@@ -1732,5 +1732,20 @@ history / this file's own change log, not as tracked product work.
   Podstawa: Issue #65; `Wymagania/Requirements_EN.md` §4 F-02, F-06, F-06.5;
   `ADR-0003-model-modeli-komercyjnych.md` ("Odłożone"); `ADR-0016-segment-dostawy-scenariusza.md`;
   `ADR-0004-wersjonowanie-kalkulacji.md` (aneks 2026-09-25).
+  **Done 2026-09-25:** PR #114 (scalone `b6d3396`). Dowód: nowa tabela `scenario_delivery_segment`
+  (migracja `b1f4e8a3c95d`), `backend/tests/test_scenario_delivery_segment_schema.py`,
+  `test_scenario_delivery_segment_copy.py`, `test_scenario_delivery_segment_guards.py`,
+  `test_scenario_delivery_segment_no_api.py` (K-01..K-09) — 773 testy backendowe zielono. QA: proof
+  holds — cztery mutacje naprawdę wykonane i zabite (strażnik zapisu K-07, rejestr kopiowania
+  `SCENARIO_CHILD_COPIERS` K-06, trasa surowego SQL K-08, dodatkowe ograniczenie migracji K-04);
+  worktree przywrócony czysto po każdej. Invariant Guardian: PASS (reguły 7/13/14/17 sprawdzone
+  wprost na kodzie, nie tylko na deklaracji). Security-auditor: PASS (parametryzacja SQLAlchemy
+  wszędzie, brak wycieku szczegółów bazy w refusal, brak dziś żadnej ścieżki dostępu do tabeli poza
+  testami i kopiującym). Reviewer: PASS WITH RESERVATIONS → poprawka → PASS — R-01 (Low): test
+  strukturalny K-08 używał nierekursywnego `glob` i pomijał `app/api/schemas/**` (cztery istniejące
+  pliki tam importują wprost z `app.models.*` — realna luka); naprawione (`glob` → `rglob`), 773
+  testów nadal zielono po poprawce. **Zaakceptowane, nie naprawiane:** brak — bez ustaleń
+  pozostawionych otwartych.
+  Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
