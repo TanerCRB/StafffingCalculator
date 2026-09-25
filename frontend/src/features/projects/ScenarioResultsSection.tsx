@@ -8,17 +8,23 @@ import {
   type PersonnelCostSource,
   type ScenarioResults,
 } from "../../api/contracts/scenarioResults";
-import type { RevenueRead } from "../../api/contracts/commercialTerms";
+import {
+  OUTCOME_BASED,
+  revenueModelKind,
+  type RevenueRead,
+} from "../../api/contracts/commercialTerms";
 import { NOT_APPLICABLE, formatMoneyString, formatPercentString } from "../../lib/money";
 import {
   ADDITIONAL_COST_LABEL,
   ADDITIONAL_COST_STATE_MESSAGES,
+  GUARANTEED_REVENUE_LABEL,
   INCLUDED_COST_LABEL,
   MARGIN_LABEL,
   MARKUP_LABEL,
   PERSONNEL_COST_LABEL,
   PERSONNEL_COST_STATE_MESSAGES,
   PROFIT_LABEL,
+  PROFITABILITY_CURRENCY_MISMATCH,
   RESULTS_CONFLICT,
   RESULTS_FAILED,
   RESULTS_FIELD_UNAVAILABLE,
@@ -29,7 +35,7 @@ import {
   RESULTS_TIMED_OUT,
   RESULTS_UNREADABLE,
   REVENUE_LABEL,
-  REVENUE_STATE_MESSAGES,
+  revenueStateMessage,
 } from "./scenarioResultsText";
 
 /**
@@ -52,6 +58,13 @@ import {
  *     rendered as the same sentence (K-02). The generic "unavailable" wording never explains why
  *     (gate 1, Q2 = option b) — not here, and not in `personnel_cost`'s own line, which the same
  *     gate can null independently of its own `state` (Architect's impact map).
+ *
+ * SC-4-07 (Issue #125): for Outcome-based only the guaranteed revenue, labelled so — the expected
+ * revenue and the categories stay in the commercial-terms section (Q2 = A; a presentation choice,
+ * not an access control: the payload still carries them). And `profitability_state =
+ * "currency_mismatch"` is a status line of the section, independent of the personnel-cost gate
+ * (Q-A = B): the gated fields keep the generic "unavailable" sentence, the line states only that the
+ * currencies differ, with no amount and no currency code.
  */
 
 type ReadState =
@@ -176,6 +189,11 @@ export function ScenarioResultsSection({
     body = (
       <>
         <RevenueLine revenue={results.revenue} />
+        {results.profitability_state === "currency_mismatch" && (
+          <p role="status" className="scenario-card__gaps" data-profitability-state="currency_mismatch">
+            {PROFITABILITY_CURRENCY_MISMATCH}
+          </p>
+        )}
         <PersonnelCostLine source={results.personnel_cost} />
         <AdditionalCostLine source={results.additional_cost} />
         <GatedMoneyLine label={INCLUDED_COST_LABEL} value={results.included_cost} currency={revenueCurrency} />
@@ -196,18 +214,23 @@ export function ScenarioResultsSection({
   );
 }
 
-/** The revenue, or the named state that withholds it — never `0`, never blank (K-01, K-03). */
+/** The revenue, or the named state that withholds it — never `0`, never blank (K-01, K-03). The
+ * label and the sentence are chosen by `assumptions_used.model_type`, never by `rate_source`
+ * (SC-4-07): Outcome-based's amount is its guaranteed revenue; Time & Material and Story Points keep
+ * the plain label. */
 function RevenueLine({ revenue }: { revenue: RevenueRead }) {
+  const model = revenueModelKind(revenue);
   if (revenue.state === "calculated") {
     return (
       <p className="scenario-card__metric" data-revenue-state={revenue.state}>
-        {REVENUE_LABEL} {formatMoneyString(revenue.amount, revenue.currency)}
+        {model === OUTCOME_BASED ? GUARANTEED_REVENUE_LABEL : REVENUE_LABEL}{" "}
+        {formatMoneyString(revenue.amount, revenue.currency)}
       </p>
     );
   }
   return (
     <p className="scenario-card__gaps" data-revenue-state={revenue.state}>
-      {REVENUE_STATE_MESSAGES[revenue.state]}
+      {revenueStateMessage(revenue.state, model)}
     </p>
   );
 }

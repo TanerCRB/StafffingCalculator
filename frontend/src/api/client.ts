@@ -10,10 +10,18 @@ import type {
   DimensionEntryList,
 } from "./contracts/catalog";
 import {
+  EXPECTED_REVENUE_STATES,
+  OUTCOME_BASED,
+  OUTCOME_CATEGORIES,
   RATE_SOURCES,
   REVENUE_NOT_APPLICABLE,
   REVENUE_STATES,
+  SOURCE_NOT_APPLICABLE,
+  STORY_POINTS,
+  STORY_POINTS_RATE_SOURCE,
+  TIME_AND_MATERIAL,
   type CommercialTermsCreateRequest,
+  type ExpectedRevenueState,
   type ScenarioCommercialTerms,
 } from "./contracts/commercialTerms";
 import { isDecimalString } from "../lib/money";
@@ -28,6 +36,7 @@ import type {
 import {
   ADDITIONAL_COST_STATES,
   PERSONNEL_COST_STATES,
+  PROFITABILITY_STATES,
   RESULTS_NOT_APPLICABLE,
   type AdditionalCostSource,
   type PersonnelCostSource,
@@ -597,13 +606,70 @@ function isUnresolvedMonthShape(value: unknown): boolean {
   );
 }
 
-function isRevenueAssumptionsShape(value: unknown): boolean {
+/**
+ * Whether the three source fields are the ones the backend emits **for this `model_type`** — a pair,
+ * never a per-field union of values (ADR-0003, addendum 2026-09-25 SC-4-07, point 5a; Q-B = B). A
+ * union would let a Time & Material revenue through with `not_applicable`, or an Outcome-based one
+ * with a catalogue source, and the screen would then render one model's lines under another's name.
+ *
+ *   * `story_points` — `not_applicable`, `not_applicable`, `story_points_terms` (SC-4-04), and no
+ *     rate window or unresolved month: the model reads neither.
+ *   * `outcome_based` — `not_applicable` ×3 (SC-4-03, point 8), and likewise no window or month.
+ *   * `time_and_material`, and `null` (the scenario without a rule) — the catalogue sources.
+ *   * any other stored model — only as the named `unsupported_model_type` state, with the catalogue
+ *     sources the backend's dispatcher gives it (`revenue_of`). The response side of `model_type` is
+ *     open (SC-4-01, R-02); the closed set of point 4 is what this client can *render as a model*,
+ *     and an unknown model is rendered as that state, never as a model.
+ *
+ * The `unsupported_model_type` state is checked **first**, before the per-model pairing (SC-4-07,
+ * verification R-01): in the mixed-version window (ADR-0001) an older backend instance can answer
+ * that state for a model this client *does* know (`story_points`, `outcome_based`) — and it answers
+ * it with the dispatcher's catalogue sources, not the model's own. Checking the model first would
+ * refuse that named state as a broken payload. The render follows the same order
+ * (`revenueModelKind`): an unsupported revenue is shown as the state, never as the model's lines.
+ *
+ * Each model adds only its own values; no Fixed Price value is admitted here (#113, Q3 = A).
+ */
+function isRevenueSourcePairing(value: Record<string, unknown>, revenueState: unknown): boolean {
+  const model = value.model_type;
+  const catalogueSources =
+    value.hours_source === "billable_hours" &&
+    value.vendor_axis === "internal" &&
+    isOneOf(value.rate_source, RATE_SOURCES);
+  if (revenueState === "unsupported_model_type") {
+    // The same sources this state was accepted with before SC-4-07 verification — the catalogue
+    // ones — for any stored model, a known one included. `model_type` itself is typed by the caller.
+    return catalogueSources;
+  }
+  const noWindowsOrMonths =
+    Array.isArray(value.rate_windows) &&
+    value.rate_windows.length === 0 &&
+    Array.isArray(value.unresolved_months) &&
+    value.unresolved_months.length === 0;
+  if (model === STORY_POINTS) {
+    return (
+      value.hours_source === SOURCE_NOT_APPLICABLE &&
+      value.vendor_axis === SOURCE_NOT_APPLICABLE &&
+      value.rate_source === STORY_POINTS_RATE_SOURCE &&
+      noWindowsOrMonths
+    );
+  }
+  if (model === OUTCOME_BASED) {
+    return (
+      value.hours_source === SOURCE_NOT_APPLICABLE &&
+      value.vendor_axis === SOURCE_NOT_APPLICABLE &&
+      value.rate_source === SOURCE_NOT_APPLICABLE &&
+      noWindowsOrMonths
+    );
+  }
+  return (model === null || model === TIME_AND_MATERIAL) && catalogueSources;
+}
+
+function isRevenueAssumptionsShape(value: unknown, revenueState: unknown): boolean {
   return (
     isRecord(value) &&
     isRequiredNullableString(value.model_type) &&
-    value.hours_source === "billable_hours" &&
-    value.vendor_axis === "internal" &&
-    isOneOf(value.rate_source, RATE_SOURCES) &&
+    isRevenueSourcePairing(value, revenueState) &&
     Array.isArray(value.rate_windows) &&
     value.rate_windows.every(isRateWindowShape) &&
     Array.isArray(value.unresolved_months) &&
@@ -611,6 +677,62 @@ function isRevenueAssumptionsShape(value: unknown): boolean {
     Array.isArray(value.currencies) &&
     value.currencies.every((currency) => typeof currency === "string")
   );
+}
+
+/** A field that is present and either `null` or a fixed-point decimal string — an optional rule
+ * component, a category's units or probability. `undefined` is not `null` here: a payload that does
+ * not mention the field is not a payload stating its absence. */
+function isNullableDecimalString(value: unknown): boolean {
+  return value === null || isDecimalString(value);
+}
+
+function isCategoryRevenueShape(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isOneOf(value.category, OUTCOME_CATEGORIES) &&
+    isNullableDecimalString(value.units) &&
+    isNullableDecimalString(value.probability) &&
+    isDecimalString(value.amount)
+  );
+}
+
+/**
+ * The SC-4-03 fields of a revenue, paired with its `state` and its model (ADR-0003, addendum SC-4-07,
+ * point 5b):
+ *
+ *   * `expected_amount` is a decimal **only** with `expected_state = "calculated"`, and `"n/a"` with
+ *     every other state — a `no_probabilities` state carrying a number would put a figure the server
+ *     says it does not have under the "expected" label;
+ *   * an expected revenue (`calculated` or `no_probabilities`) and the category revenues exist only
+ *     for a **calculated Outcome-based** revenue, and that revenue always has them — the categories as
+ *     exactly the four fixed words, each once (they are rendered by `category`, never by position,
+ *     so a missing or doubled one would be a row silently absent or shown twice). Any other revenue —
+ *     another model, or a withheld one — carries `not_applicable`, `"n/a"` and no categories. An
+ *     amount formatted without the revenue's own currency is the thing this rules out.
+ */
+function isExpectedRevenuePairing(value: Record<string, unknown>, outcomeCalculated: boolean): boolean {
+  const allowedStates: readonly ExpectedRevenueState[] = outcomeCalculated
+    ? ["calculated", "no_probabilities"]
+    : ["not_applicable"];
+  if (!isOneOf(value.expected_state, EXPECTED_REVENUE_STATES) || !isOneOf(value.expected_state, allowedStates)) {
+    return false;
+  }
+  const expectedAmountPaired =
+    value.expected_state === "calculated"
+      ? value.expected_amount !== REVENUE_NOT_APPLICABLE && isDecimalString(value.expected_amount)
+      : value.expected_amount === REVENUE_NOT_APPLICABLE;
+  if (!expectedAmountPaired || !Array.isArray(value.category_revenues)) {
+    return false;
+  }
+  const categories: unknown[] = value.category_revenues;
+  if (!outcomeCalculated) {
+    return categories.length === 0;
+  }
+  if (categories.length !== OUTCOME_CATEGORIES.length || !categories.every(isCategoryRevenueShape)) {
+    return false;
+  }
+  const named = new Set(categories.map((category) => (category as { category: string }).category));
+  return named.size === OUTCOME_CATEGORIES.length;
 }
 
 /**
@@ -628,6 +750,9 @@ function isRevenueAssumptionsShape(value: unknown): boolean {
  *
  *   * a calculated amount — and every window's `default_selling_rate` — is a fixed-point decimal
  *     string by the grammar `lib/money.ts` rounds with (`isDecimalString`), not merely a string.
+ *   * the source fields of `assumptions_used` are the ones of its `model_type`
+ *     (`isRevenueSourcePairing`), and the SC-4-03 fields are paired with `state` and the model
+ *     (`isExpectedRevenuePairing`) — SC-4-07.
  *
  * The grammar is checked here, unlike `isScenarioListItemShape`'s `target_margin_percent`, because
  * of where a violation would otherwise land (Reviewer R-01, SC-4-06). `"abc"` or `"1,00"` passing as
@@ -643,7 +768,13 @@ function isRevenueShape(value: unknown): boolean {
   if (!isRecord(value) || !isOneOf(value.state, REVENUE_STATES)) {
     return false;
   }
-  if (typeof value.amount !== "string" || !isRevenueAssumptionsShape(value.assumptions_used)) {
+  const assumptions = value.assumptions_used;
+  if (typeof value.amount !== "string" || !isRevenueAssumptionsShape(assumptions, value.state)) {
+    return false;
+  }
+  const outcomeCalculated =
+    value.state === "calculated" && isRecord(assumptions) && assumptions.model_type === OUTCOME_BASED;
+  if (!isExpectedRevenuePairing(value, outcomeCalculated)) {
     return false;
   }
   if (value.state === "calculated") {
@@ -656,16 +787,47 @@ function isRevenueShape(value: unknown): boolean {
   return value.amount === REVENUE_NOT_APPLICABLE && isRequiredNullableString(value.currency);
 }
 
-function isCommercialTermsShape(value: unknown): boolean {
+function isOutcomeCategoryTermsShape(value: unknown): boolean {
+  return isRecord(value) && isNullableDecimalString(value.units) && isNullableDecimalString(value.probability);
+}
+
+/** `OutcomeTermsRead` — the rule's parameters as stored. Every optional component is present as
+ * `null` or a decimal string, and all four categories are there by name (SC-4-03 R-04). */
+function isOutcomeTermsShape(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.categories)) {
+    return false;
+  }
+  const categories = value.categories;
   return (
-    isRecord(value) &&
-    typeof value.id === "string" &&
+    typeof value.currency === "string" &&
+    isDecimalString(value.fixed_fee) &&
+    isNullableDecimalString(value.success_bonus) &&
+    isNullableDecimalString(value.unit_rate) &&
+    isNullableDecimalString(value.revenue_min) &&
+    isNullableDecimalString(value.revenue_max) &&
+    OUTCOME_CATEGORIES.every((category) => isOutcomeCategoryTermsShape(categories[category]))
+  );
+}
+
+function isCommercialTermsShape(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
     // Any string: the response side of `model_type` is open (`StoredModelType`, R-02 of SC-4-01).
     // A model this version cannot price is the named `unsupported_model_type` state, not a
     // payload this client cannot read (SC-4-06, K-03).
-    typeof value.model_type === "string" &&
-    isConcurrencyMarker(value.updated_at)
-  );
+    typeof value.model_type !== "string" ||
+    !isConcurrencyMarker(value.updated_at)
+  ) {
+    return false;
+  }
+  // Required, `null` included (ADR-0003, addendum SC-4-07, point 11): `null` for every model but
+  // Outcome-based, and for an Outcome-based rule without its details row. Parameters under any other
+  // model's name would be shown as that model's — so they are not a payload this client reads.
+  if (value.outcome_terms === null) {
+    return true;
+  }
+  return value.model_type === OUTCOME_BASED && isOutcomeTermsShape(value.outcome_terms);
 }
 
 /**
@@ -675,7 +837,8 @@ function isCommercialTermsShape(value: unknown): boolean {
  * an answer about another scenario is not an answer to this request, however well-formed it is
  * (SC-4-06, K-07). And `commercial_terms` must be `null` exactly when the revenue says there is no
  * rule — otherwise the card would offer "Set Time & Material" beside an amount, or name a model
- * beside "no rule is set".
+ * beside "no rule is set". And `commercial_terms.model_type` must be `revenue.assumptions_used.model_type`
+ * (`null` on both sides when there is no rule) — SC-4-07, verification R-03.
  *
  * One predicate for the `GET` and for the `201` alike (ADR-0009, addendum 2026-09-23, narrowing
  * point 3): the body of a successful save is rendered as it stands, so it passes the very same check
@@ -699,7 +862,18 @@ function isScenarioCommercialTermsShape(
     return false;
   }
   const saysNoRule = isRecord(revenue) && revenue.state === "no_commercial_terms";
-  return (terms === null) === saysNoRule;
+  if ((terms === null) !== saysNoRule) {
+    return false;
+  }
+  // The rule's model and the revenue's model are one model (SC-4-07, verification R-03). The backend
+  // copies `assumptions_used.model_type` from the stored rule (`revenue_of`: `None` without a rule,
+  // the rule's own word otherwise — an unsupported one included), so a pair that differs is not an
+  // answer this client can read: the card would name one model in "Commercial model:" and render
+  // another model's revenue lines and parameters beneath it.
+  const assumptions = isRecord(revenue) ? revenue.assumptions_used : undefined;
+  const revenueModel = isRecord(assumptions) ? assumptions.model_type : undefined;
+  const ruleModel = isRecord(terms) ? terms.model_type : null;
+  return ruleModel === revenueModel;
 }
 
 function commercialTermsPath(projectId: string, scenarioId: string): string {
@@ -923,12 +1097,17 @@ function isScenarioResultsShape(value: unknown, scenarioId: string): value is Sc
     !isGatedResultFieldShape(value.included_cost) ||
     !isGatedResultFieldShape(value.profit) ||
     !isGatedResultFieldShape(value.margin) ||
-    !isGatedResultFieldShape(value.markup)
+    !isGatedResultFieldShape(value.markup) ||
+    !isOneOf(value.profitability_state, PROFITABILITY_STATES)
   ) {
     return false;
   }
   const revenue = value.revenue;
-  if (isRecord(revenue) && revenue.state !== "calculated") {
+  // Two pairings, both one-directional: a withheld revenue (R-01 of Issue #94), and a
+  // `profitability_state` naming why the aggregate is withheld (ADR-0003, addendum SC-4-07, point 5c),
+  // each exclude a real number in the four. `calculated` does not force one — `margin = "n/a"` beside
+  // it (AC-05, a zero revenue) is a valid payload, not a contradiction.
+  if ((isRecord(revenue) && revenue.state !== "calculated") || value.profitability_state !== "calculated") {
     return (
       !isRealGatedResultValue(value.included_cost) &&
       !isRealGatedResultValue(value.profit) &&
