@@ -167,8 +167,39 @@ def test_k_05_a_write_to_an_approved_scenario_outside_the_scope_is_404_not_409(
 # --- K-11: no cost field, by equality of the field set --------------------------------------------
 
 RESPONSE_FIELDS = {"scenario_id", "scenario_status", "commercial_terms", "revenue"}
-TERMS_FIELDS = {"id", "model_type", "updated_at"}
-REVENUE_FIELDS = {"state", "amount", "currency", "assumptions_used"}
+TERMS_FIELDS = {
+    "id",
+    "model_type",
+    "updated_at",
+    # SC-4-03, runda 2 weryfikacji (R-04, zatwierdzone przez człowieka 2026-09-25): zbiór
+    # rozszerzony jawnie o jedno nazwane pole — parametry reguły Outcome-based, `null` dla T&M.
+    # Równość zostaje.
+    "outcome_terms",
+}
+OUTCOME_TERMS_FIELDS = {
+    "currency",
+    "fixed_fee",
+    "success_bonus",
+    "unit_rate",
+    "revenue_min",
+    "revenue_max",
+    "categories",
+}
+OUTCOME_CATEGORIES_FIELDS = {"not_achieved", "partial", "achieved", "exceeded"}
+OUTCOME_CATEGORY_FIELDS = {"units", "probability"}
+REVENUE_FIELDS = {
+    "state",
+    "amount",
+    "currency",
+    "assumptions_used",
+    # SC-4-03 (bramka 1, D-6; ADR-0003 aneks 2026-09-25 pkt 5b i 10b): zbiór rozszerzony jawnie o
+    # trzy nazwane pola addytywne — przychód oczekiwany, jego stan i przychody per kategoria.
+    # Równość zbioru zostaje.
+    "expected_state",
+    "expected_amount",
+    "category_revenues",
+}
+CATEGORY_REVENUE_FIELDS = {"category", "units", "probability", "amount"}
 ASSUMPTIONS_FIELDS = {
     "model_type",
     "hours_source",
@@ -197,7 +228,15 @@ def _assert_field_sets(body: dict[str, Any]) -> None:
     assert set(body) == RESPONSE_FIELDS
     if body["commercial_terms"] is not None:
         assert set(body["commercial_terms"]) == TERMS_FIELDS
+        outcome_terms = body["commercial_terms"]["outcome_terms"]
+        if outcome_terms is not None:
+            assert set(outcome_terms) == OUTCOME_TERMS_FIELDS
+            assert set(outcome_terms["categories"]) == OUTCOME_CATEGORIES_FIELDS
+            for category in outcome_terms["categories"].values():
+                assert set(category) == OUTCOME_CATEGORY_FIELDS
     assert set(body["revenue"]) == REVENUE_FIELDS
+    for category in body["revenue"]["category_revenues"]:
+        assert set(category) == CATEGORY_REVENUE_FIELDS
     assumptions = body["revenue"]["assumptions_used"]
     assert set(assumptions) == ASSUMPTIONS_FIELDS
     for window in assumptions["rate_windows"]:

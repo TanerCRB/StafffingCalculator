@@ -22,16 +22,34 @@ Invariant Guardian; the structural test of this task extends the existing ones i
 (ADR-0002, aneks SC-7-01). *Which* component and *why* is not repeated here: each answer already
 carries its own named state, and the API layer reports each one's `state` on its own payload
 (`app.api.response_shaping.shape_scenario_results`) rather than folding four reasons into one.
+
+**Never one number out of two currencies** (R-01 of the SC-4-03 verification, 2026-09-25). Each of
+the four components checks its currency only against the scenario's — and when the scenario
+declares none (`NULL`), nothing below this layer compares the revenue's currency with the
+costs', or the costs' with one another. Hence one rule here, in the one place that composes a
+profit (`/results`, the what-if and the SC-6-02 comparison all call this function): four
+`calculated` components in more than one currency → the state `currency_mismatch` and
+`NOT_APPLICABLE` on all four fields — nothing converted (`exchange_rates`, ADR-0006, does not
+exist).
 """
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Final, Literal
 
 from app.core.money import NOT_APPLICABLE, ratio_percent, round_money
 from app.domain.additional_cost import AdditionalCostAnswer, AdditionalCostResult
 from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
 from app.domain.personnel_cost import PersonnelCostAnswer, PersonnelCostResult
-from app.domain.revenue import RevenueAnswer, RevenueResult
+from app.domain.revenue import CALCULATED, CURRENCY_MISMATCH, RevenueAnswer, RevenueResult
+
+PROFITABILITY_NOT_APPLICABLE: Final = "not_applicable"
+"""At least one of the four components is not `calculated` — which one and why is its own `state`
+in the response, not repeated here."""
+
+ProfitabilityState = Literal["calculated", "not_applicable", "currency_mismatch"]
+"""Why the four aggregate fields are or are not numbers: `calculated`, `not_applicable` (a component
+not stated) or `currency_mismatch` (all four stated, in more than one currency)."""
 
 Amount = Decimal | str
 """A `Decimal` when calculable, otherwise `NOT_APPLICABLE` ("n/a") — never `None` and never `0`."""
@@ -50,6 +68,18 @@ class ScenarioProfitability:
     margin: Amount
     markup: Amount
     included_cost: Amount
+    state: ProfitabilityState = CALCULATED
+    """Why the four fields above are `NOT_APPLICABLE` — or `calculated` when they are numbers."""
+
+
+def _withheld(state: ProfitabilityState) -> ScenarioProfitability:
+    return ScenarioProfitability(
+        profit=NOT_APPLICABLE,
+        margin=NOT_APPLICABLE,
+        markup=NOT_APPLICABLE,
+        included_cost=NOT_APPLICABLE,
+        state=state,
+    )
 
 
 def scenario_profitability(
@@ -62,7 +92,11 @@ def scenario_profitability(
 
     1. **Any of the four not `calculated` → `NOT_APPLICABLE` on all four fields.** Never the sum of
        the components that did resolve (the same rule every one of the four already applies to
-       itself, applied once more at this layer).
+       itself, applied once more at this layer). State `not_applicable`.
+    1a. **Four `calculated` components in more than one currency → `NOT_APPLICABLE` on all four
+       fields**, state `currency_mismatch` (R-01, SC-4-03). Checked here and not in the four
+       modules: only this layer holds all four currencies, and with no scenario currency none of
+       them has anything to compare against.
     2. **`included_cost`** — the three cost components, already each rounded once in their own
        module, summed and rounded once more through `round_money`: the sum of three exact
        two-decimal amounts needs no correction, but this is still the one place that finishes the
@@ -79,12 +113,15 @@ def scenario_profitability(
         and isinstance(paid_absence, PaidAbsenceCostResult)
         and isinstance(additional_cost, AdditionalCostResult)
     ):
-        return ScenarioProfitability(
-            profit=NOT_APPLICABLE,
-            margin=NOT_APPLICABLE,
-            markup=NOT_APPLICABLE,
-            included_cost=NOT_APPLICABLE,
-        )
+        return _withheld(PROFITABILITY_NOT_APPLICABLE)
+    currencies = {
+        revenue.currency,
+        base_cost.currency,
+        paid_absence.currency,
+        additional_cost.currency,
+    }
+    if len(currencies) != 1:
+        return _withheld(CURRENCY_MISMATCH)
 
     included_cost = round_money(base_cost.cost + paid_absence.cost + additional_cost.amount)
     profit = round_money(revenue.revenue - included_cost)

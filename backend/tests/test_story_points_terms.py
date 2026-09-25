@@ -40,7 +40,6 @@ from app.data.commercial_terms import (
 )
 from app.models import CommercialTerms, Scenario, ScenarioStatus, StoryPointsTerms
 from app.models.commercial_terms import (
-    MODEL_TYPE_KNOWN_EXPRESSION,
     SP_MODEL_TYPE_EXPRESSION,
     STORY_POINTS_TYPE_AGREEMENT_FOREIGN_KEY,
 )
@@ -496,6 +495,12 @@ def test_price_per_point_and_accepted_points_are_checked_in_the_database(
     )
 
 
+MODEL_TYPES_OF_D2F6A91C4B58 = ("time_and_material", "story_points")
+"""The `IN` list frozen in `d2f6a91c4b58` — what that migration **produced**, not the current
+`MODEL_TYPES` (R-02 pattern, the same as `MODEL_TYPES_OF_THIS_MIGRATION` in
+`tests/test_outcome_terms_schema.py`)."""
+
+
 def test_the_model_and_the_d2f6a91c4b58_migration_agree_on_every_sql_expression() -> None:
     """The forward-looking half of `test_commercial_terms_schema.py`'s drift guard, for the
     migration that widens `model_type_known` (SC-4-04).
@@ -505,10 +510,20 @@ def test_the_model_and_the_d2f6a91c4b58_migration_agree_on_every_sql_expression(
     the CHECK further — see that file's `_MODEL_TYPE_KNOWN_EXPRESSION_AT_E7B41C9D2A58`. *This*
     migration's copy is the one that has to agree with the model going forward, until a third model
     widens the CHECK again and this file's constant becomes the next historical snapshot.
+
+    **That third model came** (SC-4-03, Outcome-based, `b9e3c7a1f264` linearised on top of this
+    migration — human decision 2026-09-25, R-02 pattern): this migration's copy is now compared
+    against its own frozen `IN` list (`MODEL_TYPES_OF_D2F6A91C4B58`), and the model against the
+    newest widening migration by `tests/test_commercial_terms_schema.py`
+    (`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH`). Equality is kept on both sides.
     """
     migration = _migration()
 
-    assert migration._MODEL_TYPE_KNOWN_EXPRESSION == MODEL_TYPE_KNOWN_EXPRESSION
+    assert migration._MODEL_TYPE_KNOWN_EXPRESSION == (
+        "model_type IN ("
+        + ", ".join(f"'{model_type}'" for model_type in MODEL_TYPES_OF_D2F6A91C4B58)
+        + ")"
+    )
     assert migration._SP_MODEL_TYPE_EXPRESSION == SP_MODEL_TYPE_EXPRESSION
 
 

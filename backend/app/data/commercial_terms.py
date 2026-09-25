@@ -1,8 +1,9 @@
 """The only path by which a scenario's commercial rule is read, written, copied and priced.
 
-SC-4-01 (F-06.1, Issue #8), extended by SC-4-04 (F-06.4, Issue #68) — the second real model
-(Story Points) registered in `REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL` below, proving every
-mechanism in this module generalises rather than being a property of the one model it shipped with.
+SC-4-01 (F-06.1, Issue #8), extended by SC-4-04 (F-06.4, Issue #68) and SC-4-03 (F-06.3, Issue
+#67) — Story Points and Outcome-based registered in `REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL`
+below, proving every mechanism in this module generalises rather than being a property of the one
+model it shipped with.
 
 Four mechanisms, none of them new — each is an existing mechanism of this repository applied to the
 first table of plan block 4 (ADR-0003; ADR-0004, ADR-0005 and ADR-0008, addenda 2026-09-23 SC-4-01):
@@ -44,7 +45,7 @@ from datetime import date
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.identity import CallerIdentity
 from app.data.column_copy import values_to_copy
@@ -69,18 +70,30 @@ from app.domain.revenue import (
     RevenueAnswer,
     RevenueUnavailable,
 )
+from app.domain.revenue_outcome_based import (
+    OutcomeCategoryInput,
+    OutcomeTermsInput,
+    outcome_assumptions,
+    outcome_based_revenue,
+)
 from app.domain.revenue_story_points import story_points_revenue
 from app.domain.revenue_time_and_material import BillableMonth, time_and_material_revenue
 from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
 from app.models.commercial_terms import (
+    MODEL_TYPE_OUTCOME_BASED,
     MODEL_TYPE_STORY_POINTS,
     MODEL_TYPE_TIME_AND_MATERIAL,
+    OUTCOME_CATEGORIES,
     CommercialTerms,
+    OutcomeTerms,
     StoryPointsTerms,
     TmTerms,
+    probability_column,
+    units_column,
 )
 from app.models.scenario import Scenario, ScenarioStatus
+from app.models.scenario_delivery_segment import ScenarioDeliverySegment
 from app.models.staffing import StaffingPosition, StaffingPositionAllocation
 
 _TERMS_TABLE = CommercialTerms.__table__
@@ -302,6 +315,55 @@ def _time_and_material(session: Session, scenario: Scenario, rule: _Rule) -> Rev
     )
 
 
+def _outcome_based(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+    """Outcome-based (F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03): czyta **wyłącznie** wiersz
+    `outcome_terms` tej reguły — ani obsady, ani alokacji, ani katalogu, ani migawki.
+
+    Dlatego źródło nie zależy od statusu scenariusza (`rate_source = not_applicable`, pkt 8):
+    wiersz jest daną własną scenariusza chronioną strażnikiem zapisu (ADR-0004, aneks SC-4-03), a
+    zatwierdzenie nie zamraża niczego nowego. Reguła bez wiersza szczegółów to
+    `incomplete_commercial_terms`, nigdy przychód `0` (pkt 1).
+    """
+    details = _outcome_details_of(session, rule)
+    if details is None:
+        return RevenueUnavailable(
+            reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=outcome_assumptions()
+        )
+    return outcome_based_revenue(_outcome_input(details), scenario_currency=scenario.currency)
+
+
+def _outcome_details_of(session: Session, rule: _Rule) -> OutcomeTerms | None:
+    """Wiersz `outcome_terms` reguły — `None` dla innego modelu albo reguły bez szczegółów.
+
+    Jedno miejsce odczytu, wspólne dla wyceny (`_outcome_based`) i dla parametrów reguły w
+    odpowiedzi (`ScenarioCommercialView.outcome_terms`, R-04), żeby obie czytały ten sam wiersz."""
+    if rule.terms.model_type != MODEL_TYPE_OUTCOME_BASED or not rule.has_details:
+        return None
+    return session.execute(
+        sa.select(OutcomeTerms).where(OutcomeTerms.commercial_terms_id == rule.terms.id)
+    ).scalar_one_or_none()
+
+
+def _outcome_input(details: OutcomeTerms) -> OutcomeTermsInput:
+    """Wiersz `outcome_terms` jako wejście czystej funkcji — kategorie w stałej kolejności."""
+    return OutcomeTermsInput(
+        currency=details.currency,
+        fixed_fee=details.fixed_fee,
+        success_bonus=details.success_bonus,
+        unit_rate=details.unit_rate,
+        revenue_min=details.revenue_min,
+        revenue_max=details.revenue_max,
+        categories=tuple(
+            OutcomeCategoryInput(
+                category=category,
+                units=getattr(details, units_column(category)),
+                probability=getattr(details, probability_column(category)),
+            )
+            for category in OUTCOME_CATEGORIES
+        ),
+    )
+
+
 def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
     """Story Points (F-06.4, SC-4-04): a rule without its `story_points_terms` row is
     `incomplete_commercial_terms`, never priced — the same named state T&M uses for the same reason
@@ -336,6 +398,7 @@ def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueA
 REVENUE_BY_MODEL: dict[str, RevenueCalculator] = {
     MODEL_TYPE_TIME_AND_MATERIAL: _time_and_material,
     MODEL_TYPE_STORY_POINTS: _story_points,
+    MODEL_TYPE_OUTCOME_BASED: _outcome_based,
 }
 """`model_type` → the function that prices it. Chosen by the discriminator alone, never by the shape
 of the data (ADR-0003, point 9). Keys must equal `app.models.commercial_terms.MODEL_TYPES`, and a
@@ -345,8 +408,26 @@ price."""
 DETAIL_TABLE_BY_MODEL: dict[str, sa.Table] = {
     MODEL_TYPE_TIME_AND_MATERIAL: TmTerms.__table__,
     MODEL_TYPE_STORY_POINTS: StoryPointsTerms.__table__,
+    MODEL_TYPE_OUTCOME_BASED: OutcomeTerms.__table__,
 }
 """`model_type` → its details table, for the write path that creates both rows in one statement."""
+
+
+class MultipleCommercialRulesNotSupported(RuntimeError):
+    """A scenario carries more than one `commercial_terms` row (SC-4-05, D-3=A: `scope_ref` admits
+    more than the single row `_rule_of`/`commercial_terms_for_caller` assume), and this read path
+    has no way to say which one is "the" rule.
+
+    Raised instead of letting `scalar_one_or_none()` throw the raw, unnamed
+    `sqlalchemy.exc.MultipleResultsFound` — fail loud with a name a caller can catch or at least
+    read in a log, not a stack trace attached to nothing (reviewer/invariant-guardian, bramka 2 of
+    SC-4-05). Unreachable through the running API today: no request schema writes `scope_ref`, so
+    the only way to reach this state is a direct write at the data layer (tests, or a future caller
+    of `create_commercial_terms` with `scope_ref` set) — named here rather than left to surface as
+    an unhandled `500` with no distinguishing type. `rules_of_scenario`/`revenue_by_model_type` are
+    the N-row-aware read path; nothing here decides which of several rules would be "the" one to
+    show through this older, single-row-assuming path.
+    """
 
 
 def _rule_of(session: Session, scenario_id: uuid.UUID) -> _Rule | None:
@@ -357,17 +438,128 @@ def _rule_of(session: Session, scenario_id: uuid.UUID) -> _Rule | None:
     model joins the registry, a hard-coded `tm_terms` lookup would call every rule of that model
     incomplete. A model this version does not know has no table to look in — `has_details` is then
     `False`, and the dispatcher answers `unsupported_model_type` before it reads it.
+
+    **Raises `MultipleCommercialRulesNotSupported` if the scenario carries more than one row**
+    (SC-4-05) — this function still answers "the" rule of a scenario, a question `scope_ref` makes
+    ill-posed once more than one row exists; `rules_of_scenario` is the caller that expects N rows.
     """
-    terms = session.execute(
+    rows = session.execute(
         sa.select(CommercialTerms).where(CommercialTerms.scenario_id == scenario_id)
-    ).scalar_one_or_none()
-    if terms is None:
+    ).scalars().all()
+    if not rows:
         return None
+    if len(rows) > 1:
+        raise MultipleCommercialRulesNotSupported(
+            f"Scenario {scenario_id} carries {len(rows)} commercial_terms rows; this read path "
+            "assumes at most one. Use rules_of_scenario/revenue_by_model_type instead."
+        )
+    terms = rows[0]
     detail_table = DETAIL_TABLE_BY_MODEL.get(terms.model_type)
     has_details = detail_table is not None and session.execute(
         sa.select(sa.exists().where(detail_table.c.commercial_terms_id == terms.id))
     ).scalar_one()
     return _Rule(terms=terms, has_details=has_details)
+
+
+def rules_of_scenario(session: Session, scenario_id: uuid.UUID) -> list[_Rule]:
+    """Every commercial rule of one (already in-scope) scenario — 0, 1 or N rows (SC-4-05:
+    `scope_ref` admits more than the single row `_rule_of` assumes), each paired with whether its
+    details row exists, the same way `_rule_of` pairs the one row it reads.
+
+    Ordered with the whole-scenario rule first (`scope_ref IS NULL`), then by `scope_ref` — a
+    stable, arbitrary order, not a claim about precedence: nothing here decides which rule "wins"
+    for a given unit of work, because nothing here knows which unit of work belongs to which
+    segment (F-04, out of scope of SC-4-05).
+    """
+    rows = session.execute(
+        sa.select(CommercialTerms)
+        .where(CommercialTerms.scenario_id == scenario_id)
+        .order_by(CommercialTerms.scope_ref.is_(None).desc(), CommercialTerms.scope_ref)
+    ).scalars().all()
+    rules: list[_Rule] = []
+    for terms in rows:
+        detail_table = DETAIL_TABLE_BY_MODEL.get(terms.model_type)
+        has_details = detail_table is not None and session.execute(
+            sa.select(sa.exists().where(detail_table.c.commercial_terms_id == terms.id))
+        ).scalar_one()
+        rules.append(_Rule(terms=terms, has_details=has_details))
+    return rules
+
+
+class MultipleRulesOfOneModelNotSupported(RuntimeError):
+    """More than one rule of one `model_type` exists for a scenario, and that model's revenue is
+    not *proven* independent of which row priced it — so picking one and dropping the rest would
+    silently lose the dropped rule's revenue (reviewer R-01, bramka 2 of SC-4-05).
+
+    Time & Material is the one model this is proven safe for (`_MODEL_TYPES_WITH_SHARED_SCENARIO_
+    REVENUE` below): its formula reads the whole scenario's shared, unscoped `staffing_position`/
+    `staffing_position_allocation` rows regardless of which rule computed it, so two T&M rules of
+    one scenario are provably the same answer — pricing one *is* pricing all of them. Story Points
+    is not: `story_points_terms.price_per_point`/`accepted_points` are carried on the rule's own
+    row, so two Story Points rules (legal under K-02/D-3=A — a whole-scenario rule and a segment
+    rule, say) can name genuinely different figures, and `revenue_by_model_type` refuses to guess
+    which one to keep rather than return a `calculated` answer with the other's revenue silently
+    gone.
+    """
+
+
+_MODEL_TYPES_WITH_SHARED_SCENARIO_REVENUE: frozenset[str] = frozenset(
+    {MODEL_TYPE_TIME_AND_MATERIAL}
+)
+"""Models whose revenue formula reads data shared by the whole scenario rather than data carried on
+the rule's own row — so two or more rules of this model in one scenario are provably the same
+answer, and `revenue_by_model_type` may price the model once, from any one of them (K-01). Every
+other model (today: Story Points and Outcome-based — `_outcome_based` reads **only** the rule's own
+`outcome_terms` row, SC-4-03) is priced from `commercial_terms`'s own details row, where two
+rules can legitimately disagree — those raise `MultipleRulesOfOneModelNotSupported` instead of
+picking one silently. A model joins this set only when its formula is checked to have the same
+shared-data property T&M has — not by default."""
+
+
+def revenue_by_model_type(
+    session: Session, scenario: Scenario, rules: list[_Rule]
+) -> dict[str, RevenueAnswer]:
+    """The scenario's revenue, once per distinct `model_type` present among `rules` (criterion
+    K-01) — never once per rule row, and never a silent drop of a second rule's revenue.
+
+    Two or more rules of the *same* model — a whole-scenario T&M rule and a segment T&M rule, say —
+    read the identical `staffing_position`/`staffing_position_allocation` rows: no segment-to-
+    position link exists (F-04 is out of scope of SC-4-05, `docs/PLAN.md`'s "Out of scope"), so
+    pricing every row and summing would double the true amount. Pricing **one** T&M rule (any one)
+    is therefore pricing the model correctly — the disjointness predicate K-01's mutation removes;
+    dropping it and pricing every rule row instead reproduces exactly that double count for two T&M
+    rules of one scenario, and changes nothing for a scenario carrying one rule of each model — Time
+    & Material and Story Points share no countable unit (hours vs. points), so their two independent
+    amounts are not a double count of either, and that pairing cannot kill this mutation
+    (`docs/PLAN.md`, K-01's own note).
+
+    **For a model outside `_MODEL_TYPES_WITH_SHARED_SCENARIO_REVENUE`, two or more rules raise
+    `MultipleRulesOfOneModelNotSupported`** instead of picking one (reviewer R-01): unlike T&M,
+    nothing here has checked that model's formula reads scenario-shared data rather than the rule's
+    own row, so "any one of them" is not provably "all of them" — picking one would be a silent,
+    undetectable loss of the others' revenue, exactly the failure mode K-01 exists to prevent, one
+    level up.
+
+    Returns one answer **per distinct model**, not one combined scenario total: combining two
+    models' revenue into a single figure (reconciling currency, in particular) is the per-segment
+    allocation F-06.5 asks for once a position knows its segment — F-04, out of scope here (ADR-0003
+    addendum 2026-09-25, closing annex: "SC-4-05 dowodzi rozłączności na poziomie SCHEMATU, nie na
+    poziomie PRZYCHODU").
+    """
+    rules_by_model_type: dict[str, list[_Rule]] = {}
+    for rule in rules:
+        rules_by_model_type.setdefault(rule.terms.model_type, []).append(rule)
+
+    answers: dict[str, RevenueAnswer] = {}
+    for model_type, model_rules in rules_by_model_type.items():
+        if len(model_rules) > 1 and model_type not in _MODEL_TYPES_WITH_SHARED_SCENARIO_REVENUE:
+            raise MultipleRulesOfOneModelNotSupported(
+                f"Scenario {scenario.id} carries {len(model_rules)} rules of model "
+                f"{model_type!r}, whose revenue is not proven independent of which rule priced "
+                "it. Pricing one and silently dropping the rest is refused."
+            )
+        answers[model_type] = revenue_of(session, scenario, model_rules[0])
+    return answers
 
 
 def revenue_of(session: Session, scenario: Scenario, rule: _Rule | None) -> RevenueAnswer:
@@ -376,11 +568,12 @@ def revenue_of(session: Session, scenario: Scenario, rule: _Rule | None) -> Reve
     `scenario` must be one `scenario_in_scope` returned: this function decides no access.
 
     **A model this version of the code does not know is a named state, not a `KeyError`** (R-02,
-    gate 2). The discriminator CHECK admits `time_and_material` and `story_points` today (SC-4-04
-    widened it, ADR-0003 addendum 2026-09-25), and this branch stays reachable for whichever value
-    a future migration adds next, in the mixed-version window of expand → deploy → contract
-    (ADR-0001): a later model's migration widens the CHECK before every instance runs the code that
-    knows its table. Defensive only: nothing here prices another model.
+    gate 2). The discriminator CHECK admits only models this version knows (`time_and_material`,
+    `story_points` since SC-4-04, `outcome_based` since SC-4-03), so the branch is unreachable in a
+    single-version deployment; it is reachable in the mixed-version window of expand → deploy →
+    contract (ADR-0001), when a later model's migration has widened the CHECK and an instance still
+    runs older code — since SC-4-03 proven on a real `outcome_based` row read by a code version
+    without that branch (`tests/test_outcome_revenue_copy.py`).
     """
     source = APPROVED_SNAPSHOT if scenario.status == ScenarioStatus.APPROVED else LIVE_CATALOG
     if rule is None:
@@ -413,6 +606,9 @@ class ScenarioCommercialView:
     scenario: Scenario
     terms: CommercialTerms | None
     revenue: RevenueAnswer
+    outcome_terms: OutcomeTerms | None = None
+    """Wiersz szczegółów reguły Outcome-based, do pokazania jej parametrów (R-04) — `None` dla
+    każdego innego modelu i dla reguły bez wiersza szczegółów. Parametry przychodu, nie koszt."""
 
 
 def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
@@ -424,6 +620,7 @@ def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
         scenario=scenario,
         terms=None if rule is None else rule.terms,
         revenue=revenue_of(session, scenario, rule),
+        outcome_terms=None if rule is None else _outcome_details_of(session, rule),
     )
 
 
@@ -487,14 +684,21 @@ def create_commercial_terms(
     scenario_id: uuid.UUID,
     *,
     model_type: str,
+    scope_ref: uuid.UUID | None = None,
     domain_values: Mapping[str, object] | None = None,
 ) -> ScenarioCommercialView | None:
     """Create the rule of one scenario **and** its details row, in one guarded statement.
 
+    `domain_values` — kolumny dziedzinowe wiersza szczegółów (dla `outcome_based`: opłata, premia,
+    stawka, min/max, waluta, jednostki i prawdopodobieństwa kategorii; dla `story_points`: cena
+    punktu, liczba punktów, waluta; dla T&M brak). Wchodzą do **tej
+    samej** instrukcji jako literały obok `RETURNING` reguły, więc strażnik `approved` obejmuje je
+    tak samo (ADR-0004, aneks 2026-09-25 SC-4-03, pkt 2), a odmowa nie zapisuje żadnego wiersza.
+
     ```
     WITH new_commercial_terms AS (
-        INSERT INTO commercial_terms (id, scenario_id, model_type)
-        SELECT :id, open_scenario.id, :model_type
+        INSERT INTO commercial_terms (id, scenario_id, model_type, scope_ref)
+        SELECT :id, open_scenario.id, :model_type, :scope_ref
           FROM (SELECT id FROM scenarios
                  WHERE id = :scenario_id AND status <> 'approved' FOR UPDATE) AS open_scenario
         RETURNING id, model_type
@@ -503,6 +707,17 @@ def create_commercial_terms(
     SELECT id, model_type FROM new_commercial_terms
     RETURNING commercial_terms_id
     ```
+
+    **`scope_ref` (SC-4-05, Issue #69, D-3=A)** — `None` (the default) writes a whole-scenario rule,
+    exactly SC-4-01's shape. A segment id writes a rule scoped to that `scenario_delivery_segment`,
+    carried as a literal into the *same* guarded `INSERT … SELECT` — never a second statement — so
+    the composite foreign key `app.models.commercial_terms.SCOPE_REF_FOREIGN_KEY` and the two
+    partial unique indexes (K-02, K-04) are the only things that can refuse it, and they refuse it
+    inside the one statement that writes, exactly as the `approved` guard does. No HTTP request
+    schema carries this parameter yet (ADR-0016, point 8: no API surface for a segment) — SC-4-05
+    proves the write path exists and is correctly guarded; wiring it to a client-facing endpoint is
+    left to the task that decides the API shape of "which segment" (an explicit gap, named in the
+    SC-4-05 developer report).
 
     (`story_points_terms` widens the second `INSERT`'s column list with `domain_values` — see below;
     the shape above is unchanged for a model with none, which is why passing no `domain_values` for
@@ -537,12 +752,15 @@ def create_commercial_terms(
     new_terms = (
         sa.insert(_TERMS_TABLE)
         .from_select(
-            ["id", "scenario_id", "model_type"],
+            ["id", "scenario_id", "model_type", "scope_ref"],
             sa.select(
                 sa.literal(uuid.uuid4(), type_=_TERMS_TABLE.c.id.type).label("id"),
                 open_scenario.c.id.label("scenario_id"),
                 sa.literal(model_type, type_=_TERMS_TABLE.c.model_type.type).label(
                     "model_type"
+                ),
+                sa.literal(scope_ref, type_=_TERMS_TABLE.c.scope_ref.type).label(
+                    "scope_ref"
                 ),
             ).select_from(open_scenario),
         )
@@ -602,12 +820,17 @@ def _diagnose_refusal(session: Session, scenario_id: uuid.UUID) -> CommercialTer
 # --- the copying cascade (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b) -----------------------
 
 COMMERCIAL_TERMS_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
-    {"id", "scenario_id", "created_at", "updated_at"}
+    {"id", "scenario_id", "scope_ref", "created_at", "updated_at"}
 )
 """Rule attributes a copy does not inherit: a new row (`id`), the copy's own scenario
 (`scenario_id`), and its own timestamps — the ADR-0007 marker of the copy is its own, never the
-source's. Everything else (today: `model_type`) is copied by reflection, and a drift guard asserts
-every mapped attribute is on one side or the other."""
+source's. `scope_ref` (SC-4-05) is excluded from blind reflection for a different reason than the
+other three: it is not *dropped*, it is *remapped* — the source's segment id means nothing on the
+copy (the composite foreign key would refuse it outright, pointing at another scenario's segment) —
+so `copy_commercial_terms` below computes the copy's own `scope_ref` explicitly instead of letting
+`values_to_copy` carry the source's value across verbatim. Everything else (today: `model_type`) is
+copied by reflection, and a drift guard asserts every mapped attribute is on one side or the
+other."""
 
 TM_TERMS_COLUMNS_NOT_COPIED: frozenset[str] = frozenset({"commercial_terms_id", "created_at"})
 """The same for the details row — of `tm_terms` today, and the convention every details table
@@ -628,13 +851,27 @@ class CommercialTermsNotCopyable(RuntimeError):
 
 
 def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) -> None:
-    """Copy one scenario's rule **and its details row** onto the copy, with new identifiers.
+    """Copy every rule of `source` onto `copy` — 0, 1 or N rows (SC-4-05: `scope_ref` admits more
+    than the single row SC-4-01 assumed) — **and** each rule's details row, with new identifiers.
 
-    One entry in `SCENARIO_CHILD_COPIERS` for the aggregate, not one per table (ADR-0004, addendum
-    2026-09-19, point 1, applied by the addendum of 2026-09-23 SC-4-01, point 1b): the registry's
-    contract carries no mapping from the source rule's id to the copy's, and the details row needs
-    exactly that. A copy with the rule and without its details row is an *incomplete* rule, not a
-    copied one — criterion K-07's canary.
+    Still one entry in `SCENARIO_CHILD_COPIERS` for the aggregate, not one per table (ADR-0004,
+    addendum 2026-09-19, point 1, applied by the addendum of 2026-09-23 SC-4-01, point 1b): the
+    registry's contract carries no mapping from a source row's id to the copy's, and the details row
+    of *each* rule needs exactly that — built locally in this closure, the way the staffing copier
+    holds its own old-to-new position map.
+
+    **`scope_ref` is remapped, not reflected** (D-4=A, ADR-0003 addendum 2026-09-25): a rule whose
+    source points at segment X must point at *the copy's own* segment named the same as X, never at
+    X itself (X belongs to `source`; the composite foreign key would refuse a copy's rule pointing
+    at another scenario's segment — criterion K-04). This is why `copy_scenario_delivery_segments`
+    now runs *before* this function in `SCENARIO_CHILD_COPIERS` (D-4=A): by the time this closure
+    runs, `copy`'s segments already exist, each with the exact `name` its source segment had
+    (ADR-0016, point 5 — `UNIQUE (scenario_id, name)`), and the map below is built by joining
+    source-segment-of-`source.id` to copy-segment-of-`copy.id` **by that name**. If segment names
+    ever stop being unique per scenario this join stops being well-defined, and the registry's
+    contract needs a shared id-mapping channel instead (`ScenarioChildCopier`'s signature would grow
+    a parameter — the option the impact map named as D-4/B and left for that day, not built now
+    because D-4/A is cheaper and names are unique today).
 
     A source rule that is itself incomplete (no details row) is copied as incomplete: the copy
     reproduces the source, it does not repair it.
@@ -642,56 +879,97 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
     Nothing here is guarded against `approved`, and nothing needs to be: every copy is a `draft`
     (`copy_scenario` takes no status), and the source is only read.
 
-    **A model outside `DETAIL_TABLE_BY_MODEL` is refused, never half-copied** (R-03, gate 2):
-    `CommercialTermsNotCopyable`. Unreachable while the CHECK admits `time_and_material` alone; it
-    covers the mixed-version window of ADR-0001 in which a later model's rows exist before every
-    instance runs the code that knows its details table. Defensive only — nothing here copies
-    another model's details.
+    **A model outside `DETAIL_TABLE_BY_MODEL` is refused, never half-copied** (R-03, gate 2 of
+    SC-4-01): `CommercialTermsNotCopyable`, checked for every rule *before* any of them is
+    written — one uncopyable rule among several never leaves the earlier ones half-written in a
+    transaction the caller (`copy_project`) is about to roll back anyway; checking first only
+    makes the failure unconditional on write order rather than a new correctness property.
+    Unreachable in a single-version deployment; it covers the mixed-version window of ADR-0001 in
+    which a later model's rows exist before every instance runs the code that knows its details
+    table (since SC-4-03 proven on a real `outcome_based` row). Every details table is copied by
+    reflection here — `outcome_terms` with all its domain columns (ADR-0004, aneks 2026-09-25
+    SC-4-03, pkt 3) — so no model needs a branch of its own, and `scope_ref` is remapped above the
+    model dispatch, identically for every model.
     """
-    terms = session.execute(
-        sa.select(CommercialTerms).where(CommercialTerms.scenario_id == source.id)
-    ).scalar_one_or_none()
-    if terms is None:
+    rules = list(
+        session.execute(
+            sa.select(CommercialTerms)
+            .where(CommercialTerms.scenario_id == source.id)
+            .order_by(CommercialTerms.scope_ref.is_(None).desc(), CommercialTerms.scope_ref)
+        )
+        .scalars()
+        .all()
+    )
+    if not rules:
         return
-    if terms.model_type not in DETAIL_TABLE_BY_MODEL:
-        raise CommercialTermsNotCopyable(
-            f"The scenario's commercial terms use the model {terms.model_type!r}, which this "
-            "version of the application cannot copy. Nothing was copied; retry once every "
-            "instance runs a version that supports it."
+    for terms in rules:
+        if terms.model_type not in DETAIL_TABLE_BY_MODEL:
+            raise CommercialTermsNotCopyable(
+                f"The scenario's commercial terms use the model {terms.model_type!r}, which this "
+                "version of the application cannot copy. Nothing was copied; retry once every "
+                "instance runs a version that supports it."
+            )
+
+    # The old-segment-id -> new-segment-id map (D-4=A), built once, only if some rule needs it.
+    segment_id_by_source_segment_id: dict[uuid.UUID, uuid.UUID] = {}
+    if any(terms.scope_ref is not None for terms in rules):
+        source_segment = aliased(ScenarioDeliverySegment)
+        copy_segment = aliased(ScenarioDeliverySegment)
+        segment_id_by_source_segment_id = dict(
+            session.execute(
+                sa.select(source_segment.id, copy_segment.id)
+                .join(copy_segment, copy_segment.name == source_segment.name)
+                .where(
+                    source_segment.scenario_id == source.id,
+                    copy_segment.scenario_id == copy.id,
+                )
+            ).all()
         )
-    new_terms_id = uuid.uuid4()
-    session.add(
-        CommercialTerms(
-            id=new_terms_id,
-            scenario_id=copy.id,
-            **values_to_copy(terms, excluded=COMMERCIAL_TERMS_COLUMNS_NOT_COPIED),
-        )
-    )
-    session.flush()
-    # The details table of **the rule's own model** — the same registry entry the refusal above
-    # checked, never `tm_terms` by name (R-05, SC-4-01 gate 2). A hard-coded `tm_terms` here would
-    # stop matching the refusal the day a second model joins `DETAIL_TABLE_BY_MODEL`: the refusal
-    # would let the rule through and this lookup would find no details, silently re-creating the
-    # incomplete copy R-03 exists to prevent.
-    detail_table = DETAIL_TABLE_BY_MODEL[terms.model_type]
-    details = (
-        session.execute(
-            sa.select(detail_table).where(detail_table.c.commercial_terms_id == terms.id)
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if details is not None:
-        session.execute(
-            sa.insert(detail_table).values(
-                {
-                    **{
-                        column: value
-                        for column, value in details.items()
-                        if column not in TM_TERMS_COLUMNS_NOT_COPIED
-                    },
-                    "commercial_terms_id": new_terms_id,
-                }
+
+    for terms in rules:
+        new_terms_id = uuid.uuid4()
+        new_scope_ref: uuid.UUID | None = None
+        if terms.scope_ref is not None:
+            new_scope_ref = segment_id_by_source_segment_id.get(terms.scope_ref)
+            if new_scope_ref is None:  # pragma: no cover — D-4's ordering guarantees this
+                raise RuntimeError(
+                    "The source rule points at a segment that was not found among the copy's own "
+                    "segments — copy_scenario_delivery_segments must run before "
+                    "copy_commercial_terms in SCENARIO_CHILD_COPIERS (D-4=A)."
+                )
+        session.add(
+            CommercialTerms(
+                id=new_terms_id,
+                scenario_id=copy.id,
+                scope_ref=new_scope_ref,
+                **values_to_copy(terms, excluded=COMMERCIAL_TERMS_COLUMNS_NOT_COPIED),
             )
         )
         session.flush()
+        # The details table of **the rule's own model** — the same registry entry the refusal above
+        # checked, never `tm_terms` by name (R-05, SC-4-01 gate 2). A hard-coded `tm_terms` here
+        # would stop matching the refusal the day a second model joins `DETAIL_TABLE_BY_MODEL`: the
+        # refusal would let the rule through and this lookup would find no details, silently
+        # re-creating the incomplete copy R-03 exists to prevent.
+        detail_table = DETAIL_TABLE_BY_MODEL[terms.model_type]
+        details = (
+            session.execute(
+                sa.select(detail_table).where(detail_table.c.commercial_terms_id == terms.id)
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if details is not None:
+            session.execute(
+                sa.insert(detail_table).values(
+                    {
+                        **{
+                            column: value
+                            for column, value in details.items()
+                            if column not in TM_TERMS_COLUMNS_NOT_COPIED
+                        },
+                        "commercial_terms_id": new_terms_id,
+                    }
+                )
+            )
+            session.flush()

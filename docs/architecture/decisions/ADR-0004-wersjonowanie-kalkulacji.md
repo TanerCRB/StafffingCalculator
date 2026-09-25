@@ -765,3 +765,38 @@ mimo że SC-5-02 nie buduje własnego czytelnika migawki — Opcja A, "zamrozić
    do "kopia zatwierdzonego scenariusza ma zero wierszy migawkowych" (aneks SC-3-02, pkt 2): kolumna(-y)
    narzutu zamrożonego wiersza migawki nie zmienia się po edycji katalogu; scenariusz zatwierdzony przed
    i po SC-5-02 rozróżnialny przez samą obecność/brak wartości w nowej kolumnie, nie przez błąd.
+
+**Aneks — reguła Outcome-based jako dana własna scenariusza (2026-09-25, bramka 1, SC-4-03, Issue
+#67, zaakceptowany przez człowieka).** Przypisanie grupy dla `outcome_terms` (obowiązek aneksu
+SC-3-01 pkt 4); model danych — ADR-0003, aneks 2026-09-25 SC-4-03.
+
+1. **`outcome_terms` — grupa 2, strażnik zapisu.** Wszystkie wartości (opłata, premia, stawka za
+   jednostkę, min/max, waluta, jednostki i prawdopodobieństwa kategorii) wpisuje użytkownik do
+   scenariusza; nic spoza scenariusza ich nie zmienia — kryterium "kierunek dziedziczenia, nie udział
+   w wyliczeniu" (aneks SC-3-01) spełnione wprost.
+2. **Strażnik zapisu bez nowego kształtu.** `INSERT` reguły outcome (dziś jedyna ścieżka zapisu,
+   ADR-0003 aneks SC-4-03 pkt 9) odrzucany pod `approved` przez `app.data.scenario_guard` w tej
+   samej instrukcji co zapis; zero wierszy w `commercial_terms` i `outcome_terms` po odmowie. Test
+   odmowy i test wyścigu dwóch połączeń dla tej ścieżki, kontrast na `draft` (warunek aneksu
+   SC-3-01: per ścieżka zapisu). Przyszła ścieżka edycji/usunięcia dostaje własne testy w swoim
+   zadaniu.
+3. **Kopiowanie przez istniejący jeden wpis agregatu** — wzorzec pkt 1b aneksu SC-4-01: kopiujący
+   `commercial_terms` kopiuje w tej samej funkcji wiersz `outcome_terms` z kompletem kolumn, z
+   nowymi identyfikatorami; bez nowego wpisu w `SCENARIO_CHILD_COPIERS`. Kanarek: kopia scenariusza
+   z regułą outcome ma regułę **i** wiersz szczegółów, a jej wynik jest identyczny ze źródłem;
+   `model_type` bez gałęzi w kopiującym → `unsupported_model_type`, nigdy reguła bez szczegółów.
+4. **Brak migawki.** Wyliczenie outcome nie czyta żadnej wartości dziedziczonej spoza scenariusza
+   (brak katalogu stawek, brak kursów — waluta reguły bez przeliczenia), więc zatwierdzenie nie
+   zamraża nic nowego: brak tabeli `approved_snapshot_*`, brak zmiany `_snapshot_statement` i
+   `SNAPSHOT_TABLES`. Przychód zatwierdzonego scenariusza outcome czyta własne tabele
+   (`rate_source = not_applicable`, ADR-0003 aneks SC-4-03 pkt 8). Warunek ponownego rozpatrzenia:
+   pierwsza wartość domyślna organizacji dla reguły outcome albo przeliczenie walut — wtedy grupa 1
+   dla tej wartości i własny aneks.
+5. **Uzgodnienie po merge z `main` (2026-09-25, decyzja człowieka, runda weryfikacji 2).** Obok
+   `outcome_terms` na `main` istnieje już `story_points_terms` (SC-4-04) — również grupa 2, bez
+   migawki. Pkt 3 (kopiowanie przez jeden wpis agregatu, gałąź per `model_type` w kopiującym)
+   obowiązuje obie tabele szczegółów jednocześnie; kopia scenariusza z regułą Story Points albo
+   outcome ma regułę **i** wiersz szczegółów właściwego modelu. Pkt 4 bez zmian: żaden z modeli
+   bez katalogu stawek nie czyta wartości dziedziczonej spoza scenariusza, więc zatwierdzenie nie
+   zamraża nic nowego (`rate_source` = `not_applicable` dla outcome, `story_points_terms` dla Story
+   Points — ADR-0003, aneks 2026-09-25 SC-4-03 pkt 12).
