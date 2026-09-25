@@ -45,7 +45,7 @@ downgrade of this revision must be paired with a deployment of the pre-SC-5-02 a
 run against the current one.
 
 Revision ID: 9b3f6a1d0c47
-Revises: d2f6a91c4b58
+Revises: b9e3c7a1f264
 Create Date: 2026-09-25
 """
 
@@ -55,7 +55,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "9b3f6a1d0c47"
-down_revision: str | None = "d2f6a91c4b58"
+down_revision: str | None = "b9e3c7a1f264"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

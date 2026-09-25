@@ -52,7 +52,14 @@ from tests.test_outcome_revenue_copy import FULL_DETAILS
 OUTCOME_REVISION = "b9e3c7a1f264"
 PREVIOUS_REVISION = "b7e3f19a6c52"
 """`down_revision` migracji `b9e3c7a1f264` po drugiej linearyzacji (merge SC-4-05); `b7e3f19a6c52`
-nie dotyka CHECK dyskryminatora — lista po `downgrade` to nadal lista z `d2f6a91c4b58`."""
+nie dotyka CHECK dyskryminatora — lista po `downgrade` to nadal lista z `d2f6a91c4b58`.
+
+**`OUTCOME_REVISION` przestał być `head` po trzeciej linearyzacji** (merge SC-5-02, 2026-09-25):
+`9b3f6a1d0c47` dopięta na `b9e3c7a1f264` zamiast obok niej, więc `head` jest teraz o jeden krok
+dalej. Oba testy migracyjne poniżej badają zachowanie MIGRACJI `b9e3c7a1f264`, nie definicję
+`head` — każdy zaczyna teraz jawnym `downgrade(alembic_config, OUTCOME_REVISION)`, który odtwarza
+dokładnie ten punkt startowy, jaki miały przed tą linearyzacją. Treść żadnej asercji się nie
+zmienia."""
 
 DETAILS_BY_MODEL = {
     "time_and_material": TmTerms,
@@ -124,6 +131,9 @@ def test_merge_a_story_points_rule_survives_the_downgrade_and_the_upgrade_of_the
         "SELECT price_per_point::text || '|' || accepted_points::text || '|' || currency"
         " FROM story_points_terms WHERE commercial_terms_id = :id"
     )
+    # `OUTCOME_REVISION` docstring: no longer `head` after the SC-5-02 linearization — an explicit
+    # `downgrade` here reproduces the exact starting point this test had before that.
+    command.downgrade(alembic_config, OUTCOME_REVISION)
     before = _one(engine, "SELECT version_num FROM alembic_version")
     assert before == OUTCOME_REVISION
     try:
@@ -135,7 +145,11 @@ def test_merge_a_story_points_rule_survives_the_downgrade_and_the_upgrade_of_the
         ) == "story_points"
         assert _one(engine, details_sql, id=rule_id) == "1000.0000|25|PLN"
 
-        command.upgrade(alembic_config, "head")
+        # `OUTCOME_REVISION`, not `"head"`: `head` now points one migration further (SC-5-02) than
+        # the point this test is about — going all the way to `head` here would still prove nothing
+        # wrong, but `assert … == before` would then compare `OUTCOME_REVISION` against the real
+        # `head` and fail for a reason unrelated to what this test checks.
+        command.upgrade(alembic_config, OUTCOME_REVISION)
         assert _one(engine, "SELECT version_num FROM alembic_version") == before
         assert _one(
             engine, "SELECT model_type FROM commercial_terms WHERE id = :id", id=rule_id
@@ -156,6 +170,9 @@ def test_merge_contrast_an_outcome_rule_makes_the_downgrade_refuse_and_loses_not
     przejść": `downgrade` przechodzi i reguła znika po cichu."""
     ids = _committed_rule(engine, make_outcome_terms, "Outcome downgrade", **FULL_DETAILS)
     rule_id = ids[0]
+    # `OUTCOME_REVISION` docstring: no longer `head` after the SC-5-02 linearization — an explicit
+    # `downgrade` here reproduces the exact starting point this test had before that.
+    command.downgrade(alembic_config, OUTCOME_REVISION)
     before = _one(engine, "SELECT version_num FROM alembic_version")
     assert before == OUTCOME_REVISION
     try:
