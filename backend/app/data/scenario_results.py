@@ -67,7 +67,9 @@ edited between them resolve to the same `rate_source` (`live_catalog` both times
 caught — a narrower, rarer risk than R-01's status flip, out of this fix's declared scope.
 
 **Never imports `app.domain.revenue*`, `app.domain.personnel_cost` or `app.domain.additional_cost`
-beyond the *answer* types the three already export for exactly this composition** — no rate window,
+beyond the *answer* types the three already export for exactly this composition** (and, since
+SC-4-03, the `rate_source` vocabulary `STATUS_DEPENDENT_SOURCES` the guard compares) — no rate
+window,
 no catalogue row and no SQL predicate of its own. The formula itself lives in
 `app.domain.scenario_results`, not here (this module has no `Decimal` arithmetic of its own).
 """
@@ -82,7 +84,7 @@ from app.data.additional_cost import additional_costs_for_caller
 from app.data.commercial_terms import commercial_terms_for_caller
 from app.data.personnel_cost import ScenarioCostView, scenario_cost_for_caller
 from app.domain.additional_cost import AdditionalCostAnswer
-from app.domain.revenue import RevenueAnswer
+from app.domain.revenue import STATUS_DEPENDENT_SOURCES, RevenueAnswer
 from app.models.scenario import Scenario
 
 
@@ -112,6 +114,28 @@ class ScenarioResultsRaceDetected(RuntimeError):
             "The scenario's approval status changed while its result was being computed. Retry "
             "the request."
         )
+
+
+def refuse_a_status_race(*, revenue_source: str, cost_source: str) -> None:
+    """Raise `ScenarioResultsRaceDetected` when the two reads saw the scenario at two statuses.
+
+    **Porównuje wyłącznie źródła zależne od statusu** (`STATUS_DEPENDENT_SOURCES`: `live_catalog`,
+    `approved_snapshot`; ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8). Przychód modelu bez katalogu
+    (`not_applicable` — Outcome-based; `story_points_terms` — Story Points) czyta wyłącznie własne
+    wiersze scenariusza, więc nie utrwala żadnego momentu statusu — nie jest dowodem ani braku, ani
+    wystąpienia wyścigu. Porównanie przez samą równość zamieniało każdy odczyt takiego scenariusza w
+    stały `409` (dla Story Points — defekt na `main` przed merge SC-4-03, decyzja człowieka
+    2026-09-25; `tests/test_story_points_scenario_results.py`).
+
+    Jedna funkcja dla `/results` i dla what-if (`app.data.scenario_what_if`), żeby dwa miejsca
+    porównujące `rate_source` nie rozjechały się w rozumieniu nowej wartości.
+    """
+    if (
+        revenue_source in STATUS_DEPENDENT_SOURCES
+        and cost_source in STATUS_DEPENDENT_SOURCES
+        and revenue_source != cost_source
+    ):
+        raise ScenarioResultsRaceDetected(revenue_source=revenue_source, cost_source=cost_source)
 
 
 @dataclass(frozen=True)
@@ -163,10 +187,10 @@ def scenario_results_for_caller(
     cost_view = scenario_cost_for_caller(session, caller, project_id, scenario_id)
     if cost_view is None:  # pragma: no cover — scope agrees with the call above by construction
         return None
-    revenue_source = commercial.revenue.assumptions_used.rate_source
-    cost_source = cost_view.cost.assumptions_used.rate_source
-    if revenue_source != cost_source:
-        raise ScenarioResultsRaceDetected(revenue_source=revenue_source, cost_source=cost_source)
+    refuse_a_status_race(
+        revenue_source=commercial.revenue.assumptions_used.rate_source,
+        cost_source=cost_view.cost.assumptions_used.rate_source,
+    )
     additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
     if additional is None:  # pragma: no cover — scope agrees with the two calls above
         return None

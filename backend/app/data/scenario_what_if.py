@@ -79,7 +79,7 @@ from app.data.additional_cost import additional_costs_for_caller
 from app.data.commercial_terms import commercial_terms_for_caller
 from app.data.paid_absence_cost import paid_absence_months
 from app.data.personnel_cost import ScenarioCostView, _worked_months, scenario_cost_for_caller
-from app.data.scenario_results import ScenarioResultsRaceDetected
+from app.data.scenario_results import refuse_a_status_race
 from app.domain.additional_cost import AdditionalCostAnswer
 from app.domain.paid_absence_cost import paid_absence_cost
 from app.domain.personnel_cost import (
@@ -167,15 +167,18 @@ def scenario_what_if_salary_raise_for_caller(
     cost_view = scenario_cost_for_caller(session, caller, project_id, scenario_id)
     if cost_view is None:  # pragma: no cover — scope agrees with the call above by construction
         return None
-    revenue_source = commercial.revenue.assumptions_used.rate_source
-    cost_source = cost_view.cost.assumptions_used.rate_source
-    if revenue_source != cost_source:
-        # Inherited unchanged from `scenario_results_for_caller` (ADR-0015, point 5): an approval
-        # landing between the two real reads above is still a race, whatever this endpoint goes on
-        # to compute from a hypothetical rate. Both sources are still real here (`live_catalog` /
-        # `approved_snapshot`) — the raise has not been applied yet, so `WHAT_IF_HYPOTHETICAL` can
-        # never reach this comparison.
-        raise ScenarioResultsRaceDetected(revenue_source=revenue_source, cost_source=cost_source)
+    # Inherited unchanged from `scenario_results_for_caller` (ADR-0015, point 5): an approval
+    # landing between the two real reads above is still a race, whatever this endpoint goes on to
+    # compute from a hypothetical rate. Neither source is hypothetical here — the raise has not
+    # been applied yet, so `WHAT_IF_HYPOTHETICAL` can never reach this comparison. The revenue's
+    # source is one of the two real catalogue sources (T&M), `story_points_terms` (Story Points) or
+    # `not_applicable` (Outcome-based) — neither of the last two reads the catalogue; the same
+    # function as `/results`, for which a source outside the status-dependent pair is not a race
+    # (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8).
+    refuse_a_status_race(
+        revenue_source=commercial.revenue.assumptions_used.rate_source,
+        cost_source=cost_view.cost.assumptions_used.rate_source,
+    )
 
     scenario = cost_view.scenario
     if scenario.status != ScenarioStatus.DRAFT:
