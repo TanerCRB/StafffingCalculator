@@ -1802,4 +1802,8 @@ history / this file's own change log, not as tracked product work.
   pozostawionych otwartych.
   Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-7-03** — Strażnik wyścigu `/results`, `/compare` i what-if porównuje status scenariusza,
+  nie `rate_source` (naprawa 409 dla Story Points). Zarezerwowane, kryteria i decyzje bramki 1 w
+  Issue #118.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
