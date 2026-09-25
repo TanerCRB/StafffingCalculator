@@ -67,6 +67,16 @@ COST_BASIS_BASE: Final = "base"
 LIVE_CATALOG: Final = "live_catalog"
 APPROVED_SNAPSHOT: Final = "approved_snapshot"
 
+WHAT_IF_HYPOTHETICAL: Final = "what_if_hypothetical"
+"""The third value of `rate_source` (ADR-0015, SC-6-04, Issue #88): a cost computed on a rate
+structure substituted by a hypothetical salary raise and never persisted. Closed at two values
+(`LIVE_CATALOG`/`APPROVED_SNAPSHOT`) until this task; every place that compares `rate_source` by
+equality has been audited so this third value is never mistaken for either real source — in
+particular `app.data.scenario_results.ScenarioResultsRaceDetected`'s guard, which the what-if path
+(`app.data.scenario_what_if`) never feeds a substituted view: it compares the two **real** sources
+before applying any raise, exactly as `scenario_results_for_caller` does (ADR-0013, aneks
+2026-09-24 "granica reużycia dla przeliczenia bez zapisu")."""
+
 HOURS_SOURCE_PLANNED: Final = "planned_allocation_hours"
 """The one source of hours of the worked-time basis (ADR-0013, point 4): the plan, non-billable
 effort included — never `billable_hours` (the revenue's basis) and never the availability."""
