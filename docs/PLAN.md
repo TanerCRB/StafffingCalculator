@@ -1100,10 +1100,22 @@ history / this file's own change log, not as tracked product work.
   SC-4-04 i SC-1-11 — rozwiązany, zachowano obie) i rozjazd łańcucha migracji Alembic z SC-1-11
   (dwie głowy z tego samego `down_revision` — zlinearyzowane bez zmiany treści żadnej migracji).
 
-- [ ] **SC-4-05** — Reguły wspólne modeli komercyjnych: `scope_ref` na `commercial_terms`, ochrona
+- [x] **SC-4-05** — Reguły wspólne modeli komercyjnych: `scope_ref` na `commercial_terms`, ochrona
   przed podwójnym rozliczeniem między regułą projektu a regułą segmentu, cross-scenario integrity
   (F-06.5, część), warunek wstępny SC-1-11 (encja segmentu, bramka 3 zamknięta) i SC-4-04 (drugi
   model komercyjny) (Issue #69).
+  **Done 2026-09-25:** PR #119 (scalone `06296e8`). Developer: 814/814 testów backendu, `ruff`
+  czyste, `backend/tests/test_commercial_terms_scope.py` (K-01..K-04, D-4). QA: PROOF HOLDS (4
+  mutacje uruchomione i zabite, jeden dodatkowy test dwusegmentowej granicy D-4). Invariant
+  Guardian i Reviewer: PASS WITH RESERVATIONS w pierwszej rundzie (odczyt niehartowany na >1 wiersz
+  — surowy `MultipleResultsFound` w `_rule_of`, cicha utrata przychodu drugiej reguły Story Points
+  w `revenue_by_model_type`), oba zastrzeżenia naprawione (jawne, nazwane wyjątki zamiast
+  cichego/surowego zachowania) i zweryfikowane niezależnie przez tych samych audytorów, werdykt
+  końcowy PASS. Security-auditor: PASS. Frontend: dodatkowa poprawka poza zakresem roli backend —
+  `commercialTermsRefusals.test.ts` czytał `backend/app/models/commercial_terms.py` jako tekst i
+  oczekiwał starego kształtu `UniqueConstraint(...)`; SC-4-05 zmienił go na częściowy `Index(...)`
+  pod tą samą nazwą, regex testu zaktualizowany do nowego kształtu (262/262 testów frontendu,
+  `eslint` czyste) — ta sama asercja treści, inny sposób jej wyciągnięcia ze źródła.
   *Done when:* `backend/tests` dowodzą kryteriów K-01..K-04 (analyst, runda 3, 2026-09-25):
   1. (K-01) Reguła projektu i reguła segmentu dzielące tę samą policzalną pracę (dwie reguły T&M,
      zasięgi zagnieżdżone, te same pozycje/miesiące obsady) — przychód liczony raz per
