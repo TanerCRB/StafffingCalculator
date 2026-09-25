@@ -196,3 +196,19 @@ jawnie poza zakresem (Issue #65, "Out of scope (explicit)"; impact-mapa SC-1-11,
 
 F-02, F-04 (tylko jako granica), F-06, F-06.5, NF-01; AC-02; ADR-0001, ADR-0003, ADR-0004,
 ADR-0005 (tylko jako granica), ADR-0007, ADR-0008; reguły Strażnika Niezmienników 1, 11, 13, 17.
+
+## Aneksy
+
+### 2026-09-25 — bramka 1 SC-4-05 (Issue #69): gdzie żyje rozstrzygnięcie `scope_ref`
+
+Bullet "Odłożone" wyżej ("`scope_ref` na `commercial_terms`… plus rozstrzygnięcie, czy reguła »cały
+scenariusz« i reguła »jeden segment« mogą współistnieć i jak wygląda »reguła łączona«") jest
+przedmiotem impact-mapy architekta dla SC-4-05, spisanej jako aneks do
+`ADR-0003-model-modeli-komercyjnych.md` (2026-09-25, drugi aneks tej daty) — nie tutaj, bo
+`scope_ref` jest kolumną `commercial_terms`, a ADR-0003 pozostaje jedynym miejscem klasyfikacji tej
+tabeli (ten sam podział ról, którym pkt 7 wyżej oddaje kopiowanie segmentu do ADR-0004, nie do tego
+dokumentu). Kształt złożonego FK `(segment_id, scenario_id) → scenario_delivery_segment (id,
+scenario_id)` pozostaje bez zmian wobec zapowiedzi w "Odłożone" — potwierdzony, nie przeprojektowany.
+K-03 tej decyzji ("kryterium dowodzi wyłącznie kształtu klucza… siłę ochronną dowiedzie dopiero
+SC-4-05") jest przedmiotem tamtego aneksu wprost — wciąż niedowiedzione, nie rozstrzygnięte przez ten
+wpis.
