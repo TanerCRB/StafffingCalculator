@@ -171,3 +171,77 @@ nigdy osobno. `rate_source` (pkt niżej w tym dokumencie, zamknięty dwuelemento
 `WHAT_IF_HYPOTHETICAL`, z wymogiem audytu każdego porównania przez równość (w szczególności
 strażnika wyścigu `ScenarioResultsRaceDetected`), żeby trzecia wartość nigdy nie wyciekła do
 kompozycji zaprojektowanej dla dwóch stanów. Pełne uzasadnienie: ADR-0015.
+
+### 2026-09-25 — SC-5-02 (Issue #77, narzuty i koszt w pełni obciążony): rozstrzygnięcia bramki 1
+
+Pkt 8 wyżej wyznacza to miejsce dla SC-5-02 wprost: "SC-5-02 (narzuty, rozróżnienie stawka bazowa /
+w pełni obciążony koszt)". Poprzednia wersja tego wpisu (2026-09-25, mapa wpływu Architekta, "Draft —
+pending approval") nazwała pięć pytań bramki 1 i nie rozstrzygnęła żadnego. Człowiek rozstrzygnął
+wszystkie pięć na bramce 1 (2026-09-25) — ten wpis zastępuje treść pytań treścią decyzji; nic z sekcji
+"Decyzja" ani z jej dotychczasowych aneksów nie zostaje przez to zmienione, poza tym, co punkty 1–5
+niżej nazywają wprost jako rozszerzenie zapowiedziane w pkt 8.
+
+1. **Q1 — `profit`/`margin`/`markup`/`included_cost` (F-10) NIE przechodzą w tym zadaniu na koszt w
+   pełni obciążony; zostają na koszcie bazowym.** [Opcja B]. `included_cost` nadal sumuje wyłącznie
+   `base_personnel_cost.cost` (SC-7-01, `backend/tests/test_scenario_results.py`, zielony bez zmian).
+   Rozbieżność nazwana wprost, nie odkrywana przy reklamacji: organizacje korzystające z narzutów będą
+   miały `profit`/`margin`/`markup` systematycznie zawyżone od chwili, gdy SC-5-02 wprowadzi koszt w
+   pełni obciążony, bo F-10 nadal czyta wyłącznie koszt bazowy. To jest nazwane ograniczenie F-10, nie
+   defekt SC-5-02, i **musi wejść do `docs/architecture/capabilities.md`** w chwili, gdy SC-5-02
+   zamyka bramkę 3 — jako świadomie przyjęte ograniczenie, obok stanu SC-7-01 jako dowiedzionej,
+   zamkniętej capability na koszcie bazowym. Przełączenie F-10 na koszt w pełni obciążony (Opcja A,
+   odrzucona tu) zostaje osobnym, przyszłym zadaniem, które otwiera mutation-checked testy SC-7-01 —
+   nie częścią SC-5-02.
+2. **Q2 — narzut WCHODZI do migawki zatwierdzonego scenariusza W TYM SAMYM zadaniu (SC-5-02), mimo że
+   SC-5-02 nie buduje własnego czytelnika migawki.** [Opcja A, "zamrozić teraz"]. Precedens wiążący
+   wprost, nie tylko analogiczny: ADR-0004, aneks 2026-09-23 SC-4-01, pkt 2b — `default_cost_rate`
+   został zamrożony całe zadanie wcześniej, niż cokolwiek go czytało, dokładnie dlatego, że "migawka
+   nie ma ścieżki UPDATE: scenariusz zatwierdzony przed blokiem 5 bez zamrożonego kosztu nie
+   odzyskałby go nigdy". Ten sam argument, słowo w słowo, stosuje się do narzutu. Mechanizm migawki:
+   ADR-0004, aneks tej daty (SC-5-02, drugi aneks tej daty w tamtym pliku). Bramka dostępu do wiersza
+   migawkowego: ADR-0005, aneks tej daty (rozstrzygnięcie Q4 niżej, przeniesione).
+3. **Q3 — podstawienie what-if (ADR-0015) obejmuje narzut AUTOMATYCZNIE, bez własnej ścieżki kodu —
+   konsekwencja wprost kształtu rozstrzygniętego w Q4.** Ponieważ narzut jest PROCENTEM od stawki
+   bazowej (`default_cost_rate`), nie kwotą o własnym rozstrzygnięciu, jest on wartością wyprowadzoną
+   z dokładnie tej samej stawki godzinowej, którą ADR-0015 pkt 3 już podstawia raz, na współdzielonym
+   słowniku stawek per-(pozycja, miesiąc), przed wywołaniem wszystkich konsumentów ("Podstawienie musi
+   nastąpić raz, na współdzielonej strukturze stawek, przed wywołaniem obu konsumentów — nigdy osobno
+   na wejściu do jednego z nich"). Koszt w pełni obciążony, gdy stanie się trzecim konsumentem tego
+   słownika obok `base_personnel_cost` i `paid_absence_cost`, dziedziczy podstawioną stawkę bazową z
+   automatu — **pod warunkiem, że formuła narzutu SC-5-02 czyta stawkę z tego samego słownika, a nie z
+   osobnego zapytania do katalogu** wewnątrz swojej własnej funkcji. SC-5-02 NIE projektuje osobnej
+   ścieżki podstawienia narzutu w what-if — warunek i pełne rozwinięcie: ADR-0015, aneks tej daty.
+4. **Q4 — klasyfikacja surowej stawki/procentu narzutu: PARAMETR ORGANIZACYJNY, w kształcie PROCENTU
+   od stawki bazowej (nie kwoty absolutnej), bramkowany samym `CATALOG_READ` poza kontekstem
+   projektu.** [Opcja B]. Precedens wiążący: budżet urlopowy (ADR-0005, aneks 2026-09-22 SC-3-03, pkt
+   3) — "mnożnik nie ujawnia kwoty bez stawki bazowej, która jest już bramkowana osobno". Kształt
+   (procent, nie kwota) jest tym, co decyduje o klasyfikacji, nie odwrotnie — gdyby narzut był kwotą
+   absolutną, byłby bliżej `default_cost_rate` (mirror SC-2-01 pkt 3) niż liczby dni budżetu, i ta
+   klasyfikacja wymagałaby ponownego rozpatrzenia (ADR-0005, aneks tej daty, pkt 1). Pełne
+   rozstrzygnięcie i uzasadnienie: ADR-0005, aneks tej daty.
+5. **Q5 — flaga "stawka już zawiera narzuty" żyje W TYM SAMYM wierszu i tej samej tabeli co
+   `default_cost_rate`.** Zweryfikowane w kodzie: `backend/app/models/catalog.py`, klasa
+   `CatalogDefaultRate`, `__tablename__ = "catalog_default_rates"` — nie osobna tabela ustawień
+   organizacji, nie kolumna per reguła komercyjna. Konsekwencja: flaga (i procent narzutu, Q4)
+   dziedziczą za darmo mechanizm przedziału obowiązywania tej samej krotki (rola × senioritet ×
+   lokalizacja × typ zaangażowania × poddostawca) — `effective_from`/`effective_to`, kolumna
+   generowana `valid_period`, `EXCLUDE USING gist` (ADR-0008) — zamiast wymagać nowego, równoległego
+   mechanizmu czasu: nowa wartość flagi dla tej samej krotki otwiera nowe okno `EXCLUDE` dokładnie
+   tak, jak zmiana samej stawki. SC-5-02 nie potrzebuje własnej decyzji ADR-0008, tylko musi dowieść,
+   że flaga i procent wchodzą do tego samego okna co `default_cost_rate` i `default_selling_rate` —
+   żadna kolumna `catalog_default_rates` nie ma dziś własnego, niezależnego okna obowiązywania.
+   Konsekwencja dla migawki (Q2): flaga i procent są kolejnymi kolumnami
+   `ApprovedSnapshotCatalogDefaultRate`/`approved_snapshot_catalog_default_rate`, zamrażanymi razem ze
+   stawką bazową w tej samej transakcji zatwierdzenia — nie osobnym wierszem ani osobną tabelą
+   migawkową (pełne rozwinięcie mechanizmu migawki: ADR-0004, aneks tej daty).
+
+**Pytanie, które SC-5-02 musi jeszcze rozstrzygnąć we własnym zakresie, nazwane tu, nie
+zablokowane przez bramkę 1.** Wiersze `catalog_default_rates` z `vendor_id NOT NULL` (stawka
+poddostawcy, ADR-0005 aneks 2026-09-21 SC-2-03) niosą tę samą kolumnę procentu/flagi co wiersze
+wewnętrzne, bo obie żyją w jednej tabeli (Q5). Ceny kontrahenta bywają z natury już w pełni
+obciążone (umowa z poddostawcą rzadko rozbija stawkę na bazę i narzut) — czy SC-5-02 dopuszcza
+niezerowy procent na takim wierszu, wymusza go na `0`, czy zostawia pole bez znaczenia biznesowego
+dla `vendor_id NOT NULL`, nie jest rozstrzygnięte żadnym z Q1–Q5 i nie było zadane na bramce 1. Nie
+blokuje wejścia w fazę `code` — formuła kosztu bazowego (pkt 1 "Decyzja") czyta wyłącznie
+`vendor_id IS NULL` i ten predykat nie zmienia się tu — ale SC-5-02 musi nazwać wybór wprost we
+własnym "Done when", nie zostawić pole poddostawcy milcząco niezdefiniowane.

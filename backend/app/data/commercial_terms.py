@@ -603,6 +603,18 @@ class ScenarioCommercialView:
     scenario: Scenario
     terms: CommercialTerms | None
     revenue: RevenueAnswer
+    status_at_read: ScenarioStatus
+    """The scenario's status **as this read saw it**, copied into an immutable value right after
+    this read's own `session.refresh` — for every commercial model alike, before the dispatcher
+    runs (SC-7-03, Issue #118; ADR-0015, aneks SC-7-03, points 1 and 3).
+
+    Never `scenario.status` read later: `scenario` is an identity-mapped object that a later read
+    in the same session (`app.data.personnel_cost.scenario_cost_for_caller`) refreshes again, so its
+    `.status` stops being a record of *this* read the moment that call runs. This value does not
+    move. It is what `app.data.scenario_results.refuse_a_status_race` compares with the cost read's
+    status — only when `revenue.assumptions_used.rate_source` classifies the revenue as
+    status-dependent (`STATUS_DEPENDENT_SOURCES`); `rate_source` itself is never compared with the
+    cost's (ADR-0003, aneks SC-7-03)."""
     outcome_terms: OutcomeTerms | None = None
     """Wiersz szczegółów reguły Outcome-based, do pokazania jej parametrów (R-04) — `None` dla
     każdego innego modelu i dla reguły bez wiersza szczegółów. Parametry przychodu, nie koszt."""
@@ -612,11 +624,13 @@ def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
     # Refreshed, not trusted from the identity map: the status decides live-versus-snapshot, and an
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
+    status_at_read = scenario.status
     rule = _rule_of(session, scenario.id)
     return ScenarioCommercialView(
         scenario=scenario,
         terms=None if rule is None else rule.terms,
         revenue=revenue_of(session, scenario, rule),
+        status_at_read=status_at_read,
         outcome_terms=None if rule is None else _outcome_details_of(session, rule),
     )
 

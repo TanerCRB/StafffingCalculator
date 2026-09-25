@@ -492,6 +492,10 @@ def test_k_07_an_amount_crosses_the_api_boundary_as_a_fixed_point_string(
         default_selling_rate=Decimal("1.85E+3"),
         currency="EUR",
         unit="hour",
+        # SC-5-02: required since the field is never gated (K-04) — a fixed, uninteresting value,
+        # this test is about `default_cost_rate`'s exponent form, not about the surcharge.
+        surcharge_percent=Decimal("0"),
+        includes_surcharge=False,
         effective_from=date(2026, 1, 1),
         effective_to=None,
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),

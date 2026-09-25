@@ -272,6 +272,12 @@ def test_k_04_the_scenario_cost_fields_are_their_own_set_and_the_projects_stays_
             "paid_absence_amount",
             "paid_absence_budget_amount",
             "paid_absence_assumptions_used",
+            # SC-5-02 (Issue #77, K-01/K-03/K-05; ADR-0013 aneks 2026-09-25): re-armed again — the
+            # fully loaded cost and its surcharge, for the base component and for paid absence.
+            "fully_loaded_amount",
+            "surcharge_amount",
+            "paid_absence_fully_loaded_amount",
+            "paid_absence_surcharge_amount",
         }
     )
     assert PERSONNEL_COST_FIELDS == frozenset()

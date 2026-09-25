@@ -721,6 +721,51 @@ milczeniu, który tamten aneks nazwał ryzykiem.
    nie wystawia segmentu (Q2 = A, ADR-0016 pkt 8). Uprawnienia (ADR-0005) pozostają nierozstrzygnięte
    do zadania, które doda pierwszy endpoint nad tą tabelą.
 
+### 2026-09-25 — SC-5-02 (Issue #77, narzuty): narzut wchodzi do migawki w tym samym zadaniu (drugi aneks tej daty, osobny wpis, nie dopisek do SC-1-11 wyżej)
+
+Rozstrzygnięcie bramki 1 (2026-09-25, ADR-0013 aneks tej daty, Q2; ADR-0005 aneks tej daty): narzut
+WCHODZI do `approved_snapshot_catalog_default_rate` w tym samym zadaniu, w którym powstaje (SC-5-02),
+mimo że SC-5-02 nie buduje własnego czytelnika migawki — Opcja A, "zamrozić teraz", nie Opcja B
+("odłożyć zamrażanie").
+
+1. **Precedens wiążący wprost, nie tylko analogiczny.** Aneks 2026-09-23 SC-4-01, pkt 2b: "Zamrażana
+   jest także `default_cost_rate`, choć SC-4-01 jej nie czyta (…) Migawka nie ma ścieżki UPDATE:
+   scenariusz zatwierdzony przed blokiem 5 bez zamrożonego kosztu nie odzyskałby go nigdy." Ten sam
+   argument, słowo w słowo, stosuje się do narzutu: scenariusz zatwierdzony w oknie między SC-5-02 a
+   przyszłym zadaniem budującym czytelnika kosztu w pełni obciążonego nigdy nie odzyskałby narzutu,
+   gdyby SC-5-02 go nie zamroziła — migawka bez ścieżki UPDATE czyni to nieodwracalnym, nie tylko
+   niewygodnym.
+2. **Kształt: nowa kolumna (kolumny) na ISTNIEJĄCEJ tabeli migawkowej, nie nowa tabela.** Procent
+   narzutu i flaga "stawka już zawiera narzuty" (ADR-0013 aneks tej daty, Q4/Q5) rozszerzają
+   `ApprovedSnapshotCatalogDefaultRate`/`approved_snapshot_catalog_default_rate` o tyle kolumn, ile
+   nowych pól niesie wiersz źródłowy `catalog_default_rates` po SC-5-02 — nie tworzą drugiej tabeli
+   migawkowej dla tego samego wiersza. Precedens dosłowny: aneks 2026-09-22 SC-3-03, pkt 8 — flaga
+   typu ustawowego weszła do migawki jako nowa kolumna istniejącej tabeli
+   `ApprovedSnapshotAbsenceType`, a "zdanie „nazwa i obie flagi" (…) przestaje być kompletne — nowy
+   wpis je zastępuje, nie kasuje". Ten sam wzorzec tu: docstring klasy i lista kolumn rosną, tabela
+   nie mnoży się.
+3. **Zakres okien zamrażanych — bez zmian wobec aneksu 2026-09-23 SC-5-01, pkt 1.** To ten sam
+   predykat kosztowy (okna razem pokrywają każdy dzień miesiąca, jedna para `default_cost_rate` +
+   `currency`) decyduje, które okna wiersza zamrozić. Narzut podróżuje na TYM SAMYM wierszu co stawka
+   bazowa (ADR-0013 aneks tej daty, Q5) — nie ma więc osobnego kryterium zamrożenia do wynalezienia:
+   jeśli wiersz stawki bazowej jest zamrażany, jego kolumna(-y) narzutu jest zamrażana razem z nim, w
+   tej samej instrukcji `_snapshot_statement` (ta sama szósta CTE, aneks SC-4-01 pkt 2d — kształt
+   zapisu bez zmian).
+4. **Konsekwencja nazwana wprost, wzorem pkt 2b aneksu SC-4-01.** Tabela poszerza się jako nośnik
+   kosztu osobowego — od SC-5-02 niesie też narzut, nie tylko stawkę bazową. SC-5-02 sam nie musi
+   wystawiać żadnej ścieżki, która zwraca tę kolumnę: pierwszy czytelnik (przyszłe zadanie budujące
+   koszt w pełni obciążony zatwierdzonego scenariusza) podlega tej samej koniunkcji kosztowej co dziś
+   `default_cost_rate` migawkowe (ADR-0005, aneks 2026-09-23 SC-5-01 pkt 2), rozszerzonej dla procentu
+   surowego poza kontekstem projektu przez ADR-0005 aneks tej daty (`CATALOG_READ` samo, Q4).
+5. **Bez działania wstecz.** Scenariusze zatwierdzone przed SC-5-02 nie mają zamrożonej kolumny
+   narzutu (kolumna nie istniała w chwili ich zatwierdzenia) — nazwany stan "brak narzutu w migawce",
+   nie luka do naprawienia; migawka nie ma ścieżki UPDATE (zasada niezmienna od aneksu SC-3-02, pkt
+   3d).
+6. **Warunek, który SC-5-02 musi dowieść, nie założyć.** Kanarek analogiczny do M-1 (aneks SC-5-06) i
+   do "kopia zatwierdzonego scenariusza ma zero wierszy migawkowych" (aneks SC-3-02, pkt 2): kolumna(-y)
+   narzutu zamrożonego wiersza migawki nie zmienia się po edycji katalogu; scenariusz zatwierdzony przed
+   i po SC-5-02 rozróżnialny przez samą obecność/brak wartości w nowej kolumnie, nie przez błąd.
+
 **Aneks — reguła Outcome-based jako dana własna scenariusza (2026-09-25, bramka 1, SC-4-03, Issue
 #67, zaakceptowany przez człowieka).** Przypisanie grupy dla `outcome_terms` (obowiązek aneksu
 SC-3-01 pkt 4); model danych — ADR-0003, aneks 2026-09-25 SC-4-03.
