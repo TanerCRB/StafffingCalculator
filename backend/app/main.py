@@ -10,6 +10,7 @@ from app.api.personnel_cost import router as personnel_cost_router
 from app.api.projects import router as projects_router
 from app.api.scenario_results import compare_router as scenario_results_compare_router
 from app.api.scenario_results import router as scenario_results_router
+from app.api.scenario_what_if import router as scenario_what_if_router
 from app.api.scenarios import router as scenarios_router
 from app.api.staffing import router as staffing_router
 from app.core.config import settings
@@ -67,3 +68,9 @@ app.include_router(scenario_results_router)
 # same gates), never a new calculation. A router of its own because its path
 # (`/projects/{project_id}/scenarios/compare`) does not carry `{scenario_id}/results`.
 app.include_router(scenario_results_compare_router)
+# Same nesting, a ninth router (SC-6-04, F-09 pt.3, ADR-0015): the salary-raise "what-if" — the
+# first read that computes a hypothesis instead of persisting one. Same `RESULTS_READ`, same
+# personnel-cost gate as `scenario_results_router`, applied to a substituted, never-written rate
+# structure; a router of its own because its path carries `{scenario_id}/what-if`, not
+# `{scenario_id}/results`.
+app.include_router(scenario_what_if_router)

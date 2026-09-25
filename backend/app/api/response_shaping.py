@@ -88,6 +88,7 @@ from app.api.schemas.project import (
 )
 from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
 from app.api.schemas.scenario_results import ScenarioResults
+from app.api.schemas.scenario_what_if import ScenarioWhatIfSalaryRaiseResults
 from app.api.schemas.staffing import (
     AbsenceBudgetSource,
     DerivedCapacitySource,
@@ -107,6 +108,7 @@ from app.data.organization_defaults import OrganizationLevel
 from app.data.personnel_cost import ScenarioCostView
 from app.data.project_reads import CallerProjectView
 from app.data.scenario_results import ScenarioResultsView
+from app.data.scenario_what_if import ScenarioWhatIfView
 from app.data.staffing import StaffingPositionView
 from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, StatutoryLeaveType
 from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
@@ -1189,6 +1191,53 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
     result = ScenarioResults(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        revenue=revenue,
+        personnel_cost=personnel_cost,
+        additional_cost=additional_cost,
+        included_cost=profitability.included_cost,
+        profit=profitability.profit,
+        margin=profitability.margin,
+        markup=profitability.markup,
+    )
+    return _without_scenario_profitability(result, cost_view, caller)
+
+
+# --- the salary-raise what-if (SC-6-04, ADR-0015) -------------------------------------------------
+# Not a fifth gate: this reuses `_without_scenario_personnel_costs` and
+# `_without_scenario_profitability` unchanged, on a `ScenarioCostView` whose `cost`/`paid_absence`
+# are hypothetical but whose `user_id`/`can_view_personnel_costs` are the real ones
+# `app.data.scenario_what_if.scenario_what_if_salary_raise_for_caller` resolved — the same
+# conjunction, applied to a hypothetical figure exactly as it is applied to a real one.
+
+
+def shape_scenario_what_if_salary_raise(
+    view: ScenarioWhatIfView, caller: CallerIdentity
+) -> ScenarioWhatIfSalaryRaiseResults:
+    """One scenario's whole-life result under a hypothetical salary raise (SC-6-04, ADR-0015).
+
+    Built from the same private helpers `shape_scenario_results` uses
+    (`_revenue_read_of`, `_personnel_cost_read_of`, `_without_scenario_personnel_costs`,
+    `_additional_cost_total_read_of`, `_without_scenario_profitability`,
+    `app.domain.scenario_results.scenario_profitability`) — never `shape_scenario_results` itself:
+    that function's own `ScenarioResultsView` is documented as built only by
+    `scenario_results_for_caller`, from two reads of the scenario that are known to agree about its
+    real status. A `ScenarioWhatIfView` makes no such claim about the *hypothetical* cost view it
+    carries, so this is its own, small composition rather than a call that would misrepresent what
+    it was handed (ADR-0015, point 4).
+    """
+    cost_view = view.cost_view
+    revenue = _revenue_read_of(view.revenue)
+    personnel_cost = _without_scenario_personnel_costs(
+        _personnel_cost_read_of(cost_view), cost_view, caller
+    )
+    additional_cost = _additional_cost_total_read_of(view.additional_cost)
+    profitability = scenario_profitability(
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+    )
+    result = ScenarioWhatIfSalaryRaiseResults(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        salary_raise_percent=view.salary_raise_percent,
         revenue=revenue,
         personnel_cost=personnel_cost,
         additional_cost=additional_cost,
