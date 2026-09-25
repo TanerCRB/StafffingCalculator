@@ -1,5 +1,11 @@
 """The commercial rule of one scenario, its Time & Material details and its Story Points details
-(F-06, F-06.1, F-06.4; SC-4-01, SC-4-04).
+(F-06, F-06.1, F-06.4, F-06.5; SC-4-01, SC-4-04, SC-4-05).
+
+SC-4-05 (Issue #69) adds `scope_ref`, a nullable pointer from a rule to one `scenario_delivery_
+segment` of *its own* scenario (ADR-0003 addendum 2026-09-25, D-3=A). It does not add a new entity
+("reguła łączona" is not a table) and it does not change how a rule's own model prices anything — it
+only widens *how many* rows one scenario may have and *which one* each points at. See `scope_ref`
+below and `SCENARIO_ID_WHOLE_SCENARIO_UNIQUE`/`SCENARIO_ID_SCOPE_UNIQUE`/`SCOPE_REF_FOREIGN_KEY`.
 
 Two details tables, one rule table, and every property below is a decision of ADR-0003 (rewritten
 and accepted at gate 1 of SC-4-01, extended by its 2026-09-25 addendum for SC-4-04) rather than a
@@ -52,11 +58,13 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     Numeric,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -100,6 +108,32 @@ STORY_POINTS_TYPE_AGREEMENT_FOREIGN_KEY = "fk_story_points_terms_commercial_term
 """The same mechanism as `TYPE_AGREEMENT_FOREIGN_KEY`, for `story_points_terms` (SC-4-04, K-04): a
 Story Points details row pointing at a rule of another model is unwritable, by this foreign key."""
 
+SCOPE_REF_FOREIGN_KEY = "fk_commercial_terms_scope_ref_scenario_id"
+"""The composite foreign key that makes cross-scenario integrity of `scope_ref` a property of the
+database (SC-4-05, Issue #69; criterion K-04) — `(scope_ref, scenario_id) -> scenario_delivery_
+segment (id, scenario_id)`, the same construction `TYPE_AGREEMENT_FOREIGN_KEY` already proves for
+the model discriminator. `NULL` (the whole-scenario rule) never participates in a foreign key check
+— an ordinary SQL rule, not a case this constraint special-cases."""
+
+SCOPE_REF_NULL_EXPRESSION = "scope_ref IS NULL"
+SCOPE_REF_NOT_NULL_EXPRESSION = "scope_ref IS NOT NULL"
+"""Spelled here as well as in migration `b7e3f19a6c52` rather than imported from it — the same
+convention `MODEL_TYPE_KNOWN_EXPRESSION` already follows for the discriminator CHECK;
+`tests/test_commercial_terms_schema.py` keeps the two copies honest."""
+
+SCENARIO_ID_WHOLE_SCENARIO_UNIQUE = "uq_commercial_terms_scenario_id"
+"""At most one rule with `scope_ref IS NULL` per scenario — the *same name* `e7b41c9d2a58` (SC-4-01)
+gave the non-partial `UNIQUE (scenario_id)` it shipped with. SC-4-05 narrows what this name means
+(one *whole-scenario* rule, not "one rule") rather than replacing it, so the SC-4-01 test and error
+message that already name it (`tests/test_commercial_terms_guards.py`,
+`tests/test_commercial_terms_schema.py`) keep meaning exactly what they said."""
+
+SCENARIO_ID_SCOPE_UNIQUE = "uq_commercial_terms_scenario_id_scope_ref"
+"""At most one rule per (scenario, segment) — no segment carries two rules (D-3=A, criterion K-02).
+New in SC-4-05: paired with `SCENARIO_ID_WHOLE_SCENARIO_UNIQUE` above, the two admit a
+whole-scenario rule and any number of distinct-segment rules coexisting under one scenario, while
+still refusing a second rule of the *same* scope, whichever scope that is."""
+
 
 class CommercialTerms(Base):
     """The commercial rule of one scenario: which model prices it (ADR-0003, points 1-2)."""
@@ -122,6 +156,19 @@ class CommercialTerms(Base):
     adds a model is one statement, while `ALTER TYPE … ADD VALUE` cannot run inside the one
     transaction `migrations/env.py` wraps a batch in."""
 
+    scope_ref: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    """`NULL` — the rule prices the whole scenario (the only shape before SC-4-05). A segment id —
+    the rule prices one `scenario_delivery_segment` of *this* scenario, enforced by the composite
+    foreign key `SCOPE_REF_FOREIGN_KEY` below, never by a plain `ForeignKey("scenario_delivery_
+    segment.id")`, which would accept a segment belonging to another scenario (SC-4-05, criterion
+    K-04). At most one row per scenario carries `NULL` and at most one row per (scenario, segment)
+    carries a given non-null value (`SCENARIO_ID_WHOLE_SCENARIO_UNIQUE`, `SCENARIO_ID_SCOPE_UNIQUE`
+    below) — a scenario is either governed by one whole-scenario rule or by any number of
+    distinct-segment rules, never two rules of the identical scope (D-3=A, criterion K-02). Nothing
+    on this row, and nothing in `app.data.commercial_terms`, knows which `staffing_position` belongs
+    to which segment (F-04 is out of scope of SC-4-05): this column proves disjointness of *rows*;
+    the per-segment allocation of revenue is not proven here."""
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -137,10 +184,34 @@ class CommercialTerms(Base):
 
     __table_args__ = (
         CheckConstraint(MODEL_TYPE_KNOWN_EXPRESSION, name="model_type_known"),
-        UniqueConstraint("scenario_id", name="uq_commercial_terms_scenario_id"),
+        # At most one whole-scenario rule per scenario (`scope_ref IS NULL`) — narrowed from the
+        # non-partial `UNIQUE (scenario_id)` SC-4-01 shipped, kept at the same name (migration
+        # `b7e3f19a6c52`, SC-4-05, D-3=A).
+        Index(
+            SCENARIO_ID_WHOLE_SCENARIO_UNIQUE,
+            "scenario_id",
+            unique=True,
+            postgresql_where=text(SCOPE_REF_NULL_EXPRESSION),
+        ),
+        # At most one rule per (scenario, segment) — no segment carries two rules.
+        Index(
+            SCENARIO_ID_SCOPE_UNIQUE,
+            "scenario_id",
+            "scope_ref",
+            unique=True,
+            postgresql_where=text(SCOPE_REF_NOT_NULL_EXPRESSION),
+        ),
         # The parent half of `TYPE_AGREEMENT_FOREIGN_KEY`: PostgreSQL accepts a foreign key only
         # against a unique constraint on exactly the referenced columns.
         UniqueConstraint("id", "model_type", name="uq_commercial_terms_id_model_type"),
+        # Cross-scenario integrity for `scope_ref` (SC-4-05, criterion K-04) — against
+        # `scenario_delivery_segment`'s own `UNIQUE (id, scenario_id)` (ADR-0016, point 4), the
+        # composite foreign key that decision prepared the ground for without naming this table.
+        ForeignKeyConstraint(
+            ["scope_ref", "scenario_id"],
+            ["scenario_delivery_segment.id", "scenario_delivery_segment.scenario_id"],
+            name=SCOPE_REF_FOREIGN_KEY,
+        ),
     )
 
 
