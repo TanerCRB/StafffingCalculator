@@ -707,3 +707,44 @@ Relacja do ADR-0004: `outcome_terms` — grupa 2, aneks 2026-09-25 SC-4-03 tam.
 | O-10 | Scenariusz outcome: `assumptions_used.hours_source`, `vendor_axis`, `rate_source` = `not_applicable`; dla T&M wartości bez zmian. |
 | O-11 | `/results`, what-if i porównanie scenariusza Story Points (szkicowego i zatwierdzonego) → `200`, `rate_source = story_points_terms`, bez `409`; prawdziwy wyścig zatwierdzenia T&M → `409` bez zmian. |
 | O-12 | Test migracji `d2f6a91c4b58` porównuje ją z własną zamrożoną listą (dwie wartości); stała modelu jest równa liście migracji wskazanej przez `LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` (`b9e3c7a1f264`, trzy wartości). |
+
+### 2026-09-25 — `rate_source` przychodu to deskryptor zależny od modelu, nie świadek statusu (SC-7-03, Issue #118, bramka 1, Q3/B)
+
+Punkt 9 mówi o "źródle stawek (żywy katalog albo migawka)"; aneks SC-4-04 nie odnotował, że
+kontrakt przychodu (`backend/app/api/schemas/commercial_terms.py`, `assumptions_used.rate_source`)
+ma już trzecią wartość `story_points_terms`. Rejestr tego dokumentu rozjechał się z kontraktem, a
+brak tego zapisu był przyczyną błędu #118: strażnik wyścigu porównywał `rate_source` przychodu z
+`rate_source` kosztu tak, jakby oba były tym samym słownikiem.
+
+> Uzgodnienie po merge z `main` (SC-4-03, PR #120), decyzja człowieka 2026-09-25: Q4 zmienione z A
+> na B (ADR-0015, aneks SC-7-03). Pkt 1–2 niżej przepisane w tym samym dniu, przed scaleniem SC-7-03 —
+> wpis nie był jeszcze częścią `main`; wcześniejsze brzmienie ("porównywanie nie może sterować
+> logiką") wykluczało klasyfikację z pkt 2 i przeczyło pkt 12b wyżej.
+
+1. `assumptions_used.rate_source` przychodu to deskryptor F-06.5 **zależny od modelu**: T&M zgłasza
+   `live_catalog` / `approved_snapshot` (stawka sprzedażowa z katalogu albo migawki, pkt 4–5), Story
+   Points — `story_points_terms` (dana własna reguły, bez katalogu i bez migawki), Outcome-based —
+   `not_applicable` (aneks SC-4-03, pkt 8). Odpowiedzi bez modelu albo z modelem nieobsługiwanym
+   (`no_commercial_terms`, `unsupported_model_type`) i niekompletna reguła T&M zgłaszają wartość
+   wybraną ze statusu (`live_catalog` / `approved_snapshot`). Każdy kolejny model (Fixed Price #66)
+   dopisuje tu swoją wartość w tym samym zadaniu, w którym rozszerza kontrakt — zgodnie z konwencją
+   aneksu SC-4-03, pkt 10a/12a.
+2. Słownik `rate_source` przychodu i słownik `rate_source` kosztu (ADR-0013, ADR-0015 pkt 4) to **dwa
+   odrębne słowniki**, które dzielą dwie wartości. **Wartości z jednego nie porównuje się z
+   wartościami z drugiego.** `rate_source` przychodu wolno użyć do jednej decyzji logicznej:
+   klasyfikacji, czy przychód zależy od statusu scenariusza (`rate_source ∈ STATUS_DEPENDENT_SOURCES`
+   — `live_catalog`, `approved_snapshot`). To jest uściślenie pkt 8, 10a i 12b aneksu SC-4-03, nie
+   odstępstwo od ich semantyki: strażnik wyścigu nadal uwzględnia przychód wyłącznie wtedy, gdy jego
+   źródło zależy od statusu, i nadal nie traktuje `story_points_terms` ani `not_applicable` jako
+   dowodu wyścigu ani jego braku. **Zmienia się mechanizm (odstępstwo od brzmienia pkt 10a/12b, zapis
+   wymagany zdaniem końcowym pkt 10):** strażnik nie porównuje `rate_source` przychodu z `rate_source`
+   kosztu, lecz statusy scenariusza zamrożone przez trzy odczyty (przychód, koszt osobowy, koszt
+   dodatkowy) — reguła w ADR-0015, aneks SC-7-03, pkt 2. Zdania "strażnik porównuje wyłącznie źródła
+   zależne od statusu" w pkt 8, 10a i 12b czyta się odtąd jako "strażnik uwzględnia przychód
+   wyłącznie, gdy jego źródło należy do źródeł zależnych od statusu". Obowiązek pkt 10a (wartość spoza
+   zbioru dla modelu bez katalogu, test wyścigu `/results` dla nowego modelu) bez zmian; dochodzi
+   jawna klasyfikacja każdej nowej wartości do zbioru albo poza niego (ADR-0015, aneks SC-7-03, pkt
+   7).
+3. Reguła 10 Strażnika bez zmian: poprawka strażnika nie może skłonić przychodu modelu niezależnego od
+   katalogu do czytania statusu ani stawek katalogu tylko po to, by zgłosić wartość porównywalną z
+   kosztem.

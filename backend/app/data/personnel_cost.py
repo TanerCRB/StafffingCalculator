@@ -292,6 +292,15 @@ class ScenarioCostView:
     paid_absence: PaidAbsenceCostAnswer
     """The paid-absence component (SC-5-06; ADR-0013, aneks 2026-09-23 SC-5-06) — beside `cost`,
     never added to it. Carried on the same view so the same conjunction gates it (point 6)."""
+    status_at_read: ScenarioStatus
+    """The scenario's status **as this read saw it** — the status that chose live catalogue versus
+    snapshot for `cost` — copied into an immutable value right after this read's own
+    `session.refresh` (SC-7-03, Issue #118; ADR-0015, aneks SC-7-03, point 3). Never
+    `scenario.status` read later: `scenario` is an identity-mapped object another read in the same
+    session may refresh again. Compared against `app.data.commercial_terms.ScenarioCommercialView.
+    status_at_read` by the race guard in `app.data.scenario_results`/`app.data.scenario_what_if`.
+    Not a personnel-cost figure and never serialised: `app.api.response_shaping` does not read
+    it."""
     fully_loaded_cost: FullyLoadedPersonnelCostAnswer
     """The fully loaded base cost (SC-5-02) — a second, named field beside `cost`, never a
     replacement of it (criterion K-01). Gated by the identical conjunction, through the identical
@@ -316,6 +325,7 @@ def scenario_cost_for_caller(
     # Refreshed, not trusted from the identity map: the status decides live-versus-snapshot, and an
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
+    status_at_read = scenario.status
     source, months = _worked_months(session, scenario)
     # The paid-absence component is costed at **these** rates — the base cost's resolution of each
     # (position, month), live or frozen by the same status — and asks no predicate of its own
@@ -337,4 +347,5 @@ def scenario_cost_for_caller(
         fully_loaded_paid_absence=fully_loaded_paid_absence_cost(
             absence_months, scenario_currency=scenario.currency
         ),
+        status_at_read=status_at_read,
     )

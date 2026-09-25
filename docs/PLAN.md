@@ -2043,4 +2043,8 @@ history / this file's own change log, not as tracked product work.
   gwarantowany w `/results` (ADR-0003 aneks pkt 13d, warunek wstępny `scope_ref` w API); frontend
   bez przychodu oczekiwanego (D-9). Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-7-03** — Strażnik wyścigu `/results`, `/compare` i what-if porównuje status scenariusza,
+  nie `rate_source` (naprawa 409 dla Story Points). Zarezerwowane, kryteria i decyzje bramki 1 w
+  Issue #118.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
