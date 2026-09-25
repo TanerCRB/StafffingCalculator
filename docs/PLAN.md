@@ -1254,8 +1254,20 @@ history / this file's own change log, not as tracked product work.
   zmienną stawką sprzedażową (migawka bez ścieżki UPDATE, nazwane w aneksie ADR-0004 pkt 7). Zob.
   `docs/architecture/capabilities.md`.
 
-- [ ] **SC-5-02** — Rozdziel narzuty osobowe od stawki bazowej, policz koszt w pełni obciążony
+- [x] **SC-5-02** — Rozdziel narzuty osobowe od stawki bazowej, policz koszt w pełni obciążony
   (F-07), rozszerzenie SC-5-01/SC-5-06 (Issue #77).
+  **Done 2026-09-25:** PR #128 (scalone `e807349`). Developer: 918/918 testów backendu, `ruff`
+  czyste, migracja `9b3f6a1d0c47` (zlinearyzowana po merge z SC-4-05 na `b9e3c7a1f264`),
+  `backend/tests/test_personnel_cost_surcharge.py` (K-01..K-08 + regresja QA + mid-month
+  uniformity). QA: znalazła realną regresję nienazwaną przy implementacji (zatwierdzenie
+  scenariusza z narzutem cicho zerowało go — `costed_month_windows` czytał literał zamiast
+  kolumny migawki), naprawiona przez developera, mutacje na 6 mechanizmach uruchomione i zabite
+  (K-02, K-05, K-03, K-04, regresja migawki, K-07). Invariant Guardian (S-01) i Reviewer (R-01)
+  znalazły niezależnie tę samą lukę — zmiana samego narzutu w środku miesiąca cicho psuła cały
+  miesiąc — naprawiona rozszerzeniem `month_has_cost_rate` o uniformity check (mirror istniejącej
+  reguły dla stawki bazowej), werdykt końcowy obu PASS. Security-auditor: PASS WITH RESERVATIONS
+  (klasyfikacja surowego narzutu zaimplementowana zgodnie z bramką 1; dwa Medium dokumentacyjne —
+  rozszerzony payload B-01, stale docstringi po fixie migawki — naprawione, wpis ADR-0005 poniżej).
   *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07 (analyst + architect, bramka 1,
   2026-09-25):
   1. (K-01) Suma narzutów/premii/benefitów + stawka bazowa = koszt w pełni obciążony, pole odrębne
