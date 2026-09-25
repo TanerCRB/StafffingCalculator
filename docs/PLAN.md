@@ -1046,9 +1046,59 @@ history / this file's own change log, not as tracked product work.
   dużych projektach; strażnik `mounted` przy zapisie jest nieobserwowalny w React 18 (dekoracyjny,
   udokumentowane w teście).
 
-- [ ] **SC-4-04** — Story Points — wyliczanie przychodu scenariusza (F-06.4), czwarty model
-  komercyjny po T&M (SC-4-01). Zarezerwowane, kryteria analityka i impact map architekta (Draft —
-  pending approval, aneks ADR-0003) w Issue #68, otwarte pytania D-1/D-4/D-5/D-6 dla bramki 1.
+- [x] **SC-4-04** — Story Points — wyliczanie przychodu scenariusza (F-06.4), czwarty model
+  komercyjny po T&M (SC-4-01): reguła "cena za zaakceptowany Story Point × liczba zaakceptowanych
+  punktów", zero konwersji Story Points ↔ godziny (Issue #68).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-05: (1) AC-09 — 25 zaakceptowanych punktów
+  × 1000 PLN = 25000 PLN dokładnie; niezaakceptowane/częściowe punkty nie generują przychodu; (2)
+  brak konwersji Story Points ↔ godziny — drastyczna zmiana `billable_hours` scenariusza nie rusza
+  przychodu SP, kontrast na regule T&M w tym samym scenariuszu, która MUSI zareagować; (3)
+  dyspozytor wielu modeli komercyjnych (`REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL`) dowiedziony
+  PIERWSZY RAZ na DWÓCH realnych modelach w bazie (T&M + SP), nie symulacją `monkeypatch`;
+  `unsupported_model_type`/`CommercialTermsNotCopyable` nadal poprawne z realnym drugim wpisem; (4)
+  powtórzenie dla nowej tabeli szczegółów `story_points_terms` trzech boundary już dowiedzionych dla
+  T&M — zasięg projektu (404 nieodróżnialne, także dla zapisu), niemutowalność zapisu do
+  scenariusza `approved` (strażnik w TEJ SAMEJ instrukcji zapisu SP, dowiedzione realnym wyścigiem
+  dwóch połączeń), kaskada kopiowania (agregat reguła+szczegóły, jeden wpis
+  `SCENARIO_CHILD_COPIERS`), zgodność typu przez złożony klucz obcy w bazie; (5) odpowiedź
+  reguły/przychodu SP nie niesie żadnego pola kosztowego — dowód przez równość zbioru pól.
+  **Decyzje bramki 1 (2026-09-25, analyst + architect, zaakceptowane przez człowieka):** D-1 —
+  wyłącznie wariant "za zaakceptowany punkt" (Requirements §8, open decision #2 rozstrzygnięta dla
+  MVP), wariant "sprint fee" poza zakresem; D-4 — limit budżetowy poza zakresem (AC-09 go nie
+  wymaga); D-5 — `accepted_points` jako pojedyncza wartość wpisywana raz przy tworzeniu reguły, zero
+  ścieżki edycji w MVP (zmiana wymaga kopii scenariusza); D-6 — kształt API jako unia dyskryminowana
+  po `model_type`, wartości dziedzinowe SP do TEJ SAMEJ strażonej instrukcji zapisu co T&M. Prognoza
+  przychodu z velocity per zespół i rozliczenie punktu przenoszonego między sprintami trwale poza
+  zakresem MVP — brak encji "team" i brak tożsamości jednostkowej punktu w rejestrze.
+  **Nowa/zmieniona decyzja architektoniczna:** aneks do **ADR-0003** (2026-09-25, sekcja "impact map
+  i decyzje bramki 1 dla SC-4-04") — rozszerzenie dyskryminatora/dyspozytora, zasięgu i uprawnień,
+  znacznika współbieżności i okien obowiązywania na drugi realny model, bez zmiany istniejących
+  tabel (wzorzec ADR-0003 "Konsekwencje": "Nowy model komercyjny = nowa tabela szczegółów +
+  rozszerzenie CHECK + gałąź dyspozytora"); aneks do **ADR-0004** wyłącznie potwierdzający
+  (kopiowanie/strażnik zapisu obejmują każdą tabelę zarejestrowaną w `DETAIL_TABLE_BY_MODEL`, nie
+  tylko `tm_terms`).
+  **Out of scope (explicit):** wariant "sprint fee" (opłata za sprint ze zobowiązaniem punktowym),
+  limit budżetowy, prognoza z velocity per zespół, rozliczenie punktu przenoszonego między
+  sprintami, edycja `accepted_points` po utworzeniu reguły, reguły rework/re-estymacji, progi
+  cenowe (pricing tiers), koszt/zysk/marża (blok 5/7), ekran (osobne przyszłe zadanie, wzorem
+  SC-4-01/SC-4-06), wielowalutowość w jednej regule.
+  Podstawa: Issue #68, `Wymagania/Requirements_EN.md` §2, §4 F-06.4, §7 AC-09, §8 open decision #2,
+  `docs/architecture/decisions/ADR-0003-model-modeli-komercyjnych.md` (aneks 2026-09-25).
+  **Done 2026-09-25:** PR #115 (scalone `4011f7c`). Dowód: `backend/tests/test_story_points_revenue.py`,
+  `backend/tests/test_story_points_terms.py` — 796 testów backendowych zielono (było 772 przed
+  mergem z main, 760 na moment otwarcia PR), `ruff check .` czysty. QA: PASS WITH GAPS — luka w
+  teście wyścigu (nie łapał drugiego, niestrzeżonego statementu post-commit) znaleziona i zamknięta
+  nowym testem strukturalnym w tej samej rundzie, 5/5 mutacji zabite mutacyjnie. Invariant Guardian
+  PASS (zero naruszeń reguł 1–21). Reviewer: **R-01 (High)** — `story_points_terms.currency` nigdy
+  nie było zestawiane ze `scenarios.currency`, ryzyko cichego mieszania walut w
+  profit/margin/markup — naprawione tym samym wzorcem co pozostałe cztery komponenty przychodu/
+  kosztu (T&M, personnel_cost, paid_absence_cost, additional_cost); ponowna recenzja potwierdziła
+  **R-01 CLOSED**. Security-auditor PASS (migracja w zakresie): reużyty mechanizm
+  uprawnień/zasięgu bez zmian, brak nowych zależności, brak wektora SQL injection, walidacja
+  liczbowa zgodna z CHECK w bazie. Synchronizacja z `main` przed PR: konflikt mechaniczny w
+  `backend/tests/conftest.py` (dwie niezależne funkcje fixture wstawione w tym samym miejscu przez
+  SC-4-04 i SC-1-11 — rozwiązany, zachowano obie) i rozjazd łańcucha migracji Alembic z SC-1-11
+  (dwie głowy z tego samego `down_revision` — zlinearyzowane bez zmiany treści żadnej migracji).
 
 - [x] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
   worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
