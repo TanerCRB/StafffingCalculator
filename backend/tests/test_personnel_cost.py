@@ -181,11 +181,19 @@ def test_k_01_one_hundred_twenty_planned_hours_at_one_hundred_twenty_is_14400(
                 "effective_to": None,
                 "default_cost_rate": "120.0000",
                 "currency": "PLN",
+                # SC-5-02 (Issue #77): `make_rate` defaults to no surcharge configured — the same
+                # "no surcharge" a tuple written before SC-5-02 existed carries.
+                "surcharge_percent": "0.000",
+                "includes_surcharge": False,
             }
         ],
         "unresolved_months": [],
         "currencies": ["PLN"],
     }
+    assert cost["fully_loaded_amount"] == cost["amount"] == "14400.00", (
+        "no surcharge configured on this tuple — the fully loaded cost equals the base cost"
+    )
+    assert cost["surcharge_amount"] == "0.00"
 
 
 def test_k_01_the_sum_is_rounded_once_at_the_end_never_per_month(
@@ -617,6 +625,15 @@ COST_FIELDS = {
     "paid_absence_budget_amount",
     "paid_absence_currency",
     "paid_absence_assumptions_used",
+    # SC-5-02 (Issue #77; ADR-0013 aneks 2026-09-25, point 8 named this task as exactly the one
+    # that would re-arm this equality with a fully loaded field — "musi nazwać to wprost", not a
+    # surprise regression). `cost_basis` stays the literal `"base"` and `amount` is untouched
+    # (K-01): the fully loaded cost is these two new, separate fields, never a widening of the two
+    # above.
+    "fully_loaded_amount",
+    "surcharge_amount",
+    "paid_absence_fully_loaded_amount",
+    "paid_absence_surcharge_amount",
 }
 ASSUMPTIONS_FIELDS = {
     "hours_source",
@@ -627,15 +644,24 @@ ASSUMPTIONS_FIELDS = {
     "currencies",
 }
 WINDOW_FIELDS = {
-    "source_rate_id", "effective_from", "effective_to", "default_cost_rate", "currency"
+    "source_rate_id",
+    "effective_from",
+    "effective_to",
+    "default_cost_rate",
+    "currency",
+    # SC-5-02: the window's own surcharge percentage and flag, ungated like the catalogue's own
+    # field (K-04) even though this payload sits behind the SC-1-08 conjunction as a whole.
+    "surcharge_percent",
+    "includes_surcharge",
 }
 UNRESOLVED_FIELDS = {"position_id", "period_month"}
 
 
 def _assert_field_sets(body: dict[str, Any]) -> None:
-    """Every level of the payload, compared by **equality** with the decided field set — so a
-    loaded cost, an overhead, a profit, a margin or a selling rate added at any level fails here
-    the day it is added (ADR-0013, point 5)."""
+    """Every level of the payload, compared by **equality** with the decided field set — so an
+    overhead, a profit, a margin or a selling rate added at any level fails here the day it is
+    added (ADR-0013, point 5) — a fully loaded cost specifically does not fail here any more since
+    SC-5-02, which is the field set change ADR-0013 point 8 pre-announced for this task."""
     assert set(body) == RESPONSE_FIELDS
     cost = body["personnel_cost"]
     assert set(cost) == COST_FIELDS

@@ -627,6 +627,8 @@ def create_catalog_rate(
             unit=payload.unit,
             effective_from=payload.effective_from,
             effective_to=payload.effective_to,
+            surcharge_percent=payload.surcharge_percent,
+            includes_surcharge=payload.includes_surcharge,
         )
     except CatalogWriteRefused as refusal:
         raise HTTPException(
