@@ -476,6 +476,7 @@ REVENUE_MODULES = {
     "app.data.commercial_terms",
     "app.domain.revenue",
     "app.domain.revenue_time_and_material",
+    "app.domain.revenue_story_points",
 }
 PERSONNEL_COST_MODULES = {"app.data.personnel_cost", "app.domain.personnel_cost"}
 
@@ -484,7 +485,8 @@ def test_k_10_the_additional_cost_and_the_revenue_and_personnel_cost_modules_nev
     """K-10 (D-8; ADR-0014, "Konsekwencje"; rule 10 of the Invariant Guardian) — structurally.
 
     The two additional-cost modules import nothing of the revenue path and nothing of the personnel
-    cost; the five revenue and personnel-cost modules import nothing of the additional cost. The
+    cost; the six revenue and personnel-cost modules (T&M and Story Points since SC-4-04) import
+    nothing of the additional cost. The
     contrast keeps this from passing by reading files that import nothing: the copy registry
     (`app.data.project_writes`) does import the additional-cost data module, and the additional-cost
     data module does import its own domain module.
@@ -497,6 +499,7 @@ def test_k_10_the_additional_cost_and_the_revenue_and_personnel_cost_modules_nev
         "app/data/commercial_terms.py",
         "app/domain/revenue.py",
         "app/domain/revenue_time_and_material.py",
+        "app/domain/revenue_story_points.py",
         "app/data/personnel_cost.py",
         "app/domain/personnel_cost.py",
     ):

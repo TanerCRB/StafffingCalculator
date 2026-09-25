@@ -1,4 +1,4 @@
-"""A scenario's commercial rule and its revenue (F-06, F-06.1; SC-4-01).
+"""A scenario's commercial rule and its revenue (F-06, F-06.1, F-06.4; SC-4-01, SC-4-04).
 
 Under `/projects/{project_id}/scenarios/{scenario_id}/commercial-terms`:
 
@@ -20,8 +20,10 @@ reached (criterion K-05). A scenario **with no rule** is not one of them: it is 
 revenue is the named `no_commercial_terms` state, because "no rule yet" is information about a
 scenario the caller may see, not about whether it exists.
 
-**No edit and no delete path.** The model is immutable after the write (ADR-0003, point 2) and
-`tm_terms` has no column to edit; the one write path is the one guarded, raced and tested.
+**No edit and no delete path.** The model is immutable after the write (ADR-0003, point 2) and no
+details table (`tm_terms`, `story_points_terms`) has an edit path — a changed Story Points
+`accepted_points` needs a copy of the scenario (ADR-0003 addendum 2026-09-25, D-5/A), the same
+mechanism a changed model would. The one write path is the one guarded, raced and tested.
 """
 
 import uuid
@@ -35,6 +37,7 @@ from app.api.response_shaping import shape_scenario_commercial_terms
 from app.api.schemas.commercial_terms import (
     CommercialTermsCreateRequest,
     ScenarioCommercialTerms,
+    StoryPointsTermsCreateRequest,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.commercial_terms import (
@@ -96,7 +99,7 @@ def read_commercial_terms(
     "",
     response_model=ScenarioCommercialTerms,
     status_code=status.HTTP_201_CREATED,
-    summary="Set a scenario's commercial rule (Time & Material)",
+    summary="Set a scenario's commercial rule (Time & Material or Story Points)",
     responses={
         404: {"description": COMMERCIAL_TERMS_NOT_FOUND_DETAIL},
         409: {
@@ -125,9 +128,23 @@ def create_scenario_commercial_terms(
     - **500** — a write that broke for a reason no SQLSTATE classified; never dressed as a `409`.
     - **403** — the permission dependency, before the database.
     """
+    domain_values = (
+        {
+            "price_per_point": payload.price_per_point,
+            "accepted_points": payload.accepted_points,
+            "currency": payload.currency,
+        }
+        if isinstance(payload, StoryPointsTermsCreateRequest)
+        else None
+    )
     try:
         view = create_commercial_terms(
-            session, caller, project_id, scenario_id, model_type=payload.model_type
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            model_type=payload.model_type,
+            domain_values=domain_values,
         )
     except CommercialTermsWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
