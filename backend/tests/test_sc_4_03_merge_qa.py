@@ -6,7 +6,8 @@
   (`tests/test_story_points_terms.py`). `downgrade` odtwarzający listę `IN` bez `story_points`
   przechodził więc po stronie bazy (na regule T&M) i był łapany wyłącznie porównaniem tekstu
   `pg_get_constraintdef`. Tu reguła Story Points ze szczegółami musi przejść `downgrade` do
-  `d2f6a91c4b58` i ponowny `upgrade` bez zmiany wartości — baza sama odrzuca zawężoną listę.
+  `b7e3f19a6c52` (lista `IN` z `d2f6a91c4b58`) i ponowny `upgrade` bez zmiany wartości — baza sama
+  odrzuca zawężoną listę.
 - **Kontrast: ta sama próba z zapisaną regułą Outcome-based jest odrzucona i nic nie ginie.**
   Docstring `downgrade` obiecuje, że pozostała reguła `outcome_based` sprawi, iż odtworzenie CHECK
   zostanie odrzucone — "celowo: downgrade nie usuwa po cichu reguł scenariuszy". Dotąd nie
@@ -49,7 +50,9 @@ from tests.conftest import (
 from tests.test_outcome_revenue_copy import FULL_DETAILS
 
 OUTCOME_REVISION = "b9e3c7a1f264"
-PREVIOUS_REVISION = "d2f6a91c4b58"
+PREVIOUS_REVISION = "b7e3f19a6c52"
+"""`down_revision` migracji `b9e3c7a1f264` po drugiej linearyzacji (merge SC-4-05); `b7e3f19a6c52`
+nie dotyka CHECK dyskryminatora — lista po `downgrade` to nadal lista z `d2f6a91c4b58`."""
 
 DETAILS_BY_MODEL = {
     "time_and_material": TmTerms,
@@ -108,7 +111,7 @@ def _delete_committed(engine: Engine, rule_id, scenario_id, project_id) -> None:
 def test_merge_a_story_points_rule_survives_the_downgrade_and_the_upgrade_of_the_outcome_migration(
     engine: Engine, alembic_config: Config
 ) -> None:
-    """Reguła Story Points ze szczegółami (1000 × 25 PLN) przechodzi `downgrade` do `d2f6a91c4b58`
+    """Reguła Story Points ze szczegółami (1000 × 25 PLN) przechodzi `downgrade` do `b7e3f19a6c52`
     i ponowny `upgrade` bez zmiany. Mutacja "`downgrade` odtwarza listę `IN` bez `story_points`"
     (albo `upgrade` z listą bez `story_points`): baza odrzuca odtworzenie CHECK na tej regule —
     niezależnie od tego, czy stała w migracji i jej strażnik dryfu się zgadzają."""

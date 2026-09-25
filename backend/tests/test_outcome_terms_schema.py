@@ -48,9 +48,10 @@ from tests.conftest import (
 )
 
 MIGRATION_REVISION = "b9e3c7a1f264"
-PREVIOUS_REVISION = "d2f6a91c4b58"
-"""SC-4-04 (Story Points) — `down_revision` tej migracji po linearyzacji (decyzja człowieka
-2026-09-25)."""
+PREVIOUS_REVISION = "b7e3f19a6c52"
+"""SC-4-05 (`scope_ref`) — `down_revision` tej migracji po drugiej linearyzacji (merge z `main`
+2026-09-25). `b7e3f19a6c52` nie dotyka CHECK dyskryminatora, więc lista odtwarzana przez
+`downgrade` pozostaje listą z `d2f6a91c4b58` (`PREVIOUS_CHECK_MIGRATION_PATH`)."""
 MIGRATION_PATH = (
     Path(__file__).resolve().parents[1]
     / "migrations"
@@ -246,7 +247,8 @@ def test_o_6_the_discriminator_admits_both_models_and_still_refuses_an_unknown_o
 
 def test_the_model_and_the_outcome_migration_agree_on_every_sql_expression() -> None:
     """Strażnik dryfu: kopie wyrażeń `outcome_terms` w migracji `b9e3c7a1f264` są wyrażeniami
-    modelu, a `downgrade` odtwarza dokładnie wyrażenie z `d2f6a91c4b58` (lista sprzed migracji, nie
+    modelu, a `downgrade` odtwarza dokładnie wyrażenie z `d2f6a91c4b58` — ostatniej migracji
+    odtwarzającej ten CHECK przed `b9e3c7a1f264` (lista sprzed migracji, nie
     pusta). Lista `IN` dyskryminatora porównana z **zamrożoną listą tej migracji**, nie z bieżącym
     `MODEL_TYPES` — kolejny model poszerzy model i swoją migrację, nie tę (R-02)."""
     migration = _load(MIGRATION_PATH, "sc_4_03_migration")
@@ -279,7 +281,7 @@ def alembic_config(database_url: str) -> Config:
 def test_o_6_a_tm_rule_survives_the_downgrade_and_the_upgrade_of_the_outcome_migration(
     engine: Engine, alembic_config: Config
 ) -> None:
-    """O-6 — zatwierdzona w bazie reguła T&M przechodzi `downgrade` do `d2f6a91c4b58` (CHECK
+    """O-6 — zatwierdzona w bazie reguła T&M przechodzi `downgrade` do `b7e3f19a6c52` (CHECK
     odtworzony z `time_and_material`, `story_points`) i ponowny `upgrade` (CHECK z pełną listą) bez
     zmiany; `outcome_terms` znika i wraca. Mutacja "downgrade odtwarza listę z samym
     `outcome_based`": odtworzenie CHECK odrzucone przez bazę na istniejącej regule T&M.

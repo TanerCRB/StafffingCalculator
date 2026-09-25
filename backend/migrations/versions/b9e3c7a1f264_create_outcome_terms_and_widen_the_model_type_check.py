@@ -12,14 +12,18 @@ R-02/R-03).
 usuwane i odtwarzane z **pełną listą `IN`** — `time_and_material`, `story_points` i `outcome_based`
 (ADR-0003, aneks SC-4-03, pkt 10c). Migracja niosąca tylko własną wartość po cichu unieważniłaby
 zapisane reguły T&M i Story Points przy walidacji ograniczenia; `downgrade` odtwarza listę sprzed
-migracji (`time_and_material`, `story_points` — dokładnie wyrażenie z `d2f6a91c4b58`), nie listę
-pustą ani jednoelementową z nową wartością. Odtworzenie waliduje istniejące wiersze pod blokadą
-`ACCESS EXCLUSIVE` na `commercial_terms` — tabela jest mała (jedna reguła na scenariusz), a
-`lock_timeout` niżej ogranicza czekanie.
+migracji (`time_and_material`, `story_points` — dokładnie wyrażenie z `d2f6a91c4b58`, którego
+nie zmienia `b7e3f19a6c52`), nie listę pustą ani jednoelementową z nową wartością. Odtworzenie
+waliduje istniejące wiersze pod blokadą `ACCESS EXCLUSIVE` na `commercial_terms` — tabela jest mała
+(reguła całego scenariusza i co najwyżej jedna na segment, SC-4-05), a `lock_timeout` niżej
+ogranicza czekanie.
 
 **Linearyzacja (decyzja człowieka 2026-09-25):** migracja powstała równolegle z SC-4-04 na
 `a3d9e6f20c71`; przy merge z `main` jej `down_revision` przepięto na `d2f6a91c4b58` (Story Points),
-żeby historia miała jedną głowę, a lista `IN` objęła oba wcześniejsze modele.
+żeby historia miała jedną głowę, a lista `IN` objęła oba wcześniejsze modele. Przy drugim merge z
+`main` (SC-4-05, `scope_ref`) przepięto ją ponownie, na `b7e3f19a6c52` — ta migracja nie dotyka
+`ck_commercial_terms_model_type_known`, więc lista sprzed tej migracji pozostaje listą z
+`d2f6a91c4b58`.
 
 **Co baza egzekwuje w `outcome_terms`** (fixture, skrypt ani import nie przechodzą przez Pydantic):
 
@@ -37,7 +41,7 @@ zniknięcia wiersza zatwierdzonego scenariusza), `updated_at` (znacznik należy 
 migawki (ADR-0004, aneks SC-4-03, pkt 4 — nic spoza scenariusza).
 
 Revision ID: b9e3c7a1f264
-Revises: d2f6a91c4b58
+Revises: b7e3f19a6c52
 Create Date: 2026-09-25
 """
 
@@ -47,7 +51,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b9e3c7a1f264"
-down_revision: str | None = "d2f6a91c4b58"
+down_revision: str | None = "b7e3f19a6c52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -67,8 +71,8 @@ _MODEL_TYPE_KNOWN_EXPRESSION = (
 pkt 10c)."""
 
 _PREVIOUS_MODEL_TYPE_KNOWN_EXPRESSION = "model_type IN ('time_and_material', 'story_points')"
-"""Lista sprzed tej migracji — dokładnie wyrażenie z `d2f6a91c4b58` (SC-4-04); odtwarza ją
-`downgrade`."""
+"""Lista sprzed tej migracji — dokładnie wyrażenie z `d2f6a91c4b58` (SC-4-04), niezmienione przez
+`b7e3f19a6c52` (SC-4-05); odtwarza ją `downgrade`."""
 
 _MODEL_TYPE_KNOWN = "ck_commercial_terms_model_type_known"
 

@@ -1100,6 +1100,50 @@ history / this file's own change log, not as tracked product work.
   SC-4-04 i SC-1-11 — rozwiązany, zachowano obie) i rozjazd łańcucha migracji Alembic z SC-1-11
   (dwie głowy z tego samego `down_revision` — zlinearyzowane bez zmiany treści żadnej migracji).
 
+- [ ] **SC-4-05** — Reguły wspólne modeli komercyjnych: `scope_ref` na `commercial_terms`, ochrona
+  przed podwójnym rozliczeniem między regułą projektu a regułą segmentu, cross-scenario integrity
+  (F-06.5, część), warunek wstępny SC-1-11 (encja segmentu, bramka 3 zamknięta) i SC-4-04 (drugi
+  model komercyjny) (Issue #69).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-04 (analyst, runda 3, 2026-09-25):
+  1. (K-01) Reguła projektu i reguła segmentu dzielące tę samą policzalną pracę (dwie reguły T&M,
+     zasięgi zagnieżdżone, te same pozycje/miesiące obsady) — przychód liczony raz per
+     (pozycja, miesiąc), nie sumą obu reguł. Mutacja: usunięcie predykatu rozłączności zasięgów.
+     Para modeli musi faktycznie czytać `staffing_position_allocation` (np. dwie reguły T&M) — T&M
+     + Story Points nie dzielą żadnej policzalnej jednostki (godziny vs. punkty), nie zabija tej
+     mutacji.
+  2. (K-02) Reguła "cały scenariusz" (`scope_ref IS NULL`) i reguła "jeden segment" nie mogą
+     współistnieć bez jawnej reguły łączonej — zaimplementowanej jako rozłączność wartości
+     `scope_ref` wymuszona ograniczeniem w bazie (D-3=A), zastępującym `UNIQUE (scenario_id)`
+     (ADR-0003 pkt 1). Mutacja: usunięcie ograniczenia bez zastąpienia.
+  3. (K-03) Zatwierdzony scenariusz z regułą na poziomie segmentu pozostaje odtwarzalny
+     mechanizmem, który dany model faktycznie używa — migawka stawek dla T&M-kształtnych
+     (rozszerzenie testu SC-4-01 K-09), strażnik zapisu dla Story-Points-kształtnych (rozszerzenie
+     testu SC-4-04 K-04(b)). Mutacja: `scope_ref` jako kolumna zwalniająca z istniejącego
+     strażnika/migawki.
+  4. (K-04) Złożony FK `(segment_id, scenario_id) → scenario_delivery_segment (id, scenario_id)`
+     odrzuca segment INNEGO scenariusza niż reguła (cross-scenario integrity, wzorzec
+     `TYPE_AGREEMENT_FOREIGN_KEY` na `tm_terms`). Mutacja: FK zawężony do samego `segment_id`.
+
+  **Decyzje bramki 1 (2026-09-25, analyst + architect, zaakceptowane przez człowieka bez
+  zastrzeżeń):** D-1=A (przypisanie przychodu do okresów/termin płatności, F-06.5 pierwsza połowa,
+  pozostaje odłożone — poza zakresem tego zadania); D-2=potwierdzone (porównanie modeli przez F-09/
+  duplikację scenariusza i ujawnianie założeń przez `assumptions_used` już pokryte, bez nowego
+  mechanizmu); D-3=A (reguła łączona = rozłączność `scope_ref` w bazie, nie nowa encja —
+  rozłączność dowiedziona na poziomie SCHEMATU wierszy reguł, NIE na poziomie PRZYCHODU: żadna
+  opcja nie liczy przychodu per segment bez F-04, poza zakresem, patrz Out of scope); D-4=A
+  (`copy_scenario_delivery_segments` przestawione przed `copy_commercial_terms` w
+  `SCENARIO_CHILD_COPIERS`, mapowanie `scope_ref` po `(scenario_id, name)`).
+
+  **Out of scope (explicit):** przypisanie przychodu do okresów i termin płatności (F-06.5, D-1);
+  porównanie modeli i ujawnianie założeń jako nowy mechanizm (D-2, już pokryte gdzie indziej);
+  ochrona przed podwójnym rozliczeniem na poziomie KWOTY przychodu (dopiero po F-04, pozycja obsady
+  ↔ segment — dziś nieistniejącej); zysk/marża/koszt (blok 5/7); historia wersji warunków poza
+  migawką zatwierdzenia; API dla segmentu (ADR-0016 pkt 8, nadal bez nośnika).
+
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-06.5; `ADR-0003-model-modeli-komercyjnych.md`
+  (aneksy 2026-09-25, bramka 1 SC-4-05); `ADR-0016-segment-dostawy-scenariusza.md` (aneks
+  2026-09-25); `ADR-0004-wersjonowanie-kalkulacji.md`; `docs/PLAN.md` SC-1-11, SC-4-01, SC-4-04.
+
 - [x] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
   worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
   predykatem lustrzanym do ADR-0003/R-01), koszt jawnie bazowy (nie w pełni obciążony), bramka
@@ -1875,6 +1919,11 @@ history / this file's own change log, not as tracked product work.
   `amount` i `category_revenues` zwykle `fixed_fee`, `unit_rate`, `success_bonus`, `currency`, a
   przy zadziałaniu ograniczenia także `revenue_min`/`revenue_max`; akceptacja utrzymana,
   nieeksploatowalne dziś (`PLACEHOLDER_PERMISSIONS`), do ponownego otwarcia przy zadaniu ról.
+  **Integracja z SC-4-05 (2026-09-25):** `scope_ref` (SC-4-05, PR #119) dotyczy reguł
+  `outcome_based` tak samo jak reguł pozostałych modeli — kolumna żyje na `commercial_terms`, nie
+  na `outcome_terms`; migracja `b9e3c7a1f264` zlinearyzowana na `b7e3f19a6c52` (lista `IN` i
+  downgrade bez zmian); decyzje rundy weryfikacji 2 obowiązują bez zmian — ADR-0003, aneks SC-4-03,
+  pkt 13.
   **Nowa/zmieniona decyzja architektoniczna:** aneksy 2026-09-25 do **ADR-0003** (tabela
   `outcome_terms`, kategorie, waluta, dwa przychody, `rate_source = not_applicable`; uzupełnienia
   rundy weryfikacji 1 w pkt 3, 4, 5d, 7, 8, 10c, nowy pkt 11, kontrole O-7..O-10; runda 2: pkt 10

@@ -1104,16 +1104,26 @@ def commercial_terms_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
 
 
 def make_commercial_terms(
-    session: Session, scenario: Scenario, *, with_details: bool = True
+    session: Session,
+    scenario: Scenario,
+    *,
+    with_details: bool = True,
+    scope_ref: uuid.UUID | None = None,
 ) -> CommercialTerms:
     """Insert a T&M rule directly — and, unless told otherwise, its `tm_terms` row.
 
     `with_details=False` is the only way to reach the named `incomplete_commercial_terms` state: the
     production write path creates both rows in one statement, and the database enforces the *type*
     of a details row, not its existence (ADR-0003, point 3).
+
+    `scope_ref` (SC-4-05) defaults to `None` — a whole-scenario rule, the only shape before this
+    task. A `ScenarioDeliverySegment.id` of the *same* scenario scopes the rule to that segment.
     """
     terms = CommercialTerms(
-        id=uuid.uuid4(), scenario_id=scenario.id, model_type="time_and_material"
+        id=uuid.uuid4(),
+        scenario_id=scenario.id,
+        model_type="time_and_material",
+        scope_ref=scope_ref,
     )
     session.add(terms)
     session.flush()
@@ -1131,13 +1141,18 @@ def make_story_points_terms(
     price_per_point: Decimal = Decimal("1000.0000"),
     accepted_points: int = 25,
     currency: str = "PLN",
+    scope_ref: uuid.UUID | None = None,
 ) -> CommercialTerms:
     """Insert a Story Points rule directly — and, unless told otherwise, its `story_points_terms`
     row (SC-4-04). The counterpart of `make_commercial_terms` for the second real commercial model
     (criterion K-03): a test creating both in the same database calls one of each, never a
     `monkeypatch` of the registries.
+
+    `scope_ref` (SC-4-05) — see `make_commercial_terms`.
     """
-    terms = CommercialTerms(id=uuid.uuid4(), scenario_id=scenario.id, model_type="story_points")
+    terms = CommercialTerms(
+        id=uuid.uuid4(), scenario_id=scenario.id, model_type="story_points", scope_ref=scope_ref
+    )
     session.add(terms)
     session.flush()
     if with_details:
@@ -1159,6 +1174,7 @@ def make_outcome_terms(
     scenario: Scenario,
     *,
     with_details: bool = True,
+    scope_ref: uuid.UUID | None = None,
     **details: object,
 ) -> CommercialTerms:
     """Wstaw regułę Outcome-based wprost (SC-4-03) — i, jeśli nie powiedziano inaczej, jej wiersz
@@ -1167,8 +1183,12 @@ def make_outcome_terms(
     Domyślnie AC-08 bez prawdopodobieństw: opłata 20000 PLN, premia 10000 PLN, zero jednostek w
     każdej kategorii. `details` nadpisuje kolumny wiersza szczegółów po ich nazwach. Zapis z
     pominięciem API — ścieżka produkcyjna tworzy oba wiersze jedną strzeżoną instrukcją.
+
+    `scope_ref` (SC-4-05) — jak w `make_commercial_terms`: `None` to reguła całego scenariusza.
     """
-    terms = CommercialTerms(id=uuid.uuid4(), scenario_id=scenario.id, model_type="outcome_based")
+    terms = CommercialTerms(
+        id=uuid.uuid4(), scenario_id=scenario.id, model_type="outcome_based", scope_ref=scope_ref
+    )
     session.add(terms)
     session.flush()
     if with_details:
