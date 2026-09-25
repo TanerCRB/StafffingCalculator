@@ -62,6 +62,7 @@ from app.models import (  # noqa: E402
     ProjectAccess,
     ProjectStatus,
     Scenario,
+    ScenarioDeliverySegment,
     ScenarioStatus,
     StaffingPosition,
     StaffingPositionAbsence,
@@ -242,6 +243,8 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotCatalogDefaultRate))
             connection.execute(sa.delete(TmTerms))
             connection.execute(sa.delete(CommercialTerms))
+            # SC-1-11: the delivery segment points at `scenarios` with no `ON DELETE` action too.
+            connection.execute(sa.delete(ScenarioDeliverySegment))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -1112,6 +1115,28 @@ def make_commercial_terms(
         session.add(TmTerms(commercial_terms_id=terms.id, model_type="time_and_material"))
         session.flush()
     return terms
+
+
+# --- scenario delivery segments (F-02, F-06; SC-1-11, ADR-0016) ---------------------------------
+
+
+def make_scenario_delivery_segment(
+    session: Session, scenario: Scenario, *, name: str = "Phase 1"
+) -> ScenarioDeliverySegment:
+    """Insert one delivery segment directly — no endpoint, no request schema (ADR-0016, point 8):
+    the constraints under test are claims about the database."""
+    segment = ScenarioDeliverySegment(id=uuid.uuid4(), scenario_id=scenario.id, name=name)
+    session.add(segment)
+    session.flush()
+    return segment
+
+
+def count_scenario_delivery_segments(session: Session) -> int:
+    """Segment rows visible in the test transaction — used to prove a refused write wrote nothing,
+    not merely that the caller was told no."""
+    return session.execute(
+        sa.select(sa.func.count()).select_from(ScenarioDeliverySegment)
+    ).scalar_one()
 
 
 # --- additional costs (F-08, SC-5-05) -----------------------------------------------------------
