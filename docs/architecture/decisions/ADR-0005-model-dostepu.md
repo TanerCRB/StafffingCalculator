@@ -904,3 +904,42 @@ nie ujawnia kwoty bez stawki bazowej, która jest już bramkowana osobno".
    Czy SC-5-02 dopuszcza niezerowy procent na takim wierszu, wymusza `0`, czy zostawia pole bez
    znaczenia biznesowego dla `vendor_id NOT NULL`, nie zostało zadane na bramce 1 — SC-5-02 musi
    nazwać ten wybór wprost we własnym "Done when".
+
+### 2026-09-25 — SC-5-03 (Issue #78, kwota stała jako podstawa kosztu): stany walutowe w polu `state` bez nowej bramki; `cost_basis`/`fixed_amount` nigdy w liście pozycji
+
+1. **Q1 — nowe stany walutowe (`currency_mismatch`/`no_cost_currency` dla `fixed_amount`, ADR-0013
+   aneks tej daty) lądują w polu `state`, już wyłączonym z koniunkcji — bez nowego pola w
+   `SCENARIO_COST_FIELDS`.** Cytat wiążący: aneks 2026-09-23 (SC-5-01) pkt 7 — "`SCENARIO_COST_FIELDS
+   = {amount, assumptions_used}`; `state`, `cost_basis` i `currency` pozostają widoczne wołającemu
+   bez koniunkcji… Odmówiony wołający wie, czy koszt jest policzalny i dlaczego nie (…), nie wie ile
+   ani z jakich stawek i miesięcy." Nowe wartości `state` wprowadzone przez SC-5-03 mówią wyłącznie
+   "koszt tej pozycji jest/nie jest policzalny i dlaczego" — dokładnie ta sama granica, nie więcej.
+   **Warunek, który SC-5-03 musi dowieść, nie założyć** (spełnienie "zobowiązania naprzód" z tego
+   samego punktu 7: "każda przyszła wartość `state` lub `cost_basis`, z której da się wywnioskować
+   kwotę lub stawkę, przechodzi do `SCENARIO_COST_FIELDS` w zadaniu, w którym powstaje"): dowieść, że
+   nowe wartości `state` same nie niosą kwoty ani stawki — test kontrastowy: wołający bez koniunkcji
+   widzi `state = currency_mismatch` dla pozycji `fixed_amount`, nigdy samą kwotę ani walutę pozycji.
+2. **Q4 — `cost_basis`/`fixed_amount` NIGDY w schemacie `GET .../staffing-positions`: rozstrzygnięcie
+   ryzyka AC-06 nazwanego w mapie wpływu tego zadania.** `fixed_amount`, w przeciwieństwie do
+   `default_cost_rate` (stawka wymagająca rozstrzygnięcia okna) i do procentu narzutu (mnożnik
+   wymagający stawki bazowej, aneks tej daty SC-5-02), JEST wprost kwotą kosztu tej pozycji — przy
+   `headcount = 1` bez żadnego pośrednictwa. Umieszczenie jej na endpointcie bramkowanym wyłącznie
+   `STAFFING_READ`, bez koniunkcji (jak dziś `GET .../staffing-positions` — aneks 2026-09-19 SC-3-01
+   pkt 5: "SC-3-01 nie niesie żadnej stawki… odpowiedź pozycji obsady zwraca krotkę wymiarów
+   katalogu, headcount i godziny — żadnego pola kosztowego"), byłoby złamaniem AC-06 szerszym niż
+   którekolwiek z dotychczas nazwanych ryzyk tej klasy (SC-3-02 pkt 11, SC-5-05 pkt 2/6) — tam
+   ujawniana jest liczba dni albo etykieta, tu byłaby to sama kwota pieniężna. **Rozstrzygnięcie:**
+   `cost_basis` i `fixed_amount` (+ waluta) są wykluczone z konstrukcji ze schematu odpowiedzi tego
+   endpointu i każdego innego endpointu bramkowanego wyłącznie `STAFFING_READ` bez koniunkcji kosztowej
+   — widoczne wyłącznie przez ścieżkę kosztu już bramkowaną koniunkcją `PERSONNEL_COSTS_READ` ∧
+   `can_view_personnel_costs` (aneks 2026-09-23 SC-5-01), wzorem `default_cost_rate` (nigdy na
+   endpointcie dimension-only, tylko na ścieżce kosztu). **Dowód wymagany: strukturalne porównanie
+   zbioru pól odpowiedzi `GET .../staffing-positions`** sprzed i po tym zadaniu — musi pozostać
+   identyczny (wzorem aneks 2026-09-23 SC-4-01 pkt 3: "Dowód strukturalny (zbiór pól odpowiedzi
+   porównany równością), nie asercja `not in`"), nie test wymieniający tylko nazwy dwóch nowych pól.
+3. **Potwierdzenie, nie duplikat: `cost_basis` (pole odpowiedzi kosztu) pozostaje bez koniunkcji —
+   już rozstrzygnięte aneksem SC-5-01 pkt 7, ten wpis go zamyka dla nowej wartości, nie
+   otwiera ponownie.** SC-5-03 poszerza zbiór wartości, jakie pole `cost_basis` odpowiedzi kosztu
+   może przyjąć (`fixed_amount` obok `worked_time`/`base`, ADR-0013 aneks SC-5-06 pkt 5), nie
+   zmienia klasyfikacji samego pola. Nic w tym punkcie nie wymaga nowego aneksu poza tym
+   potwierdzeniem — pkt 7 aneksu SC-5-01 obowiązuje bez zmian.

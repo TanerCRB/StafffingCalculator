@@ -245,3 +245,82 @@ dla `vendor_id NOT NULL`, nie jest rozstrzygnięte żadnym z Q1–Q5 i nie było
 blokuje wejścia w fazę `code` — formuła kosztu bazowego (pkt 1 "Decyzja") czyta wyłącznie
 `vendor_id IS NULL` i ten predykat nie zmienia się tu — ale SC-5-02 musi nazwać wybór wprost we
 własnym "Done when", nie zostawić pole poddostawcy milcząco niezdefiniowane.
+
+### 2026-09-25 — SC-5-03 (Issue #78, kwota stała jako podstawa kosztu): rozstrzygnięcia bramki 1
+
+Pkt 8 wyżej wyznacza to miejsce dla SC-5-03 wprost: "SC-5-03 (kwota stała jako podstawa, wybór
+podstawy per pozycja)". Bramka 1 (2026-09-25) rozstrzygnęła cztery pytania (Q1–Q4) bez zastrzeżeń —
+ten wpis zapisuje treść decyzji, nie zmienia niczego z sekcji "Decyzja" ani z dotychczasowych
+aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie zapowiedziane w pkt 8.
+
+1. **Q1 — kwota stała ma WŁASNĄ walutę, wiązaną do `scenarios.currency`; dwa stany nazwane,
+   wzorem ADR-0014 pkt 7.** Pozycja z `cost_basis = 'fixed_amount'` nie czyta żadnej stawki
+   katalogowej — jej "koszt" jest liczbą wpisaną wprost, z własną walutą. Kształt wyniku dla takiej
+   pozycji: `calculated` (kwota w tej walucie) albo stan nazwany — `currency_mismatch` (waluty
+   różnych pozycji `fixed_amount` różnią się między sobą albo różnią się od zadeklarowanej
+   `scenarios.currency`, bez przeliczenia, ADR-0006) albo `no_cost_currency` (scenariusz bez
+   `scenarios.currency` i bez żadnej rozstrzygniętej kwoty/stawki — ani `fixed_amount`, ani
+   worked time). Cytat wiążący: ADR-0014 pkt 7 — "`calculated` (kwota, waluta, `assumptions_used`…)
+   albo stan nazwany: `currency_mismatch` (koszty w więcej niż jednej walucie albo w walucie innej
+   niż `scenarios.currency`…), `no_cost_currency` (brak kosztów i brak `scenarios.currency`)… Zakaz
+   sumy częściowej" — ten sam kształt, nie nowy wynaleziony dla trzeciej podstawy kosztu. Dwie
+   podstawy (worked time, pkt 2 wyżej; fixed amount, ten punkt) mają OSOBNE zestawy stanów
+   nazwanych rozstrzygane przez OSOBNE predykaty, dispatchowane przez `cost_basis` pozycji — nigdy
+   jeden wspólny predykat czytający oba źródła na raz (patrz pkt 4 niżej, izolacja modułu).
+2. **Q2 — CHECK w migracji (`cost_basis = 'fixed_amount' → fixed_amount IS NOT NULL`), nie walidacja
+   aplikacyjna.** Wzorem ADR-0001 i precedensu G-1 ADR-0014 ("`CHECK amount > 0` w bazie… wiersz
+   kosztu reprezentuje realną pozycję kosztową") — integralność tej krotki jest egzekwowana w bazie,
+   nie w warstwie żądania, żeby żaden zapis z pominięciem API (seed, migracja danych, przyszła druga
+   ścieżka zapisu) nie mógł wytworzyć wiersza `fixed_amount` bez kwoty. **Pytanie nierozstrzygnięte
+   przez bramkę 1, nazwane tu dla SC-5-03, nie blokujące:** czy ten sam CHECK obejmuje też kolumnę
+   waluty towarzyszącej `fixed_amount` (`cost_basis = 'fixed_amount' → fixed_amount IS NOT NULL AND
+   <waluta> IS NOT NULL`), czy waluta zostaje nullable z jakimś fallbackiem. SC-5-03 musi nazwać ten
+   wybór wprost we własnym "Done when" — nie zostawić kolumny waluty milcząco niezdefiniowaną (ten
+   sam wzorzec co pytanie o `vendor_id NOT NULL` zostawione SC-5-02 w poprzednim aneksie tego pliku).
+3. **Q3 — kolumny bezpośrednio na `staffing_position`, nie tabela-wnuczka; kopiowanie przez istniejący
+   `copy_staffing_positions`, bez nowego rejestru.** `cost_basis` i `fixed_amount` (+ waluta) są
+   kolumnami tego samego wiersza, który agregat pozycji już kopiuje jako całość (ADR-0004, aneks tej
+   daty, niżej) — żadnego nowego mapowania starych-na-nowe identyfikatorów, żadnej nowej krotki w
+   `SCENARIO_CHILD_COPIERS`, bo nie powstaje żadna nowa tabela. To odwraca wcześniejsze przewidywanie
+   z Out of scope SC-5-01 ("SC-5-03 — nowe wejście, ścieżka zapisu, strażnik `approved`, wpis w
+   `SCENARIO_CHILD_COPIERS`") w części dotyczącej rejestru — konsekwencja nazwana wprost w ADR-0004,
+   aneks tej daty, nie milcząca korekta.
+4. **Q4 — `cost_basis`/`fixed_amount` NIGDY w schemacie `GET .../staffing-positions`; widoczne
+   wyłącznie przez bramkowany endpoint kosztu, wzorem `default_cost_rate`.** Rozwinięcie w
+   ADR-0005, aneks tej daty (niżej) — ten dokument nie powtarza mechanizmu bramki, tylko go zakłada
+   (jak pkt 7 wyżej dla koniunkcji `PERSONNEL_COSTS_READ`).
+5. **K-01 (dwie formuły, osobne ścieżki z tej samej dyspozycji) — izolacja modułu, reguła 10
+   Strażnika.** Formuła `fixed_amount` NIE czyta `catalog_default_rates` i nie woła predykatu z pkt 1
+   "Decyzja" (rozstrzyganie stawki kosztowej) — czyta wyłącznie własne kolumny wiersza pozycji.
+   Dispatch po `cost_basis` żyje w jednej, wspólnej funkcji wywołującej (nowej albo istniejącej w
+   `app.data.personnel_cost`/`app.domain.personnel_cost`), ale same dwie formuły są dwiema
+   niezależnymi funkcjami — formuła `fixed_amount` nie importuje modułu rozstrzygania stawki
+   katalogowej ani `app.data.commercial_terms` (ścieżka przychodu), tak samo jak formuła worked time
+   (pkt 1) nie importuje żadnej z nich. Test strukturalny grafu importów (wzorem C-5, aneks
+   2026-09-23 SC-5-01) musi objąć obie formuły osobno, nie tylko parę już istniejącą.
+6. **K-06 (brak kwoty przy `fixed_amount` — stan nazwany/nieosiągalny, nigdy `0`) jest zastosowaniem
+   zasady "dwa kształty, nigdy trzeci" (pkt 2 wyżej), wzmocnionym o gwarancję bazy z Q2.** Dzięki
+   CHECK z pkt 2 stan "`cost_basis = 'fixed_amount'` i brak kwoty" jest **nieosiągalny w aplikacji**
+   z konstrukcji — formuła kosztu nigdy nie musi dla niego wynajdywać nazwanego stanu domenowego,
+   bo baza nie dopuszcza takiego wiersza do istnienia. To silniejsza i trwała gwarancja niż "gałąź
+   pozytywna nieosiągalna w produkcji" (która jest tymczasowa, do ADR uwierzytelniania) — tu
+   nieosiągalność jest strukturalna i nie wygasa z żadnym przyszłym ADR. Jedyne nazwane stany, jakie
+   `fixed_amount` faktycznie potrzebuje, to stany walutowe z pkt 1 — i zakaz `0` obowiązuje tam
+   identycznie jak w pkt 2 dla worked time: `currency_mismatch`/`no_cost_currency` nigdy nie zwraca
+   kwoty zastępczej.
+7. **Migawka: brak trzech miejsc, bo brak czego zamrażać.** Pkt 6 wyżej ("rozstrzyganie stawki
+   kosztowej dla zatwierdzonego scenariusza… ten sam predykat kosztowy stosowany identycznie na
+   żywej ścieżce, w kopiarce migawki i w czytelniku migawki — trzy miejsca, jeden predykat") dotyczy
+   wyłącznie worked time, gdzie wartość jest dziedziczona spoza scenariusza (katalog). `fixed_amount`
+   jest daną własną scenariusza (ADR-0004, aneks tej daty, grupa 2) — nie ma trzeciego miejsca do
+   zbudowania: jedynym miejscem liczącym ten koszt, przed i po zatwierdzeniu, jest formuła czytająca
+   żywy wiersz `staffing_position`, chroniony strażnikiem zapisu (`approved`), nie migawką. To nie
+   jest luka wobec pkt 6 — to inna klasa danych, dla której "trzy miejsca" nie ma zastosowania.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| F-1 | Pozycja `cost_basis='fixed_amount'` z walutą inną niż zadeklarowana `scenarios.currency` → `currency_mismatch`, nigdy `0`. |
+| F-2 | Dwie pozycje `fixed_amount` w różnych walutach → `currency_mismatch`; kontrast ze zgodną walutą → `calculated`. |
+| F-3 | Scenariusz bez `scenarios.currency` i bez żadnej rozstrzygniętej kwoty/stawki (ani worked time, ani fixed amount) → `no_cost_currency`, bez kwoty. |
+| F-4 | `cost_basis='fixed_amount' AND fixed_amount IS NULL` odrzucone przez bazę (CHECK), nieosiągalne w aplikacji — asercja na `pg_constraint`, wzór ADR-0014 D-10. |
+| F-5 | Formuła `fixed_amount` nie importuje `app.data.commercial_terms` ani modułu rozstrzygania stawki katalogowej (test strukturalny grafu importów, mirror C-5). |

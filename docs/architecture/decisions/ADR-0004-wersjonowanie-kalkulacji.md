@@ -765,3 +765,52 @@ mimo że SC-5-02 nie buduje własnego czytelnika migawki — Opcja A, "zamrozić
    do "kopia zatwierdzonego scenariusza ma zero wierszy migawkowych" (aneks SC-3-02, pkt 2): kolumna(-y)
    narzutu zamrożonego wiersza migawki nie zmienia się po edycji katalogu; scenariusz zatwierdzony przed
    i po SC-5-02 rozróżnialny przez samą obecność/brak wartości w nowej kolumnie, nie przez błąd.
+
+### 2026-09-25 — SC-5-03 (Issue #78, kwota stała jako podstawa kosztu): nowe kolumny na `staffing_position`, grupa 2 potwierdzona, kopiowanie i token współbieżności nazwane wprost
+
+Aneks z 2026-09-19 (SC-3-01) pkt 4 zobowiązuje każdą nową tabelę-dziecko scenariusza do przypisania
+grupy **w chwili powstania**. `cost_basis`/`fixed_amount` (+ waluta) nie są nową tabelą — są nowymi
+kolumnami tabeli już przypisanej do grupy 2 (aneks 2026-09-19 SC-3-01 pkt 2: "Dane własne
+scenariusza → strażnik zapisu, nie migawka. Pozycja obsady i alokacja należą do scenariusza"). Ten
+wpis nie zmienia tego przypisania — potwierdza je wprost dla nowych kolumn, zamiast zostawić je
+domyślnemu milczeniu, które aneks 2026-09-19 nazwał ryzykiem na poziomie tabel; tu stosuje ten sam
+rygor na poziomie kolumn.
+
+1. **Kryterium kierunku dziedziczenia (aneks 2026-09-19) spełnione wprost dla nowych kolumn.**
+   `fixed_amount` jest liczbą wpisaną wprost przez planistę dla tej pozycji — nic spoza scenariusza
+   (katalog, budżet, reguła organizacyjna) jej nie zmienia. Ten sam argument, którym aneks 2026-09-23
+   SC-5-05 objął koszt dodatkowy grupą 2: "kwota kosztu dodatkowego jest wpisywana wprost do
+   scenariusza, nic spoza scenariusza jej nie zmienia, więc nie ma czego zamrażać przy zatwierdzeniu".
+   **Grupa 2 potwierdzona, nie zmieniona.**
+2. **Konsekwencja wprost: brak trzeciego miejsca migawkowego, kontrast nazwany z worked time.** Koszt
+   bazowy worked time (SC-5-01) zależy od `catalog_default_rates.default_cost_rate` — wartości
+   dziedziczonej spoza scenariusza — stąd migawka i "trzy miejsca, jeden predykat" (ADR-0013 pkt 6).
+   `fixed_amount` zależy wyłącznie od własnej kolumny wiersza scenariusza — nie wchodzi i nie będzie
+   wchodzić do `SNAPSHOT_TABLES`; jedyną ochroną zatwierdzonego scenariusza jest strażnik zapisu
+   (`app.data.scenario_guard`, ten sam mechanizm co dla reszty własnych kolumn `staffing_position`),
+   nie kopia. To zastosowanie zdania z aneksu 2026-09-19 pkt 2 ("Migawka pozycji byłaby drugą kopią
+   tych samych wierszy… i pierwszym miejscem, w którym dwie kopie mogłyby się rozjechać"), nie
+   wyjątek od niego.
+3. **Kopiowanie: bez nowego wpisu w `SCENARIO_CHILD_COPIERS` — warunek, który SC-5-03 musi dowieść,
+   nie założyć.** Ponieważ kolumny żyją na wierszu już kopiowanym przez istniejący kopiujący agregat
+   pozycji (aneks 2026-09-19 SC-3-01 pkt 1), podróżują z kopią row automatycznie — **pod warunkiem**,
+   że ten kopiujący wstawia kopię przez pełne przepisanie wiersza, a nie przez zamkniętą, wcześniej
+   napisaną listę kolumn. Jeśli implementacja koduje listę kolumn wprost, dodanie kolumny do modelu
+   bez dodania jej do tej listy jest cichą regresją tej samej klasy, jaką aneks 2026-09-19 pkt 4
+   nazwał dla całych tabel ("tabela dodana bez przypisania wpada domyślnie do grupy 2") — tu na
+   poziomie kolumny: kopia dostałaby `cost_basis` domyślne/`fixed_amount = NULL` niezależnie od
+   źródła, cicho łamiąc K-04 (AC-02: kopia musi mieć wartość niezależną, nie referencję ani wartość
+   domyślną). **Kanarek obowiązkowy:** kopia pozycji z `cost_basis='fixed_amount'` ma na kopii tę
+   samą kwotę/walutę, na niezależnym wierszu; mutacja do zabicia — kopiujący zwracający `cost_basis`
+   domyślne (`worked_time`) niezależnie od źródła.
+4. **Token współbieżności ADR-0007 obejmuje nowe kolumny automatycznie — nazwane wprost, nie
+   milcząco.** ADR-0007, aneks 2026-09-19 (SC-3-01): "znacznik współbieżności żyje na **pozycji**
+   (`staffing_position.updated_at`), nie na każdym wierszu miesiąca i nie na scenariuszu". `cost_basis`
+   i `fixed_amount` są kolumnami TEGO SAMEGO wiersza — każda ścieżka zapisu, która je edytuje,
+   uczestniczy z automatu w tym samym mechanizmie kontroli optymistycznej co edycja pozostałych pól
+   pozycji: ten sam znacznik, ten sam `409` przy niezgodności, żaden nowy token, żaden nowy aneks do
+   ADR-0007. To rozróżnienie jest istotne, bo najbliższy precedens tego repozytorium (koszt dodatkowy,
+   SC-5-05) poszedł w drugą stronę — dostał **własny, per-wiersz** znacznik (ADR-0007, aneks SC-5-05),
+   dokładnie DLATEGO że koszt dodatkowy jest osobną tabelą/wierszem, nie kolumną wiersza już
+   objętego tokenem. Nazwane tu wprost, żeby implementacja nie skopiowała precedensu SC-5-05 przez
+   analogię tam, gdzie nie pasuje: SC-5-03 nie potrzebuje własnej decyzji ADR-0007 i nie dostaje jej.
