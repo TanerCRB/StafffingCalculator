@@ -852,3 +852,14 @@ ADR-0014, Q-2/Q-4/Q-7).**
    projektowej (ADR-0001), jak i tego, co odpowiedź ujawnia (ADR-0005): oba dokumenty muszą się
    zgadzać, że pojedynczy zły/rasujący `scenario_id` nie zostawia częściowego payloadu ujawniającego
    które z pozostałych N-1 były w zasięgu/gotowe, tylko jednolitą odmowę bez różnicowania przyczyny.
+
+**Aneks — parametry reguły outcome widoczne pod `RESULTS_READ` (2026-09-25, SC-4-03, Issue #67,
+runda weryfikacji 1, decyzja człowieka).**
+
+1. `category_revenues` (liczba jednostek, prawdopodobieństwo, kwota per kategoria) i
+   `expected_amount` są widoczne w `/results`, what-if i porównaniu pod samym `RESULTS_READ`, bez
+   `COMMERCIAL_READ` — wołający bez prawa odczytu reguły poznaje część jej parametrów. Przyjęte
+   świadomie przez człowieka.
+2. Dziś nieeksploatowalne: `PLACEHOLDER_PERMISSIONS` nadaje oba uprawnienia naraz (aneks
+   2026-09-18). **Warunek ponownego otwarcia:** zadanie wprowadzające role/rozdział uprawnień
+   między realne osoby — ten sam co dla pozostałych nazwanych skrzyżowań tej rodziny.

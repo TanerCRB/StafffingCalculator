@@ -680,3 +680,30 @@ SC-6-01, F-09 pkt 1, AC-02).**
 5. Duplikacja scenariusza generuje kolejne zdarzenie pod odłożonym warunkiem `audit_log` (F-12) —
    dołącza do SC-1-02..04, SC-3-02, SC-4-01, SC-5-05 jako kolejne zadanie z tym samym, powtórzonym
    zamknięciem (aneks 2026-09-18 "historia zmian… odłożona").
+
+**Aneks — reguła Outcome-based jako dana własna scenariusza (2026-09-25, bramka 1, SC-4-03, Issue
+#67, zaakceptowany przez człowieka).** Przypisanie grupy dla `outcome_terms` (obowiązek aneksu
+SC-3-01 pkt 4); model danych — ADR-0003, aneks 2026-09-25 SC-4-03.
+
+1. **`outcome_terms` — grupa 2, strażnik zapisu.** Wszystkie wartości (opłata, premia, stawka za
+   jednostkę, min/max, waluta, jednostki i prawdopodobieństwa kategorii) wpisuje użytkownik do
+   scenariusza; nic spoza scenariusza ich nie zmienia — kryterium "kierunek dziedziczenia, nie udział
+   w wyliczeniu" (aneks SC-3-01) spełnione wprost.
+2. **Strażnik zapisu bez nowego kształtu.** `INSERT` reguły outcome (dziś jedyna ścieżka zapisu,
+   ADR-0003 aneks SC-4-03 pkt 9) odrzucany pod `approved` przez `app.data.scenario_guard` w tej
+   samej instrukcji co zapis; zero wierszy w `commercial_terms` i `outcome_terms` po odmowie. Test
+   odmowy i test wyścigu dwóch połączeń dla tej ścieżki, kontrast na `draft` (warunek aneksu
+   SC-3-01: per ścieżka zapisu). Przyszła ścieżka edycji/usunięcia dostaje własne testy w swoim
+   zadaniu.
+3. **Kopiowanie przez istniejący jeden wpis agregatu** — wzorzec pkt 1b aneksu SC-4-01: kopiujący
+   `commercial_terms` kopiuje w tej samej funkcji wiersz `outcome_terms` z kompletem kolumn, z
+   nowymi identyfikatorami; bez nowego wpisu w `SCENARIO_CHILD_COPIERS`. Kanarek: kopia scenariusza
+   z regułą outcome ma regułę **i** wiersz szczegółów, a jej wynik jest identyczny ze źródłem;
+   `model_type` bez gałęzi w kopiującym → `unsupported_model_type`, nigdy reguła bez szczegółów.
+4. **Brak migawki.** Wyliczenie outcome nie czyta żadnej wartości dziedziczonej spoza scenariusza
+   (brak katalogu stawek, brak kursów — waluta reguły bez przeliczenia), więc zatwierdzenie nie
+   zamraża nic nowego: brak tabeli `approved_snapshot_*`, brak zmiany `_snapshot_statement` i
+   `SNAPSHOT_TABLES`. Przychód zatwierdzonego scenariusza outcome czyta własne tabele
+   (`rate_source = not_applicable`, ADR-0003 aneks SC-4-03 pkt 8). Warunek ponownego rozpatrzenia:
+   pierwsza wartość domyślna organizacji dla reguły outcome albo przeliczenie walut — wtedy grupa 1
+   dla tej wartości i własny aneks.

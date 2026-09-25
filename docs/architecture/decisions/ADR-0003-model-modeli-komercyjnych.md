@@ -156,3 +156,160 @@ Stany nazwane pkt 9 rozszerzone o `unsupported_model_type` (nieznany dyspozytoro
 ochrona przed mieszanymi wersjami kodu podczas wdrożenia kolejnego modelu, ADR-0001 expand→deploy→
 contract) i `no_revenue_currency` (reguła bez żadnej wycenionej pozycji i bez `scenarios.currency` —
 zastępuje wcześniejsze `currency: null`, które łamało kształt wyniku z pkt 9).
+
+### 2026-09-25 — model Outcome-based: `outcome_terms`, cztery kategorie wyniku, przychód gwarantowany i oczekiwany (SC-4-03, Issue #67, bramka 1)
+
+Rozstrzygnięcia zaakceptowane przez człowieka na bramce 1, 2026-09-25 (D-1..D-9, P-1..P-5 mapy
+wpływu SC-4-03). Sekcja "Odłożone" zapowiada `outcome_terms` jako własny wpis przy własnym zadaniu —
+to jest ten wpis. `fixed_price_terms` i `story_points_terms` pozostają odłożone (open decision #2
+nadal otwarta), ale wiążą je elementy wspólne z pkt 10 niżej. Podstawa: F-06.3, AC-08, F-06.5.
+
+1. **Tabela szczegółów `outcome_terms` — wzorzec pkt 3 bez zmian.** Klucz główny
+   `commercial_terms_id`; kolumna `model_type` z `CHECK (model_type = 'outcome_based')`; złożony
+   klucz obcy `(commercial_terms_id, model_type) → commercial_terms (id, model_type)`. Wartość
+   dyskryminatora `outcome_based` dochodzi do `CHECK model_type_known` w tej samej migracji, która
+   tworzy tabelę (pkt 2). Istnienia wiersza szczegółów baza nie wymusza — reguła `outcome_based` bez
+   `outcome_terms` jest nazwanym stanem "reguła niekompletna", nigdy przychodem `0`; ścieżka zapisu
+   tworzy oba wiersze jedną instrukcją. Pierwsza tabela szczegółów z kolumnami dziedzinowymi.
+2. **Wynagrodzenie w MVP (D-1): opłata stała, premia binarna warunkowa, stawka za jednostkę,
+   min/max.** Opłata stała obowiązkowa; premia, stawka za jednostkę, minimum i maksimum
+   opcjonalne. **Składnik opcjonalny nieobecny = `NULL`, nigdy `0`** — `0` jest wartością wpisaną
+   przez użytkownika i znaczy co innego niż brak składnika (dla min/max: "ogranicz do zera" ≠ "bez
+   ograniczenia"). `CHECK (min <= max)`, gdy oba ustawione; kwoty i stawka nieujemne. Premia jest
+   wypłacana dla kategorii "osiągnięty" i "przekroczony", **nie** dla "częściowy" i
+   "nieosiągnięty". Formuła częściowego osiągnięcia, udział w korzyści, progi wielostopniowe i kary
+   — poza MVP (wymagania nie podają formuły); każde wymaga własnego wpisu.
+3. **Cztery stałe kategorie wyniku jako kolumny `outcome_terms` (D-3/P-2 wariant A).**
+   `not_achieved` / `partial` / `achieved` / `exceeded` — każda z liczbą osiągniętych jednostek
+   (`>= 0`, wpisana ręcznie) i opcjonalnym prawdopodobieństwem. Nie osobna tabela kategorii: zbiór
+   jest zamknięty, a ograniczenie sumy prawdopodobieństw musi być wyrażalne jako `CHECK` jednego
+   wiersza (ADR-0001: integralność w bazie; `CHECK` nie sięga do innych wierszy).
+   **Uzupełnienie po rundzie weryfikacji 1 (2026-09-25, decyzja człowieka):** liczby jednostek są
+   nullowalne, gdy stawka za jednostkę jest `NULL` — reguła bez składnika jednostkowego nie wymaga
+   wpisywania jednostek, a brak jednostek nie jest udawany zerem (`NULL` ≠ `0`, pkt 2).
+   `CHECK` w bazie: `unit_rate IS NOT NULL` → wszystkie cztery liczby jednostek `NOT NULL`.
+4. **Prawdopodobieństwa (D-2): procenty, `NUMERIC(5,2)`, suma dokładnie `100.00`.** `CHECK` w
+   bazie: "wszystkie cztery `NULL` albo wszystkie `NOT NULL` i suma = 100". Bez tolerancji, bez
+   normalizacji, bez uzupełniania brakującej kategorii. Wartość z trzecim miejscem po przecinku —
+   `422` na granicy API, **nigdy** zaokrąglenie po cichu (zaokrąglenie zmieniałoby sumę, którą
+   użytkownik uważa za sprawdzoną). Odrzucenie nie zapisuje żadnego wiersza (ani `commercial_terms`,
+   ani `outcome_terms`).
+   **Ograniczenie przyjęte świadomie (runda weryfikacji 1, 2026-09-25, decyzja człowieka):**
+   kolumny `NUMERIC(5,2)` i `NUMERIC(14,4)` tej tabeli przy zapisie z pominięciem API po cichu
+   zaokrąglają nadmiarowe miejsca po przecinku (zachowanie PostgreSQL) — nadmiar precyzji odrzuca
+   (`422`) wyłącznie granica API, nie baza. Dziś nie istnieje żadna ścieżka zapisu poza API.
+   **Warunek ponownego otwarcia:** pierwsza ścieżka zapisu omijająca API (import, skrypt, migracja
+   danych) — wtedy odrzucenie nadmiaru precyzji musi przejść do bazy albo do tej ścieżki.
+5. **Dwa przychody, dwa pola (D-4/P-1 wariant A).**
+   a. **`RevenueResult.revenue` / `amount` = przychód gwarantowany**: opłata stała + zero
+      składnika zmiennego, po ograniczeniu min/max (pkt 6). To jedyna wartość, od której liczą zysk
+      `/results` (SC-7-01) i porównanie scenariuszy (SC-6-02) — znaczenie istniejącego pola się nie
+      zmienia: "przychód, na który scenariusz może liczyć".
+   b. **Przychód oczekiwany — nowe pole addytywne**, obok przychodów per kategoria (również nowe
+      pola). Oczekiwany = Σ pₖ·rₖ liczone z **niezaokrąglonych** przychodów kategorii, zaokrąglone
+      **raz**, na końcu, przez `app.core.money.round_money` (ADR-0002, pkt 9 tego ADR).
+   c. **Brak prawdopodobieństw → nazwany stan przychodu oczekiwanego**, nigdy `0` i nigdy kopia
+      gwarantowanego. Przychód gwarantowany i per kategoria są wtedy nadal podawane.
+   d. Zysk/marża oczekiwana — poza zakresem (blok 7, osobne Issue). Zmiana pól `RevenueRead` jest
+      addytywna (ADR-0009); żadne istniejące pole nie zmienia typu ani znaczenia — **z jednym
+      nazwanym wyjątkiem** (runda weryfikacji 1, 2026-09-25, decyzja człowieka): pola
+      `hours_source`, `vendor_axis` i `rate_source` w `assumptions_used` poszerzają zbiór wartości o
+      `not_applicable` (pkt 8). Wartości dla T&M bez zmian; poszerzenie enumu jest zmianą kontraktu
+      dla klienta, który zna zamknięty zbiór — skutek przyjęty w pkt 8.
+6. **Min/max ograniczają cały przychód (D-5).** Ograniczenie stosuje się do sumy opłaty stałej i
+   składnika zmiennego danej kategorii — i do przychodu gwarantowanego, który jest przez to
+   `max(min, …)` nawet przy zerowym składniku zmiennym. Nie do samego składnika zmiennego.
+7. **Waluta reguły (D-7/P-4 wariant A).** Kolumna `currency` na `outcome_terms` (ISO-4217, `CHECK`
+   jak w katalogu: `char_length(currency) = 3`, wielkie litery). Waluta różna od
+   `scenarios.currency` (gdy ta jest ustawiona) → nazwany stan `currency_mismatch` (pkt 8), nigdy
+   kwota i nigdy przeliczenie — `exchange_rates` (ADR-0006) nadal nie istnieje.
+   **Uzupełnienie po rundzie weryfikacji 1 (2026-09-25, decyzja człowieka):** wyniki złożone
+   (`/results` SC-7-01, what-if SC-6-04, porównanie SC-6-02) wymagają równości waluty przychodu i
+   waluty **każdego** wyliczonego źródła kosztu (koszt osobowy, nieobecności płatne, koszty
+   dodatkowe); w przeciwnym razie `profit`/`margin`/`markup` = nazwany stan `currency_mismatch`,
+   nigdy liczba z sumy różnych walut. Reguła zamyka również istniejący wcześniej przypadek koszt
+   dodatkowy ≠ waluta kosztu osobowego — nie tylko nowy przypadek waluty reguły outcome. Zasada
+   "nazwij źródło, nie zwijaj" (ADR-0002, aneks 2026-09-24 SC-7-01) obowiązuje bez zmian; wpis w
+   ADR-0002 — aneks 2026-09-25 SC-4-03. **Kształt (decyzja człowieka 2026-09-25, runda 2):**
+   stan niesie nowe, addytywne pole `profitability_state` (`calculated` | `not_applicable` |
+   `currency_mismatch`) poza bramką kosztu osobowego — nie niesie liczby; pola liczbowe przy
+   niezgodności mają `"n/a"`, bo walidator kształtu frontendu (`isGatedResultFieldShape`)
+   przyjmuje tam tylko `null`/`"n/a"`/liczbę. Frontend do czasu Issue frontendowego pokazuje
+   `"n/a"` bez przyczyny (ograniczenie pkt 8).
+8. **`rate_source = not_applicable` (P-3 wariant B).** Model bez katalogu stawek nie ma źródła
+   stawek, więc `assumptions_used.rate_source` dostaje nową wartość `not_applicable` zamiast
+   udawania `live_catalog`/`approved_snapshot`. Obowiązek przyjęty razem z tą wartością, wzorem
+   `what_if_hypothetical` (ADR-0015, SC-6-04): **jawny przegląd każdego miejsca porównującego
+   `rate_source` przez równość**; w szczególności strażnik wyścigu `/results`
+   (`ScenarioResultsRaceDetected`) porównuje wyłącznie źródła zależne od statusu scenariusza —
+   `not_applicable` nie jest dowodem ani braku, ani wystąpienia wyścigu. Test wyścigu dla obu
+   modeli: zatwierdzony scenariusz outcome → `200`, prawdziwy wyścig zatwierdzenia T&M → nadal
+   `409`. `assumptions_used` nie może też nazywać źródła, którego wyliczenie outcome nie czyta
+   (godziny `billable_hours`, oś poddostawcy) — F-06.5 wymaga założeń faktycznie użytych.
+   Uściślenie (runda weryfikacji 1, 2026-09-25, decyzja człowieka): dla outcome
+   `assumptions_used.hours_source`, `vendor_axis` i `rate_source` przyjmują `not_applicable`;
+   wartości dla T&M bez zmian. To jest nazwany wyjątek od pkt 5d.
+   **Ograniczenie przyjęte świadomie, datowane:** do zadania frontendowego (D-9, osobne Issue) ekran
+   SC-4-06 pokazuje scenariusz outcome jako błąd odczytu sekcji (kontrakt frontendu zna dwie
+   wartości `rate_source`) i nie pokazuje przychodu oczekiwanego — tymczasowe odstępstwo od F-06.3
+   "displayed separately". **Rozszerzenie (runda weryfikacji 1, 2026-09-25, decyzja człowieka):**
+   to samo ograniczenie obejmuje sekcję wyników SC-7-02 (zysk/marża/koszty) dla scenariusza
+   outcome — nie tylko sekcję przychodu SC-4-06; nowe wartości `not_applicable` w założeniach nie są
+   znane kontraktowi frontendu. Warunek zamknięcia dla obu sekcji: Issue frontendowe SC-4-03.
+9. **Zakres zapisu (P-5 wariant C): tylko tworzenie.** Edycja i usunięcie reguły outcome — osobne
+   zadanie. `model_type` pozostaje niezmienny po zapisie (pkt 2). Znacznik współbieżności ADR-0007
+   na `commercial_terms` obejmuje `outcome_terms` ("Konsekwencje") — konsumowany dopiero przez
+   zadanie edycji.
+10. **Elementy wspólne bloku 4 — wiążące SC-4-02 (Fixed Price, #66) i SC-4-04 (Story Points,
+    #68).** SC-4-03 idzie pierwsze; każde z kolejnych zadań modelu przyjmuje bez ponownego
+    rozstrzygania:
+    a. **Konwencja `rate_source = not_applicable`** dla każdego modelu bez katalogu stawek, z tym
+       samym obowiązkiem przeglądu porównań i testem wyścigu `/results` dla nowego modelu; model,
+       który czyta katalog, używa istniejących wartości i nie dostaje nowej.
+    b. **Wzorzec rozszerzania testu K-11 SC-4-01**: zbiór pól wyniku rozszerzany jawnie o nazwane
+       nowe pola, zatwierdzone na bramce 1 danego zadania; **równość zbioru zostaje** (nigdy
+       osłabienie do "zawiera").
+    c. **Wzorzec migracji rozszerzającej `CHECK model_type_known`**: każda kolejna migracja
+       odtwarza ograniczenie z **pełną listą `IN`**, łącznie z wartościami wcześniejszych modeli
+       (`time_and_material`, `outcome_based`, …) — migracja niosąca tylko własną wartość po cichu
+       unieważnia zapisane reguły innych modeli przy następnej walidacji ograniczenia. Downgrade
+       odtwarza listę sprzed migracji, nie listę jednoelementową. Strażnik dryfu
+       (`test_commercial_terms_schema.py::test_the_model_and_the_migration_agree_on_every_sql_expression`)
+       porównuje stałą modelu z **najnowszą** migracją odtwarzającą to ograniczenie
+       (`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH`) — równość zostaje; kolejny model przepina tę
+       ścieżkę na swoją migrację i dokłada test, że jego downgrade odtwarza listę poprzedniej
+       (wzór `test_outcome_terms_schema.py`). Decyzja człowieka 2026-09-25 (zatrzymanie na
+       czerwonym teście przy SC-4-03).
+       **Uzupełnienie po rundzie weryfikacji 1 (2026-09-25, decyzja człowieka):** testy danej
+       migracji porównują z **własną, zamrożoną w teście listą tej migracji**, nie ze stałą modelu,
+       która przesunie się przy kolejnym modelu. "Nieznany model" w testach to wartość-wartownik,
+       **nigdy nazwa realnego przyszłego modelu** (`fixed_price`, `story_points`), bo taki test
+       zmienia znaczenie w chwili wdrożenia tego modelu. `_details_of` odmawia dla nieznanego typu
+       payloadu, zamiast go przepuszczać. Istniejący test SC-4-01 używający `'fixed_price'` jako
+       nieznanego modelu przepina na wartownika SC-4-02 — jawnie, na swojej bramce 1.
+    d. Pkt 1 (zgodność typu złożonym kluczem obcym, "reguła niekompletna"), pkt 2 zdanie o `NULL` ≠
+       `0` dla składników opcjonalnych, pkt 7 (waluta reguły, jeśli model niesie kwoty wpisane
+       wprost) — ten sam kształt.
+    Odstępstwo od któregokolwiek z a–d wymaga datowanego aneksu w tym ADR, nie rozstrzygnięcia w
+    zadaniu.
+11. **Odczyt reguły niesie jej parametry (runda weryfikacji 1, 2026-09-25, decyzja człowieka).**
+    Odpowiedź `GET` reguły komercyjnej dla `outcome_based` niesie parametry wynagrodzenia: opłatę
+    stałą, premię, stawkę za jednostkę, minimum, maksimum, walutę oraz per kategoria liczbę
+    jednostek i prawdopodobieństwo — reguły, której parametrów nie da się odczytać, nie da się
+    zweryfikować (F-06.5). Zbiór pól reguły w teście K-11 SC-4-01 rozszerzony jawnie o te pola, wg
+    pkt 10b — **równość zbioru zostaje**.
+
+Relacja do ADR-0004: `outcome_terms` — grupa 2, aneks 2026-09-25 SC-4-03 tam.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| O-1 | `INSERT` z pominięciem API odrzucany przez bazę dla: sumy prawdopodobieństw ≠ 100.00, zestawu niepełnego (część `NULL`), `min > max`, ujemnej liczby jednostek, wiersza `outcome_terms` wskazującego regułę innego `model_type`; kontrast 33.34/33.33/33.33/0.00 zapisywalny. |
+| O-2 | AC-08: opłata 20000 PLN + premia 10000 PLN → 20000 dla "nieosiągnięty" i "częściowy", 30000 dla "osiągnięty"; przychód gwarantowany 20000 niezależnie od prawdopodobieństw; oczekiwany 23000 (70/30) i 29000 (10/90); brak prawdopodobieństw → nazwany stan oczekiwanego, nie `0` i nie 20000. |
+| O-3 | Opłata 20000, 100 PLN/j., min 22000, max 30000: 50 j. → 25000, 150 j. → 30000, 0 j. → 22000, gwarantowany 22000; `min > max` odrzucone (`422`, zero wierszy). |
+| O-4 | Reguła w walucie innej niż `scenarios.currency` → `currency_mismatch`, bez kwoty w żadnym polu przychodu. |
+| O-5 | `/results` zatwierdzonego scenariusza outcome → `200`, zysk liczony od przychodu gwarantowanego, `rate_source = not_applicable`; prawdziwy wyścig zatwierdzenia scenariusza T&M → `409` bez zmian. |
+| O-6 | Migracja niesie w `CHECK model_type_known` pełną listę wartości (`time_and_material` i `outcome_based`); istniejąca reguła T&M przechodzi upgrade i downgrade; kopiujący reguł bez gałęzi dla `model_type` prawdziwego wiersza odmawia `unsupported_model_type`/`409`, a nie kopiuje połowy agregatu. |
+| O-7 | `/results`, what-if i porównanie: waluta przychodu różna od waluty któregokolwiek wyliczonego źródła kosztu (w tym koszt dodatkowy ≠ koszt osobowy przy regule T&M) → `profit`/`margin`/`markup` = `currency_mismatch`, bez liczby. |
+| O-8 | `GET` reguły outcome zwraca opłatę, premię, stawkę za jednostkę, min, max, walutę i per kategoria jednostki oraz prawdopodobieństwo; zbiór pól reguły w teście K-11 równy rozszerzonemu zbiorowi. |
+| O-9 | `INSERT` z pominięciem API: `unit_rate` ustawione przy choć jednej liczbie jednostek `NULL` odrzucone przez bazę; `unit_rate = NULL` z jednostkami `NULL` zapisywalne. |
+| O-10 | Scenariusz outcome: `assumptions_used.hours_source`, `vendor_axis`, `rate_source` = `not_applicable`; dla T&M wartości bez zmian. |
