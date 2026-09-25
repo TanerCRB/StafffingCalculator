@@ -1,7 +1,8 @@
 // API response shapes live here and only here — see agents/developer-frontend.md,
 // "API response shapes are modeled in exactly one contracts layer".
 //
-// Mirrors backend/app/api/schemas/commercial_terms.py (SC-4-01), consumed by SC-4-06. Three
+// Mirrors backend/app/api/schemas/commercial_terms.py (SC-4-01, SC-4-03, SC-4-04), consumed by
+// SC-4-06 and — for the Story Points and Outcome-based models — by SC-4-07. Three
 // properties of that schema are part of the contract and must not be re-interpreted in a component:
 //
 //   * **No field carries a cost** — not `default_cost_rate`, not a cost, profit or margin (ADR-0005,
@@ -42,12 +43,65 @@ export type RevenueState = (typeof REVENUE_STATES)[number];
 export type WithheldRevenueState = Exclude<RevenueState, "calculated">;
 
 /** Where the rates came from: the live catalogue for a draft, the approval's frozen windows for an
- * approved scenario (AC-04). */
+ * approved scenario (AC-04). Time & Material only — the two values whose meaning depends on the
+ * scenario's status. */
 export const RATE_SOURCES = ["live_catalog", "approved_snapshot"] as const;
 export type RateSource = (typeof RATE_SOURCES)[number];
 
+// --- The models this client can render, and the sources each of them names (SC-4-07) ------------
+//
+// ADR-0003, addendum 2026-09-25 SC-4-07, points 3-5: the render is chosen by
+// `assumptions_used.model_type`, never by `rate_source`/`hours_source`/`vendor_axis`, and the three
+// source fields are checked *in a pair with* that `model_type` (`api/client.ts`,
+// `isRevenueAssumptionsShape`) — never as a per-field union of values, which would let a
+// Time & Material revenue through with `not_applicable`. Each model adds only its own values; no
+// Fixed Price value is declared here (#113).
+
+/** Story Points (F-06.4, SC-4-04). */
+export const STORY_POINTS = "story_points";
+/** Outcome-based (F-06.3, SC-4-03). */
+export const OUTCOME_BASED = "outcome_based";
+
+/** The backend's `SourceNotApplicable` — a source the model's calculation does not read. */
+export const SOURCE_NOT_APPLICABLE = "not_applicable";
+/** Story Points' `rate_source`: the rule's own price per point, never the catalogue. */
+export const STORY_POINTS_RATE_SOURCE = "story_points_terms";
+
+/** Every `assumptions_used.model_type` this client can read besides `null` (the scenario without a
+ * rule). A stored model this version does not know is readable only as the named
+ * `unsupported_model_type` state (the response side of `model_type` is open — SC-4-01, R-02), and
+ * then with the catalogue sources the backend's dispatcher gives it. */
+export const REVENUE_MODEL_TYPES = [TIME_AND_MATERIAL, STORY_POINTS, OUTCOME_BASED] as const;
+
 /** The backend's `NOT_APPLICABLE` sentinel, as `revenue.amount` carries it for a withheld state. */
 export const REVENUE_NOT_APPLICABLE = "n/a";
+
+/** The four fixed outcome categories (ADR-0003, addendum 2026-09-25 SC-4-03, point 3), in the
+ * backend's canonical order. A category is always identified by this word, never by its position. */
+export const OUTCOME_CATEGORIES = ["not_achieved", "partial", "achieved", "exceeded"] as const;
+export type OutcomeCategory = (typeof OUTCOME_CATEGORIES)[number];
+
+/** One outcome category as the rule stores it — `null` is "not given", never `0`. */
+export interface OutcomeCategoryRead {
+  /** Fixed-point decimal string (`NUMERIC(14,4)`), or `null`. */
+  units: string | null;
+  /** Percentage as a fixed-point decimal string (`NUMERIC(5,2)`), or `null`. */
+  probability: string | null;
+}
+
+/** An Outcome-based rule's parameters as stored (`OutcomeTermsRead`, SC-4-03 R-04). Amounts are
+ * `NUMERIC(14,4)` strings copied from the row; an optional component that is absent is `null`,
+ * never `0` (addendum SC-4-03, point 2). No cost field. */
+export interface OutcomeTermsRead {
+  /** The rule's own currency — the currency of every amount below. */
+  currency: string;
+  fixed_fee: string;
+  success_bonus: string | null;
+  unit_rate: string | null;
+  revenue_min: string | null;
+  revenue_max: string | null;
+  categories: Record<OutcomeCategory, OutcomeCategoryRead>;
+}
 
 export interface CommercialTermsRead {
   id: string;
@@ -55,6 +109,9 @@ export interface CommercialTermsRead {
   model_type: string;
   /** ADR-0007's marker. Carried, not used: this task has no edit path (ADR-0003, point 2). */
   updated_at: string;
+  /** The Outcome-based rule's parameters — `null` for every other model, and for an Outcome-based
+   * rule without its details row (then `revenue.state` is `incomplete_commercial_terms`). */
+  outcome_terms: OutcomeTermsRead | null;
 }
 
 export interface RateWindowRead {
@@ -76,14 +133,99 @@ export interface UnresolvedMonthRead {
   period_month: string;
 }
 
-export interface RevenueAssumptionsRead {
+interface RevenueAssumptionsCommon {
+  /** Empty for a model that reads no rate window (Story Points, Outcome-based). */
+  rate_windows: RateWindowRead[];
+  /** Empty for a model that reads no staffed month. */
+  unresolved_months: UnresolvedMonthRead[];
+  currencies: string[];
+}
+
+/** Time & Material — and the scenario without a rule (`model_type: null`), and a stored model this
+ * version cannot price (`unsupported_model_type`): the catalogue sources the dispatcher names. */
+export interface CatalogRevenueAssumptionsRead extends RevenueAssumptionsCommon {
   model_type: string | null;
   hours_source: "billable_hours";
   vendor_axis: "internal";
   rate_source: RateSource;
-  rate_windows: RateWindowRead[];
-  unresolved_months: UnresolvedMonthRead[];
-  currencies: string[];
+}
+
+/** Story Points (SC-4-04): no hour, no vendor axis, the rule's own price. */
+export interface StoryPointsRevenueAssumptionsRead extends RevenueAssumptionsCommon {
+  model_type: typeof STORY_POINTS;
+  hours_source: typeof SOURCE_NOT_APPLICABLE;
+  vendor_axis: typeof SOURCE_NOT_APPLICABLE;
+  rate_source: typeof STORY_POINTS_RATE_SOURCE;
+}
+
+/** Outcome-based (SC-4-03, point 8): none of the three sources is read. */
+export interface OutcomeRevenueAssumptionsRead extends RevenueAssumptionsCommon {
+  model_type: typeof OUTCOME_BASED;
+  hours_source: typeof SOURCE_NOT_APPLICABLE;
+  vendor_axis: typeof SOURCE_NOT_APPLICABLE;
+  rate_source: typeof SOURCE_NOT_APPLICABLE;
+}
+
+export type RevenueAssumptionsRead =
+  | CatalogRevenueAssumptionsRead
+  | StoryPointsRevenueAssumptionsRead
+  | OutcomeRevenueAssumptionsRead;
+
+/** Which of the three renderings a revenue gets — chosen by `assumptions_used.model_type` and by
+ * nothing else (ADR-0003, addendum SC-4-07, point 3), except that the named `unsupported_model_type`
+ * state comes first: a backend instance that cannot price the model says so with the dispatcher's
+ * catalogue sources, whatever the model's word (SC-4-07, verification R-01). `"catalog"` covers
+ * Time & Material, the scenario without a rule, and every unsupported model. */
+export type RevenueModelKind = "catalog" | typeof STORY_POINTS | typeof OUTCOME_BASED;
+
+export function revenueModelKind(revenue: RevenueRead): RevenueModelKind {
+  if (revenue.state === "unsupported_model_type") {
+    return "catalog";
+  }
+  if (revenue.assumptions_used.model_type === STORY_POINTS) {
+    return STORY_POINTS;
+  }
+  if (revenue.assumptions_used.model_type === OUTCOME_BASED) {
+    return OUTCOME_BASED;
+  }
+  return "catalog";
+}
+
+/** The catalogue sources of a revenue rendered as `"catalog"`, or `null` — sound because
+ * `isRevenueSourcePairing` admits catalogue sources exactly for the unsupported state and for a
+ * model other than Story Points and Outcome-based, which is what `revenueModelKind` reads. */
+export function catalogAssumptionsOf(revenue: RevenueRead): CatalogRevenueAssumptionsRead | null {
+  return revenueModelKind(revenue) === "catalog"
+    ? (revenue.assumptions_used as CatalogRevenueAssumptionsRead)
+    : null;
+}
+
+/** The backend's `ExpectedRevenueState` (SC-4-03, point 5b-c). */
+export const EXPECTED_REVENUE_STATES = ["calculated", "no_probabilities", "not_applicable"] as const;
+export type ExpectedRevenueState = (typeof EXPECTED_REVENUE_STATES)[number];
+
+/** One outcome category's revenue after the min/max bounds (SC-4-03, points 5b, 6). */
+export interface CategoryRevenueRead {
+  category: OutcomeCategory;
+  /** `null` when the rule has no unit rate and no units were given — never `0`. */
+  units: string | null;
+  /** `null` when the rule has no probabilities — never `0`. */
+  probability: string | null;
+  /** Fixed-point decimal string, in the revenue's own currency. */
+  amount: string;
+}
+
+/**
+ * The additive SC-4-03 fields every revenue carries. The pairing `expected_state` ⇄
+ * `expected_amount` (an amount only with `"calculated"`, `"n/a"` otherwise) is checked in
+ * `api/client.ts`, like the `state` ⇄ `amount` pairing below.
+ */
+interface ExpectedRevenueFields {
+  expected_state: ExpectedRevenueState;
+  /** Fixed-point decimal string when `expected_state` is `"calculated"`, `"n/a"` otherwise. */
+  expected_amount: string;
+  /** Empty for a model without categories and for a withheld revenue. */
+  category_revenues: CategoryRevenueRead[];
 }
 
 /**
@@ -91,9 +233,10 @@ export interface RevenueAssumptionsRead {
  * prose contract ("a fixed-point string when `state` is `calculated`, `n/a` otherwise"), made a type
  * here and checked in `api/client.ts` (`isRevenueShape`).
  */
-export interface CalculatedRevenueRead {
+export interface CalculatedRevenueRead extends ExpectedRevenueFields {
   state: "calculated";
-  /** Fixed-point decimal string — possibly `"0.00"`, which is a legal, computed zero. */
+  /** Fixed-point decimal string — possibly `"0.00"`, which is a legal, computed zero. For
+   * Outcome-based: the **guaranteed** revenue (addendum SC-4-03, point 5a). */
   amount: string;
   /** The revenue's own currency — never substituted by the project's reporting currency. */
   currency: string;
@@ -101,7 +244,7 @@ export interface CalculatedRevenueRead {
 }
 
 /** A revenue the server withheld, with the named state saying why (ADR-0003, point 9). */
-export interface WithheldRevenueRead {
+export interface WithheldRevenueRead extends ExpectedRevenueFields {
   state: WithheldRevenueState;
   amount: typeof REVENUE_NOT_APPLICABLE;
   currency: string | null;

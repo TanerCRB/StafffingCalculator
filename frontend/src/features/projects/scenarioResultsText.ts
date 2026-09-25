@@ -15,9 +15,16 @@ import type {
   AdditionalCostState,
   PersonnelCostState,
 } from "../../api/contracts/scenarioResults";
-import { REVENUE_STATE_MESSAGES } from "./commercialTermsText";
+import {
+  GUARANTEED_REVENUE_LABEL,
+  REVENUE_STATE_MESSAGES,
+  RULE_CURRENCY_MISMATCH,
+  revenueStateMessage,
+} from "./commercialTermsText";
 
-export { REVENUE_STATE_MESSAGES };
+// One wording per revenue state and label, shared with the commercial-terms section — the two
+// sections must not come to word the same revenue two ways (SC-4-07).
+export { GUARANTEED_REVENUE_LABEL, REVENUE_STATE_MESSAGES, RULE_CURRENCY_MISMATCH, revenueStateMessage };
 
 // --- Labels (K-01, K-03) ---------------------------------------------------------------------------
 
@@ -41,6 +48,21 @@ export const MARKUP_LABEL = "Markup:";
  * sentence (K-02).
  */
 export const RESULTS_FIELD_UNAVAILABLE = "Not shown on this screen.";
+
+/**
+ * `profitability_state = "currency_mismatch"` (SC-4-03, R-01): every component is stated, but not
+ * all in one currency, so profit, margin and markup are not summed across currencies (F-10). A status
+ * line of the section, shown whether or not the personnel-cost gate is open (SC-4-07, Q-A = B;
+ * ADR-0005, addendum 2026-09-25 SC-4-07): it states the fact of the mismatch only — no amount, no
+ * currency code — and the currencies it rests on are on the component payloads anyway.
+ *
+ * Distinct from `RESULTS_FIELD_UNAVAILABLE` (the gate), from `lib/money.ts`'s `NOT_APPLICABLE` (a
+ * field not computable) and from every revenue/cost `currency_mismatch` sentence — none is a
+ * substring of another (asserted). A margin of `"n/a"` beside `calculated` (AC-05) is not this.
+ */
+export const PROFITABILITY_CURRENCY_MISMATCH =
+  "Profit, margin and markup not stated — the scenario's revenue and costs are in different " +
+  "currencies, and nothing is converted.";
 
 // --- The personnel-cost source's own non-computable states (K-03) ----------------------------------
 

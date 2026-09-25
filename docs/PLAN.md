@@ -2066,4 +2066,46 @@ history / this file's own change log, not as tracked product work.
   `/results`); wyścig "live–live" (edycja okna katalogu) — nazwana luka.
   Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
+  F-06.4, frontend): konsument istniejącego API, zamyka ograniczenie D-9 SC-4-03 (ADR-0003 aneks
+  SC-4-03 pkt 8) i nienazwaną dotąd degradację po SC-4-04 — scenariusz Outcome-based i Story Points
+  był błędem odczytu obu sekcji karty, bo kontrakt frontendu znał tylko wartości T&M (Issue #125).
+  *Done when:* `frontend/src` (vitest) dowodzi kryteriów K-01..K-07, każde z zarejestrowanym
+  przebiegiem mutacyjnym: (1) Story Points (AC-09) i Outcome-based czytelne w sekcji reguły i w
+  sekcji wyników; walidator kształtu pozostaje zbiorem zamkniętym, wartości założeń sparowane z
+  `model_type` — wartownik spoza kontraktu i T&M z `not_applicable` nadal dają nazwany błąd odczytu;
+  blok założeń bez linii T&M dla modeli niegodzinowych; (2) przychód gwarantowany i oczekiwany jako
+  dwie osobno podpisane kwoty (AC-08: 20000 / 23000 PLN); `no_probabilities` → nazwany stan, nigdy 0
+  ani kwota gwarantowana; (3) reguły parowania przed renderem (`expected_state`/`expected_amount`;
+  `profitability_state` ⇄ pola zbiorcze jednokierunkowo — AC-05 `margin "n/a"` przy `calculated`
+  czytelne); (4) cztery kategorie podpisane po `category`, `null` = brak, jawne `0` = 0; (5)
+  parametry `outcome_terms` jak zapisane (4 miejsca przez `lib/money.ts`), `null` = nieobecny; (6)
+  `profitability_state = currency_mismatch` jako osobna linia stanu sekcji wyników, niezależna od
+  bramki kosztu osobowego, przy polach nadal "niedostępne"; tekst odróżnialny od `not_applicable` i
+  od bramki; komunikat `revenue.state = currency_mismatch` dobrany do `model_type`; (7) sekcja wyników
+  dla Outcome pokazuje tylko przychód gwarantowany z etykietą, wybór po `model_type`; T&M bez zmian.
+  Istniejące asercje frontendu bez zmian (nowe pola dopisane wyłącznie do danych fixture'ów — decyzja
+  Q4); `git diff main -- backend/` pusty.
+  **Decyzje bramki 1 (2026-09-25, analyst + architect, zaakceptowane przez człowieka):** Q1=A bez
+  formularzy tworzenia reguł Outcome/Story Points; Q2=A sekcja wyników tylko z przychodem
+  gwarantowanym i przyczyną `profitability_state` (wybór prezentacji, nie kontrola dostępu —
+  ekspozycja pod `RESULTS_READ` z ADR-0005 aneks SC-4-03 bez zmian); Q3=A zbiór zamknięty, każde
+  zadanie dopisuje tylko wartości swojego modelu (wiąże Fixed Price #66/#113); Q-A=B przyczyna
+  `currency_mismatch` jako linia sekcji niezależna od bramki; Q-B=B parowanie z `model_type`; Q-C
+  aneks ADR-0003 (render i etykiety po `model_type`, nigdy po `rate_source`); Q4=A dane fixture'ów
+  istniejących testów uzupełnione, asercje bez zmian; Q5=A parametry reguły z 4 miejscami przez
+  `roundDecimalString`; Q6=A komunikat `currency_mismatch` przychodu dobrany do modelu.
+  **Nowa/zmieniona decyzja architektoniczna:** aneksy 2026-09-25 SC-4-07 do **ADR-0003** (zamknięcie
+  D-9, luka rejestru SC-4-04, kontrakt frontendu dla kolejnych modeli) i **ADR-0005** (linia stanu
+  sekcji a bramka pól, Q-A=B); `architecture-sensitive-paths.md` — ADR-0003 w wierszach frontendu.
+  **Out of scope (explicit):** formularze tworzenia/edycji/usunięcia reguł (po #126); parametry
+  Story Points (`GET` ich nie zwraca, #126 Q2); zysk/marża oczekiwana (#127); Fixed Price (#113);
+  ekrany what-if i porównania; mobile/responsive (NF-09); backend (zero zmian).
+  **Fundament:** API dowiedzione (SC-4-03, SC-4-04, `capabilities.md`); ADR-0009/ADR-0010 w statusie
+  Draft; parowanie R-01 SC-7-02, które to zadanie rozszerza, ma w rejestrze status "test, no
+  mutation". Podstawa: Issue #125, `Wymagania/Requirements_EN.md` §4 F-06.3, F-06.4, F-10, §7
+  AC-05, AC-08, AC-09; `ADR-0003-model-modeli-komercyjnych.md` (aneksy SC-4-03, SC-4-04, SC-4-07);
+  `ADR-0005-model-dostepu.md`; `ADR-0002-obsluga-pieniedzy.md`; `ADR-0010-awaria-renderu-frontendu.md`;
+  `docs/PLAN.md` SC-4-03, SC-4-04, SC-4-06, SC-7-02.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*

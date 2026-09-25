@@ -124,6 +124,7 @@ const RULE = {
   id: "dddddddd-0000-0000-0000-000000000001",
   model_type: "time_and_material",
   updated_at: "2026-09-23T10:00:00Z",
+  outcome_terms: null,
 };
 
 function noRule(scenarioId: string, status: ScenarioStatus = "Draft"): ScenarioCommercialTerms {
@@ -136,6 +137,7 @@ function noRule(scenarioId: string, status: ScenarioStatus = "Draft"): ScenarioC
       amount: "n/a",
       currency: null,
       assumptions_used: NO_ASSUMPTIONS,
+      expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [],
     },
   };
 }
@@ -154,14 +156,14 @@ function withRule(
 }
 
 function calculated(amount: string, currency: string): RevenueRead {
-  return { state: "calculated", amount, currency, assumptions_used: TM_ASSUMPTIONS };
+  return { state: "calculated", amount, currency, assumptions_used: TM_ASSUMPTIONS, expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [] };
 }
 
 function withheld(
   state: WithheldRevenueState,
   assumptions: RevenueAssumptionsRead = TM_ASSUMPTIONS,
 ): RevenueRead {
-  return { state, amount: "n/a", currency: null, assumptions_used: assumptions };
+  return { state, amount: "n/a", currency: null, assumptions_used: assumptions, expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [] };
 }
 
 // --- A backend, by path and method ---------------------------------------------------------------
@@ -484,7 +486,7 @@ describe("K-03 — the rule's presence decides whether 'Set Time & Material' is 
       reads: {
         [BASELINE]: {
           status: 200,
-          body: withRule(BASELINE, withheld("unsupported_model_type", NO_ASSUMPTIONS), "fixed_price"),
+          body: withRule(BASELINE, withheld("unsupported_model_type", { ...NO_ASSUMPTIONS, model_type: "fixed_price" }), "fixed_price"),
         },
         [STRETCH]: { hang: true },
         [SIGNED]: { hang: true },

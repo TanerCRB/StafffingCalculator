@@ -945,3 +945,25 @@ runda weryfikacji 1, decyzja człowieka).**
    rozliczeniowej" co przychód T&M (aneks SC-7-01 pkt 1 i 4); ceny punktu ani liczby punktów
    osobno nie odtworzy, bo `assumptions_used` Story Points ich nie niesie. Skala inna niż
    outcome z pkt 3 — do uwzględnienia przy tym samym zadaniu ról.
+
+**Aneks — przyczyna `currency_mismatch` na ekranie przy zamkniętej bramce kosztu osobowego
+(2026-09-25, bramka 1, SC-4-07, Issue #125, decyzja człowieka Q-A=B).**
+
+1. **Zakres "bez ujawniania powodu" doprecyzowany.** Decyzja Q2=b bramki 1 SC-7-02 (2026-09-24,
+   `docs/PLAN.md` SC-7-02: stan `null` bramki renderowany jako generyczne "niedostępne") i
+   ostrożność aneksu SC-7-01 pkt 4 wobec B-01 dotyczą **pól** bramkowanych (`profit`/`margin`/
+   `markup`, część osobowa `included_cost`). Nie obejmują linii stanu sekcji wyników niosącej
+   `profitability_state`. Na polach bez zmian — SC-7-02 K-02 obowiązuje.
+2. **Linia stanu sekcji niezależna od bramki.** `profitability_state` jest poza bramką kosztu
+   osobowego już w odpowiedzi (ADR-0003, aneks SC-4-03 pkt 7, "Kształt") — ekran pokazujący go przy
+   zamkniętej bramce nie ujawnia niczego, czego ładunek pod `RESULTS_READ` nie niesie. Ujawnia się
+   wyłącznie fakt niezgodności walut; waluty składników są już w ładunku. Żadna kwota ani wartość
+   pochodna kosztu osobowego nie trafia do tej linii.
+3. **Uzasadnienie:** `PLACEHOLDER_PERMISSIONS` nigdy nie nadaje `PERSONNEL_COSTS_READ` (aneks
+   2026-09-19 pkt 5), więc w działającej aplikacji bramka jest zawsze zamknięta — pierwszeństwo
+   bramki nad przyczyną czyniłoby przyczynę widoczną wyłącznie w fixture testowym.
+4. **Granica:** ten wyjątek obejmuje wyłącznie wartość `profitability_state = "currency_mismatch"`
+   (`not_applicable` odsyła do stanów składników, które mają własne komunikaty — bez zmian).
+   Każda nowa wartość tego pola lub nowa linia stanu wyprowadzana z danych
+   kosztu osobowego wymaga własnego aneksu i potwierdzenia security-auditora; B-01 i warunek
+   ponownego otwarcia (zadanie ról) — bez zmian. Kontrola: ADR-0003, aneks 2026-09-25 SC-4-07, F-4.

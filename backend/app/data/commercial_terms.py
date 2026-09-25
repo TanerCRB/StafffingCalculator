@@ -62,7 +62,6 @@ from app.domain.revenue import (
     INCOMPLETE_COMMERCIAL_TERMS,
     LIVE_CATALOG,
     NO_COMMERCIAL_TERMS,
-    RATE_SOURCE_STORY_POINTS_TERMS,
     UNSUPPORTED_MODEL_TYPE,
     AssumptionsUsed,
     MonthPrice,
@@ -76,7 +75,7 @@ from app.domain.revenue_outcome_based import (
     outcome_assumptions,
     outcome_based_revenue,
 )
-from app.domain.revenue_story_points import story_points_revenue
+from app.domain.revenue_story_points import story_points_assumptions, story_points_revenue
 from app.domain.revenue_time_and_material import BillableMonth, time_and_material_revenue
 from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
@@ -373,14 +372,12 @@ def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueA
     calls `_billable_months` and never touches `StaffingPosition`/`StaffingPositionAllocation` — the
     price is entirely the rule's own row, so a scenario's billable-hours plan can change arbitrarily
     without moving this revenue by a cent. `assumptions_used` names that explicitly
-    (`HOURS_SOURCE_NOT_APPLICABLE`), not merely by omission.
+    (`HOURS_SOURCE_NOT_APPLICABLE`), not merely by omission — on the incomplete branch too, through
+    the same `story_points_assumptions` the priced path uses (weryfikacja SC-4-07, R-01).
     """
     if not rule.has_details:
         return RevenueUnavailable(
-            reason=INCOMPLETE_COMMERCIAL_TERMS,
-            assumptions_used=AssumptionsUsed(
-                model_type=rule.terms.model_type, rate_source=RATE_SOURCE_STORY_POINTS_TERMS
-            ),
+            reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=story_points_assumptions()
         )
     details = session.execute(
         sa.select(StoryPointsTerms).where(

@@ -44,6 +44,13 @@ export const ADDITIONAL_COST_STATES = ["calculated", "currency_mismatch", "no_co
 
 export type AdditionalCostState = (typeof ADDITIONAL_COST_STATES)[number];
 
+/** Every `profitability_state` the backend can emit — exactly the backend's `ProfitabilityState`
+ * literal (SC-4-03, R-01). Why the four aggregate fields are `"n/a"`, or `"calculated"` when they are
+ * not withheld for a computational reason. **Never gated**: it states no figure. */
+export const PROFITABILITY_STATES = ["calculated", "not_applicable", "currency_mismatch"] as const;
+
+export type ProfitabilityState = (typeof PROFITABILITY_STATES)[number];
+
 /** The backend's `NOT_APPLICABLE` sentinel, exactly as `RevenueRead`'s `REVENUE_NOT_APPLICABLE`
  * carries it (`backend/app/core/money.py`). */
 export const RESULTS_NOT_APPLICABLE = "n/a";
@@ -92,4 +99,11 @@ export interface ScenarioResults {
   margin: GatedResultField;
   /** `profit / included_cost × 100` — `"n/a"` when `included_cost` is exactly `0.00`. */
   markup: GatedResultField;
+  /**
+   * Why the four fields above are `"n/a"` (SC-4-03, R-01; ADR-0003 addendum SC-4-07, point 5c). The
+   * pairing is one-directional and checked in `api/client.ts`: `not_applicable`/`currency_mismatch`
+   * exclude a number in any of the four, while `calculated` does not force one — a `margin` of
+   * `"n/a"` beside `calculated` (AC-05, a zero revenue) is a valid payload.
+   */
+  profitability_state: ProfitabilityState;
 }

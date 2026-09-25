@@ -14,8 +14,12 @@
 
 import { ApiError, RequestTimeoutError } from "../../api/client";
 import {
+  OUTCOME_BASED,
+  STORY_POINTS,
   TIME_AND_MATERIAL,
+  type OutcomeCategory,
   type RateSource,
+  type RevenueModelKind,
   type WithheldRevenueState,
 } from "../../api/contracts/commercialTerms";
 import {
@@ -48,8 +52,78 @@ export const REVENUE_STATE_MESSAGES: Readonly<Record<WithheldRevenueState, strin
     "declares none.",
 };
 
+/**
+ * `currency_mismatch` of a model priced from its own rule (Story Points, Outcome-based): the rule's
+ * currency is not the scenario's (ADR-0003, addendum SC-4-03, point 7). The catalogue sentence above
+ * would name selling rates these models never read (addendum SC-4-07, point 8; Q6 = A).
+ */
+export const RULE_CURRENCY_MISMATCH =
+  "Revenue not stated — the commercial rule's own currency differs from the scenario's currency, " +
+  "and nothing is converted.";
+
+/**
+ * The sentence for a withheld revenue — chosen by the model (`revenueModelKind`, i.e. by
+ * `assumptions_used.model_type`), never by `rate_source` (addendum SC-4-07, point 3). Only
+ * `currency_mismatch` differs between models; Time & Material keeps its sentence unchanged.
+ */
+export function revenueStateMessage(state: WithheldRevenueState, model: RevenueModelKind): string {
+  if (state === "currency_mismatch" && model !== "catalog") {
+    return RULE_CURRENCY_MISMATCH;
+  }
+  return REVENUE_STATE_MESSAGES[state];
+}
+
 /** The prefix a calculated revenue is shown with; the amount comes from `lib/money.ts` only. */
 export const REVENUE_LABEL = "Revenue:";
+
+// --- Outcome-based: guaranteed and expected revenue, categories (SC-4-07, F-06.3) ----------------
+
+/** An Outcome-based revenue's `amount` — the revenue the fixed fee guarantees whatever the outcome
+ * (addendum SC-4-03, point 5a). The only Outcome-based figure the results section shows (Q2 = A). */
+export const GUARANTEED_REVENUE_LABEL = "Guaranteed revenue:";
+
+/** The probability-weighted revenue — "displayed separately" from the guaranteed one (F-06.3). */
+export const EXPECTED_REVENUE_LABEL = "Expected revenue:";
+
+/** `expected_state = "no_probabilities"` — a named state, never `0` and never the guaranteed
+ * amount (addendum SC-4-03, point 5c). */
+export const EXPECTED_NO_PROBABILITIES =
+  "Expected revenue: not stated — the rule gives no probabilities for its outcome categories.";
+
+export const OUTCOME_CATEGORIES_LABEL = "Revenue by outcome category:";
+
+/** The four categories by their word (`category`), never by position in the list. */
+export const OUTCOME_CATEGORY_LABELS: Readonly<Record<OutcomeCategory, string>> = {
+  not_achieved: "Not achieved",
+  partial: "Partially achieved",
+  achieved: "Achieved",
+  exceeded: "Exceeded",
+};
+
+/** A value the rule does not give — `null` on the wire. Never `0`: an explicit zero is shown as the
+ * zero it is (addendum SC-4-03, point 2). */
+export const NOT_GIVEN = "none";
+
+export const CATEGORY_UNITS_LABEL = "units:";
+export const CATEGORY_PROBABILITY_LABEL = "probability:";
+export const CATEGORY_REVENUE_LABEL = "revenue:";
+
+// --- Outcome-based: the rule's parameters as stored (SC-4-07, K-05) ------------------------------
+
+export const RULE_PARAMETERS_LABEL = "Rule parameters:";
+export const RULE_CURRENCY_LABEL = "Rule currency:";
+export const FIXED_FEE_LABEL = "Fixed fee:";
+export const SUCCESS_BONUS_LABEL = "Success bonus:";
+export const UNIT_RATE_LABEL = "Rate per unit:";
+export const REVENUE_MIN_LABEL = "Minimum revenue:";
+export const REVENUE_MAX_LABEL = "Maximum revenue:";
+
+/** The rule's four categories as stored (SC-4-07, verification R-04) — the inputs, shown also when
+ * the revenue is withheld and `category_revenues` is empty. Worded apart from the revenue lines'
+ * `units:` / `probability:`: these are what the rule sets, not what a calculation used. */
+export const RULE_CATEGORIES_LABEL = "Outcome categories as set in the rule:";
+export const RULE_CATEGORY_UNITS_LABEL = "units set:";
+export const RULE_CATEGORY_PROBABILITY_LABEL = "probability set:";
 
 // --- The rule itself (K-03) ----------------------------------------------------------------------
 
@@ -63,7 +137,11 @@ export const NO_RULE = "not set";
 
 /** The words this screen uses for the models it knows. A `Map`, not an object literal: an object
  * would answer `"constructor"` with a function. */
-const MODEL_LABELS: ReadonlyMap<string, string> = new Map([[TIME_AND_MATERIAL, "Time & Material"]]);
+const MODEL_LABELS: ReadonlyMap<string, string> = new Map([
+  [TIME_AND_MATERIAL, "Time & Material"],
+  [STORY_POINTS, "Story Points"],
+  [OUTCOME_BASED, "Outcome-based"],
+]);
 
 /**
  * The name of a stored model. A model this version does not know is shown **as the server spelled
@@ -93,6 +171,16 @@ export const RATE_SOURCE_LABELS: Readonly<Record<RateSource, string>> = {
 export const RATE_WINDOWS_LABEL = "Selling rate windows used:";
 export const NO_RATE_WINDOWS = "Selling rate windows used: none";
 export const UNRESOLVED_MONTHS_LABEL = "Months without a rate:";
+
+/** Where a model priced from its own rule takes its revenue — in place of the Time & Material lines
+ * above, which would name hours, windows and months these models never read (SC-4-07, K-01). */
+export const RULE_SOURCE_LABELS: Readonly<Record<Exclude<RevenueModelKind, "catalog">, string>> = {
+  [STORY_POINTS]:
+    "Revenue taken from: the Story Points rule — its price per point and accepted points, " +
+    "not hours and not catalogue rates",
+  [OUTCOME_BASED]:
+    "Revenue taken from: the Outcome-based rule's own parameters — not hours and not catalogue rates",
+};
 
 // --- Reading (K-01, K-04) ------------------------------------------------------------------------
 

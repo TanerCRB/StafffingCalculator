@@ -28,6 +28,23 @@ from app.domain.revenue import (
 from app.models.commercial_terms import MODEL_TYPE_STORY_POINTS
 
 
+def story_points_assumptions(currencies: tuple[str, ...] = ()) -> AssumptionsUsed:
+    """The one source triple of a Story Points answer — `story_points_terms` / `not_applicable` /
+    `not_applicable` (ADR-0003, aneks SC-4-07, pkt 5a) — on **every** shape of it: a result, a
+    `currency_mismatch`, and the caller's `incomplete_commercial_terms` for a rule without its
+    details row (`app.data.commercial_terms._story_points`). One place, so the named state can never
+    fall back to the T&M defaults of `AssumptionsUsed` (`billable_hours`/`internal`) — a hybrid this
+    model does not have (weryfikacja SC-4-07, R-01). The counterpart of `outcome_assumptions`.
+    """
+    return AssumptionsUsed(
+        model_type=MODEL_TYPE_STORY_POINTS,
+        rate_source=RATE_SOURCE_STORY_POINTS_TERMS,
+        hours_source=HOURS_SOURCE_NOT_APPLICABLE,
+        vendor_axis=VENDOR_AXIS_NOT_APPLICABLE,
+        currencies=currencies,
+    )
+
+
 def story_points_revenue(
     *,
     price_per_point: Decimal,
@@ -58,13 +75,7 @@ def story_points_revenue(
     (ADR-0002, rule 2; criterion K-01 — 25 accepted points × 1000 = exactly 25000.00).
     """
     currencies = (currency,)
-    assumptions = AssumptionsUsed(
-        model_type=MODEL_TYPE_STORY_POINTS,
-        rate_source=RATE_SOURCE_STORY_POINTS_TERMS,
-        hours_source=HOURS_SOURCE_NOT_APPLICABLE,
-        vendor_axis=VENDOR_AXIS_NOT_APPLICABLE,
-        currencies=currencies,
-    )
+    assumptions = story_points_assumptions(currencies)
     if scenario_currency is not None and currencies != (scenario_currency,):
         return RevenueUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
     revenue = round_money(Decimal(accepted_points) * price_per_point)
