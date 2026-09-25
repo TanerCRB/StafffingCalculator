@@ -27,6 +27,7 @@ from app.data.column_copy import values_to_copy
 from app.data.commercial_terms import CommercialTermsNotCopyable, copy_commercial_terms
 from app.data.organization_defaults import organization_level_for
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.scenario_delivery_segment import copy_scenario_delivery_segments
 from app.data.scenario_guard import copying_source_scenario, project_group_two_lock
 from app.data.staffing import copy_staffing_positions
 from app.data.write_errors import WriteFailed, describe_without_values
@@ -367,6 +368,11 @@ SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (
     # pass of `copy_staffing_positions`, which holds the old-to-new position ids. Two halves, two
     # places, and a canary for each (`tests/test_additional_cost_copy.py`, criterion K-07).
     copy_scenario_additional_costs,
+    # SC-1-11 (ADR-0016; ADR-0004, addendum 2026-09-25 SC-1-11, point 4): delivery segments/
+    # workstreams. The simplest entry this registry has — the aggregate is one table, one row per
+    # segment, no old-to-new id mapping to hold (a segment has no child of its own, ADR-0016 point
+    # 9), unlike every entry above it.
+    copy_scenario_delivery_segments,
 )
 """The cascade, as data rather than as prose (ADR-0004, addendum, point 4).
 
