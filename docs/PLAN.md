@@ -1858,7 +1858,7 @@ history / this file's own change log, not as tracked product work.
   pozostawionych otwartych.
   Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-4-03** — Wylicz przychód Outcome-based dla scenariusza (F-06.3): opłata stała + premia
+- [x] **SC-4-03** — Wylicz przychód Outcome-based dla scenariusza (F-06.3): opłata stała + premia
   binarna warunkowa + stawka za jednostkę, ograniczone min/max; cztery stałe kategorie wyniku
   (nieosiągnięty / częściowy / osiągnięty / przekroczony) z ręcznie wpisaną liczbą jednostek i
   opcjonalnym prawdopodobieństwem; przychód gwarantowany i przychód oczekiwany jako dwie osobne
@@ -1956,5 +1956,23 @@ history / this file's own change log, not as tracked product work.
   `Wymagania/Requirements_EN.md` §4 F-06.3, §7 AC-08, `ADR-0003-model-modeli-komercyjnych.md`,
   `ADR-0004-wersjonowanie-kalkulacji.md`, `ADR-0002-obsluga-pieniedzy.md`,
   `ADR-0005-model-dostepu.md`, `ADR-0006-waluty-i-kursy.md`, `ADR-0007-wspolbiezna-edycja.md`.
+  **Done 2026-09-25:** PR #120 (scalone `3a46772`), zintegrowany z SC-1-11, SC-4-04 i SC-4-05
+  (trzy merge `main`). Dowód: `backend/tests/test_outcome_revenue.py` (K-01..K-04),
+  `test_outcome_terms_schema.py` (K-03/K-04 w bazie, O-1, O-6), `test_outcome_terms_guards.py`
+  (K-05), `test_outcome_revenue_copy.py` (K-06), `test_outcome_scenario_results.py` (K-07),
+  `test_profitability_currency.py` (waluty w wynikach złożonych), `test_outcome_terms_read_and_units.py`
+  (parametry reguły w odczycie, jednostki `NULL`), `test_story_points_scenario_results.py` (naprawa
+  `/results` Story Points), `test_outcome_scope_ref.py` (`scope_ref` dla outcome) oraz testy QA
+  `test_outcome_revenue_qa.py`, `test_outcome_round2_qa.py`, `test_sc_4_03_merge_qa.py`,
+  `test_outcome_scope_ref_qa.py` — 906 testów backendu i 262 frontendu zielono, CI zielone. QA: cztery
+  rundy, dowód trzyma (mutacje, które przeżyły testy dewelopera — 4/5/3/2 w kolejnych rundach —
+  zabite po testach QA; jedna mutacja równoważna nazwana). Invariant Guardian: PASS WITH
+  RESERVATIONS (waluta w `/results`) → PASS ×3. Reviewer: STOP (R-01 waluta, High) → STOP
+  (integracja z SC-4-04) → PASS ×2. Security-auditor: PASS → PASS WITH RESERVATIONS (B-01, zakres
+  akceptacji w ADR-0005) → PASS ×2. Zaakceptowane przez człowieka, nienaprawione: parametry outcome
+  odtwarzalne spod `RESULTS_READ` (ADR-0005 aneks SC-4-03, do zadania ról); ciche zaokrąglenie
+  `NUMERIC` przy zapisie z pominięciem API (ADR-0003 aneks pkt 4); N reguł per segment a przychód
+  gwarantowany w `/results` (ADR-0003 aneks pkt 13d, warunek wstępny `scope_ref` w API); frontend
+  bez przychodu oczekiwanego (D-9). Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
