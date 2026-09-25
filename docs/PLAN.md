@@ -1100,6 +1100,62 @@ history / this file's own change log, not as tracked product work.
   SC-4-04 i SC-1-11 — rozwiązany, zachowano obie) i rozjazd łańcucha migracji Alembic z SC-1-11
   (dwie głowy z tego samego `down_revision` — zlinearyzowane bez zmiany treści żadnej migracji).
 
+- [x] **SC-4-05** — Reguły wspólne modeli komercyjnych: `scope_ref` na `commercial_terms`, ochrona
+  przed podwójnym rozliczeniem między regułą projektu a regułą segmentu, cross-scenario integrity
+  (F-06.5, część), warunek wstępny SC-1-11 (encja segmentu, bramka 3 zamknięta) i SC-4-04 (drugi
+  model komercyjny) (Issue #69).
+  **Done 2026-09-25:** PR #119 (scalone `06296e8`). Developer: 814/814 testów backendu, `ruff`
+  czyste, `backend/tests/test_commercial_terms_scope.py` (K-01..K-04, D-4). QA: PROOF HOLDS (4
+  mutacje uruchomione i zabite, jeden dodatkowy test dwusegmentowej granicy D-4). Invariant
+  Guardian i Reviewer: PASS WITH RESERVATIONS w pierwszej rundzie (odczyt niehartowany na >1 wiersz
+  — surowy `MultipleResultsFound` w `_rule_of`, cicha utrata przychodu drugiej reguły Story Points
+  w `revenue_by_model_type`), oba zastrzeżenia naprawione (jawne, nazwane wyjątki zamiast
+  cichego/surowego zachowania) i zweryfikowane niezależnie przez tych samych audytorów, werdykt
+  końcowy PASS. Security-auditor: PASS. Frontend: dodatkowa poprawka poza zakresem roli backend —
+  `commercialTermsRefusals.test.ts` czytał `backend/app/models/commercial_terms.py` jako tekst i
+  oczekiwał starego kształtu `UniqueConstraint(...)`; SC-4-05 zmienił go na częściowy `Index(...)`
+  pod tą samą nazwą, regex testu zaktualizowany do nowego kształtu (262/262 testów frontendu,
+  `eslint` czyste) — ta sama asercja treści, inny sposób jej wyciągnięcia ze źródła.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-04 (analyst, runda 3, 2026-09-25):
+  1. (K-01) Reguła projektu i reguła segmentu dzielące tę samą policzalną pracę (dwie reguły T&M,
+     zasięgi zagnieżdżone, te same pozycje/miesiące obsady) — przychód liczony raz per
+     (pozycja, miesiąc), nie sumą obu reguł. Mutacja: usunięcie predykatu rozłączności zasięgów.
+     Para modeli musi faktycznie czytać `staffing_position_allocation` (np. dwie reguły T&M) — T&M
+     + Story Points nie dzielą żadnej policzalnej jednostki (godziny vs. punkty), nie zabija tej
+     mutacji.
+  2. (K-02) Reguła "cały scenariusz" (`scope_ref IS NULL`) i reguła "jeden segment" nie mogą
+     współistnieć bez jawnej reguły łączonej — zaimplementowanej jako rozłączność wartości
+     `scope_ref` wymuszona ograniczeniem w bazie (D-3=A), zastępującym `UNIQUE (scenario_id)`
+     (ADR-0003 pkt 1). Mutacja: usunięcie ograniczenia bez zastąpienia.
+  3. (K-03) Zatwierdzony scenariusz z regułą na poziomie segmentu pozostaje odtwarzalny
+     mechanizmem, który dany model faktycznie używa — migawka stawek dla T&M-kształtnych
+     (rozszerzenie testu SC-4-01 K-09), strażnik zapisu dla Story-Points-kształtnych (rozszerzenie
+     testu SC-4-04 K-04(b)). Mutacja: `scope_ref` jako kolumna zwalniająca z istniejącego
+     strażnika/migawki.
+  4. (K-04) Złożony FK `(segment_id, scenario_id) → scenario_delivery_segment (id, scenario_id)`
+     odrzuca segment INNEGO scenariusza niż reguła (cross-scenario integrity, wzorzec
+     `TYPE_AGREEMENT_FOREIGN_KEY` na `tm_terms`). Mutacja: FK zawężony do samego `segment_id`.
+
+  **Decyzje bramki 1 (2026-09-25, analyst + architect, zaakceptowane przez człowieka bez
+  zastrzeżeń):** D-1=A (przypisanie przychodu do okresów/termin płatności, F-06.5 pierwsza połowa,
+  pozostaje odłożone — poza zakresem tego zadania); D-2=potwierdzone (porównanie modeli przez F-09/
+  duplikację scenariusza i ujawnianie założeń przez `assumptions_used` już pokryte, bez nowego
+  mechanizmu); D-3=A (reguła łączona = rozłączność `scope_ref` w bazie, nie nowa encja —
+  rozłączność dowiedziona na poziomie SCHEMATU wierszy reguł, NIE na poziomie PRZYCHODU: żadna
+  opcja nie liczy przychodu per segment bez F-04, poza zakresem, patrz Out of scope); D-4=A
+  (`copy_scenario_delivery_segments` przestawione przed `copy_commercial_terms` w
+  `SCENARIO_CHILD_COPIERS`, mapowanie `scope_ref` po `(scenario_id, name)`).
+
+  **Out of scope (explicit):** przypisanie przychodu do okresów i termin płatności (F-06.5, D-1);
+  porównanie modeli i ujawnianie założeń jako nowy mechanizm (D-2, już pokryte gdzie indziej);
+  ochrona przed podwójnym rozliczeniem na poziomie KWOTY przychodu (dopiero po F-04, pozycja obsady
+  ↔ segment — dziś nieistniejącej); zysk/marża/koszt (blok 5/7); historia wersji warunków poza
+  migawką zatwierdzenia; API dla segmentu (ADR-0016 pkt 8, nadal bez nośnika).
+
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-06.5; `ADR-0003-model-modeli-komercyjnych.md`
+  (aneksy 2026-09-25, bramka 1 SC-4-05); `ADR-0016-segment-dostawy-scenariusza.md` (aneks
+  2026-09-25); `ADR-0004-wersjonowanie-kalkulacji.md`; `docs/PLAN.md` SC-1-11, SC-4-01, SC-4-04.
+
 - [x] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
   worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
   predykatem lustrzanym do ADR-0003/R-01), koszt jawnie bazowy (nie w pełni obciążony), bramka

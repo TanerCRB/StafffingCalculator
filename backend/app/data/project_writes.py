@@ -360,9 +360,6 @@ ScenarioChildCopier = Callable[[Session, Scenario, Scenario], None]
 
 SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (
     copy_staffing_positions,
-    # SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b): the commercial rule and its
-    # details row — one entry for one aggregate, like the staffing entry above.
-    copy_commercial_terms,
     # SC-5-05 (ADR-0014, point 10, Q-6 = A; ADR-0004, aneks SC-5-05, point 4): the additional costs
     # with **no position**. The costs attached to a position are not here — they are the fourth
     # pass of `copy_staffing_positions`, which holds the old-to-new position ids. Two halves, two
@@ -372,7 +369,19 @@ SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (
     # workstreams. The simplest entry this registry has — the aggregate is one table, one row per
     # segment, no old-to-new id mapping to hold (a segment has no child of its own, ADR-0016 point
     # 9), unlike every entry above it.
+    #
+    # **Ordered before `copy_commercial_terms` since SC-4-05 (D-4=A), not merely appended after
+    # it.** `copy_commercial_terms` now remaps a rule's `scope_ref` onto the copy's own segment,
+    # matched by name (ADR-0016 point 5, `UNIQUE (scenario_id, name)`) — it can only do that once
+    # the copy's segments already exist. Moving this entry earlier is the whole mechanism D-4 chose
+    # (option A: reorder, over option B: thread a shared id-mapping channel through every entry of
+    # this registry) — see `app.data.commercial_terms.copy_commercial_terms` for the join itself.
     copy_scenario_delivery_segments,
+    # SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b), extended by SC-4-05 (D-4=A, D-3=A):
+    # the commercial rule(s) and their details rows — one entry for the aggregate, like the staffing
+    # entry above. Since SC-4-05 a scenario may hold more than one rule (`scope_ref`), and this
+    # entry copies all of them; it must run *after* the segment entry immediately above.
+    copy_commercial_terms,
 )
 """The cascade, as data rather than as prose (ADR-0004, addendum, point 4).
 
@@ -381,26 +390,33 @@ A table left out raises nothing — it yields a copy that shares the source's da
 what AC-02 forbids. The registry exists so that adding a table is one append in one named place
 instead of a search for every place that copies something.
 
-Two entries since SC-4-01: the commercial-rule aggregate (`commercial_terms` + `tm_terms`, one entry
-for two tables for the same reason as below — ADR-0004, addendum 2026-09-23 SC-4-01, point 1b), and
-the staffing aggregate of SC-3-01 (F-04). The staffing entry is **one entry for two tables** —
-positions and their monthly allocation rows — because the allocation row is a *grandchild* of the
-scenario and this contract carries no mapping from old position ids to new ones (ADR-0004, addendum
-2026-09-19, point 1). The consequence is named there and repeated here: "one entry per table" is no
-longer literally true, it is "one entry per aggregate whose root is a child of the scenario", and a
-future completeness test over this registry has to know the difference or the next grandchild table
-will look registered while it is not.
+**Order matters since SC-4-05 (D-4=A)**, which this registry did not require before it: every entry
+used to be able to run in any order relative to every other, because none of them read another
+entry's output. `copy_commercial_terms` is now the first exception — it reads `copy`'s
+already-copied segments to remap `scope_ref` — so `copy_scenario_delivery_segments` must precede
+it. A future entry with the same kind of cross-aggregate dependency has to be placed with the same
+care, and named here as a decision, not left to append order by convention alone.
+
+Two entries since SC-4-01: the commercial-rule aggregate (`commercial_terms` + its details table(s),
+one entry for multiple tables for the same reason as below — ADR-0004, addendum 2026-09-23 SC-4-01,
+point 1b), and the staffing aggregate of SC-3-01 (F-04). The staffing entry is **one entry for two
+tables** — positions and their monthly allocation rows — because the allocation row is a
+*grandchild* of the scenario and this contract carries no mapping from old position ids to new
+ones (ADR-0004, addendum 2026-09-19, point 1). The consequence is named there and repeated here:
+"one entry per
+table" is no longer literally true, it is "one entry per aggregate whose root is a child of the
+scenario", and a future completeness test over this registry has to know the difference or the next
+grandchild table will look registered while it is not.
 
 Three entries since SC-5-05: the scenario-level additional costs (ADR-0014, point 10) joined as an
 entry of their own, while the position-attached ones joined the staffing entry — the first child
 table of `scenarios` whose rows are split between two copiers, by `position_id IS NULL`.
 
-Still absent, and owed by the tasks that create them: scenario-level rate overrides and the details
-tables of the other commercial models (ADR-0003, "Odłożone" — each joins the
-commercial-rule copier, not the registry). The approval snapshot is absent on purpose — the third
-group, never copied. The company catalogue is **not** absent by omission — a catalogue
-row belongs to the organisation and not to a scenario, so it has no entry here on purpose (ADR-0004,
-addendum 2026-09-19 "katalog organizacyjny nie jest dzieckiem scenariusza").
+Still absent, and owed by the tasks that create them: scenario-level rate overrides. The approval
+snapshot is absent on purpose — the third group, never copied. The company catalogue is **not**
+absent by omission — a catalogue row belongs to the organisation and not to a scenario, so it has no
+entry here on purpose (ADR-0004, addendum 2026-09-19 "katalog organizacyjny nie jest dzieckiem
+scenariusza").
 """
 
 SCENARIO_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(

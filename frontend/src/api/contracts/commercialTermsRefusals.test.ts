@@ -66,12 +66,25 @@ describe("the commercial-rule refusal markers this client reads are the backend'
   });
 
   it("spells the one-rule-per-scenario constraint exactly as the model declares it", () => {
-    const declared = /UniqueConstraint\("scenario_id", name="([^"]+)"\)/.exec(
-      COMMERCIAL_TERMS_MODEL_PY,
-    );
-    expect(declared, "the model no longer declares the constraint in the shape read here").not
-      .toBeNull();
-    expect(ONE_RULE_PER_SCENARIO_CONSTRAINT).toBe(declared?.[1]);
+    // SC-4-05, D-3=A: the plain `UniqueConstraint("scenario_id", name="...")` SC-4-01 shipped
+    // became a partial `Index(...)` (only `Index` carries `postgresql_where` in SQLAlchemy) —
+    // same name, new shape. The name is now a module constant, not a string literal at the call
+    // site, so this reads the call for the identifier and then resolves that identifier's own
+    // assignment, rather than assuming either step alone spells the name out.
+    const indexCall =
+      /Index\(\s*(\w+),\s*"scenario_id",\s*unique=True,\s*postgresql_where=text\(SCOPE_REF_NULL_EXPRESSION\),?\s*\)/.exec(
+        COMMERCIAL_TERMS_MODEL_PY,
+      );
+    expect(indexCall, "the model no longer declares the whole-scenario partial index in the shape read here")
+      .not.toBeNull();
+    const constantAssignment = indexCall
+      ? new RegExp(`${indexCall[1]}\\s*=\\s*"([^"]+)"`).exec(COMMERCIAL_TERMS_MODEL_PY)
+      : null;
+    expect(
+      constantAssignment,
+      "the constant naming the whole-scenario index is no longer assigned a literal string here",
+    ).not.toBeNull();
+    expect(ONE_RULE_PER_SCENARIO_CONSTRAINT).toBe(constantAssignment?.[1]);
   });
 
   it("classifies each refusal built the way the backend builds it, and a refusal the backend cannot produce as unstated", () => {
