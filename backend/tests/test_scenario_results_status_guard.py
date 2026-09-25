@@ -50,6 +50,7 @@ from tests.conftest import (
     make_commercial_terms,
     make_cost_category,
     make_dimension_tuple,
+    make_outcome_terms,
     make_project,
     make_rate,
     make_scenario,
@@ -129,6 +130,7 @@ def _cost_visible_project(session: Session, *, name: str) -> Any:
 STORY_POINTS = "story_points"
 TIME_AND_MATERIAL = "time_and_material"
 NO_RULE = "no_rule"
+OUTCOME = "outcome_based"
 
 
 def _committed_scenario(engine: Engine, rule: str) -> dict[str, uuid.UUID]:
@@ -141,7 +143,10 @@ def _committed_scenario(engine: Engine, rule: str) -> dict[str, uuid.UUID]:
     - `TIME_AND_MATERIAL`: 100 × 200 = revenue 20000.00, profit 8000.00 (revenue chosen by the
       status, `live_catalog`/`approved_snapshot`);
     - `NO_RULE`: no rule at all — `no_commercial_terms`, with a `rate_source` still chosen by the
-      status (A15-9)."""
+      status (A15-9);
+    - `OUTCOME`: an Outcome-based rule with `conftest.make_outcome_terms`' defaults — revenue
+      = the guaranteed fixed fee 20000.00, profit 8000.00 (revenue independent of the status,
+      `not_applicable`; SC-4-03)."""
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         project = _cost_visible_project(setup, name=f"Race {rule}")
         scenario = make_scenario(setup, project, name="Baseline", currency="PLN")
@@ -174,6 +179,8 @@ def _committed_scenario(engine: Engine, rule: str) -> dict[str, uuid.UUID]:
             make_story_points_terms(setup, scenario)
         elif rule == TIME_AND_MATERIAL:
             make_commercial_terms(setup, scenario)
+        elif rule == OUTCOME:
+            make_outcome_terms(setup, scenario)
         state = {"project_id": project.id, "scenario_id": scenario.id}
         setup.commit()
     return state
@@ -204,10 +211,17 @@ NO_RULE_REVENUE_READ_TRIGGER = "from commercial_terms"
 revenue read issues (no details table, no rate window follows it); no scope query names that table
 (A15-9)."""
 
+OUTCOME_REVENUE_READ_TRIGGER = "outcome_terms"
+"""The Outcome-based revenue read's lookup of its `outcome_terms` details row — issued by
+`commercial_terms_for_caller` after its refresh froze `s_P`, and never by the personnel-cost or
+additional-cost reads; the same trigger `tests/test_outcome_scenario_results.py` uses. Fires on the
+first such statement, i.e. still inside the revenue read, before the cost read's refresh."""
+
 TRIGGER_OF_REVENUE_READ = {
     STORY_POINTS: REVENUE_READ_TRIGGER,
     TIME_AND_MATERIAL: TM_REVENUE_READ_TRIGGER,
     NO_RULE: NO_RULE_REVENUE_READ_TRIGGER,
+    OUTCOME: OUTCOME_REVENUE_READ_TRIGGER,
 }
 
 COST_READ_TRIGGER = "requested_months"
@@ -539,7 +553,7 @@ def test_k_04_contrast_approved_before_the_request_answers_404(
 
 @PERMISSION_SETS
 @pytest.mark.parametrize("endpoint", ["results", "what_if"])
-@pytest.mark.parametrize("rule", [STORY_POINTS, TIME_AND_MATERIAL])
+@pytest.mark.parametrize("rule", [STORY_POINTS, TIME_AND_MATERIAL, OUTCOME])
 def test_a15_7_an_approval_raced_between_the_cost_and_additional_cost_reads_is_a_409(
     committing_client: TestClient,
     engine: Engine,
@@ -557,7 +571,9 @@ def test_a15_7_an_approval_raced_between_the_cost_and_additional_cost_reads_is_a
     with the generic `409` (K-06 parametrization).
 
     Mutation killed: rule (b) dropped from `refuse_a_status_race` — `…/results` then answers `200`
-    (both models) and what-if `200` (T&M, rule (a) sees nothing either) / `404` (Story Points)."""
+    (every model) and what-if `200` (T&M, rule (a) sees nothing either) / `404` (Story Points,
+    Outcome). The `OUTCOME` case (QA, SC-7-03 round 3, SC-7-03-M33) also kills rule (b) switched
+    off only for a `not_applicable` revenue — "every model" includes Outcome-based."""
     state = _committed_scenario(engine, rule)
 
     response = _get_with_an_approval_raced_in(
@@ -610,6 +626,46 @@ def test_a15_8_story_points_approval_between_revenue_and_cost_is_the_approved_an
         assert body["personnel_cost"]["amount"] == "12000.00"
         assert body["personnel_cost"]["assumptions_used"]["rate_source"] == "approved_snapshot"
         assert body["profit"] == "13000.00"
+    else:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL}
+
+
+@pytest.mark.parametrize("endpoint", ["results", "what_if"])
+def test_a15_8_outcome_approval_between_revenue_and_cost_is_the_approved_answer_not_a_race(
+    committing_client: TestClient, engine: Engine, endpoint: str
+) -> None:
+    """A15-8 for Outcome-based (QA, SC-7-03 round 3) — the approval commits after the Outcome
+    revenue read (`s_P = draft`, `not_applicable`) and before the cost read (`s_K = s_D =
+    approved`): the approved scenario read whole.
+
+    - `…/results` → `200`, cost from the snapshot (12000.00), `scenario_status` `"Approved"`,
+      profit 20000.00 − 12000.00 = 8000.00 (the same fact `tests/test_outcome_scenario_results.py::
+      test_k_07_an_approval_between_the_outcome_revenue_and_the_cost_read_is_not_a_race` pins);
+    - what-if → `404` with the "not found" body — never `409`.
+
+    Mutation killed (SC-7-03-M34): what-if classifying a `not_applicable` revenue as
+    status-dependent → `409` instead of `404`. No other test races what-if on an Outcome scenario.
+    """
+    state = _committed_scenario(engine, OUTCOME)
+
+    response = _get_with_an_approval_raced_in(
+        committing_client,
+        state,
+        _path(endpoint, state),
+        EVERYTHING,
+        trigger=OUTCOME_REVENUE_READ_TRIGGER,
+    )
+
+    if endpoint == "results":
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["scenario_status"] == "Approved"
+        assert body["revenue"]["amount"] == "20000.00"
+        assert body["revenue"]["assumptions_used"]["rate_source"] == "not_applicable"
+        assert body["personnel_cost"]["amount"] == "12000.00"
+        assert body["personnel_cost"]["assumptions_used"]["rate_source"] == "approved_snapshot"
+        assert body["profit"] == "8000.00"
     else:
         assert response.status_code == 404, response.text
         assert response.json() == {"detail": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL}
