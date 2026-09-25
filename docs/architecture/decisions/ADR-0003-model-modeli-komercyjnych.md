@@ -482,15 +482,35 @@ ma już trzecią wartość `story_points_terms`. Rejestr tego dokumentu rozjecha
 brak tego zapisu był przyczyną błędu #118: strażnik wyścigu porównywał `rate_source` przychodu z
 `rate_source` kosztu tak, jakby oba były tym samym słownikiem.
 
+> Uzgodnienie po merge z `main` (SC-4-03, PR #120), decyzja człowieka 2026-09-25: Q4 zmienione z A
+> na B (ADR-0015, aneks SC-7-03). Pkt 1–2 niżej przepisane w tym samym dniu, przed scaleniem SC-7-03 —
+> wpis nie był jeszcze częścią `main`; wcześniejsze brzmienie ("porównywanie nie może sterować
+> logiką") wykluczało klasyfikację z pkt 2 i przeczyło pkt 12b wyżej.
+
 1. `assumptions_used.rate_source` przychodu to deskryptor F-06.5 **zależny od modelu**: T&M zgłasza
    `live_catalog` / `approved_snapshot` (stawka sprzedażowa z katalogu albo migawki, pkt 4–5), Story
-   Points zgłasza `story_points_terms` (dana własna reguły, bez katalogu i bez migawki). Każdy kolejny
-   model (Fixed Price #66, Outcome-based #67) dopisuje tu swoją wartość w tym samym zadaniu, w którym
-   rozszerza kontrakt.
+   Points — `story_points_terms` (dana własna reguły, bez katalogu i bez migawki), Outcome-based —
+   `not_applicable` (aneks SC-4-03, pkt 8). Odpowiedzi bez modelu albo z modelem nieobsługiwanym
+   (`no_commercial_terms`, `unsupported_model_type`) i niekompletna reguła T&M zgłaszają wartość
+   wybraną ze statusu (`live_catalog` / `approved_snapshot`). Każdy kolejny model (Fixed Price #66)
+   dopisuje tu swoją wartość w tym samym zadaniu, w którym rozszerza kontrakt — zgodnie z konwencją
+   aneksu SC-4-03, pkt 10a/12a.
 2. Słownik `rate_source` przychodu i słownik `rate_source` kosztu (ADR-0013, ADR-0015 pkt 4) to **dwa
-   odrębne słowniki**, które przypadkiem dzielą dwie wartości. Porównywanie ich ze sobą nie ma sensu
-   dziedzinowego i nie może sterować logiką — wykrycie wyścigu odczytu opiera się na statusie
-   scenariusza (ADR-0015, aneks SC-7-03).
+   odrębne słowniki**, które dzielą dwie wartości. **Wartości z jednego nie porównuje się z
+   wartościami z drugiego.** `rate_source` przychodu wolno użyć do jednej decyzji logicznej:
+   klasyfikacji, czy przychód zależy od statusu scenariusza (`rate_source ∈ STATUS_DEPENDENT_SOURCES`
+   — `live_catalog`, `approved_snapshot`). To jest uściślenie pkt 8, 10a i 12b aneksu SC-4-03, nie
+   odstępstwo od ich semantyki: strażnik wyścigu nadal uwzględnia przychód wyłącznie wtedy, gdy jego
+   źródło zależy od statusu, i nadal nie traktuje `story_points_terms` ani `not_applicable` jako
+   dowodu wyścigu ani jego braku. **Zmienia się mechanizm (odstępstwo od brzmienia pkt 10a/12b, zapis
+   wymagany zdaniem końcowym pkt 10):** strażnik nie porównuje `rate_source` przychodu z `rate_source`
+   kosztu, lecz statusy scenariusza zamrożone przez trzy odczyty (przychód, koszt osobowy, koszt
+   dodatkowy) — reguła w ADR-0015, aneks SC-7-03, pkt 2. Zdania "strażnik porównuje wyłącznie źródła
+   zależne od statusu" w pkt 8, 10a i 12b czyta się odtąd jako "strażnik uwzględnia przychód
+   wyłącznie, gdy jego źródło należy do źródeł zależnych od statusu". Obowiązek pkt 10a (wartość spoza
+   zbioru dla modelu bez katalogu, test wyścigu `/results` dla nowego modelu) bez zmian; dochodzi
+   jawna klasyfikacja każdej nowej wartości do zbioru albo poza niego (ADR-0015, aneks SC-7-03, pkt
+   7).
 3. Reguła 10 Strażnika bez zmian: poprawka strażnika nie może skłonić przychodu modelu niezależnego od
    katalogu do czytania statusu ani stawek katalogu tylko po to, by zgłosić wartość porównywalną z
    kosztem.
