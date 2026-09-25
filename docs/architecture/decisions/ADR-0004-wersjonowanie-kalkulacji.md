@@ -680,3 +680,43 @@ SC-6-01, F-09 pkt 1, AC-02).**
 5. Duplikacja scenariusza generuje kolejne zdarzenie pod odłożonym warunkiem `audit_log` (F-12) —
    dołącza do SC-1-02..04, SC-3-02, SC-4-01, SC-5-05 jako kolejne zadanie z tym samym, powtórzonym
    zamknięciem (aneks 2026-09-18 "historia zmian… odłożona").
+
+### 2026-09-25 — nowa tabela-dziecko scenariusza: segment dostawy/workstreamu, grupa 2, bez migawki (SC-1-11, ADR-0016)
+
+Aneks z 2026-09-19 (SC-3-01) pkt 4 zobowiązuje każdą nową tabelę-dziecko scenariusza do
+przypisania "dziedziczona → migawka" albo "własna → strażnik zapisu" **w chwili powstania** —
+tabela dodana bez przypisania wpada domyślnie do grupy 2 i nie dostaje żadnej ochrony poza tą,
+którą strażnik faktycznie egzekwuje. `scenario_delivery_segment` (ADR-0016, encja fazy/workstreamu,
+Issue #65) jest tą tabelą. Ten wpis nazywa przypisanie wprost — nie zostawia je domyślnemu
+milczeniu, który tamten aneks nazwał ryzykiem.
+
+1. **Grupa 2 — dana własna scenariusza, strażnik zapisu, nie migawka.** Segment jest strukturalnym
+   wejściem planistycznym scenariusza (nazwa i miejsce w hierarchii projekt → scenariusz →
+   segment); nic spoza scenariusza go nie zmienia — kryterium "kierunek dziedziczenia, nie udział
+   w wyliczeniu" (aneks 2026-09-19 SC-3-01) spełnione wprost, tak samo jak dla `staffing_position`,
+   `commercial_terms`/`tm_terms` i `additional_cost`.
+2. **Zapis odrzucany pod `approved` w tej samej instrukcji co odczyt statusu.** Ten sam wzorzec
+   strażnika co dla pozostałych tabel-dzieci: `INSERT … SELECT … FROM scenarios WHERE id =
+   :scenario_id AND status <> 'approved'` (aneks 2026-09-19 SC-3-01, pkt 2) dla `INSERT`; `UPDATE`/
+   `DELETE`, jeśli którakolwiek z tych funkcji zapisu powstaje w tym zadaniu, zawieszone na tym
+   samym predykacie w klauzuli `WHERE`. Żaden nowy kształt strażnika — `app.data.scenario_guard`
+   bez zmian.
+3. **Wyścig z zatwierdzeniem: bez nowego mechanizmu, korzysta z już domkniętego.** Warunek
+   zamknięcia z aneksu 2026-09-19 SC-3-01 pkt 2 ("pierwsza prawdziwa ścieżka zatwierdzenia
+   scenariusza musi rozstrzygnąć ten wyścig … dla WSZYSTKICH tabel-dzieci scenariusza naraz, nie
+   tylko dla tej, która akurat wtedy powstaje") został domknięty przez SC-3-02 dla tabel istniejących
+   w tamtym czasie. Nowa tabela korzysta z tego samego, już dowiedzionego mechanizmu — nie otwiera
+   wyścigu ponownie i nie wymaga własnego testu fundamentu, tylko testu tej konkretnej tabeli
+   (kanarek per ścieżka zapisu, warunek aneksu SC-3-01).
+4. **Jeden wpis w `SCENARIO_CHILD_COPIERS`, najprostszy kształt rejestru dotąd.** Segment nie ma
+   dziś żadnego dziecka ani wnuczka (F-04/alokacja per faza poza zakresem SC-1-11, ADR-0016 pkt 9)
+   — kopiujący wstawia, dla każdego wiersza źródłowego, nowy wiersz o nowym `id`, tej samej `name`,
+   wskazujący `id` kopii scenariusza. Brak mapowania zagnieżdżonych identyfikatorów (w przeciwieństwie
+   do kopiującego agregatu pozycji obsady, aneks 2026-09-19 SC-3-01 pkt 1) — odzwierciedla faktyczny
+   kształt agregatu, nie jest osłabieniem gwarancji reguły 17 Strażnika.
+5. **Nie wchodzi do `SNAPSHOT_TABLES`.** Konsekwencja wprost z punktu 1: dane własne scenariusza nie
+   mają czego zamrażać przy zatwierdzeniu (aneks 2026-09-19 SC-3-01 pkt 2, zdanie ostatnie).
+6. **Ten aneks nie wystawia żadnej ścieżki zapisu na zewnątrz warstwy danych.** SC-1-11 buduje
+   wyłącznie funkcję(-e) warstwy danych potrzebną do spełnienia punktów 1–5 — żaden endpoint HTTP
+   nie wystawia segmentu (Q2 = A, ADR-0016 pkt 8). Uprawnienia (ADR-0005) pozostają nierozstrzygnięte
+   do zadania, które doda pierwszy endpoint nad tą tabelą.
