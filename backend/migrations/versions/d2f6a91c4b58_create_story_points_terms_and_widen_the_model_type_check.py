@@ -35,7 +35,7 @@ version deployed before this migration keeps working against the new schema (it 
   K-02 — no Story Points ↔ hours conversion).
 
 Revision ID: d2f6a91c4b58
-Revises: a3d9e6f20c71
+Revises: b1f4e8a3c95d
 Create Date: 2026-09-25
 """
 
@@ -45,7 +45,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d2f6a91c4b58"
-down_revision: str | None = "a3d9e6f20c71"
+down_revision: str | None = "b1f4e8a3c95d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
