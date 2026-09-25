@@ -22,9 +22,11 @@ ADR-0013 definiuje formułę kosztu osobowego i zamknięty słownik `rate_source
 
 1. **Mechanizm: podstawienie w istniejące funkcje domenowe, nigdy nowa, niezależna ścieżka
    licząca.** What-if wywołuje `app.domain.personnel_cost.base_personnel_cost`,
-   `app.domain.personnel_cost.paid_absence_cost`, `app.data.personnel_cost._worked_months` i
-   `app.data.personnel_cost.paid_absence_months` (nie tylko pierwsze dwie — patrz pkt 3) oraz
-   `app.domain.scenario_results.scenario_profitability`, na PODSTAWIONYM zestawie stawek, zamiast
+   `app.domain.paid_absence_cost.paid_absence_cost`, `app.data.personnel_cost._worked_months` i
+   `app.data.paid_absence_cost.paid_absence_months` (nie tylko pierwsze dwie — patrz pkt 3; ostatnie
+   dwie mieszkają w osobnym module `paid_absence_cost`, nie w `personnel_cost` — poprawka
+   2026-09-25, deweloper SC-6-04 zaimportował z właściwych modułów mimo tej nieścisłości tekstu)
+   oraz `app.domain.scenario_results.scenario_profitability`, na PODSTAWIONYM zestawie stawek, zamiast
    pisać własną arytmetykę. "Jedna funkcja, trzy miejsca" (ADR-0013 pkt 6: live/kopier/migawka)
    staje się "jedna funkcja, cztery miejsca" — what-if jako czwarty wywołujący, nie równoległy
    mechanizm.
@@ -35,8 +37,13 @@ ADR-0013 definiuje formułę kosztu osobowego i zamknięty słownik `rate_source
    identity map sesji. Ani `app.domain.personnel_cost`, ani `app.domain.scenario_results` nie
    przyjmują `Session` jako argumentu. Jedyny obiekt mapowany ORM w tej ścieżce (`Scenario`, przez
    `session.refresh`) jest wyłącznie czytany (`.status`, `.currency`), nigdy przypisywany.
-   Dowód (nowy wzorzec testowy, do zbudowania w SC-6-04, brak precedensu w repo): (a)
-   `session.new`/`session.dirty`/`session.deleted` puste przed i po wywołaniu what-if; (b) test
+   Dowód (nowy wzorzec testowy, zbudowany w SC-6-04, poprawiony 2026-09-25 po znalezisku QA): (a)
+   **surowy odczyt `SELECT` wiersza scenariusza, POZA identity mapą sesji, z kanarkiem
+   `updated_at`, przed i po wywołaniu what-if** — `session.new`/`session.dirty`/`session.deleted`
+   puste NIE wystarcza jako dowód: SQLAlchemy `autoflush` czyści atrybut z `.dirty` w chwili, gdy
+   sesja wykona kolejną instrukcję, więc przypisanie do jedynego obiektu ORM-mapowanego w tej
+   ścieżce (`scenario.name = ...`) przeżywało kontrolę session-bookkeeping mimo realnego zapisu do
+   bazy (zademonstrowane mutacją, QA, 2026-09-24) — tylko raw-row re-read to wykrywa; (b) test
    grafu importów potwierdzający, że moduł what-if importuje wyłącznie wymienione funkcje domenowe
    i ich typy wejściowe — żaden model ORM, żadne wywołanie `Session.add`/`flush` w jego własnym
    źródle.
@@ -65,7 +72,15 @@ ADR-0013 definiuje formułę kosztu osobowego i zamknięty słownik `rate_source
 6. **Kształt podwyżki: procentowa, nie kwotowa.** `default_cost_rate` to stawka godzinowa;
    ADR-0013 nie ma słownictwa dla kwoty bezwzględnej (brak odpowiedzi na pytanie "w jakiej walucie
    jest podwyżka", gdy koszt scenariusza jest już w stanie `currency_mismatch`). Procent jest
-   bezwymiarowy i spójny z każdym stanem nazwanym formuły kosztu.
+   bezwymiarowy i spójny z każdym stanem nazwanym formuły kosztu. **Dolna granica: `-100%`**
+   (poprawka 2026-09-25, bramka 2, reviewer R-01) — poniżej tej wartości stawka staje się ujemna,
+   co `base_personnel_cost`/`paid_absence_cost` sumowałyby bez odrzucenia, dając fizycznie
+   niemożliwy, ale pewny `200` (koszt ujemny, zysk większy niż przychód, marża >100%). Dokładnie
+   `-100%` zeruje stawkę (legalna wartość rzeczywista — "darmowa godzina"), nigdy jej nie neguje.
+   Granica egzekwowana na warstwie API/schematu (`ge=SALARY_RAISE_PERCENT_FLOOR`), nie wewnątrz
+   funkcji domenowej — przyszły wariant (SC-6-05/06/07), jeśli reużyje mnożnika przez inny punkt
+   wejścia, musi ją zastosować ponownie, nie dziedziczy jej za darmo (reviewer, nienazwane ryzyko na
+   przyszłość, niebllokujące).
 7. **Kształt żądania: `GET`, nie bezciałowy `POST`.** Wzorzec siostrzanych akcji (`copy_project`,
    `archive`, `approve`, `duplicate` — ADR-0004 aneks SC-6-01 pkt 2) jest celowo bezciałowy, bo są
    to akcje ZAPISUJĄCE. What-if nic nie zapisuje — to odczyt z parametrem, więc `GET
