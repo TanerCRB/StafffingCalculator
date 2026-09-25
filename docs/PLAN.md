@@ -1522,9 +1522,75 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-05, R-01 — 15 testów) — 737 testów backendowych zielono, 234 frontendowych bez zmian.
   Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-6-04** — Pokaż wpływ hipotetycznej podwyżki wynagrodzeń na koszt i zysk scenariusza
-  (F-09 pkt 3, wariant 1/4 analizy wrażliwości). Zarezerwowane, kryteria i decyzje bramki 1 w
-  Issue #88, nowa decyzja architektoniczna ADR-0015 (Draft — pending approval).
+- [x] **SC-6-04** — Pokaż wpływ hipotetycznej podwyżki wynagrodzeń na koszt i zysk scenariusza
+  (F-09 pkt 3, wariant 1/4 analizy wrażliwości). Pierwszy w repo mechanizm "przelicz bez zapisu"
+  (compute-without-persist) — nowa decyzja architektoniczna ADR-0015 (Draft — pending approval) +
+  aneks ADR-0013. `GET /projects/{project_id}/scenarios/{scenario_id}/what-if?salary_raise_percent=`.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-06 (analyst, gate 1 zaakceptowane
+  2026-09-24):
+  1. (K-01) Podstawienie w istniejące funkcje (`base_personnel_cost`, `paid_absence_cost`,
+     `_worked_months`, `paid_absence_months`), nigdy nowa, piąta ścieżka licząca — DWA nośniki
+     razem: strukturalny (graf importów) + behawioralny (0%≡`GET .../results`) + kontrast na
+     mieszanym miesiącu (odróżnia prawdziwe podstawienie per-miesiąc od naiwnego mnożenia
+     agregatu).
+  2. (K-02) Żaden wiersz danych scenariusza nie zmienia się po wywołaniu — dowód wzmocniony przez
+     QA: `session.new`/`.dirty`/`.deleted` puste NIE wystarcza (autoflush czyści przed
+     sprawdzeniem), domknięte raw SQL re-read + kanarek `updated_at`.
+  3. (K-03) Scenariusz spoza zasięgu → `404` jak nieistniejący.
+  4. (K-04) Koniunkcja kosztu osobowego dziedziczona w warstwie kształtującej odpowiedź, nigdy na
+     bramce dostępu endpointu (dokładnie mutacja, która już raz złamała SC-7-01).
+  5. (K-05) Przychód niewrażliwy na hipotezę kosztową (dwie magnitudy podwyżki, revenue identyczne,
+     koszt różny).
+  6. (K-06) Scenariusz `approved` → ten sam `404` co K-03, nigdy osobny kształt błędu ani cichy
+     przelicz na migawce.
+
+  **Decyzje bramki 1 (2026-09-24, analyst + architect, zaakceptowane przez człowieka, ADR-0015
+  nowa + aneks ADR-0013, commit fa8cd68):** `rate_source` rozszerzony o trzecią wartość
+  `WHAT_IF_HYPOTHETICAL` (opcja A) — zaudytowane, nigdy nie dociera do porównania strażnika
+  wyścigu `ScenarioResultsRaceDetected` (what-if buduje własną kompozycję, nigdy nie woła
+  `scenario_results_for_caller`); zakres wyłącznie `draft`, z odziedziczonym strażnikiem wyścigu na
+  stronie odczytu (przychód czytany osobno od kosztu, jak SC-7-01); podwyżka procentowa, nie
+  kwotowa (brak słownictwa na walutę podwyżki w ADR-0013); `GET` nie bezciałowy `POST` (to odczyt,
+  nie akcja); `RESULTS_READ` bez zmian, żadnego nowego uprawnienia — rozszerza już nazwany, uśpiony
+  gap B-01; podwyżka dotyka WSPÓLNEGO słownika stawek, więc `paid_absence_cost` też, nie tylko
+  koszt bazowy.
+
+  **Runda weryfikacji (QA, Invariant Guardian, reviewer, security-auditor) + poprawka.** QA: proof
+  holds po naprawie realnej metodologicznej luki — `session.new/dirty/deleted` puste nie dowodzi
+  braku zapisu (autoflush), zademonstrowane mutacją (`scenario.name = ...` przeżyło oryginalny
+  test, naprawdę zapisało wiersz), domknięte nowym testem. Invariant Guardian: PASS WITH
+  RESERVATIONS → poprawka → PASS. S-01 (Medium): zero testów (nawet monkeypatch) dla własnej
+  ścieżki 409 what-if — naprawione testem monkeypatch na realnym call site, potwierdzone. Reviewer:
+  PASS WITH RESERVATIONS → poprawka → PASS. R-01 (Medium): `salary_raise_percent` bez dolnego
+  ograniczenia — podwyżka -500% daje ujemną stawkę, `profit`>`revenue`, marża >100%, fizycznie
+  niemożliwe ale pewny `200` — naprawione `ge=-100` (rata staje się dokładnie 0, nigdy ujemna),
+  dwa testy (odmowa poniżej granicy, dokładna granica nie jest pułapką off-by-one), potwierdzone.
+  Security-auditor: PASS WITH RESERVATIONS → poprawka → PASS. Dwie notatki: (1) kolejność
+  check-po-odczycie dla scenariusza `approved` (realne dane czytane w pamięci przed odmową, nigdy
+  serwowane) — doprecyzowany docstring, nie zmiana zachowania; (2) `WHAT_IF_HYPOTHETICAL` jako
+  przyszła pułapka słownikowa dla kodu, który jeszcze nie istnieje — zaakceptowane jako nazwane,
+  nieblokujące ryzyko na przyszłość.
+
+  **Out of scope (explicit):** pozostałe 3 warianty analizy wrażliwości (spadek utylizacji #100,
+  opóźniony start #101, kurs walutowy #102) — odziedziczą ten sam wzorzec compute-without-persist;
+  podwykonawcy/dostawcy (strukturalnie nieosiągalni); zapis wyniku what-if jako nowego scenariusza
+  (już istnieje jako duplikacja, SC-6-01); frontend; real-concurrency (dwa realne połączenia) dla
+  WŁASNEJ ścieżki 409 what-if — odziedziczony mechanizm dowiedziony realną współbieżnością na
+  siostrzanym endpoincie (SC-7-01), dla what-if dowiedziony czytaniem kodu + testem monkeypatch,
+  nie pełną współbieżnością (nazwane, zaakceptowane).
+
+  **Fundament nieudowodniony, przyjęty świadomie:** sam mechanizm compute-without-persist nie miał
+  precedensu w repo przed tym zadaniem — formuły (`base_personnel_cost`, `paid_absence_cost`,
+  `scenario_profitability`) dowiedzione (SC-5-01/SC-5-06/SC-7-01), sam mechanizm podstawienia
+  budowany od zera. Reviewer zanotował (niebllokująco): granica `ge=-100` żyje w warstwie
+  schematu/API, nie wewnątrz `scenario_what_if_salary_raise_for_caller` — przyszły wariant
+  (SC-6-05/06/07), jeśli reużyje mnożnika przez inny punkt wejścia niż ten `Query`, musiałby
+  ponownie zastosować granicę, nie dziedziczy jej za darmo. Podstawa: Issue #88,
+  `Wymagania/Requirements_EN.md` §4 F-09 pkt 3; `docs/PLAN.md` SC-5-01, SC-5-06, SC-7-01;
+  `ADR-0015-przeliczenie-bez-zapisu.md` (nowa); `ADR-0013-koszt-osobowy.md` (aneks).
+  **Done 2026-09-24:** PR #106 (scalone `9f3b94b`). Dowód: `backend/tests/test_scenario_what_if.py`
+  (K-01..K-06, S-01, R-01 — 12 testów) — 749 testów backendowych zielono, 262 frontendowych bez
+  zmian. Zob. `docs/architecture/capabilities.md`.
 
 - [x] **SC-6-03** — Duplikuj scenariusz z interfejsu (F-09 pkt 1, frontend). Konsument API
   dostarczonego przez SC-6-01 (`POST .../scenarios/{id}/duplicate`) — ekran świadomie odłożony przy

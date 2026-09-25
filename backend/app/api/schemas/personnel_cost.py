@@ -64,7 +64,11 @@ class CostAssumptionsRead(BaseModel):
 
     hours_source: Literal["planned_allocation_hours"]
     vendor_axis: Literal["internal"]
-    rate_source: Literal["live_catalog", "approved_snapshot"]
+    rate_source: Literal["live_catalog", "approved_snapshot", "what_if_hypothetical"]
+    """Closed at three values since SC-6-04 (ADR-0015): `what_if_hypothetical` appears only on
+    `GET …/scenarios/{id}/what-if` (`app.api.schemas.scenario_what_if`), never on this scenario's
+    own `GET …/personnel-cost` or `GET …/results`, which still only ever see the two real
+    sources."""
     rate_windows: list[CostRateWindowRead]
     unresolved_months: list[UnresolvedCostMonthRead]
     currencies: list[str]
