@@ -1,6 +1,8 @@
 """The only path by which a scenario's commercial rule is read, written, copied and priced.
 
-SC-4-01 (F-06.1, Issue #8).
+SC-4-01 (F-06.1, Issue #8), extended by SC-4-04 (F-06.4, Issue #68) — the second real model
+(Story Points) registered in `REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL` below, proving every
+mechanism in this module generalises rather than being a property of the one model it shipped with.
 
 Four mechanisms, none of them new — each is an existing mechanism of this repository applied to the
 first table of plan block 4 (ADR-0003; ADR-0004, ADR-0005 and ADR-0008, addenda 2026-09-23 SC-4-01):
@@ -36,7 +38,7 @@ point 2b).
 """
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
 
@@ -59,6 +61,7 @@ from app.domain.revenue import (
     INCOMPLETE_COMMERCIAL_TERMS,
     LIVE_CATALOG,
     NO_COMMERCIAL_TERMS,
+    RATE_SOURCE_STORY_POINTS_TERMS,
     UNSUPPORTED_MODEL_TYPE,
     AssumptionsUsed,
     MonthPrice,
@@ -66,12 +69,15 @@ from app.domain.revenue import (
     RevenueAnswer,
     RevenueUnavailable,
 )
+from app.domain.revenue_story_points import story_points_revenue
 from app.domain.revenue_time_and_material import BillableMonth, time_and_material_revenue
 from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
 from app.models.commercial_terms import (
+    MODEL_TYPE_STORY_POINTS,
     MODEL_TYPE_TIME_AND_MATERIAL,
     CommercialTerms,
+    StoryPointsTerms,
     TmTerms,
 )
 from app.models.scenario import Scenario, ScenarioStatus
@@ -296,8 +302,40 @@ def _time_and_material(session: Session, scenario: Scenario, rule: _Rule) -> Rev
     )
 
 
+def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+    """Story Points (F-06.4, SC-4-04): a rule without its `story_points_terms` row is
+    `incomplete_commercial_terms`, never priced — the same named state T&M uses for the same reason
+    (ADR-0003, point 3).
+
+    **Reads no staffing table** (criterion K-02): unlike `_time_and_material`, this branch never
+    calls `_billable_months` and never touches `StaffingPosition`/`StaffingPositionAllocation` — the
+    price is entirely the rule's own row, so a scenario's billable-hours plan can change arbitrarily
+    without moving this revenue by a cent. `assumptions_used` names that explicitly
+    (`HOURS_SOURCE_NOT_APPLICABLE`), not merely by omission.
+    """
+    if not rule.has_details:
+        return RevenueUnavailable(
+            reason=INCOMPLETE_COMMERCIAL_TERMS,
+            assumptions_used=AssumptionsUsed(
+                model_type=rule.terms.model_type, rate_source=RATE_SOURCE_STORY_POINTS_TERMS
+            ),
+        )
+    details = session.execute(
+        sa.select(StoryPointsTerms).where(
+            StoryPointsTerms.commercial_terms_id == rule.terms.id
+        )
+    ).scalar_one()
+    return story_points_revenue(
+        price_per_point=details.price_per_point,
+        accepted_points=details.accepted_points,
+        currency=details.currency,
+        scenario_currency=scenario.currency,
+    )
+
+
 REVENUE_BY_MODEL: dict[str, RevenueCalculator] = {
     MODEL_TYPE_TIME_AND_MATERIAL: _time_and_material,
+    MODEL_TYPE_STORY_POINTS: _story_points,
 }
 """`model_type` → the function that prices it. Chosen by the discriminator alone, never by the shape
 of the data (ADR-0003, point 9). Keys must equal `app.models.commercial_terms.MODEL_TYPES`, and a
@@ -306,6 +344,7 @@ price."""
 
 DETAIL_TABLE_BY_MODEL: dict[str, sa.Table] = {
     MODEL_TYPE_TIME_AND_MATERIAL: TmTerms.__table__,
+    MODEL_TYPE_STORY_POINTS: StoryPointsTerms.__table__,
 }
 """`model_type` → its details table, for the write path that creates both rows in one statement."""
 
@@ -337,10 +376,11 @@ def revenue_of(session: Session, scenario: Scenario, rule: _Rule | None) -> Reve
     `scenario` must be one `scenario_in_scope` returned: this function decides no access.
 
     **A model this version of the code does not know is a named state, not a `KeyError`** (R-02,
-    gate 2). The discriminator CHECK admits only `time_and_material` today, so the branch is
-    unreachable now; it is reachable in the mixed-version window of expand → deploy → contract
-    (ADR-0001), when a later model's migration has widened the CHECK and an instance still runs this
-    code. Defensive only: nothing here prices another model.
+    gate 2). The discriminator CHECK admits `time_and_material` and `story_points` today (SC-4-04
+    widened it, ADR-0003 addendum 2026-09-25), and this branch stays reachable for whichever value
+    a future migration adds next, in the mixed-version window of expand → deploy → contract
+    (ADR-0001): a later model's migration widens the CHECK before every instance runs the code that
+    knows its table. Defensive only: nothing here prices another model.
     """
     source = APPROVED_SNAPSHOT if scenario.status == ScenarioStatus.APPROVED else LIVE_CATALOG
     if rule is None:
@@ -447,6 +487,7 @@ def create_commercial_terms(
     scenario_id: uuid.UUID,
     *,
     model_type: str,
+    domain_values: Mapping[str, object] | None = None,
 ) -> ScenarioCommercialView | None:
     """Create the rule of one scenario **and** its details row, in one guarded statement.
 
@@ -463,6 +504,10 @@ def create_commercial_terms(
     RETURNING commercial_terms_id
     ```
 
+    (`story_points_terms` widens the second `INSERT`'s column list with `domain_values` — see below;
+    the shape above is unchanged for a model with none, which is why passing no `domain_values` for
+    T&M is not a second, different statement.)
+
     - **The `approved` refusal and the lock are inside the statement that writes** (ADR-0004,
       addendum SC-4-01, point 1a; `app.data.scenario_guard`). No parent row → no rule → no details
       row → zero rows returned, diagnosed only afterwards. A Python status check before the insert
@@ -474,6 +519,11 @@ def create_commercial_terms(
     - **A second rule for the scenario** is refused by `uq_commercial_terms_scenario_id`, i.e. by
       the database inside the `INSERT` — a `409` through `app.data.write_errors`, never a `SELECT`
       before it.
+    - **`domain_values` (SC-4-04, ADR-0003 addendum 2026-09-25, D-6/A)** — a model's own fields
+      (Story Points: `price_per_point`, `accepted_points`, `currency`), carried as literals of the
+      detail table's own column type into the *same* guarded `INSERT … SELECT`, never a second,
+      unguarded statement. Empty for a model with no domain column (T&M today), so this path is the
+      one T&M already shipped, not a new one next to it.
 
     `None` means "no such scenario for this caller" and is decided before the guard, so a `409` can
     never confirm that a scenario outside the caller's scope exists (K-05).
@@ -482,6 +532,7 @@ def create_commercial_terms(
         return None
 
     detail_table = DETAIL_TABLE_BY_MODEL[model_type]
+    domain_values = domain_values or {}
     open_scenario = unapproved_scenario(scenario_id).subquery("open_scenario")
     new_terms = (
         sa.insert(_TERMS_TABLE)
@@ -498,13 +549,15 @@ def create_commercial_terms(
         .returning(_TERMS_TABLE.c.id, _TERMS_TABLE.c.model_type)
         .cte("new_commercial_terms")
     )
+    detail_columns = ["commercial_terms_id", "model_type", *domain_values]
+    detail_select_columns = [new_terms.c.id, new_terms.c.model_type, *(
+        sa.literal(value, type_=detail_table.c[column].type).label(column)
+        for column, value in domain_values.items()
+    )]
     statement = (
         sa.insert(detail_table)
         .add_cte(new_terms)
-        .from_select(
-            ["commercial_terms_id", "model_type"],
-            sa.select(new_terms.c.id, new_terms.c.model_type),
-        )
+        .from_select(detail_columns, sa.select(*detail_select_columns))
         .returning(detail_table.c.commercial_terms_id)
     )
 

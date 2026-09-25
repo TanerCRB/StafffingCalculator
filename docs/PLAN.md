@@ -1046,6 +1046,10 @@ history / this file's own change log, not as tracked product work.
   dużych projektach; strażnik `mounted` przy zapisie jest nieobserwowalny w React 18 (dekoracyjny,
   udokumentowane w teście).
 
+- [ ] **SC-4-04** — Story Points — wyliczanie przychodu scenariusza (F-06.4), czwarty model
+  komercyjny po T&M (SC-4-01). Zarezerwowane, kryteria analityka i impact map architekta (Draft —
+  pending approval, aneks ADR-0003) w Issue #68, otwarte pytania D-1/D-4/D-5/D-6 dla bramki 1.
+
 - [x] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
   worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
   predykatem lustrzanym do ADR-0003/R-01), koszt jawnie bazowy (nie w pełni obciążony), bramka

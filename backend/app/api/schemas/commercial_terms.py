@@ -1,6 +1,10 @@
-"""Request and response schemas for a scenario's commercial rule and revenue (F-06.1, SC-4-01).
+"""Request and response schemas for a scenario's commercial rule and revenue (F-06.1, F-06.4;
+SC-4-01, SC-4-04).
 
-Two boundary decisions are visible in the shapes below.
+Two boundary decisions are visible in the shapes below — both proven again, not merely assumed, by
+the second model (Story Points, SC-4-04): a request carrying `price_per_point`/`accepted_points`/
+`currency` still fits one discriminated union (D-6/A), and its revenue still fits the one response
+shape below with no cost field.
 
 **No field carries a cost** — not `default_cost_rate`, not a cost, a profit or a margin (ADR-0005,
 addendum 2026-09-23 SC-4-01, point 3). Not "removed for callers without the permission": absent from
@@ -16,15 +20,15 @@ reinstates the conjunction (same point).
 
 import uuid
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.schemas.common import DecimalString
+from app.api.schemas.common import DecimalString, Iso4217Code
 from app.api.schemas.project import ScenarioStatusLabel
 from app.core.money import NOT_APPLICABLE
 
-ModelType = Literal["time_and_material"]
+ModelType = Literal["time_and_material", "story_points"]
 """The models a rule may name — the API spelling of `app.models.commercial_terms.MODEL_TYPES`. The
 database CHECK is the rule; this `Literal` only turns a client's typo into a `422` naming the
 field."""
@@ -48,8 +52,8 @@ row of a later model can exist while this code runs, and a closed `Literal` here
 named `unsupported_model_type` state into a response-validation `500`."""
 
 
-class CommercialTermsCreateRequest(BaseModel):
-    """`POST …/commercial-terms` — the one thing a rule says today: which model prices the scenario.
+class TimeAndMaterialTermsCreateRequest(BaseModel):
+    """`POST …/commercial-terms` — the one thing a Time & Material rule says: which model it is.
 
     `extra="forbid"`: there is no rate, override, cap or day length to send (ADR-0003, points 4 and
     7, "Odłożone"), and a field the server silently ignored would be a promise it does not keep.
@@ -57,7 +61,39 @@ class CommercialTermsCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model_type: ModelType
+    model_type: Literal["time_and_material"]
+
+
+PricePerPoint = Annotated[DecimalString, Field(gt=0, max_digits=14, decimal_places=4)]
+"""Strictly positive (`ck_story_points_terms_price_per_point_positive`) and exactly as precise as
+the column's own `NUMERIC(14,4)` — the same boundary shape `CostAmount`
+(`app.api.schemas.additional_cost`) already gives a money field with a database CHECK behind it."""
+
+
+class StoryPointsTermsCreateRequest(BaseModel):
+    """`POST …/commercial-terms` — a Story Points rule's three domain values (SC-4-04, F-06.4).
+
+    `extra="forbid"`, for the same reason as the T&M variant. `accepted_points` is written once,
+    here, with no edit path (ADR-0003 addendum 2026-09-25, D-5/A): the request is the only place
+    this value is ever set. No budget cap, no "sprint fee" field (D-1/A, D-4/A — out of scope).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_type: Literal["story_points"]
+    price_per_point: PricePerPoint
+    accepted_points: int = Field(ge=0)
+    currency: Iso4217Code
+
+
+CommercialTermsCreateRequest = Annotated[
+    TimeAndMaterialTermsCreateRequest | StoryPointsTermsCreateRequest,
+    Field(discriminator="model_type"),
+]
+"""The request shape as a discriminated union on `model_type` (ADR-0003 addendum 2026-09-25, D-6/A):
+the first model with domain fields (Story Points) does not grow one wide, optional-fielded shape —
+each model's own request carries only its own fields, and Pydantic itself refuses a `model_type` its
+`Literal` does not name, before any of this reaches `app.data.commercial_terms`."""
 
 
 class CommercialTermsRead(BaseModel):
@@ -87,12 +123,19 @@ class UnresolvedMonthRead(BaseModel):
 
 
 class RevenueAssumptionsRead(BaseModel):
-    """What the revenue depends on — present on a calculated revenue and on a named state alike."""
+    """What the revenue depends on — present on a calculated revenue and on a named state alike.
+
+    One shape for every model (SC-4-04): a Story Points revenue reads no hour, no vendor axis and
+    no rate window at all, and names that honestly (`"not_applicable"`, `"story_points_terms"`)
+    rather than reusing a Time & Material value that would misdescribe it — `rate_windows` and
+    `unresolved_months` are simply empty for this model, the same way `RateWindowRead` is unused by
+    a named state today.
+    """
 
     model_type: StoredModelType | None
-    hours_source: Literal["billable_hours"]
-    vendor_axis: Literal["internal"]
-    rate_source: Literal["live_catalog", "approved_snapshot"]
+    hours_source: Literal["billable_hours", "not_applicable"]
+    vendor_axis: Literal["internal", "not_applicable"]
+    rate_source: Literal["live_catalog", "approved_snapshot", "story_points_terms"]
     rate_windows: list[RateWindowRead]
     unresolved_months: list[UnresolvedMonthRead]
     currencies: list[str]

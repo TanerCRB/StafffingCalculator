@@ -431,12 +431,13 @@ def test_k_02_the_cost_path_and_the_revenue_path_never_import_each_other() -> No
     """K-02 "independently of the selling predicate", structurally (ADR-0013, point 1; ADR-0004,
     aneks 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant Guardian).
 
-    The two cost modules import nothing of the revenue path, and the three revenue modules import
-    nothing of the cost path. The only module that knows both predicates is the approval copier —
-    asserted as the contrast, so this test cannot pass by reading files that import nothing.
+    The two cost modules import nothing of the revenue path, and the four revenue modules (T&M and
+    Story Points since SC-4-04) import nothing of the cost path. The only module that knows both
+    predicates is the approval copier — asserted as the contrast, so this test cannot pass by
+    reading files that import nothing.
     """
     revenue_modules = {"app.data.commercial_terms", "app.domain.revenue",
-                       "app.domain.revenue_time_and_material"}
+                       "app.domain.revenue_time_and_material", "app.domain.revenue_story_points"}
     cost_modules = {"app.data.personnel_cost", "app.domain.personnel_cost"}
 
     for path in ("app/data/personnel_cost.py", "app/domain/personnel_cost.py"):
@@ -445,6 +446,7 @@ def test_k_02_the_cost_path_and_the_revenue_path_never_import_each_other() -> No
         "app/data/commercial_terms.py",
         "app/domain/revenue.py",
         "app/domain/revenue_time_and_material.py",
+        "app/domain/revenue_story_points.py",
     ):
         assert not (_imports_of(path) & cost_modules), f"{path} imports the cost path"
 
@@ -462,7 +464,7 @@ def test_c5_rate_windows_shares_geometry_never_a_rate_column() -> None:
     or spells `default_selling_rate`/`default_cost_rate` — either must fail this test.
     """
     revenue_modules = {"app.data.commercial_terms", "app.domain.revenue",
-                       "app.domain.revenue_time_and_material"}
+                       "app.domain.revenue_time_and_material", "app.domain.revenue_story_points"}
     cost_modules = {"app.data.personnel_cost", "app.domain.personnel_cost"}
 
     imports = _imports_of("app/data/rate_windows.py")

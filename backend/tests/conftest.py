@@ -66,6 +66,7 @@ from app.models import (  # noqa: E402
     StaffingPosition,
     StaffingPositionAbsence,
     StaffingPositionAllocation,
+    StoryPointsTerms,
     TmTerms,
     WorkingCalendar,
     WorkingCalendarDay,
@@ -238,9 +239,11 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotOrganizationDefaults))
             # SC-4-01: the rate snapshot like every snapshot table, and the commercial rule — its
             # details row first, because `tm_terms` points at `commercial_terms` with no `ON
-            # DELETE` action, and the rule points at `scenarios` the same way.
+            # DELETE` action, and the rule points at `scenarios` the same way. SC-4-04:
+            # `story_points_terms` is the same shape as `tm_terms`, so it goes first too.
             connection.execute(sa.delete(ApprovedSnapshotCatalogDefaultRate))
             connection.execute(sa.delete(TmTerms))
+            connection.execute(sa.delete(StoryPointsTerms))
             connection.execute(sa.delete(CommercialTerms))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
@@ -1110,6 +1113,37 @@ def make_commercial_terms(
     session.flush()
     if with_details:
         session.add(TmTerms(commercial_terms_id=terms.id, model_type="time_and_material"))
+        session.flush()
+    return terms
+
+
+def make_story_points_terms(
+    session: Session,
+    scenario: Scenario,
+    *,
+    with_details: bool = True,
+    price_per_point: Decimal = Decimal("1000.0000"),
+    accepted_points: int = 25,
+    currency: str = "PLN",
+) -> CommercialTerms:
+    """Insert a Story Points rule directly — and, unless told otherwise, its `story_points_terms`
+    row (SC-4-04). The counterpart of `make_commercial_terms` for the second real commercial model
+    (criterion K-03): a test creating both in the same database calls one of each, never a
+    `monkeypatch` of the registries.
+    """
+    terms = CommercialTerms(id=uuid.uuid4(), scenario_id=scenario.id, model_type="story_points")
+    session.add(terms)
+    session.flush()
+    if with_details:
+        session.add(
+            StoryPointsTerms(
+                commercial_terms_id=terms.id,
+                model_type="story_points",
+                price_per_point=price_per_point,
+                accepted_points=accepted_points,
+                currency=currency,
+            )
+        )
         session.flush()
     return terms
 
