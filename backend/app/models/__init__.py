@@ -29,6 +29,7 @@ from app.models.organization_defaults import OrganizationDefaults
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 from app.models.scenario import Scenario, ScenarioStatus
+from app.models.scenario_delivery_segment import ScenarioDeliverySegment
 from app.models.staffing import (
     StaffingPosition,
     StaffingPositionAbsence,
@@ -59,6 +60,7 @@ __all__ = [
     "ProjectAccess",
     "ProjectStatus",
     "Scenario",
+    "ScenarioDeliverySegment",
     "ScenarioStatus",
     "StaffingPosition",
     "StaffingPositionAbsence",

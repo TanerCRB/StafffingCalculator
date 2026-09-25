@@ -1713,4 +1713,28 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, R-01 — 17 testów) — 262 testy frontendowe zielono łącznie z SC-6-03. Zob.
   `docs/architecture/capabilities.md`.
 
+- [ ] **SC-1-11** — Wprowadź encję fazy dostawy / workstreamu (F-02, F-06), warunek wstępny dla
+  SC-4-05 (reguły wspólne mieszanych umów komercyjnych, F-06.5).
+  *Done when:* `backend/` (pytest) dowodzi kryteriów K-01..K-09 (analyst + architect, gate 1
+  zaakceptowane 2026-09-25), każde z zarejestrowanym przebiegiem mutacyjnym; K-03 ograniczone
+  jawnie do kształtu klucza — jego siłę ochronną dowiedzie dopiero SC-4-05, pierwszy konsument
+  `scope_ref`.
+
+  **Decyzje bramki 1 (2026-09-25, analyst + architect, zaakceptowane przez człowieka bez
+  zastrzeżeń):** tabela `scenario_delivery_segment`, jedna, bez dyskryminatora (Q3); dziecko
+  scenariusza, `UNIQUE (id, scenario_id)` i `UNIQUE (scenario_id, name)`, kolumny wyłącznie
+  `id, scenario_id, name, created_at, updated_at` (K-05); grupa 2 tabel-dzieci scenariusza,
+  strażnik zapisu `approved`, jeden wpis `SCENARIO_CHILD_COPIERS`, w tym samym zadaniu (Q4); bez
+  API HTTP (Q2); alokacja obsady per faza (F-04) jawnie poza zakresem (Q1). Architect: NEEDS A NEW
+  DECISION — `ADR-0016-segment-dostawy-scenariusza.md` (Draft — pending approval) + aneks
+  `ADR-0004-wersjonowanie-kalkulacji.md` (2026-09-25).
+
+  **Out of scope (explicit):** `scope_ref` na `commercial_terms` i ochrona przed podwójnym
+  rozliczeniem (SC-4-05); alokacja obsady per faza (F-04); UI; uprawnienia ADR-0005 (do pierwszego
+  zadania z endpointem); przedział obowiązywania segmentu (ADR-0008).
+
+  Podstawa: Issue #65; `Wymagania/Requirements_EN.md` §4 F-02, F-06, F-06.5;
+  `ADR-0003-model-modeli-komercyjnych.md` ("Odłożone"); `ADR-0016-segment-dostawy-scenariusza.md`;
+  `ADR-0004-wersjonowanie-kalkulacji.md` (aneks 2026-09-25).
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
