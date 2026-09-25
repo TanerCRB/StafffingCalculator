@@ -171,8 +171,9 @@ def scenario_what_if_salary_raise_for_caller(
     # landing between the two real reads above is still a race, whatever this endpoint goes on to
     # compute from a hypothetical rate. Neither source is hypothetical here — the raise has not
     # been applied yet, so `WHAT_IF_HYPOTHETICAL` can never reach this comparison. The revenue's
-    # source is one of the two real catalogue sources (T&M) or `not_applicable` (Outcome-based reads
-    # no catalogue) — the same function as `/results`, for which `not_applicable` is not a race
+    # source is one of the two real catalogue sources (T&M), `story_points_terms` (Story Points) or
+    # `not_applicable` (Outcome-based) — neither of the last two reads the catalogue; the same
+    # function as `/results`, for which a source outside the status-dependent pair is not a race
     # (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8).
     refuse_a_status_race(
         revenue_source=commercial.revenue.assumptions_used.rate_source,

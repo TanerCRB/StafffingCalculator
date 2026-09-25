@@ -73,8 +73,9 @@ class ScenarioWhatIfSalaryRaiseResults(ScenarioResults):
     `personnel_cost.state` is `"calculated"` — the third value `app.api.schemas.personnel_cost.
     CostAssumptionsRead.rate_source` grew for exactly this endpoint — while `revenue`'s own
     `assumptions_used.rate_source` is exactly what `GET …/results` reports for it: one of the two
-    real catalogue sources for a model priced from the catalogue (T&M), or `not_applicable` for a
-    model that reads no catalogue (Outcome-based, ADR-0003 aneks 2026-09-25 SC-4-03, pkt 8) — never
+    real catalogue sources for a model priced from the catalogue (T&M), or the model's own
+    non-catalogue source — `story_points_terms` (Story Points) or `not_applicable` (Outcome-based,
+    ADR-0003 aneks 2026-09-25 SC-4-03, pkt 8 i 12) — never
     `what_if_hypothetical`: the raise never touches revenue (F-06, rule 10 of the Invariant
     Guardian).
     """

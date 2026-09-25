@@ -875,3 +875,10 @@ runda weryfikacji 1, decyzja człowieka).**
    zakresie**; dziś nieeksploatowalne z powodu z pkt 2 (`PLACEHOLDER_PERMISSIONS`). **Warunek
    ponownego otwarcia bez zmian:** zadanie ról/rozdziału uprawnień — wtedy rozstrzygnięcie musi
    objąć cały zakres z tego punktu, nie tylko pola wymienione w pkt 1.
+4. **Story Points pod `RESULTS_READ` (runda weryfikacji 3, 2026-09-25, uwaga audytu
+   bezpieczeństwa).** Po merge z SC-4-04 scenariusz Story Points odpowiada na `/results`, what-if
+   i porównaniu `200` (ADR-0003, aneks SC-4-03 pkt 12b). Wołający z samym `RESULTS_READ` widzi
+   wyłącznie iloczyn `price_per_point × accepted_points` i walutę reguły — tę samą klasę "figury
+   rozliczeniowej" co przychód T&M (aneks SC-7-01 pkt 1 i 4); ceny punktu ani liczby punktów
+   osobno nie odtworzy, bo `assumptions_used` Story Points ich nie niesie. Skala inna niż
+   outcome z pkt 3 — do uwzględnienia przy tym samym zadaniu ról.
