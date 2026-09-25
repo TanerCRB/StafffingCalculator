@@ -626,8 +626,11 @@ def test_k_15_copying_a_project_copies_no_organisational_calendar_row(
     # the second is the commercial-rule aggregate (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b),
     # a scenario-owned table, and still no calendar copier. Three since SC-5-05 — re-armed, not
     # loosened: the third is `copy_scenario_additional_costs` (ADR-0004, aneks SC-5-05, point 4),
-    # the scenario-level additional costs, again scenario-owned. Still no calendar copier.
-    assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 3
+    # the scenario-level additional costs, again scenario-owned. Four since SC-1-11 — re-armed, not
+    # loosened: the fourth is `copy_scenario_delivery_segments` (ADR-0004, addendum 2026-09-25
+    # SC-1-11, point 4), the delivery segments/workstreams, again scenario-owned. Still no calendar
+    # copier.
+    assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 4
 
 
 def test_k_15_the_copied_positions_still_point_at_the_one_shared_calendar(

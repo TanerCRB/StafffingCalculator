@@ -1046,6 +1046,60 @@ history / this file's own change log, not as tracked product work.
   dużych projektach; strażnik `mounted` przy zapisie jest nieobserwowalny w React 18 (dekoracyjny,
   udokumentowane w teście).
 
+- [x] **SC-4-04** — Story Points — wyliczanie przychodu scenariusza (F-06.4), czwarty model
+  komercyjny po T&M (SC-4-01): reguła "cena za zaakceptowany Story Point × liczba zaakceptowanych
+  punktów", zero konwersji Story Points ↔ godziny (Issue #68).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-05: (1) AC-09 — 25 zaakceptowanych punktów
+  × 1000 PLN = 25000 PLN dokładnie; niezaakceptowane/częściowe punkty nie generują przychodu; (2)
+  brak konwersji Story Points ↔ godziny — drastyczna zmiana `billable_hours` scenariusza nie rusza
+  przychodu SP, kontrast na regule T&M w tym samym scenariuszu, która MUSI zareagować; (3)
+  dyspozytor wielu modeli komercyjnych (`REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL`) dowiedziony
+  PIERWSZY RAZ na DWÓCH realnych modelach w bazie (T&M + SP), nie symulacją `monkeypatch`;
+  `unsupported_model_type`/`CommercialTermsNotCopyable` nadal poprawne z realnym drugim wpisem; (4)
+  powtórzenie dla nowej tabeli szczegółów `story_points_terms` trzech boundary już dowiedzionych dla
+  T&M — zasięg projektu (404 nieodróżnialne, także dla zapisu), niemutowalność zapisu do
+  scenariusza `approved` (strażnik w TEJ SAMEJ instrukcji zapisu SP, dowiedzione realnym wyścigiem
+  dwóch połączeń), kaskada kopiowania (agregat reguła+szczegóły, jeden wpis
+  `SCENARIO_CHILD_COPIERS`), zgodność typu przez złożony klucz obcy w bazie; (5) odpowiedź
+  reguły/przychodu SP nie niesie żadnego pola kosztowego — dowód przez równość zbioru pól.
+  **Decyzje bramki 1 (2026-09-25, analyst + architect, zaakceptowane przez człowieka):** D-1 —
+  wyłącznie wariant "za zaakceptowany punkt" (Requirements §8, open decision #2 rozstrzygnięta dla
+  MVP), wariant "sprint fee" poza zakresem; D-4 — limit budżetowy poza zakresem (AC-09 go nie
+  wymaga); D-5 — `accepted_points` jako pojedyncza wartość wpisywana raz przy tworzeniu reguły, zero
+  ścieżki edycji w MVP (zmiana wymaga kopii scenariusza); D-6 — kształt API jako unia dyskryminowana
+  po `model_type`, wartości dziedzinowe SP do TEJ SAMEJ strażonej instrukcji zapisu co T&M. Prognoza
+  przychodu z velocity per zespół i rozliczenie punktu przenoszonego między sprintami trwale poza
+  zakresem MVP — brak encji "team" i brak tożsamości jednostkowej punktu w rejestrze.
+  **Nowa/zmieniona decyzja architektoniczna:** aneks do **ADR-0003** (2026-09-25, sekcja "impact map
+  i decyzje bramki 1 dla SC-4-04") — rozszerzenie dyskryminatora/dyspozytora, zasięgu i uprawnień,
+  znacznika współbieżności i okien obowiązywania na drugi realny model, bez zmiany istniejących
+  tabel (wzorzec ADR-0003 "Konsekwencje": "Nowy model komercyjny = nowa tabela szczegółów +
+  rozszerzenie CHECK + gałąź dyspozytora"); aneks do **ADR-0004** wyłącznie potwierdzający
+  (kopiowanie/strażnik zapisu obejmują każdą tabelę zarejestrowaną w `DETAIL_TABLE_BY_MODEL`, nie
+  tylko `tm_terms`).
+  **Out of scope (explicit):** wariant "sprint fee" (opłata za sprint ze zobowiązaniem punktowym),
+  limit budżetowy, prognoza z velocity per zespół, rozliczenie punktu przenoszonego między
+  sprintami, edycja `accepted_points` po utworzeniu reguły, reguły rework/re-estymacji, progi
+  cenowe (pricing tiers), koszt/zysk/marża (blok 5/7), ekran (osobne przyszłe zadanie, wzorem
+  SC-4-01/SC-4-06), wielowalutowość w jednej regule.
+  Podstawa: Issue #68, `Wymagania/Requirements_EN.md` §2, §4 F-06.4, §7 AC-09, §8 open decision #2,
+  `docs/architecture/decisions/ADR-0003-model-modeli-komercyjnych.md` (aneks 2026-09-25).
+  **Done 2026-09-25:** PR #115 (scalone `4011f7c`). Dowód: `backend/tests/test_story_points_revenue.py`,
+  `backend/tests/test_story_points_terms.py` — 796 testów backendowych zielono (było 772 przed
+  mergem z main, 760 na moment otwarcia PR), `ruff check .` czysty. QA: PASS WITH GAPS — luka w
+  teście wyścigu (nie łapał drugiego, niestrzeżonego statementu post-commit) znaleziona i zamknięta
+  nowym testem strukturalnym w tej samej rundzie, 5/5 mutacji zabite mutacyjnie. Invariant Guardian
+  PASS (zero naruszeń reguł 1–21). Reviewer: **R-01 (High)** — `story_points_terms.currency` nigdy
+  nie było zestawiane ze `scenarios.currency`, ryzyko cichego mieszania walut w
+  profit/margin/markup — naprawione tym samym wzorcem co pozostałe cztery komponenty przychodu/
+  kosztu (T&M, personnel_cost, paid_absence_cost, additional_cost); ponowna recenzja potwierdziła
+  **R-01 CLOSED**. Security-auditor PASS (migracja w zakresie): reużyty mechanizm
+  uprawnień/zasięgu bez zmian, brak nowych zależności, brak wektora SQL injection, walidacja
+  liczbowa zgodna z CHECK w bazie. Synchronizacja z `main` przed PR: konflikt mechaniczny w
+  `backend/tests/conftest.py` (dwie niezależne funkcje fixture wstawione w tym samym miejscu przez
+  SC-4-04 i SC-1-11 — rozwiązany, zachowano obie) i rozjazd łańcucha migracji Alembic z SC-1-11
+  (dwie głowy z tego samego `down_revision` — zlinearyzowane bez zmiany treści żadnej migracji).
+
 - [x] **SC-5-01** — Wylicz bazowy koszt osobowy scenariusza z przepracowanego czasu (F-07, podstawa
   worked time): Σ (`planned_allocation_hours` × `default_cost_rate` rozstrzygnięta per miesiąc
   predykatem lustrzanym do ADR-0003/R-01), koszt jawnie bazowy (nie w pełni obciążony), bramka
@@ -1709,6 +1763,45 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, R-01 — 17 testów) — 262 testy frontendowe zielono łącznie z SC-6-03. Zob.
   `docs/architecture/capabilities.md`.
 
+- [x] **SC-1-11** — Wprowadź encję fazy dostawy / workstreamu (F-02, F-06), warunek wstępny dla
+  SC-4-05 (reguły wspólne mieszanych umów komercyjnych, F-06.5).
+  *Done when:* `backend/` (pytest) dowodzi kryteriów K-01..K-09 (analyst + architect, gate 1
+  zaakceptowane 2026-09-25), każde z zarejestrowanym przebiegiem mutacyjnym; K-03 ograniczone
+  jawnie do kształtu klucza — jego siłę ochronną dowiedzie dopiero SC-4-05, pierwszy konsument
+  `scope_ref`.
+
+  **Decyzje bramki 1 (2026-09-25, analyst + architect, zaakceptowane przez człowieka bez
+  zastrzeżeń):** tabela `scenario_delivery_segment`, jedna, bez dyskryminatora (Q3); dziecko
+  scenariusza, `UNIQUE (id, scenario_id)` i `UNIQUE (scenario_id, name)`, kolumny wyłącznie
+  `id, scenario_id, name, created_at, updated_at` (K-05); grupa 2 tabel-dzieci scenariusza,
+  strażnik zapisu `approved`, jeden wpis `SCENARIO_CHILD_COPIERS`, w tym samym zadaniu (Q4); bez
+  API HTTP (Q2); alokacja obsady per faza (F-04) jawnie poza zakresem (Q1). Architect: NEEDS A NEW
+  DECISION — `ADR-0016-segment-dostawy-scenariusza.md` (Draft — pending approval) + aneks
+  `ADR-0004-wersjonowanie-kalkulacji.md` (2026-09-25).
+
+  **Out of scope (explicit):** `scope_ref` na `commercial_terms` i ochrona przed podwójnym
+  rozliczeniem (SC-4-05); alokacja obsady per faza (F-04); UI; uprawnienia ADR-0005 (do pierwszego
+  zadania z endpointem); przedział obowiązywania segmentu (ADR-0008).
+
+  Podstawa: Issue #65; `Wymagania/Requirements_EN.md` §4 F-02, F-06, F-06.5;
+  `ADR-0003-model-modeli-komercyjnych.md` ("Odłożone"); `ADR-0016-segment-dostawy-scenariusza.md`;
+  `ADR-0004-wersjonowanie-kalkulacji.md` (aneks 2026-09-25).
+  **Done 2026-09-25:** PR #114 (scalone `b6d3396`). Dowód: nowa tabela `scenario_delivery_segment`
+  (migracja `b1f4e8a3c95d`), `backend/tests/test_scenario_delivery_segment_schema.py`,
+  `test_scenario_delivery_segment_copy.py`, `test_scenario_delivery_segment_guards.py`,
+  `test_scenario_delivery_segment_no_api.py` (K-01..K-09) — 773 testy backendowe zielono. QA: proof
+  holds — cztery mutacje naprawdę wykonane i zabite (strażnik zapisu K-07, rejestr kopiowania
+  `SCENARIO_CHILD_COPIERS` K-06, trasa surowego SQL K-08, dodatkowe ograniczenie migracji K-04);
+  worktree przywrócony czysto po każdej. Invariant Guardian: PASS (reguły 7/13/14/17 sprawdzone
+  wprost na kodzie, nie tylko na deklaracji). Security-auditor: PASS (parametryzacja SQLAlchemy
+  wszędzie, brak wycieku szczegółów bazy w refusal, brak dziś żadnej ścieżki dostępu do tabeli poza
+  testami i kopiującym). Reviewer: PASS WITH RESERVATIONS → poprawka → PASS — R-01 (Low): test
+  strukturalny K-08 używał nierekursywnego `glob` i pomijał `app/api/schemas/**` (cztery istniejące
+  pliki tam importują wprost z `app.models.*` — realna luka); naprawione (`glob` → `rglob`), 773
+  testów nadal zielono po poprawce. **Zaakceptowane, nie naprawiane:** brak — bez ustaleń
+  pozostawionych otwartych.
+  Zob. `docs/architecture/capabilities.md`.
+
 - [ ] **SC-4-03** — Wylicz przychód Outcome-based dla scenariusza (F-06.3): opłata stała + premia
   binarna warunkowa + stawka za jednostkę, ograniczone min/max; cztery stałe kategorie wyniku
   (nieosiągnięty / częściowy / osiągnięty / przekroczony) z ręcznie wpisaną liczbą jednostek i
@@ -1747,8 +1840,9 @@ history / this file's own change log, not as tracked product work.
   dla modelu bez katalogu; strażnik wyścigu `/results` porównuje tylko źródła zależne od statusu.
   P-5 — edycja reguły osobnym zadaniem (dziś tylko tworzenie). D-9 — ekran osobnym Issue; do tego
   czasu SC-4-06 nie pokazuje przychodu oczekiwanego (tymczasowe odstępstwo od F-06.3 "displayed
-  separately"). Koordynacja bloku 4: SC-4-03 pierwsze; elementy wspólne dla SC-4-02/SC-4-04 ustala
-  aneks ADR-0003.
+  separately"). Koordynacja bloku 4: elementy wspólne dla kolejnych modeli ustala aneks ADR-0003
+  (założenie "SC-4-03 pierwsze" nieaktualne — SC-4-04 scalone wcześniej, patrz decyzje po rundzie
+  weryfikacji 2).
   **Decyzje po rundzie weryfikacji 1 (2026-09-25, decyzje człowieka):** (1) wyniki złożone
   (`/results`, what-if, porównanie) wymagają równości walut przychodu i każdego źródła kosztu,
   inaczej `profit`/`margin`/`markup` = `currency_mismatch` — obejmuje też istniejący przypadek koszt
@@ -1763,11 +1857,30 @@ history / this file's own change log, not as tracked product work.
   API, `422` tylko na API — do ponownego otwarcia przy pierwszej ścieżce zapisu spoza API; (7)
   `category_revenues` i `expected_amount` widoczne pod `RESULTS_READ` bez `COMMERCIAL_READ` —
   przyjęte, do ponownego otwarcia przy zadaniu wprowadzającym role.
+  **Decyzje po rundzie weryfikacji 2 (2026-09-25, decyzje człowieka):** (1) integracja z SC-4-04
+  (Story Points, scalone do `main` przed SC-4-03): migracja `b9e3c7a1f264` zlinearyzowana na
+  `d2f6a91c4b58`, `CHECK model_type_known` z pełną listą trzech wartości (`time_and_material`,
+  `story_points`, `outcome_based`), downgrade odtwarza listę dwóch wartości; Story Points zachowuje
+  własne `rate_source = story_points_terms`, outcome — `not_applicable`; konwencja ADR-0003 pkt 10a
+  w nowym brzmieniu: model bez katalogu stawek używa wartości spoza źródeł zależnych od statusu;
+  (2) strażnik wyścigu `/results` porównuje wyłącznie źródła zależne od statusu
+  (`live_catalog`/`approved_snapshot`) — to naprawia również **istniejący na `main` defekt
+  SC-4-04**: każdy scenariusz Story Points dostawał `409` na `/results`, what-if i porównaniu
+  przez porównanie `rate_source` zwykłą równością; dowód — nowe testy
+  `backend/tests/test_story_points_scenario_results.py`; (3) strażnik dryfu SC-4-04
+  (`test_story_points_terms.py`, ok. w. 511) przepięty wzorem R-02: migracja `d2f6a91c4b58` vs jej
+  własna zamrożona lista, stała modelu vs najnowsza migracja
+  (`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` → `b9e3c7a1f264`); (4) ADR-0005 (B-01 audytu
+  bezpieczeństwa): nazwany pełny zakres odtwarzalny pod `RESULTS_READ` bez `COMMERCIAL_READ` — z
+  `amount` i `category_revenues` zwykle `fixed_fee`, `unit_rate`, `success_bonus`, `currency`, a
+  przy zadziałaniu ograniczenia także `revenue_min`/`revenue_max`; akceptacja utrzymana,
+  nieeksploatowalne dziś (`PLACEHOLDER_PERMISSIONS`), do ponownego otwarcia przy zadaniu ról.
   **Nowa/zmieniona decyzja architektoniczna:** aneksy 2026-09-25 do **ADR-0003** (tabela
   `outcome_terms`, kategorie, waluta, dwa przychody, `rate_source = not_applicable`; uzupełnienia
-  rundy weryfikacji 1 w pkt 3, 4, 5d, 7, 8, 10c, nowy pkt 11, kontrole O-7..O-10), **ADR-0004**
-  (grupa 2 dla `outcome_terms`), **ADR-0002** (równość walut w wynikach złożonych) i **ADR-0005**
-  (parametry outcome pod `RESULTS_READ`).
+  rundy weryfikacji 1 w pkt 3, 4, 5d, 7, 8, 10c, nowy pkt 11, kontrole O-7..O-10; runda 2: pkt 10
+  i 10a przeredagowane, nowy pkt 12, kontrole O-11..O-12), **ADR-0004** (grupa 2 dla
+  `outcome_terms`; runda 2: pkt 5), **ADR-0002** (równość walut w wynikach złożonych) i
+  **ADR-0005** (parametry outcome pod `RESULTS_READ`; runda 2: pkt 3, pełny zakres B-01).
   **Out of scope (explicit):** częściowe osiągnięcie, udział w korzyści, progi wielostopniowe, kary;
   edycja i usuwanie reguły (osobne zadanie); zapis faktycznie zmierzonego wyniku po realizacji i
   automatyczne źródła pomiaru; definicje wyników, poziom bazowy/docelowy, okresy pomiaru jako pola
@@ -1775,7 +1888,10 @@ history / this file's own change log, not as tracked product work.
   SC-4-05); ekran (osobne zadanie frontend).
   **Fundament nieudowodniony:** pierwsze rozszerzenie `CHECK model_type_known` i pierwsza tabela
   szczegółów z kolumnami dziedzinowymi; pierwszy model przychodu bez katalogu (`rate_source`);
-  pierwsze prawdopodobieństwo jako wartość użytkownika. Podstawa: Issue #67,
+  pierwsze prawdopodobieństwo jako wartość użytkownika. (Stan po merge z `main`, 2026-09-25:
+  pierwsze rozszerzenie `CHECK`, pierwszą tabelę szczegółów z kolumnami dziedzinowymi i pierwszy
+  model bez katalogu dostarczyło SC-4-04; SC-4-03 jest drugim, pierwszym z trzema wartościami
+  `CHECK` i pierwszym z prawdopodobieństwem.) Podstawa: Issue #67,
   `Wymagania/Requirements_EN.md` §4 F-06.3, §7 AC-08, `ADR-0003-model-modeli-komercyjnych.md`,
   `ADR-0004-wersjonowanie-kalkulacji.md`, `ADR-0002-obsluga-pieniedzy.md`,
   `ADR-0005-model-dostepu.md`, `ADR-0006-waluty-i-kursy.md`, `ADR-0007-wspolbiezna-edycja.md`.

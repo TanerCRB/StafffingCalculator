@@ -858,8 +858,20 @@ runda weryfikacji 1, decyzja człowieka).**
 
 1. `category_revenues` (liczba jednostek, prawdopodobieństwo, kwota per kategoria) i
    `expected_amount` są widoczne w `/results`, what-if i porównaniu pod samym `RESULTS_READ`, bez
-   `COMMERCIAL_READ` — wołający bez prawa odczytu reguły poznaje część jej parametrów. Przyjęte
-   świadomie przez człowieka.
+   `COMMERCIAL_READ` — wołający bez prawa odczytu reguły poznaje jej parametry (pełny zakres —
+   pkt 3). Przyjęte świadomie przez człowieka.
 2. Dziś nieeksploatowalne: `PLACEHOLDER_PERMISSIONS` nadaje oba uprawnienia naraz (aneks
    2026-09-18). **Warunek ponownego otwarcia:** zadanie wprowadzające role/rozdział uprawnień
    między realne osoby — ten sam co dla pozostałych nazwanych skrzyżowań tej rodziny.
+3. **Pełny zakres ujawnienia (uzupełnienie po rundzie weryfikacji 2, 2026-09-25, decyzja
+   człowieka; ustalenie B-01 audytu bezpieczeństwa).** Pkt 1 nie ogranicza się do pól podanych
+   wprost: z `amount` (przychód gwarantowany) i `category_revenues` (jednostki, prawdopodobieństwo
+   i kwota per kategoria) wołający z samym `RESULTS_READ`, bez `COMMERCIAL_READ`, zwykle odtwarza
+   również opłatę stałą (`fixed_fee`), stawkę za jednostkę (`unit_rate`), premię
+   (`success_bonus`), walutę reguły (`currency`) oraz — gdy ograniczenie min/max zadziała w
+   którejś kategorii albo w przychodzie gwarantowanym — `revenue_min`/`revenue_max`. W praktyce
+   jest to prawie cała reguła outcome odczytywalna pod `GET` tylko z `COMMERCIAL_READ` (ADR-0003,
+   aneks 2026-09-25 SC-4-03 pkt 11). Akceptacja pkt 1 **utrzymana przez człowieka w tym pełnym
+   zakresie**; dziś nieeksploatowalne z powodu z pkt 2 (`PLACEHOLDER_PERMISSIONS`). **Warunek
+   ponownego otwarcia bez zmian:** zadanie ról/rozdziału uprawnień — wtedy rozstrzygnięcie musi
+   objąć cały zakres z tego punktu, nie tylko pola wymienione w pkt 1.

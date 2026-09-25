@@ -63,10 +63,12 @@ from app.models import (  # noqa: E402
     ProjectAccess,
     ProjectStatus,
     Scenario,
+    ScenarioDeliverySegment,
     ScenarioStatus,
     StaffingPosition,
     StaffingPositionAbsence,
     StaffingPositionAllocation,
+    StoryPointsTerms,
     TmTerms,
     WorkingCalendar,
     WorkingCalendarDay,
@@ -239,12 +241,16 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotOrganizationDefaults))
             # SC-4-01: the rate snapshot like every snapshot table, and the commercial rule — its
             # details row first, because `tm_terms` points at `commercial_terms` with no `ON
-            # DELETE` action, and the rule points at `scenarios` the same way.
+            # DELETE` action, and the rule points at `scenarios` the same way. SC-4-04:
+            # `story_points_terms` is the same shape as `tm_terms`, so it goes first too.
             connection.execute(sa.delete(ApprovedSnapshotCatalogDefaultRate))
             connection.execute(sa.delete(TmTerms))
+            connection.execute(sa.delete(StoryPointsTerms))
             # SC-4-03: szczegóły Outcome-based przed regułą, z tego samego powodu co `tm_terms`.
             connection.execute(sa.delete(OutcomeTerms))
             connection.execute(sa.delete(CommercialTerms))
+            # SC-1-11: the delivery segment points at `scenarios` with no `ON DELETE` action too.
+            connection.execute(sa.delete(ScenarioDeliverySegment))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -1117,6 +1123,37 @@ def make_commercial_terms(
     return terms
 
 
+def make_story_points_terms(
+    session: Session,
+    scenario: Scenario,
+    *,
+    with_details: bool = True,
+    price_per_point: Decimal = Decimal("1000.0000"),
+    accepted_points: int = 25,
+    currency: str = "PLN",
+) -> CommercialTerms:
+    """Insert a Story Points rule directly — and, unless told otherwise, its `story_points_terms`
+    row (SC-4-04). The counterpart of `make_commercial_terms` for the second real commercial model
+    (criterion K-03): a test creating both in the same database calls one of each, never a
+    `monkeypatch` of the registries.
+    """
+    terms = CommercialTerms(id=uuid.uuid4(), scenario_id=scenario.id, model_type="story_points")
+    session.add(terms)
+    session.flush()
+    if with_details:
+        session.add(
+            StoryPointsTerms(
+                commercial_terms_id=terms.id,
+                model_type="story_points",
+                price_per_point=price_per_point,
+                accepted_points=accepted_points,
+                currency=currency,
+            )
+        )
+        session.flush()
+    return terms
+
+
 def make_outcome_terms(
     session: Session,
     scenario: Scenario,
@@ -1190,6 +1227,28 @@ def count_outcome_rows(connection: sa.Connection | Session) -> tuple[int, int]:
     ).scalar_one()
     details = connection.execute(sa.select(sa.func.count()).select_from(OutcomeTerms)).scalar_one()
     return rules, details
+
+
+# --- scenario delivery segments (F-02, F-06; SC-1-11, ADR-0016) ---------------------------------
+
+
+def make_scenario_delivery_segment(
+    session: Session, scenario: Scenario, *, name: str = "Phase 1"
+) -> ScenarioDeliverySegment:
+    """Insert one delivery segment directly — no endpoint, no request schema (ADR-0016, point 8):
+    the constraints under test are claims about the database."""
+    segment = ScenarioDeliverySegment(id=uuid.uuid4(), scenario_id=scenario.id, name=name)
+    session.add(segment)
+    session.flush()
+    return segment
+
+
+def count_scenario_delivery_segments(session: Session) -> int:
+    """Segment rows visible in the test transaction — used to prove a refused write wrote nothing,
+    not merely that the caller was told no."""
+    return session.execute(
+        sa.select(sa.func.count()).select_from(ScenarioDeliverySegment)
+    ).scalar_one()
 
 
 # --- additional costs (F-08, SC-5-05) -----------------------------------------------------------

@@ -875,7 +875,7 @@ def test_k_07_the_revenue_answer_is_byte_for_byte_the_same_whatever_the_paid_abs
 
 PAID_ABSENCE_MODULES = {"app.data.paid_absence_cost", "app.domain.paid_absence_cost"}
 REVENUE_MODULES = {"app.data.commercial_terms", "app.domain.revenue",
-                   "app.domain.revenue_time_and_material"}
+                   "app.domain.revenue_time_and_material", "app.domain.revenue_story_points"}
 
 
 def _imports_of(module: str) -> set[str]:

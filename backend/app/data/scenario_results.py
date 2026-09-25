@@ -121,9 +121,11 @@ def refuse_a_status_race(*, revenue_source: str, cost_source: str) -> None:
 
     **Porównuje wyłącznie źródła zależne od statusu** (`STATUS_DEPENDENT_SOURCES`: `live_catalog`,
     `approved_snapshot`; ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8). Przychód modelu bez katalogu
-    (`not_applicable`, np. Outcome-based) czyta wyłącznie własne wiersze scenariusza, więc nie
-    utrwala żadnego momentu statusu — nie jest dowodem ani braku, ani wystąpienia wyścigu.
-    Porównanie przez samą równość zamieniłoby każdy odczyt takiego scenariusza w `409`.
+    (`not_applicable` — Outcome-based; `story_points_terms` — Story Points) czyta wyłącznie własne
+    wiersze scenariusza, więc nie utrwala żadnego momentu statusu — nie jest dowodem ani braku, ani
+    wystąpienia wyścigu. Porównanie przez samą równość zamieniało każdy odczyt takiego scenariusza w
+    stały `409` (dla Story Points — defekt na `main` przed merge SC-4-03, decyzja człowieka
+    2026-09-25; `tests/test_story_points_scenario_results.py`).
 
     Jedna funkcja dla `/results` i dla what-if (`app.data.scenario_what_if`), żeby dwa miejsca
     porównujące `rate_source` nie rozjechały się w rozumieniu nowej wartości.

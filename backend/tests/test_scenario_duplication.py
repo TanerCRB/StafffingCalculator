@@ -37,6 +37,7 @@ from app.models import (
     CommercialTerms,
     Project,
     Scenario,
+    ScenarioDeliverySegment,
     ScenarioStatus,
     StaffingPositionAbsence,
     TmTerms,
@@ -56,6 +57,7 @@ from tests.conftest import (
     make_dimension_tuple,
     make_project,
     make_scenario,
+    make_scenario_delivery_segment,
     make_staffing_position,
     staffing_path,
 )
@@ -90,9 +92,9 @@ def _duplicate_id(response) -> uuid.UUID:
 def _fully_equipped_source(session: Session, *, status: ScenarioStatus = ScenarioStatus.DRAFT):
     """One project, one scenario, one row in every table `SCENARIO_CHILD_COPIERS` reaches.
 
-    Used by the K-03 test: a position with one month and one absence, a T&M commercial rule, and
-    two additional costs — one attached to the position, one scenario-level (ADR-0014, point 10,
-    the two halves of the additional-cost cascade).
+    Used by the K-03 test: a position with one month and one absence, a T&M commercial rule, two
+    additional costs — one attached to the position, one scenario-level (ADR-0014, point 10, the
+    two halves of the additional-cost cascade) — and a delivery segment (SC-1-11, ADR-0016).
     """
     project = make_project(session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(session, project, name="Baseline", status=status)
@@ -129,6 +131,7 @@ def _fully_equipped_source(session: Session, *, status: ScenarioStatus = Scenari
         amount=Decimal("900.0000"),
         start_month=MARCH,
     )
+    make_scenario_delivery_segment(session, scenario, name="Discovery")
     return project, scenario, position
 
 
@@ -223,7 +226,8 @@ def test_k_03_ac_02_holds_through_this_entry_point_for_every_registered_child_ta
 ) -> None:
     """K-03 — AC-02, proven through *this* endpoint, for every table `SCENARIO_CHILD_COPIERS`
     reaches: staffing position + allocation + absence; commercial_terms + tm_terms; additional
-    cost, both halves (attached to a position, and scenario-level).
+    cost, both halves (attached to a position, and scenario-level); the delivery segment
+    (SC-1-11, ADR-0016).
 
     Independence is checked in **both directions** wherever a write endpoint exists (staffing
     allocation, additional costs), and by disjoint identifiers where none does (commercial terms —
@@ -381,6 +385,20 @@ def test_k_03_ac_02_holds_through_this_entry_point_for_every_registered_child_ta
             "editing the source's cost must not move the duplicate's row, which must still carry "
             "its own earlier edit",
         )
+
+    # --- delivery segment: no endpoint exists at all (ADR-0016, point 8) ---------------------
+    # AC-02 proven the same way as commercial_terms above: disjoint identifiers, same name, read
+    # directly from the database rather than through a write endpoint that does not exist.
+    source_segment = db_session.execute(
+        sa.select(ScenarioDeliverySegment).where(ScenarioDeliverySegment.scenario_id == source.id)
+    ).scalar_one()
+    duplicate_segment = db_session.execute(
+        sa.select(ScenarioDeliverySegment).where(
+            ScenarioDeliverySegment.scenario_id == duplicate_scenario_id
+        )
+    ).scalar_one()
+    assert duplicate_segment.id != source_segment.id
+    assert duplicate_segment.name == source_segment.name == "Discovery"
 
 
 # --- K-04 ------------------------------------------------------------------------------------

@@ -1,10 +1,11 @@
-"""A scenario's commercial rule and its revenue (F-06, F-06.1; SC-4-01).
+"""A scenario's commercial rule and its revenue (F-06, F-06.1, F-06.3, F-06.4; SC-4-01, SC-4-03,
+SC-4-04).
 
 Under `/projects/{project_id}/scenarios/{scenario_id}/commercial-terms`:
 
 - `GET  ""` — the rule and the revenue derived from it (`COMMERCIAL_READ`);
-- `POST ""` — create the rule, with its details row (`COMMERCIAL_WRITE`) — Time & Material or,
-  since SC-4-03, Outcome-based (F-06.3), chosen by `model_type`.
+- `POST ""` — create the rule, with its details row (`COMMERCIAL_WRITE`) — Time & Material, Story
+  Points (SC-4-04, F-06.4) or Outcome-based (SC-4-03, F-06.3), chosen by `model_type`.
 
 **A router of its own**, not a verb on the staffing or scenario routers: it declares its own pair of
 permissions (ADR-0005, addendum 2026-09-23 SC-4-01, point 2), and a shared router would make them
@@ -21,10 +22,12 @@ reached (criterion K-05). A scenario **with no rule** is not one of them: it is 
 revenue is the named `no_commercial_terms` state, because "no rule yet" is information about a
 scenario the caller may see, not about whether it exists.
 
-**No edit and no delete path.** The model is immutable after the write (ADR-0003, point 2) and
-`tm_terms` has no column to edit; the one write path is the one guarded, raced and tested. Reguła
-Outcome-based również tylko się tworzy — edycja i usunięcie to osobne zadanie (ADR-0003, aneks
-2026-09-25 SC-4-03, pkt 9).
+**No edit and no delete path.** The model is immutable after the write (ADR-0003, point 2) and no
+details table (`tm_terms`, `story_points_terms`, `outcome_terms`) has an edit path — a changed Story
+Points `accepted_points` needs a copy of the scenario (ADR-0003 addendum 2026-09-25, D-5/A), the
+same mechanism a changed model would; edycja i usunięcie reguły Outcome-based to osobne zadanie
+(ADR-0003, aneks 2026-09-25 SC-4-03, pkt 9). The one write path is the one guarded, raced and
+tested.
 """
 
 import uuid
@@ -39,6 +42,7 @@ from app.api.schemas.commercial_terms import (
     CommercialTermsCreateRequest,
     OutcomeBasedTermsCreateRequest,
     ScenarioCommercialTerms,
+    StoryPointsTermsCreateRequest,
     TimeAndMaterialTermsCreateRequest,
 )
 from app.core.identity import CallerIdentity, Permission
@@ -72,30 +76,36 @@ def _details_of(payload: CommercialTermsCreateRequest) -> dict[str, object]:
     pisownia z modelem); żadnej wartości domyślnej: pominięty składnik opcjonalny zostaje `None`,
     czyli `NULL` w bazie, nigdy `0` (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 2).
 
-    **Pusty słownik tylko dla T&M, jawnie** (runda 2 weryfikacji SC-4-03, R-02): typ ciała, którego
-    ta funkcja nie zna, to błąd programisty — model dodany do unii żądania bez gałęzi tutaj — i
-    kończy się wyjątkiem, nigdy regułą zapisaną bez parametrów.
+    **Jawna gałąź dla każdego modelu** (runda 2 weryfikacji SC-4-03, R-02): typ ciała, którego ta
+    funkcja nie zna, to błąd programisty — model dodany do unii żądania bez gałęzi tutaj — i kończy
+    się wyjątkiem, nigdy regułą zapisaną bez parametrów.
     """
     if isinstance(payload, TimeAndMaterialTermsCreateRequest):
         return {}
-    if not isinstance(payload, OutcomeBasedTermsCreateRequest):
-        raise TypeError(
-            f"No details mapping for commercial terms payload {type(payload).__name__}: add a "
-            "branch to _details_of together with the model's request schema."
-        )
-    details: dict[str, object] = {
-        "currency": payload.currency,
-        "fixed_fee": payload.fixed_fee,
-        "success_bonus": payload.success_bonus,
-        "unit_rate": payload.unit_rate,
-        "revenue_min": payload.revenue_min,
-        "revenue_max": payload.revenue_max,
-    }
-    for category in OUTCOME_CATEGORIES:
-        entry = getattr(payload.categories, category)
-        details[units_column(category)] = entry.units
-        details[probability_column(category)] = entry.probability
-    return details
+    if isinstance(payload, StoryPointsTermsCreateRequest):
+        return {
+            "price_per_point": payload.price_per_point,
+            "accepted_points": payload.accepted_points,
+            "currency": payload.currency,
+        }
+    if isinstance(payload, OutcomeBasedTermsCreateRequest):
+        details: dict[str, object] = {
+            "currency": payload.currency,
+            "fixed_fee": payload.fixed_fee,
+            "success_bonus": payload.success_bonus,
+            "unit_rate": payload.unit_rate,
+            "revenue_min": payload.revenue_min,
+            "revenue_max": payload.revenue_max,
+        }
+        for category in OUTCOME_CATEGORIES:
+            entry = getattr(payload.categories, category)
+            details[units_column(category)] = entry.units
+            details[probability_column(category)] = entry.probability
+        return details
+    raise TypeError(
+        f"No details mapping for commercial terms payload {type(payload).__name__}: add a "
+        "branch to _details_of together with the model's request schema."
+    )
 
 
 def _not_found() -> HTTPException:
@@ -135,7 +145,7 @@ def read_commercial_terms(
     "",
     response_model=ScenarioCommercialTerms,
     status_code=status.HTTP_201_CREATED,
-    summary="Set a scenario's commercial rule (Time & Material or Outcome-based)",
+    summary="Set a scenario's commercial rule (Time & Material, Story Points or Outcome-based)",
     responses={
         404: {"description": COMMERCIAL_TERMS_NOT_FOUND_DETAIL},
         409: {
@@ -175,7 +185,7 @@ def create_scenario_commercial_terms(
             project_id,
             scenario_id,
             model_type=payload.model_type,
-            details=_details_of(payload),
+            domain_values=_details_of(payload),
         )
     except CommercialTermsWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None

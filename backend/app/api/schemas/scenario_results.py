@@ -84,9 +84,9 @@ class ScenarioResults(BaseModel):
 
 
 class ScenarioResultsComparison(BaseModel):
-    """`GET …/scenarios/compare` — the same seven fields `ScenarioResults` already carries, once per
-    named `scenario_id`, in request order (SC-6-02, F-09 pkt 2; ADR-0001/ADR-0005, aneks
-    2026-09-24).
+    """`GET …/scenarios/compare` — the same eight result fields `ScenarioResults` already carries
+    (seven since SC-6-02, plus `profitability_state` since SC-4-03), once per named `scenario_id`,
+    in request order (SC-6-02, F-09 pkt 2; ADR-0001/ADR-0005, aneks 2026-09-24).
 
     **A set of independent rows, never an aggregate.** No field here sums, nets or averages
     `revenue`/`profit`/etc. across the compared scenarios (ADR-0005 aneks SC-7-01 pt.6, reconfirmed

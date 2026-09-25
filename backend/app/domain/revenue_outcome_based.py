@@ -26,9 +26,11 @@ from app.core.money import round_money
 from app.domain.revenue import (
     CURRENCY_MISMATCH,
     EXPECTED_CALCULATED,
+    HOURS_SOURCE_NOT_APPLICABLE,
     INCOMPLETE_COMMERCIAL_TERMS,
     NO_PROBABILITIES,
-    NOT_APPLICABLE_SOURCE,
+    RATE_SOURCE_NOT_APPLICABLE,
+    VENDOR_AXIS_NOT_APPLICABLE,
     AssumptionsUsed,
     CategoryRevenue,
     RevenueAnswer,
@@ -75,9 +77,9 @@ def outcome_assumptions(currencies: tuple[str, ...] = ()) -> AssumptionsUsed:
     """
     return AssumptionsUsed(
         model_type=MODEL_TYPE_OUTCOME_BASED,
-        rate_source=NOT_APPLICABLE_SOURCE,
-        hours_source=NOT_APPLICABLE_SOURCE,
-        vendor_axis=NOT_APPLICABLE_SOURCE,
+        rate_source=RATE_SOURCE_NOT_APPLICABLE,
+        hours_source=HOURS_SOURCE_NOT_APPLICABLE,
+        vendor_axis=VENDOR_AXIS_NOT_APPLICABLE,
         currencies=currencies,
     )
 

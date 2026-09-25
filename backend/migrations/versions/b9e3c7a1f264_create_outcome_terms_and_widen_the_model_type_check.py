@@ -9,12 +9,17 @@ stanem `unsupported_model_type` (odczyt) i `409` (kopia), nigdy połową agregat
 R-02/R-03).
 
 **Jedyna instrukcja dotykająca istniejącej tabeli**: `ck_commercial_terms_model_type_known` jest
-usuwane i odtwarzane z **pełną listą `IN`** — `time_and_material` i `outcome_based` (ADR-0003, aneks
-SC-4-03, pkt 10c). Migracja niosąca tylko własną wartość po cichu unieważniłaby zapisane reguły T&M
-przy walidacji ograniczenia; `downgrade` odtwarza listę sprzed migracji (`time_and_material`), nie
-listę pustą ani jednoelementową z nową wartością. Odtworzenie waliduje istniejące wiersze pod
-blokadą `ACCESS EXCLUSIVE` na `commercial_terms` — tabela jest mała (jedna reguła na scenariusz), a
+usuwane i odtwarzane z **pełną listą `IN`** — `time_and_material`, `story_points` i `outcome_based`
+(ADR-0003, aneks SC-4-03, pkt 10c). Migracja niosąca tylko własną wartość po cichu unieważniłaby
+zapisane reguły T&M i Story Points przy walidacji ograniczenia; `downgrade` odtwarza listę sprzed
+migracji (`time_and_material`, `story_points` — dokładnie wyrażenie z `d2f6a91c4b58`), nie listę
+pustą ani jednoelementową z nową wartością. Odtworzenie waliduje istniejące wiersze pod blokadą
+`ACCESS EXCLUSIVE` na `commercial_terms` — tabela jest mała (jedna reguła na scenariusz), a
 `lock_timeout` niżej ogranicza czekanie.
+
+**Linearyzacja (decyzja człowieka 2026-09-25):** migracja powstała równolegle z SC-4-04 na
+`a3d9e6f20c71`; przy merge z `main` jej `down_revision` przepięto na `d2f6a91c4b58` (Story Points),
+żeby historia miała jedną głowę, a lista `IN` objęła oba wcześniejsze modele.
 
 **Co baza egzekwuje w `outcome_terms`** (fixture, skrypt ani import nie przechodzą przez Pydantic):
 
@@ -32,7 +37,7 @@ zniknięcia wiersza zatwierdzonego scenariusza), `updated_at` (znacznik należy 
 migawki (ADR-0004, aneks SC-4-03, pkt 4 — nic spoza scenariusza).
 
 Revision ID: b9e3c7a1f264
-Revises: a3d9e6f20c71
+Revises: d2f6a91c4b58
 Create Date: 2026-09-25
 """
 
@@ -42,7 +47,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b9e3c7a1f264"
-down_revision: str | None = "a3d9e6f20c71"
+down_revision: str | None = "d2f6a91c4b58"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -55,12 +60,15 @@ _LOCK_TIMEOUT = "3s"
 # pilnuje zgodności kopii.
 _MODEL_TYPE_OUTCOME_BASED = "outcome_based"
 
-_MODEL_TYPE_KNOWN_EXPRESSION = "model_type IN ('time_and_material', 'outcome_based')"
+_MODEL_TYPE_KNOWN_EXPRESSION = (
+    "model_type IN ('time_and_material', 'story_points', 'outcome_based')"
+)
 """Pełna lista `IN` — wartości wcześniejszych modeli razem z nową (ADR-0003, aneks SC-4-03,
 pkt 10c)."""
 
-_PREVIOUS_MODEL_TYPE_KNOWN_EXPRESSION = "model_type IN ('time_and_material')"
-"""Lista sprzed tej migracji — dokładnie wyrażenie z `e7b41c9d2a58`; odtwarza ją `downgrade`."""
+_PREVIOUS_MODEL_TYPE_KNOWN_EXPRESSION = "model_type IN ('time_and_material', 'story_points')"
+"""Lista sprzed tej migracji — dokładnie wyrażenie z `d2f6a91c4b58` (SC-4-04); odtwarza ją
+`downgrade`."""
 
 _MODEL_TYPE_KNOWN = "ck_commercial_terms_model_type_known"
 
@@ -186,9 +194,9 @@ def downgrade() -> None:
     """Odwrotność `upgrade`: tabela szczegółów, potem lista `IN` sprzed migracji.
 
     Utrata danych z definicji, jak w każdym downgrade migracji expand — istnieje, żeby migrację
-    dało się przetestować w obie strony. Reguły T&M przechodzą bez zmian. Pozostała reguła
-    `outcome_based` (bez szczegółów po usunięciu tabeli) sprawi, że odtworzenie CHECK zostanie
-    odrzucone przez bazę — celowo: downgrade nie usuwa po cichu reguł scenariuszy.
+    dało się przetestować w obie strony. Reguły T&M i Story Points przechodzą bez zmian. Pozostała
+    reguła `outcome_based` (bez szczegółów po usunięciu tabeli) sprawi, że odtworzenie CHECK
+    zostanie odrzucone przez bazę — celowo: downgrade nie usuwa po cichu reguł scenariuszy.
     """
     op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
     op.drop_table("outcome_terms")

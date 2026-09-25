@@ -7,10 +7,10 @@ value: there is no `revenue` attribute on `RevenueUnavailable` to read a `0` fro
 on `RevenueResult` to forget to check.
 
 This module is the model-independent vocabulary only. The formula of each model lives in its own
-module (`app.domain.revenue_time_and_material`, `app.domain.revenue_outcome_based`), which
-imports from here and from nothing of another model's, and never from any cost calculation (F-06:
-independent calculation per model;
-backend checklist).
+module (`app.domain.revenue_time_and_material`, `app.domain.revenue_story_points` since SC-4-04,
+`app.domain.revenue_outcome_based` since SC-4-03), which imports from here and from nothing of
+another model's, and never from any cost calculation (F-06: independent calculation per model;
+backend checklist; rule 10 of the Invariant Guardian).
 """
 
 import uuid
@@ -70,28 +70,48 @@ CALCULATED: Final = "calculated"
 LIVE_CATALOG: Final = "live_catalog"
 APPROVED_SNAPSHOT: Final = "approved_snapshot"
 
-NOT_APPLICABLE_SOURCE: Final = "not_applicable"
-"""Trzecia wartość `rate_source` — a także `hours_source` i `vendor_axis` — dla modelu, który nie
-czyta katalogu stawek, godzin ani osi poddostawcy (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8 i 10a).
+RATE_SOURCE_STORY_POINTS_TERMS: Final = "story_points_terms"
+"""Where a Story Points revenue's price came from (SC-4-04): the rule's own, write-guarded row —
+never the catalogue and never a snapshot of it (ADR-0003 addendum 2026-09-25: `story_points_terms`
+is "an own datum of the scenario", not a rate the approval snapshot mechanism ever touches). Naming
+`live_catalog`/`approved_snapshot` here instead would claim a source this model never reads."""
+
+RATE_SOURCE_NOT_APPLICABLE: Final = "not_applicable"
+"""`rate_source` modelu, który nie czyta żadnej stawki (Outcome-based; ADR-0003, aneks 2026-09-25
+SC-4-03, pkt 8 i 10a) — ta sama pisownia co `HOURS_SOURCE_NOT_APPLICABLE` i
+`VENDOR_AXIS_NOT_APPLICABLE` niżej.
 
 Nie udaje `live_catalog`/`approved_snapshot`: przychód Outcome-based czyta wyłącznie własne wiersze
-scenariusza, więc nie zależy od statusu scenariusza. Każde miejsce porównujące `rate_source` przez
-równość musi tę wartość jawnie rozpatrzyć — w szczególności strażnik wyścigu `/results`
-(`app.data.scenario_results.STATUS_DEPENDENT_SOURCES`), dla którego nie jest ona dowodem ani braku,
-ani wystąpienia wyścigu."""
+scenariusza, więc nie zależy od statusu scenariusza."""
 
 STATUS_DEPENDENT_SOURCES: Final = frozenset({LIVE_CATALOG, APPROVED_SNAPSHOT})
 """Wartości `rate_source` wybierane ze statusu scenariusza — jedyne, których porównanie mówi coś o
-zmianie statusu między dwoma odczytami (ADR-0003, aneks SC-4-03, pkt 8)."""
+zmianie statusu między dwoma odczytami (ADR-0003, aneks SC-4-03, pkt 8).
+
+Każda inna wartość (`RATE_SOURCE_NOT_APPLICABLE`, `RATE_SOURCE_STORY_POINTS_TERMS`) nazywa daną
+własną scenariusza, niezależną od statusu — strażnik wyścigu `/results`
+(`app.data.scenario_results.refuse_a_status_race`) nie traktuje jej ani jako dowodu wyścigu, ani
+jako dowodu jego braku (decyzja człowieka 2026-09-25, merge SC-4-03 z SC-4-04)."""
 
 HOURS_SOURCE_BILLABLE: Final = "billable_hours"
 """The only source of hours a T&M revenue has (ADR-0003, point 6) — named in `assumptions_used` so a
 reader of the result is told, not left to assume, that neither the plan nor the availability was
 used."""
 
+HOURS_SOURCE_NOT_APPLICABLE: Final = "not_applicable"
+"""Also the hours source of an Outcome-based revenue (SC-4-03, pkt 8). A Story Points revenue has
+no hours at all (SC-4-04, criterion K-02): `accepted_points` is not an
+hour figure and nothing here converts one into the other. Naming `billable_hours` for this model
+would claim an hours source it never reads."""
+
 VENDOR_AXIS_INTERNAL: Final = "internal"
 """The vendor axis of every rate read (ADR-0003, point 4): `vendor_id IS NULL`, the organisation's
 own price — never "any vendor"."""
+
+VENDOR_AXIS_NOT_APPLICABLE: Final = "not_applicable"
+"""Also the vendor axis of an Outcome-based revenue (SC-4-03, pkt 8). A Story Points rule prices no
+rate row, so it has no vendor axis to name (SC-4-04): there is no
+catalogue lookup here for `vendor_id IS NULL` to be true or false of."""
 
 
 @dataclass(frozen=True)

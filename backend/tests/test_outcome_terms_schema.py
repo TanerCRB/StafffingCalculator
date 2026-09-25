@@ -48,7 +48,9 @@ from tests.conftest import (
 )
 
 MIGRATION_REVISION = "b9e3c7a1f264"
-PREVIOUS_REVISION = "a3d9e6f20c71"
+PREVIOUS_REVISION = "d2f6a91c4b58"
+"""SC-4-04 (Story Points) — `down_revision` tej migracji po linearyzacji (decyzja człowieka
+2026-09-25)."""
 MIGRATION_PATH = (
     Path(__file__).resolve().parents[1]
     / "migrations"
@@ -59,7 +61,7 @@ PREVIOUS_CHECK_MIGRATION_PATH = (
     Path(__file__).resolve().parents[1]
     / "migrations"
     / "versions"
-    / "e7b41c9d2a58_create_commercial_terms_tm_terms_and_the_rate_snapshot.py"
+    / "d2f6a91c4b58_create_story_points_terms_and_widen_the_model_type_check.py"
 )
 
 
@@ -94,7 +96,7 @@ UNKNOWN_MODEL_TYPE = "unknown_model_for_test"
 `story_points`…): SC-4-02/SC-4-04 poszerzą CHECK o swoje wartości i nie mogą przez to złamać tego
 testu (runda 2 weryfikacji SC-4-03, R-02)."""
 
-MODEL_TYPES_OF_THIS_MIGRATION = ("time_and_material", "outcome_based")
+MODEL_TYPES_OF_THIS_MIGRATION = ("time_and_material", "story_points", "outcome_based")
 """Lista `IN` zamrożona w tej migracji — to, co migracja **wytworzyła**, a nie bieżące
 `MODEL_TYPES`. Równość modelu z *najnowszą* migracją poszerzającą CHECK pilnuje
 `tests/test_commercial_terms_schema.py` (`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH`)."""
@@ -244,11 +246,11 @@ def test_o_6_the_discriminator_admits_both_models_and_still_refuses_an_unknown_o
 
 def test_the_model_and_the_outcome_migration_agree_on_every_sql_expression() -> None:
     """Strażnik dryfu: kopie wyrażeń `outcome_terms` w migracji `b9e3c7a1f264` są wyrażeniami
-    modelu, a `downgrade` odtwarza dokładnie wyrażenie z `e7b41c9d2a58` (lista sprzed migracji, nie
+    modelu, a `downgrade` odtwarza dokładnie wyrażenie z `d2f6a91c4b58` (lista sprzed migracji, nie
     pusta). Lista `IN` dyskryminatora porównana z **zamrożoną listą tej migracji**, nie z bieżącym
     `MODEL_TYPES` — kolejny model poszerzy model i swoją migrację, nie tę (R-02)."""
     migration = _load(MIGRATION_PATH, "sc_4_03_migration")
-    previous = _load(PREVIOUS_CHECK_MIGRATION_PATH, "sc_4_01_migration_for_sc_4_03")
+    previous = _load(PREVIOUS_CHECK_MIGRATION_PATH, "sc_4_04_migration_for_sc_4_03")
 
     assert migration._MODEL_TYPE_KNOWN_EXPRESSION == (
         "model_type IN ("
@@ -277,11 +279,10 @@ def alembic_config(database_url: str) -> Config:
 def test_o_6_a_tm_rule_survives_the_downgrade_and_the_upgrade_of_the_outcome_migration(
     engine: Engine, alembic_config: Config
 ) -> None:
-    """O-6 — zatwierdzona w bazie reguła T&M przechodzi `downgrade` do `a3d9e6f20c71` (CHECK
-    odtworzony
-    z `time_and_material`) i ponowny `upgrade` (CHECK z pełną listą) bez zmiany; `outcome_terms`
-    znika i wraca. Mutacja "downgrade odtwarza listę z samym `outcome_based`": odtworzenie CHECK
-    odrzucone przez bazę na istniejącej regule T&M.
+    """O-6 — zatwierdzona w bazie reguła T&M przechodzi `downgrade` do `d2f6a91c4b58` (CHECK
+    odtworzony z `time_and_material`, `story_points`) i ponowny `upgrade` (CHECK z pełną listą) bez
+    zmiany; `outcome_terms` znika i wraca. Mutacja "downgrade odtwarza listę z samym
+    `outcome_based`": odtworzenie CHECK odrzucone przez bazę na istniejącej regule T&M.
 
     Rewizja startowa jest czytana, nie wpisana na sztywno; `upgrade head` w `finally`, bo `engine`
     jest współdzielony przez całą sesję testów.
@@ -305,7 +306,10 @@ def test_o_6_a_tm_rule_survives_the_downgrade_and_the_upgrade_of_the_outcome_mig
         assert one(
             "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
             " WHERE conname = 'ck_commercial_terms_model_type_known'"
-        ) == "CHECK (((model_type)::text = 'time_and_material'::text))"
+        ) == (
+            "CHECK (((model_type)::text = ANY ((ARRAY['time_and_material'::character varying,"
+            " 'story_points'::character varying])::text[])))"
+        )
         command.upgrade(alembic_config, "head")
         assert one("SELECT version_num FROM alembic_version") == before
         assert one("SELECT to_regclass('outcome_terms') IS NOT NULL") is True

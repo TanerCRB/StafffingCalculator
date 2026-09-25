@@ -157,12 +157,153 @@ ochrona przed mieszanymi wersjami kodu podczas wdrożenia kolejnego modelu, ADR-
 contract) i `no_revenue_currency` (reguła bez żadnej wycenionej pozycji i bez `scenarios.currency` —
 zastępuje wcześniejsze `currency: null`, które łamało kształt wyniku z pkt 9).
 
+### 2026-09-25 — impact map i decyzje bramki 1 dla SC-4-04 (Story Points, Issue #68)
+
+> Rozstrzygnięcia człowieka (bramka 1, 2026-09-25): **D-1 (A), D-4 (A), D-5 (A), D-6 (A)** — wariant
+> najwęższy, zgodny z rekomendacją analityka i architekta w każdym punkcie. Poniższa treść była
+> przygotowana jako impact map roli architekta ze statusem "Draft — pending approval"; ten nagłówek
+> zamyka ją decyzją.
+
+Czwarty model komercyjny po T&M (SC-4-01), pierwszy wpis z "Odłożone" powyżej (`story_points_terms`).
+
+**Rozszerza się wprost, bez nowej decyzji (mechanizm już generyczny w kodzie, sprawdzone w
+`app.data.commercial_terms`):**
+
+1. Dyskryminator i dyspozytor (pkt 2, 9; "Konsekwencje"). `MODEL_TYPES`, `REVENUE_BY_MODEL`,
+   `DETAIL_TABLE_BY_MODEL` kluczują się wyłącznie po `model_type`; `_rule_of` i
+   `copy_commercial_terms` czytają rejestr, nigdy `tm_terms` po nazwie (R-05, SC-4-01 bramka 2).
+   Rozszerzenie `model_type_known` o `'story_points'` w tej samej migracji, która tworzy
+   `story_points_terms`, plus jeden wpis w każdym z trzech rejestrów, jest dokładnie wzorcem
+   zapowiedzianym w "Konsekwencje". `unsupported_model_type` i refuzja kopiowania (R-02/R-03,
+   `CommercialTermsNotCopyable`) przechodzą tym zadaniem z symulacji `monkeypatch`
+   (`docs/architecture/capabilities.md`, w. 163) na dowód pierwszym realnym drugim wierszem — to
+   jest fundament, który SC-4-04 **ustanawia**, nie taki, na którym może się bezpiecznie oprzeć jako
+   już gotowy.
+2. Zasięg i uprawnienia (ADR-0005, aneks 2026-09-23 SC-4-01). Punkty 1 ("zasięg bez nowej decyzji…
+   404, nigdy 403, także dla zapisu") i 2 (`COMMERCIAL_READ`/`COMMERCIAL_WRITE`) mówią o "regule
+   komercyjnej", nie o T&M — obejmują Story Points bez zmian. Punkt 3 (przychód bez koniunkcji z
+   `PERSONNEL_COSTS_READ`, dowód równością zbioru pól) jest warunkiem, który nowy kształt odpowiedzi
+   SP musi spełnić własnym testem — nie nową decyzją dostępu.
+3. Znacznik współbieżności (ADR-0007). `commercial_terms.updated_at` "obejmuje… szczegóły" i jest
+   niesiony już dziś "for the first task that adds one" (`app.models.commercial_terms`, docstring) —
+   bez zmian, dopóki SP nie dostaje ścieżki edycji (patrz D-5 niżej).
+4. Okna obowiązywania (ADR-0008, aneks SC-4-01: `commercial_terms` poza listą tabel wzorca
+   `EXCLUDE`/`valid_period`, wersjonowanie mechanizmem ADR-0004). Dotyczy reguły niezależnie od
+   modelu — bez zmian, o ile D-1 (niżej) nie wprowadza wariantu wymagającego własnego okna czasowego.
+
+**Aneks do ADR-0004 potrzebny, ale wyłącznie potwierdzający — nie nowy mechanizm.** Punkt 1b aneksu
+2026-09-23 SC-4-01 nazywa wprost `tm_terms` ("kopiujący `commercial_terms` kopiuje w tej samej
+funkcji `tm_terms`"), choć `copy_commercial_terms` już dziś czyta `DETAIL_TABLE_BY_MODEL[terms
+.model_type]`, nigdy `tm_terms` po nazwie — kod jest generyczny, tekst decyzji nie. SC-4-04 wymaga
+zdania potwierdzającego, że "grupa 2, strażnik zapisu, jeden wpis agregatu w
+`SCENARIO_CHILD_COPIERS`" obowiązuje każdą tabelę szczegółów zarejestrowaną w
+`DETAIL_TABLE_BY_MODEL`, nie tylko `tm_terms`, i że `story_points_terms` jest daną własną
+scenariusza (strażnik zapisu, bez migawki) — tym samym uzasadnieniem, którym `app.models
+.commercial_terms` (docstring, "Own data of the scenario → write guard, not snapshot") już dziś
+obejmuje `tm_terms`. **Warunek, pod którym to jest prawdą:** żadna kolumna `story_points_terms` nie
+pochodzi z tabeli organizacyjnej edytowalnej po zatwierdzeniu scenariusza. Jeśli D-5 to zmieni
+(np. cena punktu jako wartość domyślna organizacji, nie pole reguły), potrzebna jest osobna migawka
+wzorem `approved_snapshot_catalog_default_rate` — to osobna decyzja, poza tym aneksem.
+
+**Pytania bramki 1 — rozstrzygnięte 2026-09-25, opcja A w każdym:**
+
+- **D-1 (analityk): wariant "sprint fee" teraz czy później. WYBRANE: Opcja A.**
+  - *Opcja A — poza zakresem SC-4-04 (rekomendacja analityka, wybrana).* `story_points_terms` dostaje jeden
+    kształt (`price_per_point`, `currency`, pole akceptacji — patrz D-5), `model_type_known` rośnie o
+    jedną wartość `'story_points'`. Najtańsza; zgodna z wzorcem "jeden model = jeden wpis CHECK +
+    jedna tabela" i z zakresem K-01..K-05.
+  - *Opcja B — drugi wariant jako kolumna-dyskryminator WEWNĄTRZ `story_points_terms`
+    (`billing_mode`).* Odtwarza defekt, który ADR-0003 już raz odrzucił jednym poziomem wyżej
+    ("Rozważane alternatywy": "Jedna szeroka tabela ze wszystkimi kolumnami modeli — odrzucone:
+    kolumny `NULL` zależne od typu i brak `CHECK` na polach JSON"). Wymaga własnej decyzji o
+    egzekwowaniu zgodności pól w bazie (drugi złożony klucz obcy pod jednym `model_type`, albo
+    `CHECK` warunkowy) — mechanizm, którego dziś nic w repo nie ma.
+  - *Opcja C — drugi wariant jako osobna wartość dyskryminatora (`'story_points_sprint_fee'`).*
+    Reużywa dowiedziony mechanizm bez modyfikacji, kosztem podwojenia zakresu tego zadania (druga
+    tabela szczegółów, druga gałąź dyspozytora, drugi kształt żądania) wobec zawężonych kryteriów
+    K-01..K-05 analityka.
+- **D-5 (architekt, nowe): gdzie żyje "warunek rozliczenia" (zaakceptowane punkty). WYBRANE: Opcja A.**
+  - *Opcja A — pojedyncza wartość `accepted_points` wpisywana raz przy tworzeniu reguły, bez ścieżki
+    edycji* (jak `tm_terms` — zero kolumn edytowalnych w MVP). Wybrana. Najtańsza, dosłownie realizuje AC-09
+    ("cena × zaakceptowane punkty"); zmiana wymaga kopii scenariusza (wzorzec już przyjęty dla całej
+    reguły). Koszt: nie odzwierciedla realnej akumulacji punktów sprint po sprincie — nienazwane w
+    Issue, warte nazwania jako świadomie przyjęte ograniczenie MVP.
+  - *Opcja B — pole edytowalne (nowa ścieżka `PATCH`).* Pierwsza aktywacja znacznika ADR-0007 dla tej
+    tabeli i pierwszy edytowalny zapis reguły komercyjnej w repo — większy zakres niż cokolwiek
+    SC-4-01 dowiodło.
+  - *Opcja C — tabela zdarzeń akceptacji.* Trzeci poziom pod scenariuszem, nowy wpis kopiujący,
+    mechanizm poza tym, co ADR-0003/ADR-0004 dziś przewidują — realna nowa decyzja.
+- **D-6 (architekt, nowe): kształt żądania/odpowiedzi API** — pierwszy model komercyjny z polami
+  dziedzinowymi (`CommercialTermsCreateRequest` dziś ma tylko `model_type`, `extra="forbid"`).
+  **WYBRANE: Opcja A.**
+  - *Opcja A — unia dyskryminowana po `model_type`. Wybrana.* Wymaga rozszerzenia
+    `create_commercial_terms()` o wartości dziedzinowe niesione do TEJ SAMEJ jednej, strażonej
+    instrukcji `INSERT … SELECT` (ADR-0004, aneks pkt 1a bez zmian co do zasady). Pierwszy realny
+    test drugiej połowy K-04 (wiersz `story_points_terms` odrzucony pod regułą
+    `time_and_material`, i odwrotnie).
+  - *Opcja B — jeden szeroki kształt z polami opcjonalnymi per model.* Ten sam defekt co D-1/B, na
+    granicy API.
+  - Niezależnie od wyboru: nowy dowód równości zbioru pól bez kosztu dla wariantu SP — istniejący
+    test T&M go nie pokrywa.
+- **D-4 (analityk, konsekwencja architektoniczna do zapamiętania). WYBRANE: Opcja A.** Limit
+  budżetowy poza zakresem SC-4-04; jeśli wróci w przyszłym zadaniu, pytanie brzmi: nowy nazwany
+  stan (`budget_exceeded`) czy ciche przycięcie sumy — to drugie jest tym, co punkt 9 ADR-0003 dziś
+  wprost zakazuje ("przychód częściowy jest zakazany").
+
+D-2/D-3 analityka (prognoza z velocity, rozliczenie punktu między sprintami) nie mają konsekwencji
+architektonicznej ponad to, co analityk już nazwał (brak encji zespołu/sprintu) — poprawnie usunięte
+z zakresu.
+
+**Foundation status.** Dowiedzione: cały mechanizm reguły komercyjnej dla JEDNEGO realnego modelu
+(T&M) — zasięg, strażnik zapisu pod `approved`, kopiowanie agregatu, migawka stawek, odmowa
+uprawnień, brak pola kosztowego — 581 testów backendowych, PR #64, dwie rundy weryfikacji
+(`docs/PLAN.md` SC-4-01, `docs/architecture/capabilities.md` w. 153–163). Tylko planowane /
+niedowiedzione: dyspozytor (`REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL`) na DWÓCH realnych wierszach —
+dziś dowiedziony wyłącznie testem z podstawionym `monkeypatch` drugim modelem ("drugi model
+komercyjny jeszcze nie istnieje w bazie", capabilities.md w. 163). SC-4-04 jest zadaniem, które to
+ustanawia, nie takim, które może na tym polegać jako gotowym. Żadne żądanie/odpowiedź API niosące
+pole dziedzinowe modelu nigdy nie istniało w repo — `CommercialTermsCreateRequest` ma dziś dokładnie
+jedno pole. ADR-0009 (kontrakt zapisu z UI), choć nieaktywny w tym zadaniu, sam ma status Draft —
+pending approval, więc przyszłe zadanie frontendowe SP dziedziczy fundament również niezatwierdzony
+na tym poziomie.
+
+**Invariants to watch during implementation:**
+
+- Reguła 10 Strażnika (niezależne wyliczenie per model, brak importu krzyżowego, brak pola
+  kosztowego) — nowy moduł formuły SP nie importuje `revenue_time_and_material` ani żadnego modułu
+  kosztu; `story_points_terms` nie ma kolumny kosztowej.
+- Reguła 2 (jeden punkt zaokrąglenia) — `price_per_point × accepted_points` zaokrąglone wyłącznie
+  przez `round_money`, bez zaokrąglenia pośredniego.
+- Zakaz przychodu częściowego (ADR-0003 pkt 9) — jeśli `accepted_points`/`price_per_point` mają
+  luki, to musi być nazwany stan, nie cichy `0` ani suma pominięć.
+- Zgodność typu przez złożony FK (K-04) — pierwszy realny dowód, że wiersz `story_points_terms` pod
+  regułą innego `model_type` jest niezapisywalny, i odwrotnie dla `tm_terms`.
+- Jedna instrukcja dla obu wierszy (ADR-0004 aneks pkt 1a) — jeśli D-6/A, wartości dziedzinowe SP
+  muszą wejść do TEJ SAMEJ guardowanej `INSERT … SELECT`, nie do drugiej, niestrzeżonej instrukcji.
+- Kopiowanie przez `SCENARIO_CHILD_COPIERS`, jeden wpis na agregat — kolumny niekopiowane muszą
+  wykluczać tylko `commercial_terms_id`/`created_at`; jeśli D-5/A, kopiowanie `accepted_points` na
+  nowy DRAFT literalnie duplikuje fakt "tyle już zaakceptowano" na scenariusz, który niczego jeszcze
+  nie dostarczył — warte nazwania w raporcie developera, nie ciche.
+- Odpowiedź bez pola kosztowego (ADR-0005 pkt 3) — nowy, osobny dowód równością zbioru pól dla
+  wariantu SP.
+
+**Required process steps:** README indeksu decyzji (`docs/architecture/decisions/README.md`) — bez
+zmian teraz, to aneks do istniejącego ADR-0003, nie nowy plik; jeśli bramka 1 wybierze D-1/C (osobny
+`model_type` jako pełnoprawna decyzja projektowa), rozważyć nowy ADR zamiast aneksu, wtedy README
+wymaga wiersza. `docs/architecture/architecture-sensitive-paths.md` sprawdzone — bez zmian wymaganych,
+istniejące wiersze (`backend/migrations/**`, `backend/app/models/**`, `backend/app/api/**`,
+`backend/app/domain/**`, "any new/changed public API endpoint, response field or event") już
+pokrywają te ścieżki generycznie. D-1/D-4/D-5/D-6 rozstrzygnięte 2026-09-25 (opcja A wszędzie) —
+ten aneks jest teraz wiążący dla migracji tworzącej `story_points_terms`.
+
 ### 2026-09-25 — model Outcome-based: `outcome_terms`, cztery kategorie wyniku, przychód gwarantowany i oczekiwany (SC-4-03, Issue #67, bramka 1)
 
 Rozstrzygnięcia zaakceptowane przez człowieka na bramce 1, 2026-09-25 (D-1..D-9, P-1..P-5 mapy
 wpływu SC-4-03). Sekcja "Odłożone" zapowiada `outcome_terms` jako własny wpis przy własnym zadaniu —
-to jest ten wpis. `fixed_price_terms` i `story_points_terms` pozostają odłożone (open decision #2
-nadal otwarta), ale wiążą je elementy wspólne z pkt 10 niżej. Podstawa: F-06.3, AC-08, F-06.5.
+to jest ten wpis. `fixed_price_terms` pozostaje odłożone i wiążą go elementy wspólne z pkt 10
+niżej. `story_points_terms` ma własny aneks wyżej (SC-4-04, Issue #68) i został scalony do `main`
+przed SC-4-03 — integrację obu modeli rozstrzyga pkt 12 (uzgodnienie po merge z `main`,
+2026-09-25, decyzja człowieka). Podstawa: F-06.3, AC-08, F-06.5.
 
 1. **Tabela szczegółów `outcome_terms` — wzorzec pkt 3 bez zmian.** Klucz główny
    `commercial_terms_id`; kolumna `model_type` z `CHECK (model_type = 'outcome_based')`; złożony
@@ -241,8 +382,9 @@ nadal otwarta), ale wiążą je elementy wspólne z pkt 10 niżej. Podstawa: F-0
    udawania `live_catalog`/`approved_snapshot`. Obowiązek przyjęty razem z tą wartością, wzorem
    `what_if_hypothetical` (ADR-0015, SC-6-04): **jawny przegląd każdego miejsca porównującego
    `rate_source` przez równość**; w szczególności strażnik wyścigu `/results`
-   (`ScenarioResultsRaceDetected`) porównuje wyłącznie źródła zależne od statusu scenariusza —
-   `not_applicable` nie jest dowodem ani braku, ani wystąpienia wyścigu. Test wyścigu dla obu
+   (`ScenarioResultsRaceDetected`) porównuje wyłącznie źródła zależne od statusu scenariusza
+   (`live_catalog`/`approved_snapshot`) — `not_applicable` (i `story_points_terms`, pkt 12) nie
+   jest dowodem ani braku, ani wystąpienia wyścigu. Test wyścigu dla obu
    modeli: zatwierdzony scenariusz outcome → `200`, prawdziwy wyścig zatwierdzenia T&M → nadal
    `409`. `assumptions_used` nie może też nazywać źródła, którego wyliczenie outcome nie czyta
    (godziny `billable_hours`, oś poddostawcy) — F-06.5 wymaga założeń faktycznie użytych.
@@ -260,18 +402,24 @@ nadal otwarta), ale wiążą je elementy wspólne z pkt 10 niżej. Podstawa: F-0
    zadanie. `model_type` pozostaje niezmienny po zapisie (pkt 2). Znacznik współbieżności ADR-0007
    na `commercial_terms` obejmuje `outcome_terms` ("Konsekwencje") — konsumowany dopiero przez
    zadanie edycji.
-10. **Elementy wspólne bloku 4 — wiążące SC-4-02 (Fixed Price, #66) i SC-4-04 (Story Points,
-    #68).** SC-4-03 idzie pierwsze; każde z kolejnych zadań modelu przyjmuje bez ponownego
-    rozstrzygania:
-    a. **Konwencja `rate_source = not_applicable`** dla każdego modelu bez katalogu stawek, z tym
-       samym obowiązkiem przeglądu porównań i testem wyścigu `/results` dla nowego modelu; model,
-       który czyta katalog, używa istniejących wartości i nie dostaje nowej.
+10. **Elementy wspólne bloku 4 — wiążące kolejne zadania modeli (SC-4-02 Fixed Price, #66).**
+    Brzmienie z bramki 1 zakładało, że SC-4-03 idzie przed SC-4-04 (Story Points, #68) — SC-4-04
+    zostało jednak scalone do `main` pierwsze; skutki dla punktów a i c rozstrzyga pkt 12
+    (uzgodnienie po merge z `main`, 2026-09-25, decyzja człowieka). Każde kolejne zadanie modelu
+    przyjmuje bez ponownego rozstrzygania:
+    a. **Konwencja wartości `rate_source` dla modelu bez katalogu stawek** (brzmienie po pkt 12):
+       model bez katalogu stawek używa wartości `rate_source` **spoza** źródeł zależnych od statusu
+       scenariusza (`live_catalog`/`approved_snapshot`), z tym samym obowiązkiem przeglądu porównań
+       i testem wyścigu `/results` dla nowego modelu; strażnik wyścigu `/results` porównuje
+       wyłącznie źródła zależne od statusu. Outcome używa `not_applicable`, Story Points —
+       `story_points_terms`. Model, który czyta katalog, używa istniejących wartości i nie dostaje
+       nowej.
     b. **Wzorzec rozszerzania testu K-11 SC-4-01**: zbiór pól wyniku rozszerzany jawnie o nazwane
        nowe pola, zatwierdzone na bramce 1 danego zadania; **równość zbioru zostaje** (nigdy
        osłabienie do "zawiera").
     c. **Wzorzec migracji rozszerzającej `CHECK model_type_known`**: każda kolejna migracja
        odtwarza ograniczenie z **pełną listą `IN`**, łącznie z wartościami wcześniejszych modeli
-       (`time_and_material`, `outcome_based`, …) — migracja niosąca tylko własną wartość po cichu
+       (`time_and_material`, `story_points`, `outcome_based`, …) — migracja niosąca tylko własną wartość po cichu
        unieważnia zapisane reguły innych modeli przy następnej walidacji ograniczenia. Downgrade
        odtwarza listę sprzed migracji, nie listę jednoelementową. Strażnik dryfu
        (`test_commercial_terms_schema.py::test_the_model_and_the_migration_agree_on_every_sql_expression`)
@@ -283,7 +431,8 @@ nadal otwarta), ale wiążą je elementy wspólne z pkt 10 niżej. Podstawa: F-0
        **Uzupełnienie po rundzie weryfikacji 1 (2026-09-25, decyzja człowieka):** testy danej
        migracji porównują z **własną, zamrożoną w teście listą tej migracji**, nie ze stałą modelu,
        która przesunie się przy kolejnym modelu. "Nieznany model" w testach to wartość-wartownik,
-       **nigdy nazwa realnego przyszłego modelu** (`fixed_price`, `story_points`), bo taki test
+       **nigdy nazwa realnego przyszłego modelu** (dziś `fixed_price`; `story_points` jest już
+       wdrożonym modelem, pkt 12), bo taki test
        zmienia znaczenie w chwili wdrożenia tego modelu. `_details_of` odmawia dla nieznanego typu
        payloadu, zamiast go przepuszczać. Istniejący test SC-4-01 używający `'fixed_price'` jako
        nieznanego modelu przepina na wartownika SC-4-02 — jawnie, na swojej bramce 1.
@@ -298,6 +447,34 @@ nadal otwarta), ale wiążą je elementy wspólne z pkt 10 niżej. Podstawa: F-0
     jednostek i prawdopodobieństwo — reguły, której parametrów nie da się odczytać, nie da się
     zweryfikować (F-06.5). Zbiór pól reguły w teście K-11 SC-4-01 rozszerzony jawnie o te pola, wg
     pkt 10b — **równość zbioru zostaje**.
+12. **Uzgodnienie po merge z `main` (2026-09-25, decyzja człowieka, runda weryfikacji 2).**
+    SC-4-04 (Story Points) zostało scalone do `main` przed SC-4-03, z własną wartością
+    `rate_source = "story_points_terms"` i własną migracją `d2f6a91c4b58`, która rozszerza
+    `CHECK model_type_known` do `('time_and_material', 'story_points')`. Pkt 10 z bramki 1 wiązał
+    SC-4-04 wartością `not_applicable` — to brzmienie jest nieaktualne. Rozstrzygnięcia:
+    a. **Konwencja pkt 10a w nowym brzmieniu:** model bez katalogu stawek używa wartości
+       `rate_source` spoza źródeł zależnych od statusu (`live_catalog`/`approved_snapshot`);
+       konkretna wartość należy do modelu. Outcome — `not_applicable`; Story Points zachowuje
+       `story_points_terms` (bez zmiany kontraktu scalonego SC-4-04).
+    b. **Strażnik wyścigu `/results` (`ScenarioResultsRaceDetected`) porównuje wyłącznie źródła
+       zależne od statusu.** To zamyka również **istniejący na `main` defekt SC-4-04**: strażnik
+       porównywał `rate_source` zwykłą równością z wartością oczekiwaną dla statusu scenariusza, więc
+       każdy scenariusz Story Points (`story_points_terms` ≠ `live_catalog`/`approved_snapshot`)
+       dostawał `409` na `/results`, what-if i porównaniu scenariuszy — niezależnie od tego, czy
+       wyścig zaszedł. Dowód: nowe testy `backend/tests/test_story_points_scenario_results.py`
+       (scenariusz Story Points szkicowy i zatwierdzony → `200`; prawdziwy wyścig zatwierdzenia
+       T&M → nadal `409`).
+    c. **Migracja pkt 10c:** migracja SC-4-03 `b9e3c7a1f264` jest zlinearyzowana na
+       `d2f6a91c4b58` i odtwarza `CHECK model_type_known` z pełną listą `IN` trzech wartości
+       (`time_and_material`, `story_points`, `outcome_based`); downgrade odtwarza listę
+       `d2f6a91c4b58` (dwie wartości). `LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` wskazuje
+       `b9e3c7a1f264`.
+    d. **Strażnik dryfu SC-4-04 przepięty wzorem R-02** (pkt 10c, uzupełnienie rundy 1): test
+       `test_story_points_terms.py` (ok. w. 511), który porównywał migrację `d2f6a91c4b58` ze stałą
+       modelu, porównuje teraz migrację z **jej własną, zamrożoną listą** (dwie wartości), a zgodność
+       stałej modelu z najnowszą migracją sprawdza strażnik oparty na
+       `LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH`. To nie jest osłabienie testu: pokryte są oba fakty
+       (lista migracji SC-4-04 i lista najnowsza) — decyzja człowieka, nie rozstrzygnięcie w zadaniu.
 
 Relacja do ADR-0004: `outcome_terms` — grupa 2, aneks 2026-09-25 SC-4-03 tam.
 
@@ -308,8 +485,10 @@ Relacja do ADR-0004: `outcome_terms` — grupa 2, aneks 2026-09-25 SC-4-03 tam.
 | O-3 | Opłata 20000, 100 PLN/j., min 22000, max 30000: 50 j. → 25000, 150 j. → 30000, 0 j. → 22000, gwarantowany 22000; `min > max` odrzucone (`422`, zero wierszy). |
 | O-4 | Reguła w walucie innej niż `scenarios.currency` → `currency_mismatch`, bez kwoty w żadnym polu przychodu. |
 | O-5 | `/results` zatwierdzonego scenariusza outcome → `200`, zysk liczony od przychodu gwarantowanego, `rate_source = not_applicable`; prawdziwy wyścig zatwierdzenia scenariusza T&M → `409` bez zmian. |
-| O-6 | Migracja niesie w `CHECK model_type_known` pełną listę wartości (`time_and_material` i `outcome_based`); istniejąca reguła T&M przechodzi upgrade i downgrade; kopiujący reguł bez gałęzi dla `model_type` prawdziwego wiersza odmawia `unsupported_model_type`/`409`, a nie kopiuje połowy agregatu. |
+| O-6 | Migracja niesie w `CHECK model_type_known` pełną listę wartości (`time_and_material`, `story_points`, `outcome_based`), downgrade odtwarza listę `d2f6a91c4b58`; istniejące reguły T&M i Story Points przechodzą upgrade i downgrade; kopiujący reguł bez gałęzi dla `model_type` prawdziwego wiersza odmawia `unsupported_model_type`/`409`, a nie kopiuje połowy agregatu. |
 | O-7 | `/results`, what-if i porównanie: waluta przychodu różna od waluty któregokolwiek wyliczonego źródła kosztu (w tym koszt dodatkowy ≠ koszt osobowy przy regule T&M) → `profit`/`margin`/`markup` = `currency_mismatch`, bez liczby. |
 | O-8 | `GET` reguły outcome zwraca opłatę, premię, stawkę za jednostkę, min, max, walutę i per kategoria jednostki oraz prawdopodobieństwo; zbiór pól reguły w teście K-11 równy rozszerzonemu zbiorowi. |
 | O-9 | `INSERT` z pominięciem API: `unit_rate` ustawione przy choć jednej liczbie jednostek `NULL` odrzucone przez bazę; `unit_rate = NULL` z jednostkami `NULL` zapisywalne. |
 | O-10 | Scenariusz outcome: `assumptions_used.hours_source`, `vendor_axis`, `rate_source` = `not_applicable`; dla T&M wartości bez zmian. |
+| O-11 | `/results`, what-if i porównanie scenariusza Story Points (szkicowego i zatwierdzonego) → `200`, `rate_source = story_points_terms`, bez `409`; prawdziwy wyścig zatwierdzenia T&M → `409` bez zmian. |
+| O-12 | Test migracji `d2f6a91c4b58` porównuje ją z własną zamrożoną listą (dwie wartości); stała modelu jest równa liście migracji wskazanej przez `LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` (`b9e3c7a1f264`, trzy wartości). |
