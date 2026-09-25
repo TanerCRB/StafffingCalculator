@@ -2043,8 +2043,27 @@ history / this file's own change log, not as tracked product work.
   gwarantowany w `/results` (ADR-0003 aneks pkt 13d, warunek wstępny `scope_ref` w API); frontend
   bez przychodu oczekiwanego (D-9). Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-7-03** — Strażnik wyścigu `/results`, `/compare` i what-if porównuje status scenariusza,
-  nie `rate_source` (naprawa 409 dla Story Points). Zarezerwowane, kryteria i decyzje bramki 1 w
-  Issue #118.
+- [x] **SC-7-03** — Strażnik wyścigu `/results`, `/compare` i what-if na statusach zamrożonych przez
+  trzy odczyty odświeżające scenariusz, nie na porównaniu `rate_source` przychodu z kosztowym
+  (Issue #118, PR #123).
+  *Done when:* jedna funkcja `refuse_a_status_race`, wołana po trzecim odczycie, odmawia `409` ⇔
+  (a) przychód zależny od statusu (`rate_source` ∈ `STATUS_DEPENDENT_SOURCES`) i status odczytu
+  przychodu ≠ kosztu, albo (b) status odczytu kosztu ≠ kosztu dodatkowego (każdy model); Story Points
+  bez wyścigu → `200` na `/results`, `/compare`, what-if; realne zatwierdzenie między odczytami →
+  `409` dla T&M i bez reguły, spójny wynik zatwierdzony dla SP/Outcome; testy wyścigu z `main` bez
+  osłabienia; odpowiedź T&M bez zmian; treść `409` generyczna.
+  **Done 2026-09-25:** `backend/tests/test_scenario_results_status_guard.py` (K-01, K-02, K-04,
+  K-05, K-06, A15-6..A15-9 — realna współbieżność dwóch połączeń); `test_scenario_results_race.py`,
+  `test_story_points_scenario_results.py`, `test_outcome_scenario_results.py`,
+  `test_scenario_results.py` bez zmian i zielone. Mutacje: trzy rundy QA, zabite wszystkie
+  nieekwiwalentne (`docs/architecture/capabilities.md`, mutation log SC-7-03). Backend 952 passed,
+  frontend 262 passed, CI zielone. Decyzje człowieka: bramka 1 Q1–Q5; bramka 2 — R-01 (luka koszt →
+  koszt dodatkowy, obecna też na `main`) naprawione, R-02, kolizja z SC-4-03 → Q4 A→B (semantyka
+  `main`), pkt 2b A, R-06 A (warunek ważności zwolnienia SP/Outcome zapisany w ADR-0015). Podstawa:
+  ADR-0015 aneks SC-7-03, ADR-0003 aneks SC-7-03. **Zaakceptowane, nienaprawione:** nieaktualne
+  docstringi `test_scenario_results_race.py` — wyjątek człowieka (TEAM-CONTRACT §3a, do #122,
+  najpóźniej 2026-10-09). Brak testu realnej współbieżności dla samego `/compare` (ta sama funkcja co
+  `/results`); wyścig "live–live" (edycja okna katalogu) — nazwana luka.
+  Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
