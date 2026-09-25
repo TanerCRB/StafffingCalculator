@@ -1248,6 +1248,67 @@ history / this file's own change log, not as tracked product work.
   aneks 2026-09-25 (SC-5-02); `ADR-0015-przeliczenie-bez-zapisu.md` aneks 2026-09-25 (SC-5-02);
   `docs/PLAN.md` SC-5-01, SC-5-06.
 
+- [ ] **SC-5-03** — Kwota stała jako podstawa kosztu, wybór podstawy per pozycja (F-07), rozszerzenie
+  ADR-0013 (Issue #78).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-06 (analyst + architect, bramka 1,
+  2026-09-25):
+  1. (K-01) Dwie formuły kosztu (`worked_time`/`fixed_amount`) — osobne ścieżki dispatchowane z tej
+     samej pozycji przez `cost_basis`, żadna nie importuje modułu drugiej ani ścieżki przychodu
+     (`app.data.commercial_terms`) — test strukturalny grafu importów (mirror C-5). Mutacja:
+     wspólna funkcja czytająca oba źródła kosztu warunkiem `if`, bez rozdziału modułów.
+  2. (K-02) `cost_basis` jest kolumną per pozycja (`staffing_position`), domyślnie `worked_time`
+     (zgodność wsteczna z SC-5-01: pozycje istniejące przed tym zadaniem liczą się dokładnie jak
+     dziś), trwałe pole zapisu, nie parametr żądania odczytu. Mutacja: domyślna wartość
+     `fixed_amount` albo dispatch po parametrze żądania zamiast po kolumnie.
+  3. (K-03) Strażnik zapisu do `approved` (`app.data.scenario_guard`) obejmuje `cost_basis` i
+     `fixed_amount` w TEJ SAMEJ instrukcji zapisu co pozostałe kolumny `staffing_position` — żaden
+     nowy kształt strażnika, żaden nowy token współbieżności (ADR-0007 aneks 2026-09-19 SC-3-01,
+     potwierdzony ADR-0007 aneks tej daty SC-5-03 przez odniesienie w ADR-0004). Wyścig z
+     zatwierdzeniem dowiedziony na dwóch połączeniach jak dla każdej pozostałej kolumny tej tabeli.
+  4. (K-04) Kopiowanie przenosi `cost_basis`/`fixed_amount`(+waluta) jako niezależny wiersz/wartość —
+     bez nowego wpisu w `SCENARIO_CHILD_COPIERS` (kolumny podróżują z kopią agregatu pozycji,
+     ADR-0004 aneks tej daty pkt 3), na niezależnym wierszu kopii. Mutacja do zabicia: kopiujący
+     zwraca `cost_basis` domyślne (`worked_time`) niezależnie od wartości źródła.
+  5. (K-05) Bramka kosztowa (koniunkcja `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`) obejmuje
+     kwotę `fixed_amount` identycznie jak kwotę worked time (ADR-0005 aneks 2026-09-23 SC-5-01) —
+     `cost_basis`/`fixed_amount` nigdy w schemacie `GET .../staffing-positions` (ADR-0005, aneks tej
+     daty, Q4). Dowód strukturalny: zbiór pól tego endpointu identyczny przed/po zadaniu.
+  6. (K-06) Brak kwoty przy `cost_basis = 'fixed_amount'` jest stanem nieosiągalnym w aplikacji —
+     CHECK w migracji (`cost_basis = 'fixed_amount' → fixed_amount IS NOT NULL`), asercja na
+     `pg_constraint` (wzór ADR-0014 D-10) — nigdy `0` jako substytut. Niezgodność waluty
+     (`currency_mismatch`) i brak waluty scenariusza bez żadnej rozstrzygniętej kwoty
+     (`no_cost_currency`) są jedynymi dwoma stanami nazwanymi obok `calculated` — zakaz sumy
+     częściowej dziedziczony z ADR-0013 pkt 2.
+
+  **Decyzje bramki 1 (2026-09-25, PO + analyst + architect, zaakceptowane przez człowieka bez
+  zastrzeżeń):** Q1=A (własna waluta `fixed_amount`, wiązana do `scenarios.currency`, stany
+  `currency_mismatch`/`no_cost_currency` wzorem ADR-0014 pkt 7); Q2=A (CHECK w migracji, nie
+  walidacja aplikacyjna — pytanie o objęcie kolumny waluty tym samym CHECK pozostaje do rozstrzygnięcia
+  we własnym zakresie zadania, ADR-0013 aneks tej daty pkt 2); Q3=A (kolumny `cost_basis`+
+  `fixed_amount` bezpośrednio na `staffing_position`, nie tabela-wnuczka; kopiowanie przez istniejący
+  `copy_staffing_positions`, bez nowego wpisu w `SCENARIO_CHILD_COPIERS`); Q4=a (`cost_basis`/
+  `fixed_amount` nigdy w `GET .../staffing-positions`, widoczne wyłącznie przez bramkowaną ścieżkę
+  kosztu, wzorem `default_cost_rate`). Pełne uzasadnienia: `ADR-0013-koszt-osobowy.md` aneks tej
+  daty (SC-5-03), `ADR-0004-wersjonowanie-kalkulacji.md` aneks tej daty (SC-5-03),
+  `ADR-0005-model-dostepu.md` aneks tej daty (SC-5-03).
+
+  **Out of scope (explicit):** podstawa FTE (SC-5-04 — brak dziś konwersji FTE→godziny); narzuty na
+  kwotę stałą (relacja narzutu SC-5-02 do `fixed_amount` nierozstrzygnięta — narzut SC-5-02 mnoży
+  `default_cost_rate`, nie kwotę stałą; jeśli `fixed_amount` ma kiedyś dostawać narzut, to osobna
+  decyzja); przeliczenie walut (ADR-0006, niezgodność jest stanem nazwanym, nie kursem); zmiana
+  formuły kosztu nieobecności płatnych (ADR-0013 aneks SC-5-06 — pozostaje przy `cost_basis = base`,
+  niezależnie od podstawy pozycji); zysk/marża/suma kosztów (blok 7, F-10) — dziedziczą koniunkcję
+  bez zmian (ADR-0005 aneks SC-5-01 pkt 5); eksport i ekran (F-11); `audit_log` (blok 8); scenariusze
+  zatwierdzone przed tym zadaniem (nie mają i nie odzyskają wiersza migawkowego dla `fixed_amount` —
+  ale ta pozycja nie ma migawki w ogóle, ADR-0004 aneks tej daty pkt 2, więc brak działania
+  wstecznego nie ma tu zastosowania w sensie, w jakim miał dla worked time).
+
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-07; `ADR-0013-koszt-osobowy.md` pkt 8, aneks tej
+  daty (SC-5-03); `ADR-0004-wersjonowanie-kalkulacji.md` aneks 2026-09-19 (SC-3-01), aneks tej daty
+  (SC-5-03); `ADR-0005-model-dostepu.md` aneks 2026-09-19 (SC-3-01) pkt 5, aneks 2026-09-23 (SC-5-01)
+  pkt 7, aneks tej daty (SC-5-03); `ADR-0007-wspolbiezna-edycja.md` aneks 2026-09-19 (SC-3-01);
+  `ADR-0014-koszty-dodatkowe.md` pkt 7 (mirror stanów walutowych); `docs/PLAN.md` SC-5-01, SC-5-02.
+
 - [x] **SC-5-05** — Koszty dodatkowe (F-08), zawężone na bramce 1 (2026-09-23, ADR-0014, Accepted):
   kategorie kosztów o **kwocie stałej** (`CHECK amount > 0`, G-1), jednorazowych i cyklicznych,
   przypisanych do scenariusza (poziom "projektu") albo pozycji obsady, z atrybutem `funding_source`
