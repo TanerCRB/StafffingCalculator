@@ -852,3 +852,55 @@ ADR-0014, Q-2/Q-4/Q-7).**
    projektowej (ADR-0001), jak i tego, co odpowiedź ujawnia (ADR-0005): oba dokumenty muszą się
    zgadzać, że pojedynczy zły/rasujący `scenario_id` nie zostawia częściowego payloadu ujawniającego
    które z pozostałych N-1 były w zasięgu/gotowe, tylko jednolitą odmowę bez różnicowania przyczyny.
+
+### 2026-09-25 — SC-5-02 (Issue #77, narzuty i koszt w pełni obciążony): klasyfikacja surowej stawki narzutu — rozstrzygnięcie bramki 1
+
+Ten wpis zastępuje treścią decyzji poprzednią wersję (2026-09-25, mapa wpływu Architekta, "Draft —
+pending approval"), która nazwała to samo pytanie dwoma opcjami i nie rozstrzygnęła żadnej. Człowiek
+rozstrzygnął na bramce 1 (2026-09-25), razem z ADR-0013 (aneks tej daty, Q4) — te dwa wpisy zapadły
+łącznie, nie osobno, bo kształt narzutu (procent kontra kwota) decyduje o klasyfikacji, nie
+odwrotnie. Dotyczy wyłącznie SUROWEJ stawki/procentu narzutu jako pojedynczego pola konfiguracji
+katalogu — nie składanej KWOTY narzutu w kontekście scenariusza/projektu, co pozostaje rozstrzygnięte
+bez zmian aneksem 2026-09-22 (SC-3-03) pkt 4 (koniunkcja pełna, kierunek wyjątku SC-2-01 pkt 3), jak
+nazwała już poprzednia wersja tego wpisu.
+
+**Rozstrzygnięcie: Opcja B — narzut jest PARAMETREM ORGANIZACYJNYM, w kształcie PROCENTU od stawki
+bazowej (nie kwoty absolutnej).** Mirror aneksu 2026-09-22 (SC-3-03) pkt 3 (budżet urlopowy), nie
+mirror aneksu 2026-09-19 (SC-2-01) pkt 3 (`default_cost_rate`). Strzeże go samo `CATALOG_READ`, bez
+dołączania do `CATALOG_PERSONNEL_COST_FIELDS`, który **zostaje jednoelementowy** (`default_cost_rate`,
+bez zmian). Uzasadnienie przejęte wprost z argumentu, który już strzegł budżetu urlopowego: "mnożnik
+nie ujawnia kwoty bez stawki bazowej, która jest już bramkowana osobno".
+
+1. **Kształt rozstrzyga klasyfikację.** Narzut jest procentem, nie kwotą absolutną (ADR-0013, aneks
+   tej daty, Q4) — to jest to, co kwalifikuje go do mirror SC-3-03 zamiast do mirror SC-2-01 pkt 3
+   (Opcja A, odrzucona). **Warunek, na którym ten wybór stoi i który SC-5-02 musi dowieść, nie
+   założyć:** gdyby narzut kiedykolwiek przestał być czystym procentem (np. dodano by wariant kwotowy
+   obok procentowego), ten punkt wymaga ponownego rozpatrzenia — kwota absolutna narzutu jest bliżej
+   `default_cost_rate` niż liczby dni budżetu, i cichy dryf z procentu do kwoty bez nowego, datowanego
+   wpisu tutaj byłby dokładnie tym cichym obejściem bramki, przed którym ostrzega aneks 2026-09-22
+   SC-3-03 pkt 4 ("dana niebramkowana jest wejściem do liczby, która bramce podlega").
+2. **Ryzyko nazwane wprost, przyjęte świadomie (mirror pkt 5 aneksu SC-3-03).** Wołający z
+   `CATALOG_READ` bez `PERSONNEL_COSTS_READ` widzi procent narzutu każdej krotki katalogu. Dziś
+   nieszkodliwe z tego samego powodu co dla budżetu: `default_cost_rate`, mnożona przez ten procent,
+   pozostaje bramkowana koniunkcją `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` wewnątrz
+   kontekstu projektu/scenariusza (aneks 2026-09-19 SC-2-01 pkt 3, kierunek wyjątku bez zmian) —
+   odtworzenie kwoty w pełni obciążonej z samego procentu, bez stawki bazowej, jest niemożliwe.
+3. **Konsekwencja wprost dla migawki (ADR-0013/ADR-0004, aneks tej daty).** Procent narzutu (i flaga
+   "stawka już zawiera narzuty", ADR-0013 aneks tej daty Q5) żyją w tym samym wierszu
+   `catalog_default_rates` co `default_cost_rate` — zamrożenie stawki bazowej w migawce (ADR-0004,
+   aneks 2026-09-23 SC-4-01 pkt 2b) zamraża od SC-5-02 razem z nią kolumnę(-y) narzutu: jeden wiersz,
+   jedna decyzja o zamrożeniu, nie druga bramka dla drugiej kolumny tego samego wiersza. Pierwszy
+   czytelnik migawkowego procentu (przyszłe zadanie kosztu w pełni obciążonego zatwierdzonego
+   scenariusza) podlega tej samej koniunkcji co dziś `default_cost_rate` migawkowe (ADR-0005, aneks
+   2026-09-23 SC-5-01 pkt 2) — SC-5-02 sam nie musi wystawiać żadnej ścieżki, która to pole zwraca.
+4. **`PLACEHOLDER_PERMISSIONS` bez zmian.** `CATALOG_READ` jest w zestawie od aneksu 2026-09-19
+   (SC-2-01) pkt 6; ten punkt nie dodaje nowego uprawnienia, tylko klasyfikuje nowe pole pod istniejące.
+5. **Warunek ponownego otwarcia — bez zmian wobec zobowiązania z aneksu 2026-09-22 SC-3-03 pkt 4/5.**
+   Pierwsze zadanie, w którym ta asymetria (procent narzutu widoczny szerzej niż stawka, którą mnoży)
+   zacznie przeszkadzać biznesowo, rozdziela bramki i wymaga własnego, datowanego wpisu tutaj.
+6. **Pytanie nierozstrzygnięte przez bramkę 1, nazwane tu dla SC-5-02, nie blokujące.** Wiersze
+   `catalog_default_rates` z `vendor_id NOT NULL` (stawka poddostawcy, aneks 2026-09-21 SC-2-03) niosą
+   tę samą kolumnę procentu/flagi co wiersze wewnętrzne, bo obie żyją w jednej tabeli (Q5 ADR-0013).
+   Czy SC-5-02 dopuszcza niezerowy procent na takim wierszu, wymusza `0`, czy zostawia pole bez
+   znaczenia biznesowego dla `vendor_id NOT NULL`, nie zostało zadane na bramce 1 — SC-5-02 musi
+   nazwać ten wybór wprost we własnym "Done when".

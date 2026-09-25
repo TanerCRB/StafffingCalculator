@@ -1192,6 +1192,62 @@ history / this file's own change log, not as tracked product work.
   zmienną stawką sprzedażową (migawka bez ścieżki UPDATE, nazwane w aneksie ADR-0004 pkt 7). Zob.
   `docs/architecture/capabilities.md`.
 
+- [ ] **SC-5-02** — Rozdziel narzuty osobowe od stawki bazowej, policz koszt w pełni obciążony
+  (F-07), rozszerzenie SC-5-01/SC-5-06 (Issue #77).
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-07 (analyst + architect, bramka 1,
+  2026-09-25):
+  1. (K-01) Suma narzutów/premii/benefitów + stawka bazowa = koszt w pełni obciążony, pole odrębne
+     od kosztu bazowego SC-5-01, który pozostaje nietknięty. Mutacja: funkcja narzutu ignoruje
+     wejście i zwraca kopię kosztu bazowego.
+  2. (K-02) Narzut nie dolicza się drugi raz, gdy stawka bazowa już go zawiera (flaga "stawka już
+     zawiera narzuty" — ten sam wiersz/tabela co `default_cost_rate`, `CatalogDefaultRate`/
+     `catalog_default_rates`, dziedziczy okno efektywności ADR-0008). Mutacja: usunięcie warunku
+     flagi, narzut zawsze dokładany.
+  3. (K-03) Bramka kosztowa (koniunkcja `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`)
+     rozciągnięta na nowe pole KWOTY narzutu, identycznie jak pola SC-5-01. Mutacja: nowe pole nie
+     dodane do `SCENARIO_COST_FIELDS` / nie iterowane przez `_without_scenario_personnel_costs`.
+  4. (K-04) Kwota narzutu nigdy nie wypuszczana ścieżką jednoczynnikową katalogu (ADR-0005 SC-3-03
+     pkt 4); surowy procent narzutu w katalogu jest daną organizacyjną, bramkowaną samym
+     `CATALOG_READ` (ADR-0005 aneks 2026-09-25, mirror budżetu urlopowego SC-3-03 pkt 3). Mutacja:
+     kwota narzutu zaimplementowana przez `CATALOG_PERSONNEL_COST_FIELDS`/
+     `_without_catalog_personnel_costs` zamiast ścieżki scenariusza.
+  5. (K-05) Składowa nieobecności płatnych (SC-5-06) dostaje narzut tak samo jak koszt bazowy
+     (`cost_basis = base`, ADR-0013 aneks SC-5-06 pkt 5). Mutacja: mnożnik narzutu zastosowany
+     tylko wokół `base_personnel_cost`, nigdy wokół wkładu `paid_absence_cost`.
+  6. (K-06) Narzut zamrożony w migawce `approved` w TYM zadaniu — nowa kolumna na istniejącej
+     tabeli `approved_snapshot_catalog_default_rate` (ADR-0004 aneks 2026-09-25, precedens SC-4-01
+     pkt 2b). Kanarek: kolumna narzutu nie zmienia się po edycji katalogu po zatwierdzeniu
+     scenariusza (wzorem M-1/SC-3-02 pkt 2).
+  7. (K-07) Formuła narzutu czyta ze wspólnego słownika stawek, którego substytucję wykonuje
+     what-if (ADR-0015 pkt 3, aneks 2026-09-25) — podwyżka stawki bazowej przez what-if podnosi też
+     kwotę narzutu proporcjonalnie, bez osobnej ścieżki kodu w `app.data.scenario_what_if`.
+  8. Wiersze stawek poddostawcy (`catalog_default_rates.vendor_id NOT NULL`) — procent narzutu
+     zapisywalny, bez znaczenia biznesowego (formuła kosztu bazowego czyta wyłącznie
+     `vendor_id IS NULL`); brak ograniczenia w bazie wymuszającego `0`, test dokumentuje brak
+     efektu.
+
+  **Decyzje bramki 1 (2026-09-25, PO + analyst + architect + security-auditor, zaakceptowane przez
+  człowieka bez zastrzeżeń):** Q1=B (`profit`/`margin`/`markup`/`included_cost`, F-10/SC-7-01,
+  zostają liczone od kosztu bazowego, nie w pełni obciążonego — ograniczenie nazwane, nie
+  przełączane w tym zadaniu); Q2=A (narzut zamrożony w migawce już teraz, nie odłożony); Q3
+  rozstrzygnięte jako konsekwencja Q4 (what-if pokrywa narzut automatycznie); Q4=B (surowy procent
+  narzutu = parametr organizacyjny, `CATALOG_READ` samo, nie dana kosztowa jednoczynnikowa); Q5=ten
+  sam wiersz/tabela co `default_cost_rate`. Ocena skutków dla danych osobowych wykonana
+  (security-auditor, PASS WITH RESERVATIONS, przed kodem) — koniunkcja kosztowa jako mechanizm dla
+  kwoty narzutu potwierdzona.
+
+  **Out of scope (explicit):** kwota stała jako podstawa (SC-5-03) — osobna decyzja zapisu,
+  niepotrzebna tu; podstawa FTE (SC-5-04) — brak dziś konwersji FTE→godziny; stawki
+  dzienne/miesięczne — katalog wymusza `unit='hour'`; przełączenie `profit`/`margin`/`markup`/
+  `included_cost` (F-10, SC-7-01) na koszt w pełni obciążony — zostaje na bazowym (Q1), ograniczenie
+  do wpisania w `docs/architecture/capabilities.md` przy bramce 3 tego zadania.
+
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-07; `ADR-0013-koszt-osobowy.md` pkt 5/8, aneks
+  SC-5-06 pkt 5, aneks 2026-09-25 (SC-5-02); `ADR-0005-model-dostepu.md` SC-2-01 pkt 3, SC-3-03 pkt
+  3-4, aneks SC-3-02 pkt 11, aneks 2026-09-25 (SC-5-02); `ADR-0004-wersjonowanie-kalkulacji.md`
+  aneks 2026-09-25 (SC-5-02); `ADR-0015-przeliczenie-bez-zapisu.md` aneks 2026-09-25 (SC-5-02);
+  `docs/PLAN.md` SC-5-01, SC-5-06.
+
 - [x] **SC-5-05** — Koszty dodatkowe (F-08), zawężone na bramce 1 (2026-09-23, ADR-0014, Accepted):
   kategorie kosztów o **kwocie stałej** (`CHECK amount > 0`, G-1), jednorazowych i cyklicznych,
   przypisanych do scenariusza (poziom "projektu") albo pozycji obsady, z atrybutem `funding_source`
