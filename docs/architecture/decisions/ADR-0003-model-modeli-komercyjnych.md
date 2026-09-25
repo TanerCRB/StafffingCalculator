@@ -707,3 +707,118 @@ Relacja do ADR-0004: `outcome_terms` — grupa 2, aneks 2026-09-25 SC-4-03 tam.
 | O-10 | Scenariusz outcome: `assumptions_used.hours_source`, `vendor_axis`, `rate_source` = `not_applicable`; dla T&M wartości bez zmian. |
 | O-11 | `/results`, what-if i porównanie scenariusza Story Points (szkicowego i zatwierdzonego) → `200`, `rate_source = story_points_terms`, bez `409`; prawdziwy wyścig zatwierdzenia T&M → `409` bez zmian. |
 | O-12 | Test migracji `d2f6a91c4b58` porównuje ją z własną zamrożoną listą (dwie wartości); stała modelu jest równa liście migracji wskazanej przez `LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` (`b9e3c7a1f264`, trzy wartości). |
+
+### 2026-09-25 — ekrany Outcome-based i Story Points: zamknięcie D-9, kontrakt frontendu dla kolejnych modeli (SC-4-07, Issue #125, bramka 1)
+
+> Rozstrzygnięcia człowieka (bramka 1, 2026-09-25), zgodne z rekomendacją w każdym punkcie:
+> **Q1=A, Q2=A, Q3=A, Q-A=B, Q-B=B, Q-C przyjęte, Q4=A, Q5=A, Q6=A.** Treść przygotowana jako
+> impact map roli architekta; ten nagłówek zamyka ją decyzją. Aneks nie przepisuje punktów
+> wcześniejszych wpisów — uzupełnia je. To, czy opisany kontrakt działa, rozstrzyga wyłącznie
+> rejestr `docs/architecture/capabilities.md`, nie ten dokument.
+
+Zadanie wyłącznie frontendowe: konsument odczytu reguły (`GET` reguły komercyjnej, `COMMERCIAL_READ`)
+i wyników (`/results`, `RESULTS_READ`) dla modeli `outcome_based` i `story_points`. Schemat,
+uprawnienia i kształt odpowiedzi — bez zmian. Backend — jedna poprawka u źródła (pkt 5a, runda
+weryfikacji 1, 2026-09-25, decyzja człowieka); bramkowe "backend: zero zmian" przestaje obowiązywać
+w tym jednym miejscu.
+
+1. **Zamknięcie ograniczenia D-9 (aneks SC-4-03 pkt 8).** Warunek zamknięcia "Issue frontendowe
+   SC-4-03" dla obu sekcji (przychód SC-4-06, wyniki SC-7-02) wskazuje odtąd Issue #125 / SC-4-07.
+   Tymczasowe odstępstwo od F-06.3 "displayed separately" kończy się z chwilą, gdy rejestr
+   capabilities potwierdzi kontrolę F-1 niżej — nie z chwilą przyjęcia tego aneksu.
+2. **Luka rejestru SC-4-04, nazwana post factum.** Po scaleniu SC-4-04 scenariusz Story Points
+   (`rate_source = "story_points_terms"`, `hours_source`/`vendor_axis = "not_applicable"`) był na
+   `main` błędem odczytu **obu** sekcji — kontrakt frontendu znał wyłącznie
+   `live_catalog`/`approved_snapshot` — bez datowanego wpisu w tym ADR (aneks SC-4-04 nie nazywa
+   skutku dla frontendu; ograniczenie pkt 8 aneksu SC-4-03 nazywało tylko outcome). Ten punkt
+   rejestruje odstępstwo z datą; warunek zamknięcia — ten sam co w pkt 1.
+3. **Render i etykiety wybierane po `assumptions_used.model_type`, nigdy po `rate_source`** (ani po
+   `hours_source`/`vendor_axis`, ani po kształcie danych). Zasada lustrzana do pkt 9 "Decyzji"
+   (dyspozytor po `model_type`, nigdy po kształcie) na warstwie renderu.
+   *Runda weryfikacji 1, 2026-09-25, decyzja człowieka:* aneks SC-7-03 (PR #123) jest już na
+   `main`; poprzednie zdanie o jego nieobecności nie obowiązuje. Oba brzmienia są zgodne i ten
+   punkt ich nie powtarza: aneks SC-7-03 pkt 1 definiuje `rate_source` przychodu jako deskryptor
+   **zależny od modelu** (także wartości statusowe dla `no_commercial_terms`/`unsupported_model_type`),
+   a pkt 2 dopuszcza użycie `rate_source` do jednej decyzji logicznej **backendu** (klasyfikacja
+   zależności od statusu w strażniku wyścigu). Ta klasyfikacja nie jest wyborem renderu; frontend
+   nie używa `rate_source` do żadnej decyzji, poza sprawdzeniem pary z pkt 5a. Rozbieżność, gdyby
+   powstała, rozstrzyga datowany aneks, nie zadanie.
+4. **Zamknięty zbiór wartości w walidatorze kształtu frontendu (Q3=A) — nowy element wspólny,
+   uzupełnienie pkt 10 aneksu SC-4-03 (wiąże Fixed Price, #66/#113).** Walidator kształtu
+   (`frontend/src/api/client.ts`, ADR-0010) trzyma zamknięte zbiory wartości `model_type`,
+   `rate_source`, `hours_source`, `vendor_axis`, `expected_state`, `profitability_state`. Wartość
+   spoza zbioru = nieczytelny payload sekcji (błąd odczytu sekcji), nigdy render ani wartość
+   domyślna. Każde zadanie modelu dopisuje **wyłącznie wartości swojego modelu**; poszerzenie
+   zbioru na zapas albo zamiana na "dowolny string" jest odstępstwem wymagającym aneksu.
+   Zadanie backendowe modelu bez towarzyszącego zadania frontendowego zostawia scenariusz tego
+   modelu jako błąd odczytu obu sekcji — musi to nazwać w swoim aneksie jako datowane ograniczenie
+   z warunkiem zamknięcia (wzorem pkt 8 aneksu SC-4-03), nie zostawić jak SC-4-04 (pkt 2 wyżej).
+   *Wyjątek nazwany (runda weryfikacji 1, 2026-09-25, decyzja człowieka):* gdy
+   `revenue.state = "unsupported_model_type"`, zamknięty zbiór **nie** dotyczy `model_type` —
+   walidator przyjmuje dowolny napis (stan nazwany, aneks SC-4-01 R-02; test SC-4-06 K-03 z
+   `fixed_price`), a założenia niosą wartości statusowe (`live_catalog`/`approved_snapshot`,
+   `billable_hours`, `internal` — aneks SC-7-03 pkt 1). Ten sam stan przyjmowany jest także ze
+   **znanym** `model_type` i sprawdzany **przed** parowaniem per model z pkt 5a (okno mieszanych
+   wersji: frontend zna model, którego backend jeszcze nie obsługuje, albo odwrotnie). Wyjątek jest
+   wąski: dotyczy wyłącznie tego stanu; każdy inny stan z `model_type` spoza zbioru pozostaje błędem
+   odczytu. Zadanie Fixed Price (#66/#113) nie czyta zdania "wartość spoza zbioru = błąd odczytu"
+   jako zakazu tego stanu, a dopisując `fixed_price` do zbioru, nie usuwa wyjątku.
+5. **Parowanie wartości w walidatorze (Q-B=B), nie suma zbiorów per pole.**
+   a. Wartości `rate_source`/`hours_source`/`vendor_axis` są sprawdzane **w parze z
+      `assumptions_used.model_type`**: T&M — `live_catalog`|`approved_snapshot`, `billable_hours`,
+      `internal`; `outcome_based` — `not_applicable` ×3; `story_points` — `story_points_terms`,
+      `not_applicable`, `not_applicable`. Suma zbiorów per pole przepuszczałaby np. T&M z
+      `not_applicable` — także w ciele `201` zapisu.
+      *Runda weryfikacji 1, 2026-09-25, decyzja człowieka (R-01):* ścieżka Story Points
+      `incomplete_commercial_terms` emitowała w backendzie hybrydę (`story_points_terms` z
+      domyślnymi T&M `billable_hours`/`internal`), którą ścisły walidator słusznie odrzucał.
+      Poprawiono ją **u źródła w backendzie w tym zadaniu**: ścieżka emituje `hours_source` i
+      `vendor_axis` = `not_applicable`, zgodnie z parą Story Points wyżej i z aneksem SC-4-04.
+      Walidator pozostaje ścisły — hybryda nie jest dopuszczana po stronie frontendu. To zmienia
+      bramkowe "backend: zero zmian" (wstęp aneksu).
+      *Runda weryfikacji 1, 2026-09-25, decyzja człowieka (R-03):* w parze sprawdzany jest także
+      `commercial_terms.model_type` z `revenue.assumptions_used.model_type` tego samego ładunku —
+      rozbieżność = nieczytelny payload, nie render żadnego z dwóch modeli.
+   b. `expected_state` ⇄ `expected_amount`: kwota wyłącznie przy `calculated`; `no_probabilities`
+      i `not_applicable` wyłącznie z `"n/a"` (kontrakt backendu,
+      `app.api.schemas.commercial_terms`).
+   c. `profitability_state` ⇄ pola zbiorcze **jednokierunkowo**: `currency_mismatch` i
+      `not_applicable` wykluczają liczbę w `profit`/`margin`/`markup`; `calculated` **nie** wymusza
+      liczby — `margin = "n/a"` przy `calculated` (AC-05, zerowy mianownik, ADR-0002) pozostaje
+      poprawnym payloadem.
+6. **Sekcja wyników dla outcome pokazuje wyłącznie przychód gwarantowany (Q2=A)**, z etykietą
+   "gwarantowany", oraz przyczynę `profitability_state`; przychód oczekiwany i kategorie — wyłącznie
+   w sekcji reguły (`COMMERCIAL_READ`). T&M i Story Points bez etykiety. **To jest wybór
+   prezentacji, nie kontrola dostępu:** odpowiedź `/results` nadal niesie `category_revenues` i
+   `expected_amount` pod samym `RESULTS_READ` (ADR-0005, aneks 2026-09-25 SC-4-03, pkt 1–3);
+   ryzyko B-01 i warunek ponownego otwarcia — bez zmian. Żaden test tego zadania nie może być
+   przytaczany jako dowód ograniczenia ujawnienia.
+7. **Przyczyna `currency_mismatch` jako linia stanu sekcji, niezależna od bramki kosztu osobowego
+   (Q-A=B).** Pola bramkowane zachowują generyczne "niedostępne" (SC-7-02 K-02 i decyzja Q2=b
+   bramki 1 SC-7-02 dotyczą **pól**); linia stanu sekcji podaje wyłącznie fakt niezgodności walut.
+   Uzasadnienie dostępowe i granica — ADR-0005, aneks 2026-09-25 SC-4-07.
+8. **Komunikat `revenue.state = "currency_mismatch"` wybierany po `model_type` (Q6=A).** Dla
+   `outcome_based`/`story_points` — waluta reguły różna od waluty scenariusza (aneks SC-4-03 pkt 7);
+   dla T&M — dotychczasowy tekst o walutach stawek katalogowych (pkt 8 "Decyzji"), bez zmian.
+9. **Parametry reguły "jak zapisane" (Q5=A, aneks SC-4-03 pkt 11).** Kwoty reguły (`NUMERIC(14,4)`)
+   renderowane z 4 miejscami przez `roundDecimalString(v, 4)` z `frontend/src/lib/money.ts`;
+   jednostki i prawdopodobieństwa jako napis z serwera. Bez `Number()` w miejscu wywołania
+   (ADR-0002). `null` = składnik nieobecny, jawne `0` = zero (aneks SC-4-03 pkt 2) — nigdy
+   zamiennie.
+   *Runda weryfikacji 1, 2026-09-25, decyzja człowieka (R-04):* parametry reguły obejmują także
+   `outcome_terms.categories` (liczba jednostek i prawdopodobieństwo per kategoria) — dane reguły,
+   nie przychodu; widoczne w sekcji reguły również wtedy, gdy kwoty przychodu są wstrzymane
+   (np. `revenue.state = "currency_mismatch"`), na tych samych zasadach "jak zapisane".
+10. **Poza zakresem (Q1=A): formularze tworzenia reguł outcome/Story Points.** Ścieżka zapisu z UI
+    dla tych modeli nie ma konsumenta; ADR-0009 nie jest tym zadaniem aktywowany.
+11. **Nowe pola wymagane w walidatorze kształtu (Q4=A).** Pola dodane do kontraktu frontendu są
+    wymagane, nie opcjonalne (ADR-0010 pkt 2 bez osłabienia); istniejące fixture'y testów dostają
+    te pola wyłącznie w danych, asercje bez zmian.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| F-1 | Scenariusz `outcome_based` i `story_points` (AC-08, AC-09) czytelny w sekcji reguły i w sekcji wyników; wartość `model_type`, `rate_source`, `hours_source`, `vendor_axis`, `expected_state` lub `profitability_state` spoza zamkniętego zbioru → błąd odczytu sekcji, nie render. Wyjątek (runda weryfikacji 1, 2026-09-25, decyzja człowieka): `revenue.state = "unsupported_model_type"` z dowolnym `model_type` (nieznanym albo znanym) i założeniami statusowymi → stan nazwany, nie błąd odczytu (pkt 4). |
+| F-2 | Walidator odrzuca jako nieczytelne: T&M z `not_applicable` w dowolnym z trzech pól założeń; outcome/Story Points z wartością T&M; `expected_amount` liczbowe przy `expected_state` innym niż `calculated`; liczbę w `profit`/`margin`/`markup` przy `profitability_state` innym niż `calculated`. Przyjmuje `margin = "n/a"` przy `calculated`. Runda weryfikacji 1, 2026-09-25, decyzja człowieka: odrzuca także `commercial_terms.model_type` ≠ `revenue.assumptions_used.model_type` oraz Story Points z `billable_hours`/`internal`; backendowa ścieżka Story Points `incomplete_commercial_terms` zwraca `hours_source`/`vendor_axis` = `not_applicable`. |
+| F-3 | Wybór renderu i etykiet zależy wyłącznie od `model_type`: podmiana samego `rate_source` przy tym samym `model_type` nie zmienia ścieżki renderu (albo kończy się błędem odczytu z F-2), nigdy innym modelem na ekranie. |
+| F-4 | Zamknięta bramka kosztu osobowego i `profitability_state = "currency_mismatch"` naraz: pola bramkowane renderują "niedostępne", linia stanu sekcji podaje niezgodność walut; linia nie zawiera żadnej kwoty ani kodu waluty spoza ładunku. |
+| F-5 | `revenue.state = "currency_mismatch"`: dla `outcome_based`/`story_points` komunikat o walucie reguły ≠ waluta scenariusza, dla T&M komunikat o stawkach katalogowych — dwa różne teksty, rozróżnione po `model_type`. |
