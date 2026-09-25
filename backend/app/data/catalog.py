@@ -305,6 +305,11 @@ EDITABLE_RATE_FIELDS: frozenset[str] = frozenset(
         "currency",
         "effective_from",
         "effective_to",
+        # SC-5-02 (F-07): the surcharge percentage and the "already includes it" flag live on this
+        # same row (ADR-0013, aneks 2026-09-25, Q5) and are edited through this same allow-list —
+        # no second edit path for two columns of one row already being edited here.
+        "surcharge_percent",
+        "includes_surcharge",
     }
 )
 """Every column `update_rate` will ever write — an allow-list, never "whatever was sent".
@@ -673,8 +678,14 @@ def create_rate(
     unit: str,
     effective_from: date,
     effective_to: date | None,
+    surcharge_percent: Decimal = Decimal("0"),
+    includes_surcharge: bool = False,
 ) -> CatalogDefaultRate:
     """Insert one rate row and commit it — or raise `CatalogWriteFailed` if the database refuses.
+
+    `surcharge_percent`/`includes_surcharge` default to `0`/`False` (SC-5-02) — the same "no
+    surcharge configured" a tuple written before this task existed carries, never an unanswered
+    question: `0` is a legal, meaningful percentage (unlike a missing cost rate).
 
     **No pre-check for an overlapping window.** The refusal is the `EXCLUDE` constraint, evaluated
     by the database inside the `INSERT`. A `SELECT` here asking "does an overlapping row exist?"
@@ -720,6 +731,8 @@ def create_rate(
         unit=unit,
         effective_from=effective_from,
         effective_to=effective_to,
+        surcharge_percent=surcharge_percent,
+        includes_surcharge=includes_surcharge,
     )
     try:
         session.add(rate)

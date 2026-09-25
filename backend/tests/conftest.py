@@ -793,6 +793,8 @@ def make_rate(
     default_selling_rate: Decimal = Decimal("150.0000"),
     currency: str = "EUR",
     unit: str = "hour",
+    surcharge_percent: Decimal = Decimal("0"),
+    includes_surcharge: bool = False,
 ) -> CatalogDefaultRate:
     """Insert one rate row directly — no endpoint, no request schema.
 
@@ -819,6 +821,8 @@ def make_rate(
         unit=unit,
         effective_from=effective_from,
         effective_to=effective_to,
+        surcharge_percent=surcharge_percent,
+        includes_surcharge=includes_surcharge,
     )
     session.add(rate)
     session.flush()

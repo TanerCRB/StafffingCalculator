@@ -749,8 +749,11 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
     """The full `GET …/results` body for `_literal_t_and_m_fixture`, as served by the production
     code of 1739f1e — plus the four fields SC-4-03 (Outcome-based, `origin/main` 56f1d65) added to
     every answer (`profitability_state`; `revenue.category_revenues`/`expected_amount`/
-    `expected_state`), with the values `main` serves for T&M. Verified green against the production
-    code of 56f1d65 without SC-7-03 (report of SC-7-03, round 3)."""
+    `expected_state`), and the six SC-5-02 (surcharges, `origin/main` e807349) added to
+    `personnel_cost` (`surcharge_amount`, `fully_loaded_amount`, `paid_absence_surcharge_amount`,
+    `paid_absence_fully_loaded_amount`; per rate window `surcharge_percent`, `includes_surcharge`),
+    with the values `main` serves for T&M. Verified green against the production code of 56f1d65
+    and of e807349 without SC-7-03 (reports of SC-7-03, rounds 3 and 4)."""
     return {
         "scenario_id": ids["scenario_id"],
         "scenario_status": "Draft",
@@ -795,13 +798,19 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
                         "effective_to": None,
                         "default_cost_rate": "120.0000",
                         "currency": "PLN",
+                        "surcharge_percent": "0.000",
+                        "includes_surcharge": False,
                     }
                 ],
                 "unresolved_months": [],
                 "currencies": ["PLN"],
             },
+            "surcharge_amount": "0.00",
+            "fully_loaded_amount": "12000.00",
             "paid_absence_state": "calculated",
             "paid_absence_amount": "0.00",
+            "paid_absence_surcharge_amount": "0.00",
+            "paid_absence_fully_loaded_amount": "0.00",
             "paid_absence_budget_amount": "0.00",
             "paid_absence_currency": "PLN",
             "paid_absence_assumptions_used": {
@@ -889,6 +898,7 @@ def test_k_05_t_and_m_what_if_body_is_the_1739f1e_literal(
 
     expected = _expected_t_and_m_results(ids)
     expected["personnel_cost"]["amount"] = "13200.00"
+    expected["personnel_cost"]["fully_loaded_amount"] = "13200.00"
     expected["personnel_cost"]["assumptions_used"]["rate_source"] = "what_if_hypothetical"
     expected["personnel_cost"]["assumptions_used"]["rate_windows"][0]["default_cost_rate"] = (
         "132.00000"

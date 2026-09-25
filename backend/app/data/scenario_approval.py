@@ -751,6 +751,15 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     A CTE of `_snapshot_statement` like the others (point 2d): a rate edited in the catalogue while
     this approval runs cannot land between "the months this scenario plans" and "the windows frozen
     for them", because both are read from the one snapshot of the database this statement takes.
+
+    **Since SC-5-02, two more columns travel with every row**: `surcharge_percent` and
+    `includes_surcharge` (ADR-0004, aneks 2026-09-25 SC-5-02, point 2) — the same row, the same
+    `INSERT … SELECT`, the same transaction as `default_cost_rate`, because Q5 of that task's gate 1
+    put them on the identical `catalog_default_rates` row. `app.data.personnel_cost.
+    costed_month_windows` reads both columns back from this table symmetrically with
+    `default_cost_rate` (corrected during SC-5-02's own QA review, 2026-09-25 — an earlier version
+    read a literal `0`/`false` instead, which left an approved scenario's fully loaded cost wrong
+    from the moment of approval).
     """
     scenario_source = unapproved_scenario(scenario_id).subquery("open_scenario_rates")
     priced = priced_month_windows(from_snapshot=False, scenario_id=scenario_id).subquery(
@@ -787,6 +796,12 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
             CatalogDefaultRate.unit,
             CatalogDefaultRate.effective_from,
             CatalogDefaultRate.effective_to,
+            # SC-5-02 (Issue #77, criterion K-06; ADR-0004, aneks 2026-09-25 SC-5-02, point 2): the
+            # surcharge percentage and its flag, frozen on the same row, in the same transaction, as
+            # `default_cost_rate` — not a second bramka for a second column of one already-copied
+            # row.
+            CatalogDefaultRate.surcharge_percent,
+            CatalogDefaultRate.includes_surcharge,
         )
         .select_from(scenario_source)
         .join(windows_read, windows_read.c.scenario_id == scenario_source.c.id)
@@ -811,6 +826,8 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
                 "unit",
                 "effective_from",
                 "effective_to",
+                "surcharge_percent",
+                "includes_surcharge",
             ],
             rates,
         )

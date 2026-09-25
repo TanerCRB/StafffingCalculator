@@ -50,15 +50,22 @@ from app.data.rate_windows import (
     internal_catalog_windows_overlapping,
 )
 from app.data.staffing import scenario_view_in_scope
-from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, paid_absence_cost
+from app.domain.paid_absence_cost import (
+    FullyLoadedPaidAbsenceCostAnswer,
+    PaidAbsenceCostAnswer,
+    fully_loaded_paid_absence_cost,
+    paid_absence_cost,
+)
 from app.domain.personnel_cost import (
     APPROVED_SNAPSHOT,
     LIVE_CATALOG,
     CostRateWindow,
+    FullyLoadedPersonnelCostAnswer,
     MonthCostRate,
     PersonnelCostAnswer,
     WorkedMonth,
     base_personnel_cost,
+    fully_loaded_personnel_cost,
 )
 from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
@@ -69,11 +76,17 @@ from app.models.staffing import StaffingPosition, StaffingPositionAllocation
 #
 #     a (position, month) has a cost rate  <=>  the internal windows of its tuple overlapping the
 #         month (a) together cover every day of it, and
-#                (b) all carry the same (`default_cost_rate`, `currency`)
+#                (b) all carry the same (`default_cost_rate`, `currency`, `surcharge_percent`,
+#                    `includes_surcharge`)
 #
 # and it is then costed at that one cost rate. A cost-rate change inside the month breaks (b), a
-# currency change inside the month breaks (b), a gap breaks (a): all three are `no_cost_rate`. Where
-# the *selling* boundaries fall no longer matters — the mirror of ADR-0003's aneks R-01.
+# currency change inside the month breaks (b), a gap breaks (a), and — since SC-5-02, closing the
+# gap Guardian/Reviewer named at gate 2 review — a surcharge-only or flag-only change inside the
+# month breaks (b) exactly the same way: all four are `no_cost_rate`. A window boundary that moves
+# only the surcharge is not a smaller problem than one that moves the cost rate — both leave the
+# month with more than one candidate answer, and SC-5-01 already drew the line that such a month
+# gets the named state, never a silently-picked "first window" answer. Where the *selling*
+# boundaries fall still does not matter — the mirror of ADR-0003's aneks R-01.
 #
 # **One predicate, three callers** (ADR-0013, point 6; ADR-0004, aneks 2026-09-23 SC-5-01, point
 # 4): the live read below, the approval's freeze and the snapshot reader below all build their
@@ -87,6 +100,8 @@ def month_has_cost_rate(
     valid_period: sa.ColumnElement[object],
     cost_rate: sa.ColumnElement[object],
     currency: sa.ColumnElement[str],
+    surcharge_percent: sa.ColumnElement[object],
+    includes_surcharge: sa.ColumnElement[bool],
 ) -> sa.ColumnElement[bool]:
     """The cost predicate itself, as window functions over the windows overlapping one month.
 
@@ -95,8 +110,11 @@ def month_has_cost_rate(
 
     - **covered** — `app.data.rate_windows.days_covered_in_month` (never `NULL`: a month with no
       window is "0 days covered", so `false`, and `false AND NULL` is `false`);
-    - **one cost rate** — `min = max` of the cost rate and of the currency across the month's
-      windows.
+    - **one cost rate** — `min = max` of the cost rate, of the currency and (SC-5-02) of the
+      surcharge percentage, plus `bool_and = bool_or` of the "already includes it" flag — the
+      boolean equivalent of `min = max` (PostgreSQL has no `min`/`max` aggregate for `boolean`) —
+      across the month's windows. Four values, one predicate: a month answers with exactly one
+      cost rate, one currency, one surcharge percentage and one flag, or it does not answer at all.
 
     Not built from `app.data.commercial_terms.month_is_priced` and never reading the selling rate:
     a separate function in a separate module (ADR-0013, point 1).
@@ -107,6 +125,10 @@ def month_has_cost_rate(
         == sa.func.max(cost_rate).over(partition_by=allocation_id),
         sa.func.min(currency).over(partition_by=allocation_id)
         == sa.func.max(currency).over(partition_by=allocation_id),
+        sa.func.min(surcharge_percent).over(partition_by=allocation_id)
+        == sa.func.max(surcharge_percent).over(partition_by=allocation_id),
+        sa.func.bool_and(includes_surcharge).over(partition_by=allocation_id)
+        == sa.func.bool_or(includes_surcharge).over(partition_by=allocation_id),
     )
     return sa.and_(covered, one_cost_rate)
 
@@ -118,7 +140,7 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
     Columns: `scenario_id`, `position_id`, `allocation_id`, `period_month`,
     `planned_allocation_hours`, `window_id` (the catalogue row's id — on the snapshot, the frozen
     `source_rate_id`), `effective_from`, `effective_to`, `cost_rate`, `currency`,
-    `month_has_cost_rate`.
+    `surcharge_percent`, `includes_surcharge`, `month_has_cost_rate`.
 
     A `LEFT JOIN`, so a month with no overlapping window still yields one row (window columns
     `NULL`, `month_has_cost_rate` false) — which is what makes `no_cost_rate` a value the formula
@@ -127,6 +149,17 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
     **The cost rate only — never `default_selling_rate`**, from the catalogue and from the snapshot
     alike. **`planned_allocation_hours` only** — not `billable_hours`, not the availability, not the
     headcount (ADR-0013, points 3 and 4).
+
+    **`surcharge_percent`/`includes_surcharge` are read symmetrically from both branches (SC-5-02),
+    exactly like `cost_rate`/`currency` above them.** `ApprovedSnapshotCatalogDefaultRate` carries
+    both columns since SC-5-02 froze them on the same row as `default_cost_rate`, in the same
+    transaction (`app.data.scenario_approval._copy_catalog_default_rates`) — this is the *existing*
+    reader of that table for the base cost, not a new one, and completing the freeze means reading
+    it back the same way `default_cost_rate` already is. Naming a literal `0`/`false` here instead
+    (an earlier version of this function did) left an approved scenario's fully loaded cost frozen
+    at "no surcharge" for ever, regardless of what was actually configured at approval time — a
+    silent regression on approval with no catalogue edit involved, caught by QA
+    (`tests/test_personnel_cost_surcharge.py::test_qa_finding_…`).
 
     Callers filter on `month_has_cost_rate` **outside** this select (as a subquery), never inside
     it: a `WHERE` here would run before the window functions and change the partitions they see.
@@ -153,12 +186,16 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
             window.effective_to.label("effective_to"),
             window.default_cost_rate.label("cost_rate"),
             window.currency.label("currency"),
+            window.surcharge_percent.label("surcharge_percent"),
+            window.includes_surcharge.label("includes_surcharge"),
             month_has_cost_rate(
                 StaffingPositionAllocation.id,
                 StaffingPositionAllocation.period_month,
                 window.valid_period,
                 window.default_cost_rate,
                 window.currency,
+                window.surcharge_percent,
+                window.includes_surcharge,
             ).label("month_has_cost_rate"),
         )
         .select_from(StaffingPosition)
@@ -179,7 +216,13 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
 
     Python only groups the rows of one month together and reads the database's answer
     (`month_has_cost_rate`); it compares no date and no rate. Every row of a costed month carries
-    the same cost rate and currency — that equality is part of the predicate.
+    the same cost rate, currency, surcharge percentage and "already includes it" flag — all four
+    equalities are part of the predicate (SC-5-02, closing the gap Guardian/Reviewer named at gate
+    2 review: a boundary that moves only the surcharge is exactly as disqualifying as one that moves
+    the cost rate, never a silently-picked "first window" answer). Reading
+    `first.surcharge_percent`/`first.includes_surcharge` below is therefore exactly as safe as
+    reading `first.cost_rate`/`first.currency` already was — the predicate guarantees every window
+    of a resolved month agrees.
     """
     approved = scenario.status == ScenarioStatus.APPROVED
     source = APPROVED_SNAPSHOT if approved else LIVE_CATALOG
@@ -200,6 +243,8 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
             rate = MonthCostRate(
                 cost_rate=first.cost_rate,
                 currency=first.currency,
+                surcharge_percent=first.surcharge_percent,
+                includes_surcharge=first.includes_surcharge,
                 windows=tuple(
                     CostRateWindow(
                         source_rate_id=row.window_id,
@@ -207,6 +252,8 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
                         effective_to=row.effective_to,
                         cost_rate=row.cost_rate,
                         currency=row.currency,
+                        surcharge_percent=row.surcharge_percent,
+                        includes_surcharge=row.includes_surcharge,
                     )
                     for row in month_rows
                 ),
@@ -254,6 +301,13 @@ class ScenarioCostView:
     status_at_read` by the race guard in `app.data.scenario_results`/`app.data.scenario_what_if`.
     Not a personnel-cost figure and never serialised: `app.api.response_shaping` does not read
     it."""
+    fully_loaded_cost: FullyLoadedPersonnelCostAnswer
+    """The fully loaded base cost (SC-5-02) — a second, named field beside `cost`, never a
+    replacement of it (criterion K-01). Gated by the identical conjunction, through the identical
+    `SCENARIO_COST_FIELDS` set (K-03)."""
+    fully_loaded_paid_absence: FullyLoadedPaidAbsenceCostAnswer
+    """The paid-absence component's fully loaded cost (SC-5-02, criterion K-05) — beside
+    `paid_absence`, never added to it, for the same reason `paid_absence` sits beside `cost`."""
 
 
 def scenario_cost_for_caller(
@@ -278,6 +332,7 @@ def scenario_cost_for_caller(
     # (ADR-0013, aneks 2026-09-23 SC-5-06, point 3). Its hours are read from a different source,
     # and its amount is never added to the base amount (point 4).
     rates = {(month.position_id, month.period_month): month.rate for month in months}
+    absence_months = paid_absence_months(session, scenario, rates)
     return ScenarioCostView(
         user_id=project_view.user_id,
         scenario=scenario,
@@ -285,9 +340,12 @@ def scenario_cost_for_caller(
         cost=base_personnel_cost(
             months, rate_source=source, scenario_currency=scenario.currency
         ),
-        paid_absence=paid_absence_cost(
-            paid_absence_months(session, scenario, rates),
-            scenario_currency=scenario.currency,
+        paid_absence=paid_absence_cost(absence_months, scenario_currency=scenario.currency),
+        fully_loaded_cost=fully_loaded_personnel_cost(
+            months, rate_source=source, scenario_currency=scenario.currency
+        ),
+        fully_loaded_paid_absence=fully_loaded_paid_absence_cost(
+            absence_months, scenario_currency=scenario.currency
         ),
         status_at_read=status_at_read,
     )

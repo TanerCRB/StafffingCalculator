@@ -132,6 +132,45 @@ ADR-0013 definiuje formułę kosztu osobowego i zamknięty słownik `rate_source
 
 ## Aneksy
 
+### 2026-09-25 — SC-5-02 (Issue #77, narzuty): podstawienie what-if obejmuje narzut bez nowego kodu — konsekwencja rozstrzygnięta na bramce 1 (ADR-0013, Q3)
+
+Pkt 3 "Decyzji" wyżej już stwierdza: "Podwyżka dotyka WSZYSTKICH konsumentów wspólnego słownika
+stawek, nie tylko kosztu bazowego (…) Podstawienie musi nastąpić raz, na współdzielonej strukturze
+stawek, przed wywołaniem obu konsumentów — nigdy osobno na wejściu do jednego z nich." SC-5-02 (F-07,
+narzuty i koszt w pełni obciążony) zadał ten mechanizm wprost na bramce 1, zamiast zostawić go do
+odkrycia: czy koszt w pełni obciążony, gdy stanie się trzecim konsumentem słownika stawek (obok
+`base_personnel_cost` i `paid_absence_cost`), dziedziczy podstawienie automatycznie, czy wymaga
+własnej, osobnej ścieżki substytucji narzutu (ADR-0013, wpis z tej daty, Q3).
+
+**Rozstrzygnięcie (bramka 1, 2026-09-25 — zapadło jako konsekwencja Q4 ADR-0013/ADR-0005 tej daty,
+nie jako osobna decyzja tego dokumentu):** narzut jest modelowany jako PROCENT od stawki bazowej
+(`default_cost_rate`), nie jako kwota o własnym rozstrzygnięciu. Ponieważ narzut jest wartością
+wyprowadzoną z dokładnie tej samej stawki godzinowej, którą pkt 1–3 tego dokumentu podstawiają raz na
+słowniku `WorkedMonth`/`MonthCostRate` per-(pozycja, miesiąc) przed wywołaniem konsumentów, koszt w
+pełni obciążony **nie potrzebuje własnej ścieżki podstawienia w what-if**: podniesienie stawki
+bazowej podnosi z automatu bazę, do której narzut jest procentem, bez dodatkowego kodu w
+`app.data.scenario_what_if`.
+
+1. **Warunek, na którym ta konsekwencja stoi — SC-5-02 musi go dowieść, nie założyć.** Formuła
+   narzutu musi czytać stawkę bazową z TEGO SAMEGO słownika per-(pozycja, miesiąc), który
+   `_worked_months` buduje i który what-if podstawia (`rates = {(month.position_id,
+   month.period_month): month.rate ...}`, pkt 3 "Decyzji") — nie z osobnego zapytania do katalogu
+   wewnątrz formuły narzutu. Naruszenie tego warunku (np. formuła narzutu doczytująca
+   `default_cost_rate` samodzielnie z bazy zamiast z podstawionego słownika) odtwarza dokładnie lukę,
+   przed którą ostrzega pkt 3 "Decyzji" ("nigdy osobno na wejściu do jednego z nich") — koszt w pełni
+   obciążony podniósłby się na żywej ścieżce, a milcząco nie w hipotezie what-if.
+2. **Warunek ponownego otwarcia.** Gdyby narzut kiedykolwiek przestał być czystym procentem (wariant
+   kwotowy absolutny obok procentowego — ryzyko nazwane już jako warunek ponownego rozpatrzenia w
+   ADR-0013/ADR-0005, aneks tej daty, pkt 1/1 odpowiednio), ta konsekwencja przestaje obowiązywać z
+   automatu: kwota absolutna narzutu nie jest wartością wyprowadzoną ze stawki podstawionej przez
+   what-if i wymagałaby własnej decyzji o podstawieniu — rozszerzenia pkt 3 "Decyzji", analogicznego
+   do tego, jak `paid_absence_cost` dostał tam własne miejsce jako drugi konsument. Nazwane teraz, żeby
+   przyszłe zadanie wprowadzające wariant kwotowy nie odkryło tego jako nowej, nienazwanej luki.
+3. **Ten aneks nie otwiera pkt 4 "Decyzji" (`rate_source`) ponownie.** Koszt w pełni obciążony, tak
+   jak `base_personnel_cost` i `paid_absence_cost` dziś, dziedziczy istniejący, zamknięty trzyelementowy
+   zbiór `LIVE_CATALOG`/`APPROVED_SNAPSHOT`/`WHAT_IF_HYPOTHETICAL` bez nowej wartości — SC-5-02 nie
+   dodaje czwartego stanu `rate_source` tym zadaniem, i strażnik wyścigu `ScenarioResultsRaceDetected`
+   nie wymaga ponownego audytu z tego powodu.
 ### 2026-09-25 — strażnik wyścigu porównuje statusy zamrożone przez odczyty; przychód wchodzi do porównania tylko, gdy zależy od statusu (SC-7-03, Issue #118, bramki 1 i 2)
 
 > Rozstrzygnięcia człowieka: bramka 1 (2026-09-25) — **Q1 (A), Q2 (A), Q3 (B), Q5 (A)**; bramka 2
