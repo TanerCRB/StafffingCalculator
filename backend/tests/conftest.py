@@ -58,6 +58,7 @@ from app.models import (  # noqa: E402
     CatalogVendor,
     CommercialTerms,
     OrganizationDefaults,
+    OutcomeTerms,
     Project,
     ProjectAccess,
     ProjectStatus,
@@ -245,6 +246,8 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotCatalogDefaultRate))
             connection.execute(sa.delete(TmTerms))
             connection.execute(sa.delete(StoryPointsTerms))
+            # SC-4-03: szczegóły Outcome-based przed regułą, z tego samego powodu co `tm_terms`.
+            connection.execute(sa.delete(OutcomeTerms))
             connection.execute(sa.delete(CommercialTerms))
             # SC-1-11: the delivery segment points at `scenarios` with no `ON DELETE` action too.
             connection.execute(sa.delete(ScenarioDeliverySegment))
@@ -1164,6 +1167,86 @@ def make_story_points_terms(
         )
         session.flush()
     return terms
+
+
+def make_outcome_terms(
+    session: Session,
+    scenario: Scenario,
+    *,
+    with_details: bool = True,
+    scope_ref: uuid.UUID | None = None,
+    **details: object,
+) -> CommercialTerms:
+    """Wstaw regułę Outcome-based wprost (SC-4-03) — i, jeśli nie powiedziano inaczej, jej wiersz
+    `outcome_terms`.
+
+    Domyślnie AC-08 bez prawdopodobieństw: opłata 20000 PLN, premia 10000 PLN, zero jednostek w
+    każdej kategorii. `details` nadpisuje kolumny wiersza szczegółów po ich nazwach. Zapis z
+    pominięciem API — ścieżka produkcyjna tworzy oba wiersze jedną strzeżoną instrukcją.
+
+    `scope_ref` (SC-4-05) — jak w `make_commercial_terms`: `None` to reguła całego scenariusza.
+    """
+    terms = CommercialTerms(
+        id=uuid.uuid4(), scenario_id=scenario.id, model_type="outcome_based", scope_ref=scope_ref
+    )
+    session.add(terms)
+    session.flush()
+    if with_details:
+        values: dict[str, object] = {
+            "currency": "PLN",
+            "fixed_fee": Decimal("20000"),
+            "success_bonus": Decimal("10000"),
+            "not_achieved_units": Decimal("0"),
+            "partial_units": Decimal("0"),
+            "achieved_units": Decimal("0"),
+            "exceeded_units": Decimal("0"),
+        }
+        values.update(details)
+        session.add(OutcomeTerms(commercial_terms_id=terms.id, **values))
+        session.flush()
+    return terms
+
+
+def outcome_payload(
+    *,
+    probabilities: tuple[str | None, str | None, str | None, str | None] | None = None,
+    units: tuple[str | None, str | None, str | None, str | None] = ("0", "0", "0", "0"),
+    **overrides: object,
+) -> dict[str, object]:
+    """Ciało `POST …/commercial-terms` dla Outcome-based (SC-4-03) — domyślnie AC-08 bez
+    prawdopodobieństw: opłata 20000 PLN, premia 10000 PLN.
+
+    `probabilities` i `units` idą w kolejności `not_achieved`, `partial`, `achieved`, `exceeded`;
+    `None` w `probabilities` i w `units` pomija pole kategorii (nie wysyła `0`). Kwoty jako
+    napisy — tak, jak API
+    je zwraca, bez przejścia przez `float`.
+    """
+    categories: dict[str, dict[str, object]] = {}
+    for index, category in enumerate(("not_achieved", "partial", "achieved", "exceeded")):
+        entry: dict[str, object] = {}
+        if units[index] is not None:
+            entry["units"] = units[index]
+        if probabilities is not None and probabilities[index] is not None:
+            entry["probability"] = probabilities[index]
+        categories[category] = entry
+    payload: dict[str, object] = {
+        "model_type": "outcome_based",
+        "currency": "PLN",
+        "fixed_fee": "20000",
+        "success_bonus": "10000",
+        "categories": categories,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def count_outcome_rows(connection: sa.Connection | Session) -> tuple[int, int]:
+    """(reguły, wiersze `outcome_terms`) w całej bazie — dla dowodów "zero wierszy"."""
+    rules = connection.execute(
+        sa.select(sa.func.count()).select_from(CommercialTerms)
+    ).scalar_one()
+    details = connection.execute(sa.select(sa.func.count()).select_from(OutcomeTerms)).scalar_one()
+    return rules, details
 
 
 # --- scenario delivery segments (F-02, F-06; SC-1-11, ADR-0016) ---------------------------------

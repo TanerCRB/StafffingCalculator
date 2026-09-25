@@ -24,13 +24,13 @@ are one `404` — the same shape every nested scenario path already has (criteri
 personnel cost are read by two separate statements (`app.data.scenario_results`), and an approval
 committing *between* them would otherwise price one against the live catalogue and cost the other
 against the frozen snapshot — one `profit` built from two different moments of the same scenario.
-`app.data.scenario_results.ScenarioResultsRaceDetected` names that exact disagreement — the two
-reads having seen two different statuses of the scenario (SC-7-03: compared on the status each read
-froze, never on `rate_source`, whose revenue vocabulary depends on the commercial model); this
-endpoint
-answers it as a `409`, the same "the scenario changed since it was read, retry" vocabulary every
-write path in this repository already uses, applied here to a read instead of a write. Never a
-`200` with numbers mixed from two moments, and never a `500`.
+`app.data.scenario_results.ScenarioResultsRaceDetected` (raised by `refuse_a_status_race`) names
+that exact disagreement — reads that saw the scenario at two statuses that matter (SC-7-03: the
+statuses the reads froze; the revenue's `rate_source` only classifies whether the revenue read's
+status counts, and is never compared with the cost's — ADR-0015, aneks SC-7-03, point 2); this
+endpoint answers it as a `409`, the same "the scenario changed since it was read, retry"
+vocabulary every write path in this repository already uses, applied here to a read instead of a
+write. Never a `200` with numbers mixed from two moments, and never a `500`.
 
 **`str(race)` is generic, on purpose** (Reviewer, SC-7-01, R-02, Low): this `except` runs *before*
 `shape_scenario_results` and its gates, so the `409` body is a second, ungated channel out of this

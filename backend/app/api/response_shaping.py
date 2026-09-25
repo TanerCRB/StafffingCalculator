@@ -62,7 +62,11 @@ from app.api.schemas.catalog import (
     WorkingCalendarList,
 )
 from app.api.schemas.commercial_terms import (
+    CategoryRevenueRead,
     CommercialTermsRead,
+    OutcomeCategoriesRead,
+    OutcomeCategoryRead,
+    OutcomeTermsRead,
     RateWindowRead,
     RevenueAssumptionsRead,
     RevenueRead,
@@ -120,7 +124,7 @@ from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostR
 from app.domain.personnel_cost import CALCULATED as COST_CALCULATED
 from app.domain.personnel_cost import PersonnelCostResult
 from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
-from app.domain.revenue import RevenueResult, RevenueUnavailable
+from app.domain.revenue import EXPECTED_NOT_APPLICABLE, RevenueResult, RevenueUnavailable
 from app.domain.scenario_readiness import assess
 from app.domain.scenario_results import scenario_profitability
 from app.models.catalog import (
@@ -128,6 +132,12 @@ from app.models.catalog import (
     AbsenceType,
     CatalogDefaultRate,
     WorkingCalendar,
+)
+from app.models.commercial_terms import (
+    OUTCOME_CATEGORIES,
+    OutcomeTerms,
+    probability_column,
+    units_column,
 )
 from app.models.project import Project, ProjectStatus
 from app.models.scenario import Scenario, ScenarioStatus
@@ -792,10 +802,38 @@ def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCom
             None
             if terms is None
             else CommercialTermsRead(
-                id=terms.id, model_type=terms.model_type, updated_at=terms.updated_at
+                id=terms.id,
+                model_type=terms.model_type,
+                updated_at=terms.updated_at,
+                outcome_terms=_outcome_terms_read_of(view.outcome_terms),
             )
         ),
         revenue=revenue,
+    )
+
+
+def _outcome_terms_read_of(details: OutcomeTerms | None) -> OutcomeTermsRead | None:
+    """Parametry reguły Outcome-based przepisane z wiersza (R-04, runda 2 SC-4-03) — bez
+    zaokrąglenia i bez wartości domyślnej: `NULL` w bazie to `null` w odpowiedzi, nigdy `"0"`.
+    Nazwy kolumn kategorii przez `units_column`/`probability_column` — jedna pisownia z modelem."""
+    if details is None:
+        return None
+    return OutcomeTermsRead(
+        currency=details.currency,
+        fixed_fee=details.fixed_fee,
+        success_bonus=details.success_bonus,
+        unit_rate=details.unit_rate,
+        revenue_min=details.revenue_min,
+        revenue_max=details.revenue_max,
+        categories=OutcomeCategoriesRead(
+            **{
+                category: OutcomeCategoryRead(
+                    units=getattr(details, units_column(category)),
+                    probability=getattr(details, probability_column(category)),
+                )
+                for category in OUTCOME_CATEGORIES
+            }
+        ),
     )
 
 
@@ -832,17 +870,34 @@ def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
         currencies=list(assumptions.currencies),
     )
     if isinstance(answer, RevenueResult):
+        # Przychód oczekiwany i per kategoria (SC-4-03) przechodzą tak, jak je podała domena —
+        # zaokrąglone tam raz, tutaj niczego nie liczy się ani nie zaokrągla ponownie.
         return RevenueRead(
             state=REVENUE_CALCULATED,
             amount=answer.revenue,
             currency=answer.currency,
             assumptions_used=assumptions_read,
+            expected_state=answer.expected_state,
+            expected_amount=answer.expected_revenue,
+            category_revenues=[
+                CategoryRevenueRead(
+                    category=category.category,
+                    units=category.units,
+                    probability=category.probability,
+                    amount=category.revenue,
+                )
+                for category in answer.category_revenues
+            ],
         )
+    # Nazwany stan przychodu: żadnej kwoty w żadnym polu (ADR-0003, aneks SC-4-03, pkt 7; O-4).
     return RevenueRead(
         state=answer.reason,
         amount=NOT_APPLICABLE,
         currency=None,
         assumptions_used=assumptions_read,
+        expected_state=EXPECTED_NOT_APPLICABLE,
+        expected_amount=NOT_APPLICABLE,
+        category_revenues=[],
     )
 
 
@@ -1198,6 +1253,7 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
         profit=profitability.profit,
         margin=profitability.margin,
         markup=profitability.markup,
+        profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)
 
@@ -1248,5 +1304,6 @@ def shape_scenario_what_if_salary_raise(
         profit=profitability.profit,
         margin=profitability.margin,
         markup=profitability.markup,
+        profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)

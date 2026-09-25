@@ -2,10 +2,11 @@
 ADR-0015).
 
 **The response reuses `ScenarioResults` by inheritance, never a parallel type** (ADR-0015, point 4:
-"zachowuje kształt odpowiedzi zbliżony do GET …/results"). The seven fields `GET …/results` answers
-are exactly the seven fields here, so a client already rendering that endpoint renders this one
-with one added field (`salary_raise_percent`) and one different value inside
-`personnel_cost.assumptions_used.rate_source` — never a second response shape to learn.
+"zachowuje kształt odpowiedzi zbliżony do GET …/results"). The fields `GET …/results` answers
+(since SC-4-03 including `profitability_state`) are exactly the fields here, so a client already
+rendering that endpoint renders this one with one added field (`salary_raise_percent`) and one
+different value inside `personnel_cost.assumptions_used.rate_source` — never a second response
+shape to learn.
 
 **The query parameter is a percentage, allowed to be negative but floored at `-100`** (ADR-0015,
 point 6, tightened by Reviewer R-01, 2026-09-24): `0` is the neutral element K-01 proves, and a
@@ -63,16 +64,20 @@ SalaryRaisePercentQuery = Annotated[
 
 
 class ScenarioWhatIfSalaryRaiseResults(ScenarioResults):
-    """`GET …/scenarios/{id}/what-if` — the same seven fields `ScenarioResults` carries (revenue,
-    personnel_cost, additional_cost, included_cost, profit, margin, markup), next to the
-    hypothetical raise that produced them.
+    """`GET …/scenarios/{id}/what-if` — the same fields `ScenarioResults` carries (revenue,
+    personnel_cost, additional_cost, included_cost, profit, margin, markup, profitability_state),
+    next to the hypothetical raise that produced them.
 
     Never persisted and never approaching an `approved` scenario (ADR-0015, points 2 and 5):
     `personnel_cost.assumptions_used.rate_source` reads `"what_if_hypothetical"` whenever
     `personnel_cost.state` is `"calculated"` — the third value `app.api.schemas.personnel_cost.
     CostAssumptionsRead.rate_source` grew for exactly this endpoint — while `revenue`'s own
-    `assumptions_used.rate_source` stays one of the two real values: the raise never touches
-    revenue (F-06, rule 10 of the Invariant Guardian).
+    `assumptions_used.rate_source` is exactly what `GET …/results` reports for it: one of the two
+    real catalogue sources for a model priced from the catalogue (T&M), or the model's own
+    non-catalogue source — `story_points_terms` (Story Points) or `not_applicable` (Outcome-based,
+    ADR-0003 aneks 2026-09-25 SC-4-03, pkt 8 i 12) — never
+    `what_if_hypothetical`: the raise never touches revenue (F-06, rule 10 of the Invariant
+    Guardian).
     """
 
     salary_raise_percent: DecimalString

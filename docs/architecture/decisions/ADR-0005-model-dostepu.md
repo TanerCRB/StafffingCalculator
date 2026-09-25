@@ -852,3 +852,33 @@ ADR-0014, Q-2/Q-4/Q-7).**
    projektowej (ADR-0001), jak i tego, co odpowiedź ujawnia (ADR-0005): oba dokumenty muszą się
    zgadzać, że pojedynczy zły/rasujący `scenario_id` nie zostawia częściowego payloadu ujawniającego
    które z pozostałych N-1 były w zasięgu/gotowe, tylko jednolitą odmowę bez różnicowania przyczyny.
+
+**Aneks — parametry reguły outcome widoczne pod `RESULTS_READ` (2026-09-25, SC-4-03, Issue #67,
+runda weryfikacji 1, decyzja człowieka).**
+
+1. `category_revenues` (liczba jednostek, prawdopodobieństwo, kwota per kategoria) i
+   `expected_amount` są widoczne w `/results`, what-if i porównaniu pod samym `RESULTS_READ`, bez
+   `COMMERCIAL_READ` — wołający bez prawa odczytu reguły poznaje jej parametry (pełny zakres —
+   pkt 3). Przyjęte świadomie przez człowieka.
+2. Dziś nieeksploatowalne: `PLACEHOLDER_PERMISSIONS` nadaje oba uprawnienia naraz (aneks
+   2026-09-18). **Warunek ponownego otwarcia:** zadanie wprowadzające role/rozdział uprawnień
+   między realne osoby — ten sam co dla pozostałych nazwanych skrzyżowań tej rodziny.
+3. **Pełny zakres ujawnienia (uzupełnienie po rundzie weryfikacji 2, 2026-09-25, decyzja
+   człowieka; ustalenie B-01 audytu bezpieczeństwa).** Pkt 1 nie ogranicza się do pól podanych
+   wprost: z `amount` (przychód gwarantowany) i `category_revenues` (jednostki, prawdopodobieństwo
+   i kwota per kategoria) wołający z samym `RESULTS_READ`, bez `COMMERCIAL_READ`, zwykle odtwarza
+   również opłatę stałą (`fixed_fee`), stawkę za jednostkę (`unit_rate`), premię
+   (`success_bonus`), walutę reguły (`currency`) oraz — gdy ograniczenie min/max zadziała w
+   którejś kategorii albo w przychodzie gwarantowanym — `revenue_min`/`revenue_max`. W praktyce
+   jest to prawie cała reguła outcome odczytywalna pod `GET` tylko z `COMMERCIAL_READ` (ADR-0003,
+   aneks 2026-09-25 SC-4-03 pkt 11). Akceptacja pkt 1 **utrzymana przez człowieka w tym pełnym
+   zakresie**; dziś nieeksploatowalne z powodu z pkt 2 (`PLACEHOLDER_PERMISSIONS`). **Warunek
+   ponownego otwarcia bez zmian:** zadanie ról/rozdziału uprawnień — wtedy rozstrzygnięcie musi
+   objąć cały zakres z tego punktu, nie tylko pola wymienione w pkt 1.
+4. **Story Points pod `RESULTS_READ` (runda weryfikacji 3, 2026-09-25, uwaga audytu
+   bezpieczeństwa).** Po merge z SC-4-04 scenariusz Story Points odpowiada na `/results`, what-if
+   i porównaniu `200` (ADR-0003, aneks SC-4-03 pkt 12b). Wołający z samym `RESULTS_READ` widzi
+   wyłącznie iloczyn `price_per_point × accepted_points` i walutę reguły — tę samą klasę "figury
+   rozliczeniowej" co przychód T&M (aneks SC-7-01 pkt 1 i 4); ceny punktu ani liczby punktów
+   osobno nie odtworzy, bo `assumptions_used` Story Points ich nie niesie. Skala inna niż
+   outcome z pkt 3 — do uwzględnienia przy tym samym zadaniu ról.

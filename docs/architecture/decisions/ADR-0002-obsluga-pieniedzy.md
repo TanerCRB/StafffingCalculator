@@ -121,3 +121,13 @@ tych trzech enumów nie jest tym samym typem, choć część nazw pokrywa się p
 3. **Warunek ponownego otwarcia:** pierwsze zadanie, które musi zwrócić jedną nazwę stanu dla
    całej odpowiedzi (np. UI potrzebujący jednego komunikatu zamiast trzech) — wymaga wtedy osobnej
    decyzji o priorytetyzacji źródeł, nie rozszerzenia tego punktu przez milczenie.
+
+### 2026-09-25 — równość walut przychodu i kosztów w wynikach złożonych (SC-4-03, runda weryfikacji 1)
+
+Decyzja człowieka 2026-09-25 (ustalenie R-01 weryfikacji SC-4-03). Wyniki złożone (`/results`
+SC-7-01, what-if SC-6-04, porównanie SC-6-02) wymagają równości waluty przychodu i waluty każdego
+wyliczonego źródła kosztu; w przeciwnym razie `profit`/`margin`/`markup` = nazwany stan
+`currency_mismatch`, nigdy suma kwot w różnych walutach (brak przeliczenia — ADR-0006). Reguła
+zamyka także przypadek istniejący przed SC-4-03: koszt dodatkowy w walucie innej niż koszt osobowy.
+Zasada "nazwij źródło, nie zwijaj" z aneksu 2026-09-24 pozostaje bez zmian. Szczegóły: ADR-0003,
+aneks 2026-09-25 SC-4-03 pkt 7.

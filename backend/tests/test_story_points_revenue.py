@@ -251,7 +251,9 @@ def test_k_03_the_registries_are_keyed_by_exactly_the_two_real_models() -> None:
     a silent skip is exactly what this equality forbids.
     """
     assert set(REVENUE_BY_MODEL) == set(MODEL_TYPES) == set(DETAIL_TABLE_BY_MODEL)
-    assert {"time_and_material", "story_points"} == set(MODEL_TYPES)
+    # Rozszerzone jawnie o `outcome_based` przy merge SC-4-03 (decyzja człowieka 2026-09-25);
+    # nazwa testu zostaje, bo wiersz mutation log SC-4-04 w capabilities.md się do niej odwołuje.
+    assert {"time_and_material", "story_points", "outcome_based"} == set(MODEL_TYPES)
 
 
 def test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_real_models(

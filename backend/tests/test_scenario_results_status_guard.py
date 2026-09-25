@@ -1,28 +1,29 @@
-"""SC-7-03, Issue #118 — the race guard of `GET …/results`, `GET …/compare` and `GET …/what-if`
-compares the scenario's status **as each of its two reads saw it**, never `rate_source`
-(ADR-0015, aneks SC-7-03; ADR-0003, aneks SC-7-03).
+"""SC-7-03, Issue #118 — the race guard of `GET …/results`, `GET …/compare` and `GET …/what-if`:
+one function, `app.data.scenario_results.refuse_a_status_race`, applied to the scenario's status
+**as each of the three reads that refresh it saw it** (`status_at_read`), never to the revenue's
+`rate_source` compared with the cost's (ADR-0015, aneks SC-7-03; ADR-0003, aneks SC-7-03).
 
-**The defect this file pins down.** SC-7-01's guard compared `revenue.assumptions_used.rate_source`
-with `personnel_cost.assumptions_used.rate_source`. That was a stand-in for "the status changed
-between the two reads" only while every revenue was T&M (`live_catalog`/`approved_snapshot`, a
-function of the status). SC-4-04 added Story Points, whose revenue reports `story_points_terms` —
-so every Story Points scenario answered `409` on all three endpoints, with no race at all.
+**The rule (ADR-0015, aneks SC-7-03, point 2 — Q4/B, the semantics `main` fixed in SC-4-03).**
+With `s_P`, `s_K`, `s_D` the statuses frozen by the revenue, personnel-cost and additional-cost
+reads: `409` ⇔ (a) the revenue's `rate_source` ∈ `STATUS_DEPENDENT_SOURCES` and `s_P ≠ s_K`, or
+(b) `s_K ≠ s_D`, for every model. A Story Points / Outcome-based revenue reads only the scenario's
+own write-guarded rows, so an approval between its read and the cost read is not a race (`main`
+proves that in `tests/test_story_points_scenario_results.py` and
+`tests/test_outcome_scenario_results.py`; A15-8 here adds what-if).
 
-**What the fix must not become.** `commercial.scenario` and `cost_view.scenario` are frequently the
-*same* identity-mapped `Scenario`, refreshed by both calls (`app.data.commercial_terms._view_of`,
-`app.data.personnel_cost.scenario_cost_for_caller`). A guard reading `.status` off that object after
-both calls compares one value with itself and never fires. K-02/K-04 below race a real approval in
-on a second connection, exactly where only a status *frozen at the moment of each read*
-(`status_at_read`) can still tell the two reads apart.
+**What the guard must not become.** `commercial.scenario`, `cost_view.scenario` and the
+additional-cost view's scenario are frequently the *same* identity-mapped `Scenario`, refreshed by
+every call. A guard reading `.status` off that object after the calls compares one value with itself
+and never fires. Every race test below brings a real approval in on a second connection, exactly
+where only a status *frozen at the moment of each read* can still tell the reads apart.
 
 **Real concurrency, the shape of `tests/test_scenario_results_race.py`** (which this task leaves
-byte-for-byte unchanged, K-03): a cursor hook fires once, after the one statement only the Story
-Points revenue path issues (the `story_points_terms` details row, recognised by `price_per_point` —
-Story Points never issues T&M's `selling_rate` query), and commits a real approval through the real
-endpoint on another thread before the revenue read hands control back to the cost read.
+byte-for-byte unchanged, K-03): a cursor hook fires once, after a statement that only a chosen read
+issues, and commits a real approval through the real endpoint on another thread before that read
+hands control to the next one.
 
-Criteria (Issue #118): K-01, K-02, K-04, K-05, K-06, A15-6, A15-7. K-03 is the unchanged sibling
-file.
+Criteria (Issue #118): K-01, K-02, K-04, K-05, K-06, A15-6, A15-7, A15-8, A15-9. K-03 is the
+unchanged sibling file.
 """
 
 import threading
@@ -125,22 +126,34 @@ def _cost_visible_project(session: Session, *, name: str) -> Any:
     )
 
 
-def _committed_story_points_scenario(engine: Engine) -> dict[str, uuid.UUID]:
-    """A committed Story Points draft visible to every connection — the Story Points twin of
-    `tests/test_scenario_results_race.py::_committed_scenario`: 100 planned hours at cost rate 120
-    (base cost 12000.00), no additional cost, revenue 25 × 1000.0000 = 25000.00, profit 13000.00."""
+STORY_POINTS = "story_points"
+TIME_AND_MATERIAL = "time_and_material"
+NO_RULE = "no_rule"
+
+
+def _committed_scenario(engine: Engine, rule: str) -> dict[str, uuid.UUID]:
+    """A committed draft visible to every connection — `tests/test_scenario_results_race.py::
+    _committed_scenario`'s plan (100 planned and billable hours at a 120/200 rate, no additional
+    cost; base cost 12000.00) with the chosen rule:
+
+    - `STORY_POINTS`: 25 × 1000.0000 = revenue 25000.00, profit 13000.00 (revenue independent of
+      the status, `story_points_terms`);
+    - `TIME_AND_MATERIAL`: 100 × 200 = revenue 20000.00, profit 8000.00 (revenue chosen by the
+      status, `live_catalog`/`approved_snapshot`);
+    - `NO_RULE`: no rule at all — `no_commercial_terms`, with a `rate_source` still chosen by the
+      status (A15-9)."""
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
-        project = _cost_visible_project(setup, name="SP Race")
+        project = _cost_visible_project(setup, name=f"Race {rule}")
         scenario = make_scenario(setup, project, name="Baseline", currency="PLN")
-        calendar = make_working_calendar(setup, name="SP Race calendar")
+        calendar = make_working_calendar(setup, name=f"Race calendar {rule}")
         make_absence_type(
             setup,
-            name="SP Race statutory (no cost)",
+            name=f"Race statutory (no cost) {rule}",
             generates_cost=False,
             generates_revenue=False,
             is_statutory_leave=True,
         )
-        dimensions = make_dimension_tuple(setup, suffix=" SP Race", calendar=calendar)
+        dimensions = make_dimension_tuple(setup, suffix=f" Race {rule}", calendar=calendar)
         position = make_staffing_position(setup, scenario, dimensions, start_date=MAR)
         make_allocation(
             setup,
@@ -157,16 +170,45 @@ def _committed_story_points_scenario(engine: Engine) -> dict[str, uuid.UUID]:
             default_selling_rate=SELLING_RATE,
             currency="PLN",
         )
-        make_story_points_terms(setup, scenario)
+        if rule == STORY_POINTS:
+            make_story_points_terms(setup, scenario)
+        elif rule == TIME_AND_MATERIAL:
+            make_commercial_terms(setup, scenario)
         state = {"project_id": project.id, "scenario_id": scenario.id}
         setup.commit()
     return state
+
+
+def _committed_story_points_scenario(engine: Engine) -> dict[str, uuid.UUID]:
+    return _committed_scenario(engine, STORY_POINTS)
+
+
+def _path(endpoint: str, state: dict[str, uuid.UUID]) -> str:
+    if endpoint == "results":
+        return results_path(state["project_id"], state["scenario_id"])
+    return what_if_path(state["project_id"], state["scenario_id"], "10")
 
 
 REVENUE_READ_TRIGGER = "price_per_point"
 """Selected only by `_story_points`' read of its details row — the last statement the Story Points
 revenue read issues. Never `selling_rate`: Story Points never runs T&M's rate-window query, so a
 hook keyed on it would never fire here."""
+
+TM_REVENUE_READ_TRIGGER = "selling_rate"
+"""T&M's rate-window query (`priced_month_windows`) — issued by the revenue read after its refresh
+froze `s_P`, never by the personnel-cost or additional-cost reads (rule 10 of the Invariant
+Guardian); the same trigger `tests/test_scenario_results_race.py` uses."""
+
+NO_RULE_REVENUE_READ_TRIGGER = "from commercial_terms"
+"""`_rule_of`'s lookup of the scenario's rule — for a scenario without one, the last statement the
+revenue read issues (no details table, no rate window follows it); no scope query names that table
+(A15-9)."""
+
+TRIGGER_OF_REVENUE_READ = {
+    STORY_POINTS: REVENUE_READ_TRIGGER,
+    TIME_AND_MATERIAL: TM_REVENUE_READ_TRIGGER,
+    NO_RULE: NO_RULE_REVENUE_READ_TRIGGER,
+}
 
 COST_READ_TRIGGER = "requested_months"
 """The leave-budget lookup (`app.data.absence_budget.budgets_for_months`, reached through
@@ -187,8 +229,8 @@ def _get_with_an_approval_raced_in(
     trigger: str = REVENUE_READ_TRIGGER,
 ) -> Any:
     """GET `path` while a real approval commits on another connection right after the first
-    statement naming `trigger` returns — by default the Story Points revenue read's last statement,
-    i.e. after `commercial_terms_for_caller` froze `draft` and before `scenario_cost_for_caller`
+    statement naming `trigger` returns — with a revenue-read trigger (`TRIGGER_OF_REVENUE_READ`),
+    after `commercial_terms_for_caller` froze `draft` and before `scenario_cost_for_caller`
     refreshes the scenario; with `COST_READ_TRIGGER`, after `scenario_cost_for_caller` froze `draft`
     and before `additional_costs_for_caller` refreshes it (A15-7). Asserts the hook really fired,
     that no additional-cost statement ran before it, and that the approval really committed — so
@@ -258,8 +300,8 @@ def test_k_01_story_points_results_answers_200_with_price_times_points_and_a_num
     `revenue` = `price_per_point × accepted_points` (1000.0000 × 25 = 25000.00), `profit` a number:
     25000.00 − (12000.00 base + 0.00 paid absence + 2000.00 additional) = 11000.00.
 
-    Mutation killed: restoring the `rate_source` comparison in `app.data.scenario_results`
-    (`story_points_terms` ≠ `live_catalog` → `409`)."""
+    Mutation killed: the guard (`refuse_a_status_race`) comparing the revenue's `rate_source` with
+    the cost's (`story_points_terms` ≠ `live_catalog` → `409`)."""
     _ensure_statutory_bypass(db_session)
     project = _cost_visible_project(db_session, name="SP Results")
     scenario = _story_points_scenario_in_project(db_session, project, name="SP")
@@ -283,9 +325,8 @@ def test_k_01_compare_of_a_story_points_and_a_t_and_m_scenario_answers_200_with_
     """K-01 — `GET …/compare?scenario_id=<SP>&scenario_id=<T&M>`: `200`, two rows, in the named
     order, each with its own model's revenue (25000.00 Story Points, 20000.00 T&M) and profit.
 
-    Mutation killed: the `rate_source` comparison restored in `app.data.scenario_results` — the
-    compare endpoint calls the same function per row, so the SP row's `409` refuses the whole
-    response."""
+    Mutation killed: the guard comparing the revenue's `rate_source` with the cost's — the compare
+    endpoint calls the same function per row, so the SP row's `409` refuses the whole response."""
     _ensure_statutory_bypass(db_session)
     project = _cost_visible_project(db_session, name="SP Compare")
     story_points = _story_points_scenario_in_project(db_session, project, name="SP")
@@ -310,8 +351,8 @@ def test_k_01_story_points_what_if_answers_200(client: TestClient, db_session: S
     real revenue untouched (25000.00), the cost raised (100 h × 132 = 13200.00), profit
     25000.00 − 13200.00 − 2000.00 = 9800.00.
 
-    Mutation killed: the `rate_source` comparison restored in `app.data.scenario_what_if` alone
-    (mutated separately from `app.data.scenario_results`: the two guards are two copies)."""
+    Mutation killed: the guard comparing the revenue's `rate_source` with the cost's — what-if calls
+    the same `refuse_a_status_race` as `/results`, not a copy of it."""
     _ensure_statutory_bypass(db_session)
     project = _cost_visible_project(db_session, name="SP WhatIf")
     scenario = _story_points_scenario_in_project(db_session, project, name="SP")
@@ -366,45 +407,49 @@ def test_a15_6_disagreeing_rate_sources_with_an_agreeing_status_are_not_a_race(
     assert approved_body["personnel_cost"]["amount"] == "12000.00"
 
 
-# --- K-02 / K-06: a real race on Story Points `…/results` is still a generic 409 -----------------
+# --- K-02 / K-06: a real T&M race revenue -> cost on `…/results` is a generic 409 -----------------
 
 
 @PERMISSION_SETS
-def test_k_02_an_approval_raced_between_the_story_points_revenue_and_cost_reads_is_a_409(
+def test_k_02_an_approval_raced_between_the_t_and_m_revenue_and_cost_reads_is_a_409(
     committing_client: TestClient, engine: Engine, caller_permissions: frozenset[Permission]
 ) -> None:
-    """K-02 (A15-2, A15-3) with K-06 (A15-5) — the approval commits on a second connection after
-    the Story Points revenue read froze `draft` and before the cost read refreshes the scenario:
-    `409`, never a `200` mixing a 25000.00 revenue with an approved-snapshot 12000.00 cost.
+    """K-02 (A15-2, A15-3) with K-06 (A15-5) — T&M: the approval commits on a second connection
+    after the revenue read froze `draft` (and priced against the live catalogue) and before the
+    cost read refreshes the scenario: `409` by rule (a), never a `200` mixing a live 20000.00
+    revenue with an approved-snapshot 12000.00 cost. The Story Points counterpart (`200`) is
+    `main`'s own proof (`tests/test_story_points_scenario_results.py`), extended to what-if by
+    A15-8 below.
 
-    Mutations killed (both answer `200`): (a) the guard comparing `commercial.scenario.status`
-    with `cost_view.scenario.status` — one identity-mapped object refreshed by both reads, so both
-    read `approved`; (b) the guard removed from `app.data.scenario_results`.
+    Mutations killed: the guard comparing `commercial.scenario.status` with
+    `cost_view.scenario.status` (one identity-mapped object → `200`); the guard removed; rule (a)
+    dropped (only `s_K ≠ s_D` left → `200`).
 
     Parametrized over the personnel-cost gate (K-06, as R-02): the body is exactly the fixed
     message and names no `rate_source` and no status, whether or not the caller may see personnel
     costs — the gate has not run yet when this response is built."""
-    state = _committed_story_points_scenario(engine)
+    state = _committed_scenario(engine, TIME_AND_MATERIAL)
 
     response = _get_with_an_approval_raced_in(
         committing_client,
         state,
         results_path(state["project_id"], state["scenario_id"]),
         caller_permissions,
+        trigger=TM_REVENUE_READ_TRIGGER,
     )
 
     _assert_generic_409(response)
-    assert "25000.00" not in response.text
+    assert "20000.00" not in response.text
     assert "12000.00" not in response.text
-    assert "13000.00" not in response.text
+    assert "8000.00" not in response.text
 
 
 def test_k_02_contrast_no_approval_in_flight_answers_200(
     committing_client: TestClient, engine: Engine
 ) -> None:
     """K-02's contrast — the same committed fixture, no concurrent write: `200` with the real
-    numbers. What stops K-02 from being satisfied by a guard that refuses every Story Points
-    scenario (the very defect of Issue #118)."""
+    numbers, on the Story Points fixture. What stops the guard from being one that refuses every
+    Story Points scenario (the very defect of Issue #118)."""
     state = _committed_story_points_scenario(engine)
 
     with caller_holding(*EVERYTHING):
@@ -424,26 +469,26 @@ def test_k_02_contrast_no_approval_in_flight_answers_200(
 def test_k_04_an_approval_raced_between_the_what_if_real_reads_is_a_409_not_a_404(
     committing_client: TestClient, engine: Engine, caller_permissions: frozenset[Permission]
 ) -> None:
-    """K-04 (ADR-0015, aneks SC-7-03, point 5 — Q5/A) with K-06 — the same race on
+    """K-04 (A15-2; ADR-0015, aneks SC-7-03, point 5) with K-06 — the same T&M race on
     `GET …/what-if?salary_raise_percent=10`: `409` with the fixed message, not the `404` a scenario
-    approved through both reads answers (the contrasts below).
+    approved through every read answers (the contrasts below).
 
-    Mutation killed: removing the guard from `app.data.scenario_what_if` alone — the cost read then
-    sees `approved`, the endpoint's own `draft`-only refusal answers `None`, and the response is
-    `404` instead of `409`. The same `404` results from comparing the shared `Scenario`'s `.status`
-    there."""
-    state = _committed_story_points_scenario(engine)
+    Mutations killed: rule (a) dropped, or the guard's call removed from `app.data.scenario_what_if`
+    — the cost and additional-cost reads then both saw `approved`, the endpoint's own `draft`-only
+    refusal answers `None`, and the response is `404` instead of `409`."""
+    state = _committed_scenario(engine, TIME_AND_MATERIAL)
 
     response = _get_with_an_approval_raced_in(
         committing_client,
         state,
         what_if_path(state["project_id"], state["scenario_id"], "10"),
         caller_permissions,
+        trigger=TM_REVENUE_READ_TRIGGER,
     )
 
     _assert_generic_409(response)
     assert response.json() != {"detail": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL}
-    assert "25000.00" not in response.text
+    assert "20000.00" not in response.text
     assert "13200.00" not in response.text
 
 
@@ -494,41 +539,118 @@ def test_k_04_contrast_approved_before_the_request_answers_404(
 
 @PERMISSION_SETS
 @pytest.mark.parametrize("endpoint", ["results", "what_if"])
+@pytest.mark.parametrize("rule", [STORY_POINTS, TIME_AND_MATERIAL])
 def test_a15_7_an_approval_raced_between_the_cost_and_additional_cost_reads_is_a_409(
     committing_client: TestClient,
     engine: Engine,
     caller_permissions: frozenset[Permission],
     endpoint: str,
+    rule: str,
 ) -> None:
-    """A15-7 (reviewer R-01 of SC-7-03; ADR-0015, aneks SC-7-03, point 8) — the approval commits
-    after the personnel-cost read froze `draft` and before the additional-cost read refreshes the
-    shared `Scenario`. Revenue and cost both froze `draft`, so a guard comparing only those two
-    stays silent; the third refresh then flips the shared object to `approved`, which is what
-    `…/results` serialises as `scenario_status` (`"Approved"` next to `rate_source: live_catalog`)
-    and what what-if's `_worked_months` branches on (a hypothesis costed on the approval snapshot,
-    served as `200`). Both endpoints must answer the generic `409` instead (K-06 parametrization).
+    """A15-7 (reviewer R-01 of SC-7-03; ADR-0015, aneks SC-7-03, points 2b and 8) — the approval
+    commits after the personnel-cost read froze `draft` and before the additional-cost read
+    refreshes the shared `Scenario`. Revenue and cost both froze `draft`; the third refresh flips
+    the shared object to `approved`, which is what `…/results` serialises as `scenario_status`
+    (`"Approved"` next to `rate_source: live_catalog`) and what what-if's `_worked_months` branches
+    on (a hypothesis costed on the approval snapshot, served as `200`). Rule (b) (`s_K ≠ s_D`)
+    refuses it for **every** model — a status-independent revenue (Story Points) as well as T&M —
+    with the generic `409` (K-06 parametrization).
 
-    Mutation killed (each module separately): the third status left out of the comparison —
-    `…/results` and what-if then answer `200`. Also red on the round-1 code of SC-7-03, where the
-    additional-cost read ran after a two-status guard."""
-    state = _committed_story_points_scenario(engine)
-    path = (
-        results_path(state["project_id"], state["scenario_id"])
-        if endpoint == "results"
-        else what_if_path(state["project_id"], state["scenario_id"], "10")
-    )
+    Mutation killed: rule (b) dropped from `refuse_a_status_race` — `…/results` then answers `200`
+    (both models) and what-if `200` (T&M, rule (a) sees nothing either) / `404` (Story Points)."""
+    state = _committed_scenario(engine, rule)
 
     response = _get_with_an_approval_raced_in(
-        committing_client, state, path, caller_permissions, trigger=COST_READ_TRIGGER
+        committing_client,
+        state,
+        _path(endpoint, state),
+        caller_permissions,
+        trigger=COST_READ_TRIGGER,
     )
 
     _assert_generic_409(response)
-    assert "25000.00" not in response.text
+    for amount in ("25000.00", "20000.00", "12000.00", "13200.00"):
+        assert amount not in response.text, amount
+
+
+# --- A15-8: a status-independent revenue, approval between revenue and cost: not a race -----------
+
+
+@pytest.mark.parametrize("endpoint", ["results", "what_if"])
+def test_a15_8_story_points_approval_between_revenue_and_cost_is_the_approved_answer_not_a_race(
+    committing_client: TestClient, engine: Engine, endpoint: str
+) -> None:
+    """A15-8 (ADR-0015, aneks SC-7-03, points 2a and 5) — Story Points: the approval commits after
+    the revenue read (`s_P = draft`) and before the cost read (`s_K = s_D = approved`). The revenue
+    is the same before and after an approval, so the request is the approved scenario read whole:
+
+    - `…/results` → `200`, cost from the snapshot (`approved_snapshot`, 12000.00), `scenario_status`
+      `"Approved"`, profit 25000.00 − 12000.00 = 13000.00 — a coherent approved result;
+    - what-if → `404` with the "not found" body — the approved scenario's own refusal, never `409`.
+
+    Mutations killed: the classification step dropped (`s_P ≠ s_K` compared for every model →
+    `409` on both); the classification taken from the cost's `rate_source` instead of the revenue's
+    (`approved_snapshot` ∈ `STATUS_DEPENDENT_SOURCES` → `409` on both)."""
+    state = _committed_scenario(engine, STORY_POINTS)
+
+    response = _get_with_an_approval_raced_in(
+        committing_client,
+        state,
+        _path(endpoint, state),
+        EVERYTHING,
+        trigger=REVENUE_READ_TRIGGER,
+    )
+
+    if endpoint == "results":
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["scenario_status"] == "Approved"
+        assert body["revenue"]["amount"] == "25000.00"
+        assert body["revenue"]["assumptions_used"]["rate_source"] == "story_points_terms"
+        assert body["personnel_cost"]["amount"] == "12000.00"
+        assert body["personnel_cost"]["assumptions_used"]["rate_source"] == "approved_snapshot"
+        assert body["profit"] == "13000.00"
+    else:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL}
+
+
+# --- A15-9: no rule at all — a status-chosen revenue source, so revenue -> cost is a race ---------
+
+
+@PERMISSION_SETS
+@pytest.mark.parametrize("endpoint", ["results", "what_if"])
+def test_a15_9_no_commercial_terms_approval_between_revenue_and_cost_is_a_409(
+    committing_client: TestClient,
+    engine: Engine,
+    caller_permissions: frozenset[Permission],
+    endpoint: str,
+) -> None:
+    """A15-9 (ADR-0015, aneks SC-7-03, point 2(ii)) — a scenario with no commercial rule: the
+    revenue is the named `no_commercial_terms` state, `model_type = None`, but its `rate_source`
+    is still chosen by the status (`live_catalog` here). The approval commits right after the
+    revenue read's rule lookup found nothing (`s_P = draft`) and before the cost read
+    (`s_K = approved`): rule (a) classifies the answer as status-dependent and refuses `409`.
+
+    Mutations killed: rule (a) dropped; the answer without a model classified as
+    status-independent (e.g. classification by `model_type` instead of `rate_source`) — both give
+    `200` on `…/results` and `404` on what-if."""
+    state = _committed_scenario(engine, NO_RULE)
+
+    response = _get_with_an_approval_raced_in(
+        committing_client,
+        state,
+        _path(endpoint, state),
+        caller_permissions,
+        trigger=NO_RULE_REVENUE_READ_TRIGGER,
+    )
+
+    _assert_generic_409(response)
     assert "12000.00" not in response.text
-    assert "13200.00" not in response.text
+    assert "no_commercial_terms" not in response.text
 
 
-# --- K-05 / A15-4: T&M responses are byte-for-byte what they were on 1739f1e ----------------------
+# --- K-05 / A15-4: T&M responses are byte-for-byte what `main` serves -----------------------------
 
 
 def _literal_t_and_m_fixture(session: Session) -> dict[str, str]:
@@ -568,7 +690,11 @@ def _literal_t_and_m_fixture(session: Session) -> dict[str, str]:
 
 
 def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
-    """The full `GET …/results` body for `_literal_t_and_m_fixture`, as served by 1739f1e."""
+    """The full `GET …/results` body for `_literal_t_and_m_fixture`, as served by the production
+    code of 1739f1e — plus the four fields SC-4-03 (Outcome-based, `origin/main` 56f1d65) added to
+    every answer (`profitability_state`; `revenue.category_revenues`/`expected_amount`/
+    `expected_state`), with the values `main` serves for T&M. Verified green against the production
+    code of 56f1d65 without SC-7-03 (report of SC-7-03, round 3)."""
     return {
         "scenario_id": ids["scenario_id"],
         "scenario_status": "Draft",
@@ -576,6 +702,9 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
             "state": "calculated",
             "amount": "20000.00",
             "currency": "PLN",
+            "expected_state": "not_applicable",
+            "expected_amount": "n/a",
+            "category_revenues": [],
             "assumptions_used": {
                 "model_type": "time_and_material",
                 "hours_source": "billable_hours",
@@ -657,6 +786,7 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
             },
         },
         "included_cost": "14000.00",
+        "profitability_state": "calculated",
         "profit": "6000.00",
         "margin": "30.00",
         "markup": "42.86",

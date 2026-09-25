@@ -35,7 +35,7 @@ saying so. `additional_costs_for_caller` never branches on status itself, but it
 call to `session.refresh` the shared `Scenario`: an approval landing between the cost read and it
 left the first two statuses agreeing (`draft`) while the object this module returns — and whose
 `.status` becomes the response's `scenario_status` — already said `approved` (reviewer R-01 of
-SC-7-03). So the guard compares all three reads' statuses, and runs only after the third.
+SC-7-03). So the guard sees all three reads' statuses, and runs only after the third.
 
 **The guard: compare, don't prevent by locking or by raising the isolation level.** Elevating this
 read to `REPEATABLE READ`/`SERIALIZABLE` was considered and rejected here — not because it would not
@@ -47,30 +47,37 @@ endpoint code runs, and PostgreSQL refuses to change isolation level once a tran
 statement). Comparing the reads' statuses after the fact needs neither.
 
 **What is compared: the scenario's status as each of the three reads saw it** (SC-7-03, Issue
-#118; ADR-0015, aneks SC-7-03, points 3 and 8). `commercial.status_at_read`,
-`cost_view.status_at_read` and `additional.status_at_read` are each copied into an immutable
-`ScenarioStatus` inside their own call, right after that call's own `session.refresh`. Any two
-different values can only mean the status changed between two of the reads: the transition is
-one-way (ADR-0004), so no other explanation exists. **No statement after the third read refreshes
-the scenario** — the only `session.refresh(scenario)` calls on this path are the three frozen ones,
-and no later statement loads `Scenario` with `populate_existing` — so the `.status` the response
-serialises as `scenario_status` is the one all three reads agreed on. Any future call that adds a
-`session.refresh(scenario)` to this composition must join the comparison (point 8). The same rule
-for every commercial model, with no branch on `model_type` (ADR-0015, aneks SC-7-03, point 2): the
-cost always depends on the status, so a result composed across a status change is inconsistent
-whatever the revenue's model.
+#118; ADR-0015, aneks SC-7-03, points 1–3 and 8). `commercial.status_at_read` (`s_P`),
+`cost_view.status_at_read` (`s_K`) and `additional.status_at_read` (`s_D`) are each copied into an
+immutable `ScenarioStatus` inside their own call, right after that call's own `session.refresh`.
+`refuse_a_status_race` — the **one** place the rule lives, called here and by
+`app.data.scenario_what_if` — refuses when (point 2 of that addendum, Q4/B, the semantics `main`
+fixed in SC-4-03):
+
+- **(a)** the revenue depends on the status (`revenue.assumptions_used.rate_source` ∈
+  `STATUS_DEPENDENT_SOURCES`) **and** `s_P ≠ s_K`; or
+- **(b)** `s_K ≠ s_D`, whatever the revenue's model: `s_D` is what the shared `Scenario` carries
+  after the last refresh on this path — serialised as `scenario_status`, branched on by what-if —
+  and the personnel cost always depends on the status.
+
+A revenue that does not depend on the status (Story Points `story_points_terms`, Outcome-based
+`not_applicable`) reads only the scenario's own write-guarded rows, so it is the same before and
+after an approval; its `s_P` records no moment the number depends on (ADR-0003, aneks SC-4-03,
+points 8 and 12b). **No statement after the third read refreshes the scenario** — the only
+`session.refresh(scenario)` calls on this path are the three frozen ones, and no later statement
+loads `Scenario` with `populate_existing` — so every `.status` read after the guard is `s_D`, which
+passed it. Any future call that adds a `session.refresh(scenario)` to this composition must join the
+rule (point 8).
 
 - **Never `commercial.scenario.status` against `cost_view.scenario.status`.** The two are
-  frequently the *same* identity-mapped `Scenario`, refreshed a second time by the later call —
-  comparing its `.status` after both calls compares one value with itself and switches the guard
-  off without a sound (point 3 of that addendum; `tests/test_scenario_results_status_guard.py`
-  kills exactly this mutation).
-- **Never `assumptions_used.rate_source`.** SC-7-01 compared the two `rate_source` values, which
-  only worked while every revenue was T&M (`live_catalog`/`approved_snapshot` = a function of the
-  status). The revenue's `rate_source` is a descriptor whose vocabulary depends on the commercial
-  model — Story Points reports `story_points_terms` — and the cost's is a different vocabulary that
-  happens to share two values (ADR-0003, aneks SC-7-03): comparing them answered `409` for every
-  Story Points scenario, with no race at all. `rate_source` drives no logic here any more.
+  frequently the *same* identity-mapped `Scenario`, refreshed again by each later call — comparing
+  its `.status` after the calls compares one value with itself and switches the guard off without a
+  sound (point 3 of that addendum; `tests/test_scenario_results_status_guard.py` kills exactly this
+  mutation).
+- **Never the revenue's `rate_source` against the cost's.** They are two separate vocabularies that
+  happen to share two values (ADR-0003, aneks SC-7-03). The revenue's `rate_source` only
+  *classifies* the revenue as status-dependent or not (a membership test in one vocabulary); the
+  cost's plays no role in the guard at all.
 
 `ScenarioResultsRaceDetected` is raised instead of returning a view — a `409`
 (`app.api.scenario_results`), the same "state changed, re-read and retry" vocabulary every write
@@ -93,8 +100,9 @@ edited between them see the same status (`draft` both times) and are not caught 
 rarer risk than R-01's status flip, out of this fix's declared scope.
 
 **Never imports `app.domain.revenue*`, `app.domain.personnel_cost` or `app.domain.additional_cost`
-beyond the *answer* types the three already export for exactly this composition** — no rate window,
-no catalogue row and no SQL predicate of its own. The formula itself lives in
+beyond the *answer* types the three already export for exactly this composition** (and, since
+SC-4-03, `STATUS_DEPENDENT_SOURCES`, by which the guard classifies the revenue) — no rate window, no
+catalogue row and no SQL predicate of its own. The formula itself lives in
 `app.domain.scenario_results`, not here (this module has no `Decimal` arithmetic of its own).
 """
 
@@ -108,7 +116,7 @@ from app.data.additional_cost import additional_costs_for_caller
 from app.data.commercial_terms import commercial_terms_for_caller
 from app.data.personnel_cost import ScenarioCostView, scenario_cost_for_caller
 from app.domain.additional_cost import AdditionalCostAnswer
-from app.domain.revenue import RevenueAnswer
+from app.domain.revenue import STATUS_DEPENDENT_SOURCES, RevenueAnswer
 from app.models.scenario import Scenario, ScenarioStatus
 
 
@@ -116,10 +124,10 @@ class ScenarioResultsRaceDetected(RuntimeError):
     """The scenario's approval status changed while its result was being composed (Reviewer,
     SC-7-01, R-01; SC-7-03).
 
-    Raised, never swallowed and never turned into a computed number: the revenue, the base
-    personnel cost and the additional-cost reads did not all see the scenario at the same status
-    (`status_at_read` on each of the three views), which can only happen if `POST …/approve`
-    committed between two of the reads this module makes. `app.api.scenario_results` turns this
+    Raised, never swallowed and never turned into a computed number, by `refuse_a_status_race`
+    only: two of the reads this module makes saw the scenario at two statuses that rule compares
+    (`status_at_read` on each view), which can only happen if `POST …/approve` committed between
+    them. `app.api.scenario_results` turns this
     into a `409` — the caller's own read is stale the moment it is answered either way, and a retry
     reads a scenario that is either still a draft throughout or already fully approved throughout,
     never a mix of the two.
@@ -150,6 +158,48 @@ class ScenarioResultsRaceDetected(RuntimeError):
         )
 
 
+def refuse_a_status_race(
+    *,
+    revenue_source: str,
+    revenue_status: ScenarioStatus,
+    cost_status: ScenarioStatus,
+    additional_cost_status: ScenarioStatus,
+) -> None:
+    """Raise `ScenarioResultsRaceDetected` when the composed read saw the scenario at two statuses
+    that matter (ADR-0015, aneks SC-7-03, point 2 — Q4/B).
+
+    `revenue_status`, `cost_status`, `additional_cost_status` are the `status_at_read` values each
+    read froze right after its own `session.refresh` (`s_P`, `s_K`, `s_D`). Refuses when:
+
+    - **(a)** `revenue_source` ∈ `STATUS_DEPENDENT_SOURCES` **and** `s_P ≠ s_K`. **Porównuje status
+      przychodu wyłącznie dla przychodu zależnego od statusu** (`live_catalog`,
+      `approved_snapshot`; ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8). Przychód modelu bez katalogu
+      (`not_applicable` — Outcome-based; `story_points_terms` — Story Points) czyta wyłącznie własne
+      wiersze scenariusza, więc jest ten sam przed i po zatwierdzeniu — jego status nie jest
+      dowodem ani braku, ani wystąpienia wyścigu (`tests/test_story_points_scenario_results.py`,
+      `tests/test_outcome_scenario_results.py`). `revenue_source` jest tu wyłącznie klasyfikatorem
+      (test przynależności do jednego słownika) — nigdy nie jest porównywany z `rate_source` kosztu,
+      który do strażnika w ogóle nie wchodzi. Odpowiedź bez reguły (`no_commercial_terms`) niesie
+      `rate_source` wybrane ze statusu, więc zostaje w porównaniu (kontrola A15-9);
+    - **(b)** `s_K ≠ s_D`, for every model: `s_D` is the status the shared `Scenario` carries after
+      the last refresh (`scenario_status`, what-if's `draft` check and `_worked_months`), and the
+      personnel cost always depends on the status (reviewer R-01 of SC-7-03, point 8).
+
+    Jedna funkcja dla `/results`/`/compare` i dla what-if (`app.data.scenario_what_if`), wołana po
+    trzecim odczycie — dwie kopie porównania już raz się rozjechały (Issue #118).
+    """
+    status_dependent_revenue_moved = (
+        revenue_source in STATUS_DEPENDENT_SOURCES and revenue_status != cost_status
+    )
+    cost_and_reported_status_disagree = cost_status != additional_cost_status
+    if status_dependent_revenue_moved or cost_and_reported_status_disagree:
+        raise ScenarioResultsRaceDetected(
+            revenue_status=revenue_status,
+            cost_status=cost_status,
+            additional_cost_status=additional_cost_status,
+        )
+
+
 @dataclass(frozen=True)
 class ScenarioResultsView:
     """One scenario's three components, resolved in one composed read.
@@ -162,13 +212,12 @@ class ScenarioResultsView:
     handing it through unchanged is what lets this endpoint reuse that gate instead of asserting a
     second one that says the same thing.
 
-    Never constructed except by `scenario_results_for_caller`, which builds it only once `revenue`,
-    `cost_view.cost` and `additional_cost` are known to have read the scenario at the same status
-    (their three `status_at_read` values agree; `ScenarioResultsRaceDetected` otherwise), and no
-    statement after those reads refreshes `scenario` again — so `scenario.status` is that same
-    agreed status, and a
-    `ScenarioResultsView` in hand is itself the proof of that agreement, not something a reader of
-    this type has to re-check.
+    Never constructed except by `scenario_results_for_caller`, which builds it only once
+    `refuse_a_status_race` has passed — the cost and the additional-cost read agree on the status,
+    and so does the revenue read whenever the revenue depends on the status — and no statement
+    after those reads refreshes `scenario` again, so `scenario.status` is the status the cost was
+    computed at. A `ScenarioResultsView` in hand is itself the proof of that agreement, not
+    something a reader of this type has to re-check.
     """
 
     scenario: Scenario
@@ -206,17 +255,15 @@ def scenario_results_for_caller(
     additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
     if additional is None:  # pragma: no cover — scope agrees with the two calls above
         return None
-    # The status each of the three calls froze right after its own refresh — never `.status` of the
-    # shared, thrice-refreshed `Scenario`, never `rate_source` (ADR-0015, aneks SC-7-03, points 3
+    # After the third read: the status each call froze right after its own refresh — never
+    # `.status` of the shared, thrice-refreshed `Scenario` (ADR-0015, aneks SC-7-03, points 2, 3
     # and 8). Nothing below refreshes the scenario again.
-    if not (
-        commercial.status_at_read == cost_view.status_at_read == additional.status_at_read
-    ):
-        raise ScenarioResultsRaceDetected(
-            revenue_status=commercial.status_at_read,
-            cost_status=cost_view.status_at_read,
-            additional_cost_status=additional.status_at_read,
-        )
+    refuse_a_status_race(
+        revenue_source=commercial.revenue.assumptions_used.rate_source,
+        revenue_status=commercial.status_at_read,
+        cost_status=cost_view.status_at_read,
+        additional_cost_status=additional.status_at_read,
+    )
     return ScenarioResultsView(
         scenario=commercial.scenario,
         revenue=commercial.revenue,
