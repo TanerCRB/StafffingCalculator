@@ -295,3 +295,182 @@ istniejące wiersze (`backend/migrations/**`, `backend/app/models/**`, `backend/
 `backend/app/domain/**`, "any new/changed public API endpoint, response field or event") już
 pokrywają te ścieżki generycznie. D-1/D-4/D-5/D-6 rozstrzygnięte 2026-09-25 (opcja A wszędzie) —
 ten aneks jest teraz wiążący dla migracji tworzącej `story_points_terms`.
+
+### 2026-09-25 — impact mapa bramki 1 dla SC-4-05 (Issue #69, F-06.5): `scope_ref`, reguła łączona, ochrona przed podwójnym rozliczeniem — Draft, pytania otwarte
+
+Drugi aneks tej daty w tym pliku, osobny wpis (konwencja ADR-0004: odwołanie "ADR-0003, aneks
+2026-09-25" musi odtąd nazywać zadanie — SC-4-04 albo SC-4-05).
+
+Realizuje bullet "Odłożone": "Reguły na poziomie fazy/workstreamu, mieszane umowy, reguła łączona i
+ochrona przed podwójnym rozliczeniem (F-06, F-06.5, reguła 11) — po powstaniu encji fazy" — encja
+(ADR-0016, SC-1-11) już istnieje. Kryteria bramki 1 analityka (Issue #69, runda 3): K-01 (rozłączność
+zasięgu), K-02 (reguła łączona nierozstrzygnięta — to jest D-3 niżej), K-03 (odtwarzalność
+mechanizmem, który model faktycznie używa), K-04 (złożony FK cross-scenario). **Kryteria analityka
+nie są tu renegocjowane** — ten aneks wyznacza granice, w jakich muszą się zmieścić, i pytania, które
+musi rozstrzygnąć człowiek.
+
+1. **`scope_ref` żyje na `commercial_terms`, nie na tabelach szczegółów.** Zweryfikowane w kodzie
+   (`app.models.commercial_terms`): `CommercialTerms` jest jedynym rodzicem `TmTerms` i
+   `StoryPointsTerms` (1:1 przez złożony FK na `(id, model_type)`), dokładnie jak `model_type` —
+   nowa kolumna zasięgu podąża za tym samym miejscem co dyskryminator, bez duplikowania jej na
+   każdym podtypie.
+2. **Kształt złożonego FK — fits bez nowej decyzji, ADR-0016 go przewidział.** "`scope_ref` na
+   `commercial_terms` (SC-4-05): złożony klucz obcy `(segment_id, scenario_id) →
+   scenario_delivery_segment (id, scenario_id)`, analogiczny do `TYPE_AGREEMENT_FOREIGN_KEY`"
+   (ADR-0016, "Odłożone") — `commercial_terms.scenario_id` już istnieje (pkt 1 tej decyzji),
+   `scenario_delivery_segment` już niesie `UNIQUE (id, scenario_id)` przygotowane dokładnie pod ten
+   FK (ADR-0016 pkt 4). K-04 jest więc realizacją już zaprojektowanego kształtu, nie nowym
+   projektem — `NULL` = zasięg całego scenariusza (żadnej referencji), niepusta wartość = segment
+   TEGO SAMEGO scenariusza, segment innego scenariusza odrzucony przez bazę.
+3. **Konflikt z pkt 1 tej decyzji, nienazwany dotąd: `UNIQUE (scenario_id)` na `commercial_terms`.**
+   "jedna reguła na scenariusz w MVP" zakłada dokładnie jeden wiersz — K-01/K-02 zakładają WIELE
+   wierszy (reguła projektu + reguły segmentów, albo wiele reguł segmentowych) współistniejących pod
+   jednym scenariuszem. Te dwa zdania nie mogą być prawdziwe naraz. Rozwiązanie zależy od D-3
+   (niżej) i nie jest tu przesądzone — ale każda opcja D-3 wymaga zastąpienia tego ograniczenia czymś
+   słabszym (np. częściowym unikalnym indeksem `WHERE scope_ref IS NULL`, albo
+   `UNIQUE (scenario_id, scope_ref)` — pamiętając, że PostgreSQL nie traktuje dwóch `NULL` jako
+   kolizji, więc sam typ kolumny nie domyka "co najwyżej jedna reguła całego scenariusza" bez
+   dodatkowego, jawnego ograniczenia).
+
+**D-1 (analityk, Issue #69 DoD): przypisanie przychodu do okresów i termin płatności — w zakresie
+SC-4-05 czy odłożone.**
+- *Opcja A — odłożone (rekomendacja).* DoD Issue #69 (dwa zdania) nie wspomina okresów/płatności;
+  bullet "Przypisanie przychodu do okresów i termin płatności (F-06.5)" w "Odłożone" tej decyzji
+  pozostaje bez przypisanego zadania. Koszt: F-06.5 pozostaje częściowo niezrealizowane kolejny
+  blok; ADR-0008 nadal nie rozstrzyga, czy `commercial_terms` (z `scope_ref` czy bez) potrzebuje
+  własnego przedziału obowiązywania.
+- *Opcja B — SC-4-05 bierze to teraz, bo dotyka tej samej tabeli i tego samego wymagania.* Podwaja
+  zakres wobec K-01..K-04, aktywuje ADR-0008 dla `commercial_terms` (mechanizm dziś jawnie
+  nieaktywowany — ADR-0008 aneks SC-4-01) jako NOWĄ decyzję dodatkową do `scope_ref`, i miesza dwa
+  niezależne pytania: GDZIE reguła obowiązuje (zasięg) i KIEDY przychód jest rozpoznawany (okres) —
+  reguła 11 Strażnika mówi wyłącznie o pierwszym.
+
+**D-2 (analityk): porównanie modeli / ujawnianie założeń — już pokryte czy nowy mechanizm.**
+Potwierdzone z perspektywy architektury, bez zastrzeżeń: "Porównanie alternatywnych modeli dla
+jednego zakresu (F-06.5) — dziś przez dwa scenariusze" (ta decyzja, "Odłożone") — mechanizm istnieje
+(F-09/duplikacja scenariusza, ADR-0004) i nie wymaga `scope_ref`. `assumptions_used` różni się już
+kształtem per model (pkt 9 tej decyzji dla T&M; `StoryPointsTerms` niesie własny komplet pól) —
+"ujawnianie założeń" nie potrzebuje nowego mechanizmu. **Granica, którą trzeba nazwać wprost:**
+porównanie-przez-dwa-scenariusze nie daje możliwości porównania modeli WEWNĄTRZ jednego scenariusza
+na różnych segmentach — to nie jest D-2, to jest dokładnie D-3 (reguła łączona), osobne pytanie.
+
+**D-3 (architekt: kształt "reguły łączonej"; bez tego K-02 nie da się zaimplementować). GATE —
+bramka 1.**
+- *Opcja A — brak nowej encji; "reguła łączona" = rozłączność wartości `scope_ref` wymuszona przez
+  bazę.* Scenariusz ma ALBO jedną regułę z `scope_ref IS NULL` (dzisiejszy kształt, bez zmian) ALBO
+  N reguł, każda z niepustym `scope_ref`, nigdy oba naraz (nowe ograniczenie zastępujące
+  `UNIQUE (scenario_id)` z pkt 3 wyżej). Dyspozytor per `model_type` (pkt 9) pozostaje bez zmian per
+  wiersz; warstwa wyżej sumuje wyniki N wierszy zamiast czytać jeden — zmiana kontraktu funkcji
+  odczytującej regułę(-y) scenariusza, nie dyspozytora. "Reguła łączona" nie jest encją — jest
+  niezmiennikiem "żadne dwa wiersze nie mają nakładającego się zasięgu", udowadnianym w bazie.
+  Najtańsza opcja, zgodna z regułą 11 Strażnika dosłownie ("dokładnie jedna ścieżka alokacji na
+  jednostkę zasięgu").
+- *Opcja B — nowa encja `combined_pricing_rule` wiążąca N wierszy `commercial_terms`.* Odtwarza
+  dokładnie wariant, który "Kontekst" tej decyzji już raz odrzucił dla oryginalnego `scope_ref`
+  ("polimorficzny `scope_ref` + `EXCLUDE`… trzy przeszkody") — tu przeszkody inne (FK nie
+  polimorficzny), ale ten sam smak: koszt drugiego poziomu tabeli i własnego zestawu kryteriów
+  (osobny ADR-sibling do ADR-0016) bez dzisiejszego konsumenta, który policzyłby realną "cenę
+  łączoną" (np. blended rate) — K-01..K-04 tego nie wymagają.
+- *Opcja C — rozłączność egzekwowana także MIĘDZY segmentami przez nakładanie w czasie.* Rozszerza
+  opcję A o odrzucanie dwóch reguł na segmentach, które się nakładają definicyjnie — ale ADR-0016
+  pkt 6 świadomie DOPUSZCZA nakładające się segmenty ("nie błąd do odrzucenia"), a `EXCLUDE` nie
+  sięga do innej tabeli (ten sam powód, dla którego "Kontekst" tej decyzji odrzucił oryginalny
+  projekt). Wymagałoby wyzwalacza albo walidacji aplikacyjnej — dokładnie klasy mutacji, przed którą
+  ADR-0001 każe bronić się w bazie, gdzie to możliwe.
+- **Zależność wspólna dla A/B/C, nienazwana w Issue #69: żadna opcja nie oblicza faktycznego
+  przychodu per segment bez F-04.** Formuła przychodu T&M (pkt 6) sumuje WSZYSTKIE pozycje/miesiące
+  scenariusza — nie zna pojęcia "pozycja należy do segmentu X" (F-04, `staffing_position`↔segment,
+  jawnie poza zakresem ADR-0016 pkt 9 i SC-1-11). Rozłączność `scope_ref` (dowolna opcja) jest więc
+  dowodliwa na poziomie SCHEMATU (wiersze reguł nie kolidują) już dziś — ale "dokładnie jedna ścieżka
+  alokacji na jednostkę zasięgu" (reguła 11) na poziomie PRZYCHODU pozostaje niedowiedlne, bo nie
+  istnieje jednostka zasięgu mniejsza niż cały scenariusz, do której przychód dałoby się przypisać.
+  To nie jest przeszkoda dla K-04 (FK) ani dla połowy K-01 (odrzucenie mutacji usuwającej predykat
+  rozłączności na poziomie wierszy reguł) — jest przeszkodą dla twierdzenia, że SC-4-05 "chroni przed
+  podwójnym rozliczeniem" w sensie kwotowym. **Rekomendacja:** nazwać to wprost jako świadome
+  ograniczenie zakresu (schema-level teraz, revenue-level po F-04) — ten sam wzorzec co "kształt
+  klucza dowiedziony, siła ochronna nie" (ADR-0016, K-03, o `UNIQUE (id, scenario_id)`).
+
+**D-4 (architekt, nowe): kolejność kopiowania w kaskadzie — `copy_commercial_terms` biegnie PRZED
+`copy_scenario_delivery_segments`.** Zweryfikowane w kodzie
+(`app.data.project_writes.SCENARIO_CHILD_COPIERS`): kolejność dzisiejsza to
+`copy_staffing_positions, copy_commercial_terms, copy_scenario_additional_costs,
+copy_scenario_delivery_segments`. Każdy kopiujący widzi wyłącznie `(session, source, copy)` — żadnego
+kanału współdzielonego mapowania starych-na-nowe identyfikatory między AGREGATAMI (ADR-0004, aneks
+2026-09-19 pkt 1: mapowanie żyje lokalnie w domknięciu KAŻDEGO kopiującego z osobna). Jeśli
+`commercial_terms.scope_ref` ma wskazywać NOWY (skopiowany) segment, kopiujący reguły komercyjnej
+musi znać mapowanie stary-segment-id → nowy-segment-id w chwili, gdy segmenty jeszcze nie istnieją
+(kopiowane trzy pozycje w tuple później). K-03/K-06 (odtwarzalność przez kopiowanie) nie da się
+dowieść bez rozwiązania tego.
+- *Opcja A — przestawić kolejność* (`copy_scenario_delivery_segments` przed `copy_commercial_terms`),
+  kopiujący reguł czyta świeżo utworzone segmenty kopii i mapuje `scope_ref` przez dopasowanie
+  `(scenario_id=copy.id, name=source_segment.name)` (nazwa jest kopiowana dosłownie i unikalna per
+  scenariusz, ADR-0016 pkt 5) — bez zmiany kontraktu `ScenarioChildCopier`. Najtańsza, ale wiąże
+  poprawność mapowania z unikalnością nazwy, nie z identyfikatorem — krucha, jeśli kiedyś nazwa
+  segmentu przestanie być unikalna.
+- *Opcja B — rozszerzyć kontrakt `ScenarioChildCopier` o współdzielony rejestr mapowań id.*
+  Bardziej niezawodna (mapowanie po id, nie po nazwie), ale zmienia podpis współdzielony przez
+  WSZYSTKIE dzisiejsze wpisy rejestru (`Callable[[Session, Scenario, Scenario], None]` → z dodatkowym
+  parametrem) — większy koszt wsteczny niż jedna zmiana kolejności.
+  Żadna z opcji nie jest tu rozstrzygnięta — obie są zgodne z K-03/K-06, wybór jest kosztem
+  implementacyjnym, nie rozstrzygnięciem bramki 1 wymagającym człowieka w tym samym sensie co D-1..
+  D-3, ale wymaga jawnego wyboru przed napisaniem migracji, żeby nie zostać odkrytym dopiero
+  czerwonym testem na bramce 2.
+
+**Foundation status.** Dowiedzione: mechanizm reguły komercyjnej dla DWÓCH modeli (T&M, Story
+Points) — zasięg, strażnik zapisu, dyspozytor, kopiowanie jednego wiersza na scenariusz (T&M: 581+
+testów, bramka 3 zamknięta; Story Points: kod na `main`, bramka 3 W TOKU, brak wpisu w
+`capabilities.md`). `scenario_delivery_segment` — schemat, strażnik zapisu, kopiowanie — bramka 3
+ZAMKNIĘTA (migracja `b1f4e8a3c95d`), ale K-03 tamtej decyzji jest jawnie ograniczone do KSZTAŁTU
+klucza, nie jego siły ochronnej ("dowiedzie dopiero SC-4-05, pierwszy konsument"). Tylko
+planowane/niedowiedzione: `scope_ref` sam (nie istnieje), rozłączność zasięgów (schemat), reguła
+łączona (D-3, żadna opcja wybrana), F-04 (pozycja↔segment — nie istnieje, poza zakresem tego
+zadania, blokuje przychód segmentowy niezależnie od wyboru D-3).
+
+**Invariants to watch during implementation:**
+- Reguła 11 Strażnika (dokładnie jedna ścieżka alokacji na jednostkę zasięgu) — patrz ograniczenie
+  nazwane w D-3: dowiedlna dziś wyłącznie na poziomie wierszy reguł, nie na poziomie przychodu.
+- Reguła 13 (okno efektywności odrzuca nakładanie na zapisie) — jeśli D-1 wróci do zakresu,
+  `commercial_terms` aktywuje ADR-0008 po raz pierwszy; dziś nieaktywny (ADR-0008 aneks SC-4-01).
+- Reguła 17 (kopiowanie scenariusza nie zostawia współdzielonej referencji) — D-4 jest dokładnie tym
+  pytaniem dla `scope_ref`.
+- Pkt 3 tego aneksu (złożony FK zgodności typu, wzorzec K-04) — test musi dowieść odrzucenia
+  segmentu INNEGO scenariusza, nie tylko istnienia FK (ten sam wymóg co dla `TYPE_AGREEMENT_
+  FOREIGN_KEY`, pkt 3 "Decyzji").
+- Pkt 1 "Decyzji" `UNIQUE (scenario_id)` — mutacja usuwająca to ograniczenie bez zastąpienia go
+  czymkolwiek jest dokładnie luką, przed którą broni D-3; test musi dowieść, że NIE MOŻNA zapisać
+  dwóch reguł z `scope_ref IS NULL` dla jednego scenariusza, niezależnie od wybranej opcji D-3.
+
+**Required process steps.** Brak nowego pliku w `docs/architecture/decisions/` — to aneks do
+istniejącej, zaakceptowanej decyzji (ten wpis) plus krótki aneks zamykający do
+`ADR-0016-segment-dostawy-scenariusza.md`. README indeksu (`docs/architecture/decisions/README.md`)
+bez zmian (żaden nowy plik, żadna zmiana statusu). `docs/architecture/architecture-sensitive-paths.md`
+zaktualizowany tym samym zadaniem — `backend/app/models/**` i `backend/app/data/**` nie wymieniały
+dotąd ADR-0003 ani ADR-0016 wprost, mimo że `commercial_terms.py`/`app.data.commercial_terms` i
+`scenario_delivery_segment.py`/`app.data.scenario_delivery_segment` leżą dokładnie w tych ścieżkach —
+poprawione tym wpisem.
+
+### 2026-09-25 — bramka 1 SC-4-05 — decyzja człowieka
+
+Zaakceptowano rekomendacje bez zastrzeżeń: **D-1=A, D-2=potwierdzone (bez nowego mechanizmu),
+D-3=A, D-4=A**.
+
+- D-1=A: przypisanie przychodu do okresów i termin płatności (F-06.5, pierwsza połowa) pozostaje
+  odłożone, poza zakresem SC-4-05; DoD Issue #69 (dwa zdania: rozłączność zasięgu + odtwarzalność)
+  jest kompletnym, testowalnym zakresem bez tego. Bullet "Przypisanie przychodu do okresów..." w
+  "Odłożone" wyżej pozostaje bez przypisanego zadania.
+- D-2=potwierdzone: porównanie modeli (F-09/duplikacja scenariusza) i ujawnianie założeń
+  (`assumptions_used` per model) pozostają bez zmian — SC-4-05 nie dodaje tu nowego kryterium.
+- D-3=A: "reguła łączona" nie jest nową encją. Rozłączność wartości `scope_ref` (co najwyżej jedna
+  reguła z `scope_ref IS NULL` per scenariusz; dowolna liczba reguł z niepustym, wzajemnie różnym
+  `scope_ref`) jest wymuszona ograniczeniem w bazie, zastępującym `UNIQUE (scenario_id)` z pkt 1
+  "Decyzji" wyżej. Zależność wspólna nazwana wyżej (żadna opcja nie liczy przychodu per segment bez
+  F-04) pozostaje świadomym ograniczeniem zakresu — SC-4-05 dowodzi rozłączności na poziomie
+  SCHEMATU (K-01/K-02), nie na poziomie PRZYCHODU; to idzie wprost do "Out of scope" SC-4-05 w
+  `docs/PLAN.md`.
+- D-4=A: `copy_scenario_delivery_segments` przestawione przed `copy_commercial_terms` w
+  `SCENARIO_CHILD_COPIERS`; kopiujący reguł mapuje `scope_ref` przez `(scenario_id=copy.id,
+  name=source_segment.name)`. Kontrakt `ScenarioChildCopier` bez zmian. Notatka w kodzie przy tym
+  dopasowaniu: opcja B (rejestr mapowań id) jest właściwym rozwiązaniem, gdy nazwa segmentu
+  przestanie być unikalna.
+
+Przechodzę do fazy `code`.
