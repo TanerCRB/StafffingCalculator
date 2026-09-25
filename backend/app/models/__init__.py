@@ -24,7 +24,7 @@ from app.models.catalog import (
     WorkingCalendarDay,
     WorkingCalendarDayKind,
 )
-from app.models.commercial_terms import CommercialTerms, TmTerms
+from app.models.commercial_terms import CommercialTerms, OutcomeTerms, TmTerms
 from app.models.organization_defaults import OrganizationDefaults
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
@@ -55,6 +55,7 @@ __all__ = [
     "CatalogVendor",
     "CommercialTerms",
     "OrganizationDefaults",
+    "OutcomeTerms",
     "Project",
     "ProjectAccess",
     "ProjectStatus",

@@ -36,7 +36,7 @@ point 2b).
 """
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
 
@@ -66,13 +66,24 @@ from app.domain.revenue import (
     RevenueAnswer,
     RevenueUnavailable,
 )
+from app.domain.revenue_outcome_based import (
+    OutcomeCategoryInput,
+    OutcomeTermsInput,
+    outcome_assumptions,
+    outcome_based_revenue,
+)
 from app.domain.revenue_time_and_material import BillableMonth, time_and_material_revenue
 from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
 from app.models.commercial_terms import (
+    MODEL_TYPE_OUTCOME_BASED,
     MODEL_TYPE_TIME_AND_MATERIAL,
+    OUTCOME_CATEGORIES,
     CommercialTerms,
+    OutcomeTerms,
     TmTerms,
+    probability_column,
+    units_column,
 )
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import StaffingPosition, StaffingPositionAllocation
@@ -296,8 +307,58 @@ def _time_and_material(session: Session, scenario: Scenario, rule: _Rule) -> Rev
     )
 
 
+def _outcome_based(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+    """Outcome-based (F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03): czyta **wyłącznie** wiersz
+    `outcome_terms` tej reguły — ani obsady, ani alokacji, ani katalogu, ani migawki.
+
+    Dlatego źródło nie zależy od statusu scenariusza (`rate_source = not_applicable`, pkt 8):
+    wiersz jest daną własną scenariusza chronioną strażnikiem zapisu (ADR-0004, aneks SC-4-03), a
+    zatwierdzenie nie zamraża niczego nowego. Reguła bez wiersza szczegółów to
+    `incomplete_commercial_terms`, nigdy przychód `0` (pkt 1).
+    """
+    details = _outcome_details_of(session, rule)
+    if details is None:
+        return RevenueUnavailable(
+            reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=outcome_assumptions()
+        )
+    return outcome_based_revenue(_outcome_input(details), scenario_currency=scenario.currency)
+
+
+def _outcome_details_of(session: Session, rule: _Rule) -> OutcomeTerms | None:
+    """Wiersz `outcome_terms` reguły — `None` dla innego modelu albo reguły bez szczegółów.
+
+    Jedno miejsce odczytu, wspólne dla wyceny (`_outcome_based`) i dla parametrów reguły w
+    odpowiedzi (`ScenarioCommercialView.outcome_terms`, R-04), żeby obie czytały ten sam wiersz."""
+    if rule.terms.model_type != MODEL_TYPE_OUTCOME_BASED or not rule.has_details:
+        return None
+    return session.execute(
+        sa.select(OutcomeTerms).where(OutcomeTerms.commercial_terms_id == rule.terms.id)
+    ).scalar_one_or_none()
+
+
+def _outcome_input(details: OutcomeTerms) -> OutcomeTermsInput:
+    """Wiersz `outcome_terms` jako wejście czystej funkcji — kategorie w stałej kolejności."""
+    return OutcomeTermsInput(
+        currency=details.currency,
+        fixed_fee=details.fixed_fee,
+        success_bonus=details.success_bonus,
+        unit_rate=details.unit_rate,
+        revenue_min=details.revenue_min,
+        revenue_max=details.revenue_max,
+        categories=tuple(
+            OutcomeCategoryInput(
+                category=category,
+                units=getattr(details, units_column(category)),
+                probability=getattr(details, probability_column(category)),
+            )
+            for category in OUTCOME_CATEGORIES
+        ),
+    )
+
+
 REVENUE_BY_MODEL: dict[str, RevenueCalculator] = {
     MODEL_TYPE_TIME_AND_MATERIAL: _time_and_material,
+    MODEL_TYPE_OUTCOME_BASED: _outcome_based,
 }
 """`model_type` → the function that prices it. Chosen by the discriminator alone, never by the shape
 of the data (ADR-0003, point 9). Keys must equal `app.models.commercial_terms.MODEL_TYPES`, and a
@@ -306,6 +367,7 @@ price."""
 
 DETAIL_TABLE_BY_MODEL: dict[str, sa.Table] = {
     MODEL_TYPE_TIME_AND_MATERIAL: TmTerms.__table__,
+    MODEL_TYPE_OUTCOME_BASED: OutcomeTerms.__table__,
 }
 """`model_type` → its details table, for the write path that creates both rows in one statement."""
 
@@ -337,10 +399,11 @@ def revenue_of(session: Session, scenario: Scenario, rule: _Rule | None) -> Reve
     `scenario` must be one `scenario_in_scope` returned: this function decides no access.
 
     **A model this version of the code does not know is a named state, not a `KeyError`** (R-02,
-    gate 2). The discriminator CHECK admits only `time_and_material` today, so the branch is
-    unreachable now; it is reachable in the mixed-version window of expand → deploy → contract
-    (ADR-0001), when a later model's migration has widened the CHECK and an instance still runs this
-    code. Defensive only: nothing here prices another model.
+    gate 2). The discriminator CHECK admits only models this version knows, so the branch is
+    unreachable in a single-version deployment; it is reachable in the mixed-version window of
+    expand → deploy → contract (ADR-0001), when a later model's migration has widened the CHECK and
+    an instance still runs older code — since SC-4-03 proven on a real `outcome_based` row read by a
+    code version without that branch (`tests/test_outcome_revenue_copy.py`).
     """
     source = APPROVED_SNAPSHOT if scenario.status == ScenarioStatus.APPROVED else LIVE_CATALOG
     if rule is None:
@@ -373,6 +436,9 @@ class ScenarioCommercialView:
     scenario: Scenario
     terms: CommercialTerms | None
     revenue: RevenueAnswer
+    outcome_terms: OutcomeTerms | None = None
+    """Wiersz szczegółów reguły Outcome-based, do pokazania jej parametrów (R-04) — `None` dla
+    każdego innego modelu i dla reguły bez wiersza szczegółów. Parametry przychodu, nie koszt."""
 
 
 def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
@@ -384,6 +450,7 @@ def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
         scenario=scenario,
         terms=None if rule is None else rule.terms,
         revenue=revenue_of(session, scenario, rule),
+        outcome_terms=None if rule is None else _outcome_details_of(session, rule),
     )
 
 
@@ -447,8 +514,14 @@ def create_commercial_terms(
     scenario_id: uuid.UUID,
     *,
     model_type: str,
+    details: Mapping[str, object] | None = None,
 ) -> ScenarioCommercialView | None:
     """Create the rule of one scenario **and** its details row, in one guarded statement.
+
+    `details` — kolumny dziedzinowe wiersza szczegółów (dla `outcome_based`: opłata, premia, stawka,
+    min/max, waluta, jednostki i prawdopodobieństwa kategorii; dla T&M brak). Wchodzą do **tej
+    samej** instrukcji jako literały obok `RETURNING` reguły, więc strażnik `approved` obejmuje je
+    tak samo (ADR-0004, aneks 2026-09-25 SC-4-03, pkt 2), a odmowa nie zapisuje żadnego wiersza.
 
     ```
     WITH new_commercial_terms AS (
@@ -498,12 +571,20 @@ def create_commercial_terms(
         .returning(_TERMS_TABLE.c.id, _TERMS_TABLE.c.model_type)
         .cte("new_commercial_terms")
     )
+    detail_values = dict(details or {})
     statement = (
         sa.insert(detail_table)
         .add_cte(new_terms)
         .from_select(
-            ["commercial_terms_id", "model_type"],
-            sa.select(new_terms.c.id, new_terms.c.model_type),
+            ["commercial_terms_id", "model_type", *detail_values],
+            sa.select(
+                new_terms.c.id,
+                new_terms.c.model_type,
+                *(
+                    sa.literal(value, type_=detail_table.c[column].type).label(column)
+                    for column, value in detail_values.items()
+                ),
+            ),
         )
         .returning(detail_table.c.commercial_terms_id)
     )
@@ -590,10 +671,11 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
     (`copy_scenario` takes no status), and the source is only read.
 
     **A model outside `DETAIL_TABLE_BY_MODEL` is refused, never half-copied** (R-03, gate 2):
-    `CommercialTermsNotCopyable`. Unreachable while the CHECK admits `time_and_material` alone; it
-    covers the mixed-version window of ADR-0001 in which a later model's rows exist before every
-    instance runs the code that knows its details table. Defensive only — nothing here copies
-    another model's details.
+    `CommercialTermsNotCopyable`. Unreachable in a single-version deployment; it covers the
+    mixed-version window of ADR-0001 in which a later model's rows exist before every instance runs
+    the code that knows its details table (since SC-4-03 proven on a real `outcome_based` row).
+    Every details table is copied by reflection here — `outcome_terms` with all its domain columns
+    (ADR-0004, aneks 2026-09-25 SC-4-03, pkt 3) — so no model needs a branch of its own.
     """
     terms = session.execute(
         sa.select(CommercialTerms).where(CommercialTerms.scenario_id == source.id)

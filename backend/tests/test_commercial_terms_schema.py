@@ -54,11 +54,20 @@ MIGRATION_PATH = (
     / "versions"
     / "e7b41c9d2a58_create_commercial_terms_tm_terms_and_the_rate_snapshot.py"
 )
+# The newest migration recreating `ck_commercial_terms_model_type_known` with the full `IN` list
+# (ADR-0003, addendum 2026-09-25 SC-4-03, point 10c). The next commercial model repoints this path
+# at its own migration; that model's schema test pins the history through its downgrade.
+LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "migrations"
+    / "versions"
+    / "b9e3c7a1f264_create_outcome_terms_and_widen_the_model_type_check.py"
+)
 
 
-def _migration() -> ModuleType:
+def _migration(path: Path = MIGRATION_PATH, name: str = "sc_4_01_migration") -> ModuleType:
     """Import the migration by path — `migrations/versions` is not a package."""
-    spec = importlib.util.spec_from_file_location("sc_4_01_migration", MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -217,8 +226,11 @@ def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
     (ADR-0004, addendum 2026-09-23 SC-4-01, point 2e).
     """
     migration = _migration()
+    latest_check = _migration(
+        LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH, "latest_model_type_check_migration"
+    )
 
-    assert migration._MODEL_TYPE_KNOWN_EXPRESSION == MODEL_TYPE_KNOWN_EXPRESSION
+    assert latest_check._MODEL_TYPE_KNOWN_EXPRESSION == MODEL_TYPE_KNOWN_EXPRESSION
     assert migration._TM_MODEL_TYPE_EXPRESSION == TM_MODEL_TYPE_EXPRESSION
     assert migration._VALID_PERIOD_EXPRESSION == VALID_PERIOD_EXPRESSION
 

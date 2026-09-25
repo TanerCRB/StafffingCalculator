@@ -18,6 +18,15 @@ least one of the four components (`revenue`, the base cost, the paid-absence cos
 cost) is not itself `calculated` — the two withholding reasons are deliberately different values so
 a client, and a test, can tell "you may not see this" from "this cannot be computed" apart.
 
+**`profitability_state` says why the four are `"n/a"`** (SC-4-03, R-01 of the verification,
+2026-09-25): `not_applicable` — a component is not `calculated`; `currency_mismatch` — all four are,
+but in more than one currency (possible when the scenario declares no currency: each component then
+checks its own currency against nothing). An additive field, not a new value inside the four: those
+keep their existing vocabulary (a decimal, `"n/a"` or `null`), so a client that reads only them
+still sees a withheld figure, never a number summed across currencies. **Not gated**: it states no
+figure, and every currency it is derived from is already visible on the three component payloads
+(`SCENARIO_COST_FIELDS` leaves `currency` and `state` outside the gate for the same reason).
+
 **Money crosses the boundary as a fixed-point string** (`DecimalString`), never a JSON float
 (ADR-0002).
 """
@@ -33,6 +42,10 @@ from app.api.schemas.common import DecimalString
 from app.api.schemas.personnel_cost import PersonnelCostRead
 from app.api.schemas.project import ScenarioStatusLabel
 from app.core.money import NOT_APPLICABLE
+
+ProfitabilityState = Literal["calculated", "not_applicable", "currency_mismatch"]
+"""The API spelling of `app.domain.scenario_results.ProfitabilityState` (the way `RevenueState`
+spells the revenue's named states) — a schema module does not import the domain."""
 
 
 class ScenarioResults(BaseModel):
@@ -65,6 +78,9 @@ class ScenarioResults(BaseModel):
     markup: DecimalString | Literal[NOT_APPLICABLE] | None
     """`profit / included_cost × 100`, via `app.core.money.ratio_percent` — `"n/a"` only when
     `included_cost` is exactly `0.00`, independently of `margin`."""
+    profitability_state: ProfitabilityState
+    """`calculated` when the four fields above are numbers (or `null` under the gate); otherwise
+    why they are `"n/a"` — `not_applicable` or `currency_mismatch` (SC-4-03, R-01). Never gated."""
 
 
 class ScenarioResultsComparison(BaseModel):

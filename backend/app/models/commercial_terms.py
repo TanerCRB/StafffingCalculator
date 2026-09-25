@@ -8,8 +8,10 @@ accepted at gate 1 of SC-4-01) rather than a choice made here:
    `scenario_id → scenarios.project_id`, i.e. through `app.data.project_reads.project_for_caller`,
    with no scope function of its own (ADR-0005, addendum 2026-09-23 SC-4-01, point 1).
 2. **A discriminator closed to the models that have a details table** (point 2). The CHECK below
-   admits `time_and_material` and nothing else; each later model widens it in the same migration
-   that creates its details table. `model_type` is immutable after the write — there is no edit path
+   admits `time_and_material` and — since SC-4-03 — `outcome_based`; each later model widens it in
+   the same migration that creates its details table, recreating the full `IN` list (ADR-0003,
+   aneks 2026-09-25 SC-4-03, pkt 10c). `model_type` is immutable after the write — there is no
+   edit path
    for it, and changing a rule's model is out of scope of the MVP.
 3. **Type agreement is a composite foreign key, not an application check** (point 3; criterion
    K-04). `tm_terms (commercial_terms_id, model_type) → commercial_terms (id, model_type)`, the
@@ -38,6 +40,7 @@ from the catalogue (point 4), so nothing on these rows is priced and nothing is 
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -45,6 +48,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Numeric,
     String,
     UniqueConstraint,
     func,
@@ -60,21 +64,92 @@ if TYPE_CHECKING:
 MODEL_TYPE_TIME_AND_MATERIAL = "time_and_material"
 """The one commercial model that exists today (ADR-0003, point 2)."""
 
-MODEL_TYPES: tuple[str, ...] = (MODEL_TYPE_TIME_AND_MATERIAL,)
+MODEL_TYPE_OUTCOME_BASED = "outcome_based"
+"""Model Outcome-based (F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03)."""
+
+MODEL_TYPES: tuple[str, ...] = (MODEL_TYPE_TIME_AND_MATERIAL, MODEL_TYPE_OUTCOME_BASED)
 """Every model with a details table, as data — the set the discriminator CHECK admits.
 
 Growing this tuple is a migration, not an edit: the CHECK in the database is the rule, and the task
 adding a model adds its details table, its value here and its branch of the revenue dispatcher
 (`app.data.commercial_terms.REVENUE_BY_MODEL`) together."""
 
-MODEL_TYPE_KNOWN_EXPRESSION = "model_type IN ('time_and_material')"
-"""The discriminator CHECK as SQL — spelled once here and once in migration `e7b41c9d2a58`, and
-asserted identical to that copy by `tests/test_commercial_terms_schema.py` (the drift guard R-02
-introduced for the catalogue)."""
+MODEL_TYPE_KNOWN_EXPRESSION = "model_type IN ('time_and_material', 'outcome_based')"
+"""The discriminator CHECK as SQL — spelled here and in the migration that last recreated it
+(`b9e3c7a1f264`, SC-4-03), and asserted identical to that copy by
+`tests/test_outcome_terms_schema.py`.
+
+**Pełna lista `IN`, nie tylko wartość ostatniego modelu** (ADR-0003, aneks 2026-09-25 SC-4-03, pkt
+10c): migracja niosąca wyłącznie własną wartość po cichu unieważniłaby zapisane reguły
+wcześniejszych modeli przy następnej walidacji ograniczenia."""
 
 TM_MODEL_TYPE_EXPRESSION = f"model_type = '{MODEL_TYPE_TIME_AND_MATERIAL}'"
 
+OUTCOME_MODEL_TYPE_EXPRESSION = f"model_type = '{MODEL_TYPE_OUTCOME_BASED}'"
+
 MODEL_TYPE_LENGTH = 40
+
+OUTCOME_CATEGORIES: tuple[str, ...] = ("not_achieved", "partial", "achieved", "exceeded")
+"""Cztery stałe kategorie wyniku (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 3), od najgorszej. Każda
+jest parą kolumn `outcome_terms`: `<kategoria>_units` i `<kategoria>_probability`."""
+
+
+def units_column(category: str) -> str:
+    """Nazwa kolumny liczby jednostek kategorii — jedna pisownia dla modelu, zapisu i odczytu."""
+    return f"{category}_units"
+
+
+def probability_column(category: str) -> str:
+    """Nazwa kolumny prawdopodobieństwa kategorii — jedna pisownia dla modelu, zapisu i odczytu."""
+    return f"{category}_probability"
+
+
+OUTCOME_AMOUNT_PRECISION = 14
+OUTCOME_AMOUNT_SCALE = 4
+"""`NUMERIC(14,4)` dla kwot i stawki za jednostkę reguły — ta sama skala co stawki katalogu i koszty
+dodatkowe (ADR-0008, pkt 6). Zaokrąglenie do jednostki waluty należy do wyliczenia
+(`app.core.money.round_money`), nigdy do zapisu."""
+
+OUTCOME_UNITS_PRECISION = 14
+OUTCOME_UNITS_SCALE = 4
+
+PROBABILITY_PRECISION = 5
+PROBABILITY_SCALE = 2
+"""`NUMERIC(5,2)` — procenty z dwoma miejscami po przecinku (ADR-0003, aneks SC-4-03, pkt 4)."""
+
+OUTCOME_PROBABILITIES_EXPRESSION = (
+    "("
+    + " AND ".join(f"{probability_column(c)} IS NULL" for c in OUTCOME_CATEGORIES)
+    + ") OR ("
+    + " AND ".join(f"{probability_column(c)} IS NOT NULL" for c in OUTCOME_CATEGORIES)
+    + " AND "
+    + " + ".join(probability_column(c) for c in OUTCOME_CATEGORIES)
+    + " = 100)"
+)
+""""Wszystkie cztery `NULL` albo wszystkie ustawione i suma dokładnie 100" — `CHECK` jednego wiersza
+(ADR-0003, aneks SC-4-03, pkt 3-4). Bez tolerancji: `NUMERIC` porównuje dokładnie."""
+
+OUTCOME_UNITS_WITH_UNIT_RATE_EXPRESSION = (
+    "unit_rate IS NULL OR ("
+    + " AND ".join(f"{units_column(c)} IS NOT NULL" for c in OUTCOME_CATEGORIES)
+    + ")"
+)
+"""Liczby jednostek są danymi wejściowymi stawki za jednostkę (runda 2 weryfikacji SC-4-03, pkt 5):
+bez stawki (`unit_rate IS NULL`) każda z czterech może być `NULL` — nie ma czego nimi mnożyć, a `0`
+wpisane za brak byłoby fałszywą wartością; ze stawką wszystkie cztery `NOT NULL`. `CHECK` jednego
+wiersza, więc także fixture i import nie zapiszą stawki bez jednostek."""
+
+OUTCOME_BOUNDS_ORDERED_EXPRESSION = (
+    "revenue_min IS NULL OR revenue_max IS NULL OR revenue_min <= revenue_max"
+)
+"""`min <= max`, gdy oba ustawione (pkt 2). Brak ograniczenia to `NULL`, nigdy `0`."""
+
+OUTCOME_CURRENCY_ISO4217_EXPRESSION = "char_length(currency) = 3"
+OUTCOME_CURRENCY_UPPER_EXPRESSION = "currency = upper(currency)"
+"""Te same dwie reguły waluty co w katalogu (`ck_catalog_default_rates_currency_*`; pkt 7)."""
+
+OUTCOME_TYPE_AGREEMENT_FOREIGN_KEY = "fk_outcome_terms_commercial_terms_model_type"
+"""Złożony klucz obcy zgodności typu dla `outcome_terms` — wzorzec pkt 3 ADR-0003 bez zmian."""
 
 TYPE_AGREEMENT_FOREIGN_KEY = "fk_tm_terms_commercial_terms_model_type"
 """The composite foreign key that makes type agreement a property of the database (criterion K-04).
@@ -160,5 +235,112 @@ class TmTerms(Base):
             ["commercial_terms_id", "model_type"],
             ["commercial_terms.id", "commercial_terms.model_type"],
             name=TYPE_AGREEMENT_FOREIGN_KEY,
+        ),
+    )
+
+
+def _amount_column(*, nullable: bool) -> Mapped[Decimal | None]:
+    return mapped_column(Numeric(OUTCOME_AMOUNT_PRECISION, OUTCOME_AMOUNT_SCALE), nullable=nullable)
+
+
+def _units_column() -> Mapped[Decimal | None]:
+    return mapped_column(Numeric(OUTCOME_UNITS_PRECISION, OUTCOME_UNITS_SCALE), nullable=True)
+
+
+def _probability_column() -> Mapped[Decimal | None]:
+    return mapped_column(Numeric(PROBABILITY_PRECISION, PROBABILITY_SCALE), nullable=True)
+
+
+class OutcomeTerms(Base):
+    """Szczegóły reguły Outcome-based — 1:1, zgodność typu w bazie (ADR-0003, aneks 2026-09-25
+    SC-4-03).
+
+    Pierwsza tabela szczegółów z kolumnami dziedzinowymi. Każda reguła poniżej jest ograniczeniem
+    bazy, nie tylko schematu API — fixture, skrypt ani import nie przechodzą przez Pydantic:
+
+    - **opłata stała obowiązkowa; premia, stawka za jednostkę, minimum i maksimum opcjonalne**, a
+      składnik nieobecny to `NULL`, nigdy `0` (pkt 2) — `0` to wartość wpisana przez
+      użytkownika;
+    - kwoty, stawka i liczby jednostek nieujemne; `revenue_min <= revenue_max`, gdy oba ustawione;
+    - **cztery stałe kategorie jako kolumny** (pkt 3), każda z liczbą jednostek (wpisaną ręcznie;
+      `NULL` dozwolone tylko bez stawki za jednostkę —
+      `ck_outcome_terms_units_given_with_unit_rate`) i opcjonalnym prawdopodobieństwem
+      `NUMERIC(5,2)`; "wszystkie `NULL` albo suma dokładnie 100" jako `CHECK` jednego wiersza
+      (pkt 4);
+    - **własna waluta reguły** (pkt 7), te same dwa `CHECK` co w katalogu.
+
+    Dana własna scenariusza (ADR-0004, aneks 2026-09-25 SC-4-03, grupa 2): chroni ją strażnik
+    zapisu, kopiuje ją jeden wpis agregatu, migawka nie zamraża niczego.
+    """
+
+    __tablename__ = "outcome_terms"
+
+    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True
+    )
+    model_type: Mapped[str] = mapped_column(
+        String(MODEL_TYPE_LENGTH),
+        nullable=False,
+        server_default=MODEL_TYPE_OUTCOME_BASED,
+        default=MODEL_TYPE_OUTCOME_BASED,
+    )
+    """Zawsze `outcome_based` (CHECK niżej) — druga połowa złożonego klucza obcego, jak w
+    `tm_terms`."""
+
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    fixed_fee: Mapped[Decimal] = _amount_column(nullable=False)
+    success_bonus: Mapped[Decimal | None] = _amount_column(nullable=True)
+    """Premia binarna — wypłacana dla kategorii "osiągnięty" i "przekroczony" (pkt 2)."""
+    unit_rate: Mapped[Decimal | None] = _amount_column(nullable=True)
+    revenue_min: Mapped[Decimal | None] = _amount_column(nullable=True)
+    revenue_max: Mapped[Decimal | None] = _amount_column(nullable=True)
+    """Minimum i maksimum ograniczają **cały** przychód kategorii i gwarantowany (pkt 6)."""
+
+    not_achieved_units: Mapped[Decimal | None] = _units_column()
+    not_achieved_probability: Mapped[Decimal | None] = _probability_column()
+    partial_units: Mapped[Decimal | None] = _units_column()
+    partial_probability: Mapped[Decimal | None] = _probability_column()
+    achieved_units: Mapped[Decimal | None] = _units_column()
+    achieved_probability: Mapped[Decimal | None] = _probability_column()
+    exceeded_units: Mapped[Decimal | None] = _units_column()
+    exceeded_probability: Mapped[Decimal | None] = _probability_column()
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Bez `updated_at`: znacznik współbieżności należy do reguły (ADR-0003, "Konsekwencje"; aneks
+    # SC-4-03, pkt 9).
+
+    __table_args__ = (
+        CheckConstraint(OUTCOME_MODEL_TYPE_EXPRESSION, name="model_type_is_outcome"),
+        CheckConstraint(OUTCOME_CURRENCY_ISO4217_EXPRESSION, name="currency_iso4217"),
+        CheckConstraint(OUTCOME_CURRENCY_UPPER_EXPRESSION, name="currency_is_upper"),
+        CheckConstraint("fixed_fee >= 0", name="fixed_fee_not_negative"),
+        CheckConstraint("success_bonus >= 0", name="success_bonus_not_negative"),
+        CheckConstraint("unit_rate >= 0", name="unit_rate_not_negative"),
+        CheckConstraint("revenue_min >= 0", name="revenue_min_not_negative"),
+        CheckConstraint("revenue_max >= 0", name="revenue_max_not_negative"),
+        CheckConstraint(OUTCOME_BOUNDS_ORDERED_EXPRESSION, name="revenue_bounds_ordered"),
+        *(
+            CheckConstraint(
+                f"{units_column(category)} >= 0", name=f"{units_column(category)}_not_negative"
+            )
+            for category in OUTCOME_CATEGORIES
+        ),
+        *(
+            CheckConstraint(
+                f"{probability_column(category)} >= 0",
+                name=f"{probability_column(category)}_not_negative",
+            )
+            for category in OUTCOME_CATEGORIES
+        ),
+        CheckConstraint(OUTCOME_PROBABILITIES_EXPRESSION, name="probabilities_sum_to_100"),
+        CheckConstraint(
+            OUTCOME_UNITS_WITH_UNIT_RATE_EXPRESSION, name="units_given_with_unit_rate"
+        ),
+        ForeignKeyConstraint(
+            ["commercial_terms_id", "model_type"],
+            ["commercial_terms.id", "commercial_terms.model_type"],
+            name=OUTCOME_TYPE_AGREEMENT_FOREIGN_KEY,
         ),
     )

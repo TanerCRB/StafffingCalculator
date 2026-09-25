@@ -3,7 +3,8 @@
 Under `/projects/{project_id}/scenarios/{scenario_id}/commercial-terms`:
 
 - `GET  ""` — the rule and the revenue derived from it (`COMMERCIAL_READ`);
-- `POST ""` — create the rule, with its details row (`COMMERCIAL_WRITE`).
+- `POST ""` — create the rule, with its details row (`COMMERCIAL_WRITE`) — Time & Material or,
+  since SC-4-03, Outcome-based (F-06.3), chosen by `model_type`.
 
 **A router of its own**, not a verb on the staffing or scenario routers: it declares its own pair of
 permissions (ADR-0005, addendum 2026-09-23 SC-4-01, point 2), and a shared router would make them
@@ -21,20 +22,24 @@ revenue is the named `no_commercial_terms` state, because "no rule yet" is infor
 scenario the caller may see, not about whether it exists.
 
 **No edit and no delete path.** The model is immutable after the write (ADR-0003, point 2) and
-`tm_terms` has no column to edit; the one write path is the one guarded, raced and tested.
+`tm_terms` has no column to edit; the one write path is the one guarded, raced and tested. Reguła
+Outcome-based również tylko się tworzy — edycja i usunięcie to osobne zadanie (ADR-0003, aneks
+2026-09-25 SC-4-03, pkt 9).
 """
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.response_shaping import shape_scenario_commercial_terms
 from app.api.schemas.commercial_terms import (
     CommercialTermsCreateRequest,
+    OutcomeBasedTermsCreateRequest,
     ScenarioCommercialTerms,
+    TimeAndMaterialTermsCreateRequest,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.commercial_terms import (
@@ -44,6 +49,7 @@ from app.data.commercial_terms import (
     create_commercial_terms,
 )
 from app.db.session import get_session
+from app.models.commercial_terms import OUTCOME_CATEGORIES, probability_column, units_column
 
 router = APIRouter(
     prefix="/projects/{project_id}/scenarios/{scenario_id}/commercial-terms",
@@ -57,6 +63,39 @@ The same wording as `app.api.scenarios.SCENARIO_NOT_FOUND_DETAIL`, deliberately:
 not exist is the scenario, and a second phrasing of the same absence on a sibling path would be one
 more string for a client to tell apart. The indistinguishability is not maintained by this constant
 alone — `app.data.commercial_terms` returns the same `None` for every such case."""
+
+
+def _details_of(payload: CommercialTermsCreateRequest) -> dict[str, object]:
+    """Kolumny dziedzinowe wiersza szczegółów z ciała żądania — puste dla T&M.
+
+    Tylko przepisanie nazw pól na nazwy kolumn (`units_column`/`probability_column` — jedna
+    pisownia z modelem); żadnej wartości domyślnej: pominięty składnik opcjonalny zostaje `None`,
+    czyli `NULL` w bazie, nigdy `0` (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 2).
+
+    **Pusty słownik tylko dla T&M, jawnie** (runda 2 weryfikacji SC-4-03, R-02): typ ciała, którego
+    ta funkcja nie zna, to błąd programisty — model dodany do unii żądania bez gałęzi tutaj — i
+    kończy się wyjątkiem, nigdy regułą zapisaną bez parametrów.
+    """
+    if isinstance(payload, TimeAndMaterialTermsCreateRequest):
+        return {}
+    if not isinstance(payload, OutcomeBasedTermsCreateRequest):
+        raise TypeError(
+            f"No details mapping for commercial terms payload {type(payload).__name__}: add a "
+            "branch to _details_of together with the model's request schema."
+        )
+    details: dict[str, object] = {
+        "currency": payload.currency,
+        "fixed_fee": payload.fixed_fee,
+        "success_bonus": payload.success_bonus,
+        "unit_rate": payload.unit_rate,
+        "revenue_min": payload.revenue_min,
+        "revenue_max": payload.revenue_max,
+    }
+    for category in OUTCOME_CATEGORIES:
+        entry = getattr(payload.categories, category)
+        details[units_column(category)] = entry.units
+        details[probability_column(category)] = entry.probability
+    return details
 
 
 def _not_found() -> HTTPException:
@@ -96,7 +135,7 @@ def read_commercial_terms(
     "",
     response_model=ScenarioCommercialTerms,
     status_code=status.HTTP_201_CREATED,
-    summary="Set a scenario's commercial rule (Time & Material)",
+    summary="Set a scenario's commercial rule (Time & Material or Outcome-based)",
     responses={
         404: {"description": COMMERCIAL_TERMS_NOT_FOUND_DETAIL},
         409: {
@@ -109,13 +148,17 @@ def read_commercial_terms(
 def create_scenario_commercial_terms(
     project_id: uuid.UUID,
     scenario_id: uuid.UUID,
-    payload: CommercialTermsCreateRequest,
+    payload: Annotated[CommercialTermsCreateRequest, Body()],
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.COMMERCIAL_WRITE))],
     session: Annotated[Session, Depends(get_session)],
 ) -> ScenarioCommercialTerms:
     """Create the rule and its details row in one guarded statement — or refuse.
 
     - **201** — the rule, and the revenue it now yields.
+    - **422** — an invalid body, decided before any write: for Outcome-based a probability set that
+      is incomplete, does not sum to exactly 100.00 or has a third decimal place, `revenue_min >
+      revenue_max`, a negative amount (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 2-4). Nothing is
+      written.
     - **404** — as for the `GET`, decided before any `409` can be reached (K-05).
     - **409, "approved"** — refused by the `INSERT … SELECT … WHERE status <> 'approved' FOR
     UPDATE`,
@@ -127,7 +170,12 @@ def create_scenario_commercial_terms(
     """
     try:
         view = create_commercial_terms(
-            session, caller, project_id, scenario_id, model_type=payload.model_type
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            model_type=payload.model_type,
+            details=_details_of(payload),
         )
     except CommercialTermsWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None

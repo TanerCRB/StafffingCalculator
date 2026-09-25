@@ -7,8 +7,9 @@ value: there is no `revenue` attribute on `RevenueUnavailable` to read a `0` fro
 on `RevenueResult` to forget to check.
 
 This module is the model-independent vocabulary only. The formula of each model lives in its own
-module (`app.domain.revenue_time_and_material` today), which imports from here and from nothing of
-another model's, and never from any cost calculation (F-06: independent calculation per model;
+module (`app.domain.revenue_time_and_material`, `app.domain.revenue_outcome_based`), which
+imports from here and from nothing of another model's, and never from any cost calculation (F-06:
+independent calculation per model;
 backend checklist).
 """
 
@@ -17,6 +18,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Final
+
+from app.core.money import NOT_APPLICABLE
 
 # --- the named states (ADR-0003, point 9) --------------------------------------------------------
 
@@ -30,7 +33,8 @@ of a details row, not its *existence*, so this state is reachable and has to be 
 UNSUPPORTED_MODEL_TYPE: Final = "unsupported_model_type"
 """The rule names a model **this version of the code** has no formula for (R-02, gate 2 of SC-4-01).
 
-Unreachable while the discriminator CHECK admits `time_and_material` alone. It exists for the
+Unreachable in a single-version deployment (the CHECK admits only models this code knows). It
+exists for the
 mixed-version window of ADR-0001's expand → deploy → contract: the migration of a later model widens
 the CHECK and a row of that model can be written while an instance still runs this code. Such an
 instance answers with this state — never an unhandled `KeyError`, never a price computed by the
@@ -65,6 +69,20 @@ CALCULATED: Final = "calculated"
 
 LIVE_CATALOG: Final = "live_catalog"
 APPROVED_SNAPSHOT: Final = "approved_snapshot"
+
+NOT_APPLICABLE_SOURCE: Final = "not_applicable"
+"""Trzecia wartość `rate_source` — a także `hours_source` i `vendor_axis` — dla modelu, który nie
+czyta katalogu stawek, godzin ani osi poddostawcy (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8 i 10a).
+
+Nie udaje `live_catalog`/`approved_snapshot`: przychód Outcome-based czyta wyłącznie własne wiersze
+scenariusza, więc nie zależy od statusu scenariusza. Każde miejsce porównujące `rate_source` przez
+równość musi tę wartość jawnie rozpatrzyć — w szczególności strażnik wyścigu `/results`
+(`app.data.scenario_results.STATUS_DEPENDENT_SOURCES`), dla którego nie jest ona dowodem ani braku,
+ani wystąpienia wyścigu."""
+
+STATUS_DEPENDENT_SOURCES: Final = frozenset({LIVE_CATALOG, APPROVED_SNAPSHOT})
+"""Wartości `rate_source` wybierane ze statusu scenariusza — jedyne, których porównanie mówi coś o
+zmianie statusu między dwoma odczytami (ADR-0003, aneks SC-4-03, pkt 8)."""
 
 HOURS_SOURCE_BILLABLE: Final = "billable_hours"
 """The only source of hours a T&M revenue has (ADR-0003, point 6) — named in `assumptions_used` so a
@@ -133,13 +151,52 @@ class AssumptionsUsed:
     currencies: tuple[str, ...] = ()
 
 
+EXPECTED_CALCULATED: Final = "calculated"
+"""Przychód oczekiwany policzony z prawdopodobieństw kategorii (F-06.3)."""
+
+NO_PROBABILITIES: Final = "no_probabilities"
+"""Reguła Outcome-based bez prawdopodobieństw — nazwany stan przychodu **oczekiwanego**, nigdy `0` i
+nigdy kopia gwarantowanego (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 5c). Przychód gwarantowany i per
+kategoria są wtedy nadal podawane."""
+
+EXPECTED_NOT_APPLICABLE: Final = "not_applicable"
+"""Model bez przychodu oczekiwanego (T&M) — albo przychód w ogóle niepodany (nazwany stan w
+`reason`/`state`, który mówi dlaczego)."""
+
+
+@dataclass(frozen=True)
+class CategoryRevenue:
+    """Przychód jednej kategorii wyniku Outcome-based, po ograniczeniu min/max (pkt 5b, 6).
+
+    `revenue` jest zaokrąglony raz, przez `round_money`, **do prezentacji** — przychód oczekiwany
+    liczony jest z wartości niezaokrąglonych, nigdy z tego pola (pkt 5b).
+    """
+
+    category: str
+    units: Decimal | None
+    """`None` — jednostek nie podano (dozwolone tylko bez stawki za jednostkę); nigdy `0`."""
+    probability: Decimal | None
+    revenue: Decimal
+
+
 @dataclass(frozen=True)
 class RevenueResult:
-    """A stated revenue: rounded once, at the end, through `app.core.money.round_money`."""
+    """A stated revenue: rounded once, at the end, through `app.core.money.round_money`.
+
+    `revenue` to przychód, na który scenariusz może liczyć — dla Outcome-based **przychód
+    gwarantowany** (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 5a); od niego liczą zysk `/results` i
+    porównanie scenariuszy. Trzy pola niżej są addytywne (pkt 5b/5d): model bez przychodu
+    oczekiwanego (T&M) zostawia wartości domyślne.
+    """
 
     revenue: Decimal
     currency: str
     assumptions_used: AssumptionsUsed
+    expected_revenue: Decimal | str = NOT_APPLICABLE
+    """Kwota tylko przy `expected_state == EXPECTED_CALCULATED`; w każdym innym stanie
+    `NOT_APPLICABLE` (`"n/a"`) — nigdy `0` i nigdy `None`."""
+    expected_state: str = EXPECTED_NOT_APPLICABLE
+    category_revenues: tuple[CategoryRevenue, ...] = ()
 
 
 @dataclass(frozen=True)
