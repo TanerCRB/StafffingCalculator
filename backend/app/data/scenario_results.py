@@ -180,7 +180,10 @@ def refuse_a_status_race(
       `tests/test_outcome_scenario_results.py`). `revenue_source` jest tu wyłącznie klasyfikatorem
       (test przynależności do jednego słownika) — nigdy nie jest porównywany z `rate_source` kosztu,
       który do strażnika w ogóle nie wchodzi. Odpowiedź bez reguły (`no_commercial_terms`) niesie
-      `rate_source` wybrane ze statusu, więc zostaje w porównaniu (kontrola A15-9);
+      `rate_source` wybrane ze statusu, więc zostaje w porównaniu (kontrola A15-9). **Warunek
+      ważności zwolnienia** (reviewer R-06): wiersze `story_points_terms`/`outcome_terms` nie mają
+      ścieżki edycji w wersji roboczej — zadanie, które ją doda, musi przywrócić ten przychód do (a)
+      albo dostarczyć inny dowód (ADR-0015, aneks SC-7-03, pkt 2);
     - **(b)** `s_K ≠ s_D`, for every model: `s_D` is the status the shared `Scenario` carries after
       the last refresh (`scenario_status`, what-if's `draft` check and `_worked_months`), and the
       personnel cost always depends on the status (reviewer R-01 of SC-7-03, point 8).

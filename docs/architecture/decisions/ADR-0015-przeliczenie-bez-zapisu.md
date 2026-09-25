@@ -195,6 +195,16 @@ porównuje wartości dwóch odrębnych słowników (ADR-0003, aneks SC-7-03, pkt
    dwa statusy, przejście jednokierunkowe) — zbiór wykrywanych przeplotów przychód↔koszt identyczny
    jak przy porównaniu `rate_source` (SC-7-01, SC-4-03).
 
+   **Warunek ważności zwolnienia z (a) (bramka 2, reviewer R-06, decyzja człowieka 2026-09-25,
+   opcja A).** "Ten sam przed i po zatwierdzeniu" nie wynika ze strażnika zapisu — ten chroni wiersz
+   reguły dopiero po zatwierdzeniu, a odczyt nie trzyma blokady. Wynika z tego, że wiersze
+   `story_points_terms` i `outcome_terms` nie mają dziś żadnej ścieżki edycji ani usunięcia w wersji
+   roboczej (ADR-0003: aneks SC-4-04 D-5/A, aneks SC-4-03 pkt 9 — tylko tworzenie). Zwolnienie z (a)
+   obowiązuje, **dopóki** tak jest. Zadanie, które doda edycję wiersza reguły modelu niezależnego od
+   statusu, musi przywrócić ten przychód do składnika (a) albo dostarczyć inny dowód spójności —
+   inaczej przeplot "edycja wersji roboczej → zatwierdzenie → odczyt kosztu" daje `200` z
+   `scenario_status: "Approved"` i przychodem, którego zatwierdzony scenariusz nigdy nie miał.
+
    *Uzasadnienie (b):* `s_D` to status, który współdzielony obiekt `Scenario` niesie po ostatnim
    odświeżeniu na tej ścieżce — serializowany jako `scenario_status` w `…/results` i rozgałęziający
    what-if (sprawdzenie `draft`, `_worked_months`). Koszt osobowy zależy od statusu dla każdego
