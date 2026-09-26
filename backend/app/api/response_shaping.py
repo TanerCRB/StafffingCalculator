@@ -72,6 +72,8 @@ from app.api.schemas.commercial_terms import (
 from app.api.schemas.personnel_cost import (
     CostAssumptionsRead,
     CostRateWindowRead,
+    FixedAmountAssumptionsRead,
+    FixedAmountLineRead,
     PaidAbsenceAssumptionsRead,
     PaidAbsenceMonthHoursRead,
     PersonnelCostRead,
@@ -116,6 +118,8 @@ from app.domain.additional_cost import CALCULATED as ADDITIONAL_COST_CALCULATED
 from app.domain.additional_cost import AdditionalCostResult, AdditionalCostUnavailable
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
+from app.domain.fixed_amount_cost import CALCULATED as FIXED_AMOUNT_CALCULATED
+from app.domain.fixed_amount_cost import FixedAmountCostAnswer, FixedAmountCostResult
 from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
 from app.domain.personnel_cost import CALCULATED as COST_CALCULATED
 from app.domain.personnel_cost import PersonnelCostResult
@@ -159,6 +163,14 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
         "paid_absence_amount",
         "paid_absence_budget_amount",
         "paid_absence_assumptions_used",
+        # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 5; ADR-0005, aneks 2026-09-25
+        # SC-5-03, point 1): the fixed-amount basis's own amount and its assumptions —
+        # identically to `amount` and `assumptions_used` above (criterion K-05).
+        # `fixed_amount_state` and `fixed_amount_currency` are deliberately **not** here, for the
+        # same reason `state` and `currency` are not: naming why a figure cannot be stated
+        # carries no figure by itself.
+        "fixed_amount_amount",
+        "fixed_amount_assumptions_used",
     }
 )
 """Fields of a scenario's base personnel cost that carry a personnel cost (SC-5-01, SC-5-06).
@@ -936,6 +948,41 @@ def _paid_absence_fields(answer: PaidAbsenceCostAnswer) -> dict[str, Any]:
     }
 
 
+def _fixed_amount_fields(answer: FixedAmountCostAnswer) -> dict[str, Any]:
+    """The fixed-amount component (SC-5-03) as the four `fixed_amount_*` fields of the payload.
+
+    Spread into `PersonnelCostRead`, exactly as `_paid_absence_fields` is, so the component's
+    gated fields are members of `SCENARIO_COST_FIELDS` by name and go through the one
+    `_without_scenario_personnel_costs` below — no second gate (ADR-0013, aneks 2026-09-25
+    SC-5-03, point 1, applying the same "one conjunction" rule the paid-absence aneks already
+    states). Nothing is decided here: the state, the amount and the lines arrive from
+    `app.domain.fixed_amount_cost`, rounded there once, not re-rounded here.
+    """
+    assumptions = answer.assumptions_used
+    assumptions_read = FixedAmountAssumptionsRead(
+        lines=[
+            FixedAmountLineRead(
+                position_id=line.position_id, amount=line.amount, currency=line.currency
+            )
+            for line in assumptions.lines
+        ],
+        currencies=list(assumptions.currencies),
+    )
+    if isinstance(answer, FixedAmountCostResult):
+        return {
+            "fixed_amount_state": FIXED_AMOUNT_CALCULATED,
+            "fixed_amount_amount": answer.cost,
+            "fixed_amount_currency": answer.currency,
+            "fixed_amount_assumptions_used": assumptions_read,
+        }
+    return {
+        "fixed_amount_state": answer.reason,
+        "fixed_amount_amount": NOT_APPLICABLE,
+        "fixed_amount_currency": None,
+        "fixed_amount_assumptions_used": assumptions_read,
+    }
+
+
 def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
     """Build one **ungated** base-cost payload from a `ScenarioCostView` — shared by
     `shape_scenario_personnel_cost` below (SC-5-01/SC-5-06) and the results endpoint (SC-7-01,
@@ -974,6 +1021,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         currencies=list(assumptions.currencies),
     )
     paid_absence = _paid_absence_fields(view.paid_absence)
+    fixed_amount = _fixed_amount_fields(view.fixed_amount)
     if isinstance(answer, PersonnelCostResult):
         return PersonnelCostRead(
             state=COST_CALCULATED,
@@ -982,6 +1030,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             currency=answer.currency,
             assumptions_used=assumptions_read,
             **paid_absence,
+            **fixed_amount,
         )
     return PersonnelCostRead(
         state=answer.reason,
@@ -990,6 +1039,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         currency=None,
         assumptions_used=assumptions_read,
         **paid_absence,
+        **fixed_amount,
     )
 
 

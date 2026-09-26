@@ -43,6 +43,19 @@ mechanisms**: the same scope resolution (`scenario_in_scope`), the same `approve
 statement that writes, the same `staffing_position.updated_at` token (ADR-0007, addendum
 2026-09-22 — no token of their own), the same SQLSTATE classification.
 
+**SC-5-03 adds a fifth write path and no new mechanism**: `update_position_cost_basis` edits
+`cost_basis`/`fixed_amount`/`fixed_amount_currency` — columns of the position row itself — in one
+`UPDATE staffing_position SET updated_at = now(), <changes> WHERE …` that carries the same
+concurrency token and the same `unapproved_scenario` guard as every write above (criterion K-03).
+**Bramka 1 fix (Guardian, 2026-09-25):** that same `WHERE` also carries `cost_basis =
+'fixed_amount'` whenever `changes` would otherwise let an amount land on a row without also
+switching its basis — `CostBasisMismatch`, a third state-refusal beside `ApprovedScenarioFrozen`
+and `ConcurrentStaffingEditConflict`, not a fourth mechanism. **Bramka 1 fix, R-02 (Reviewer,
+2026-09-26):** `_diagnose_position_refusal` checks the token *before* `CostBasisMismatch`, not
+after — `cost_basis`, unlike `approved`, toggles both ways, so a stale token must win the diagnosis
+every time, or a race lets one caller's stale retry silently overwrite another's fresh, deliberate
+switch with no warning to either side.
+
 **Reading a position now also derives its capacity** (`app.domain.capacity`), which is why the read
 functions return a `StaffingPositionView` rather than a bare row. The derived figure travels
 *beside* the typed `availability_hours` and never replaces it: nothing in this module writes a
@@ -66,6 +79,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
@@ -90,6 +104,8 @@ from app.domain.capacity import (
 from app.models.additional_cost import AdditionalCost
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
+    COST_BASIS_FIXED_AMOUNT,
+    COST_BASIS_WORKED_TIME,
     HOURS_COLUMNS,
     StaffingPosition,
     StaffingPositionAbsence,
@@ -108,6 +124,14 @@ moving a month is not an edit of a value but a different row, and an edit that c
 would be an undocumented way around `UNIQUE (position_id, period_month)`. `position_id` and `id` are
 not user input at all, and there is no `updated_at` on this table to write (ADR-0007, addendum
 2026-09-19: the token is the position's)."""
+
+EDITABLE_POSITION_FIELDS: frozenset[str] = frozenset(
+    {"cost_basis", "fixed_amount", "fixed_amount_currency"}
+)
+"""Everything `update_position_cost_basis` will ever write (SC-5-03; ADR-0013, aneks 2026-09-25
+SC-5-03): the personnel-cost basis of the position itself. An allow-list, for the same reason
+`EDITABLE_ALLOCATION_FIELDS` is one — the four dimension ids, `headcount` and the two dates have no
+edit path at all yet, and this set must not silently grow to include them."""
 
 
 class StaffingWriteFailed(WriteFailed):
@@ -155,6 +179,46 @@ class ConcurrentStaffingEditConflict(StaffingWriteRejected):
     false collision accepted by name in ADR-0007's addendum of 2026-09-19, because the position is
     the unit of editing and the month is not.
     """
+
+
+class CostBasisMismatch(StaffingWriteRejected):
+    """`fixed_amount`/`fixed_amount_currency` were named without also naming `cost_basis`, and the
+    position's *current, stored* basis is not `fixed_amount` (bramka 1 SC-5-03, Guardian finding).
+
+    The model's invariant is "`fixed_amount`/`fixed_amount_currency` are `NULL` for the default
+    basis" (`app.models.staffing`) — a `PATCH` that writes an amount onto a `worked_time` row would
+    leave that invariant holding in the database's eyes (the CHECK does not forbid a stray amount on
+    `worked_time`, `test_worked_time_basis_with_a_stray_amount_or_currency_is_not_refused_by_this_
+    check` names that permissiveness on purpose) while breaking it in the sense every reader of this
+    module relies on: a `worked_time` row with a leftover amount nobody asked for. Refused *by
+    state*, exactly like `ApprovedScenarioFrozen`/`ConcurrentStaffingEditConflict` — the same
+    guarded `UPDATE` decides it, in the same `WHERE`, not a second check bolted on afterwards.
+
+    A caller switching `cost_basis` to `fixed_amount` in the same request is unaffected: `changes`
+    then contains `cost_basis`, and the requirement below never applies. A caller editing the amount
+    of a position that is *already* `fixed_amount` is unaffected either — the requirement is about
+    what the row **is**, not about what the request also happens to name.
+
+    **Reported only when the caller's own token is still fresh** (Reviewer R-02, correcting this
+    exception's first diagnosis order): `cost_basis` toggles both ways, unlike `approved`, so a
+    `cost_basis` read *after* a concurrent write has already changed it is not a fact about the
+    caller's own request — see `_diagnose_position_refusal`. A stale token is always
+    `ConcurrentStaffingEditConflict`, never this.
+    """
+
+
+_AMOUNT_FIELDS: frozenset[str] = frozenset({"fixed_amount", "fixed_amount_currency"})
+
+
+def _requires_an_existing_fixed_amount_basis(changes: Mapping[str, Any]) -> bool:
+    """Whether `changes` needs the row's *current* `cost_basis` to already be `fixed_amount`.
+
+    True exactly when `fixed_amount`/`fixed_amount_currency` are named and `cost_basis` is not —
+    the one combination the schema validator cannot refuse on its own, because it has no view of
+    the row (`StaffingPositionCostBasisEditRequest._at_least_one_field_and_consistent_with_its_
+    basis`'s own residual, closed here instead, at the one place that does have the row: the
+    statement that writes it)."""
+    return "cost_basis" not in changes and bool(_AMOUNT_FIELDS & set(changes))
 
 
 class AllocationFieldNotEditable(RuntimeError):
@@ -479,8 +543,20 @@ def create_position(
     start_date: date,
     end_date: date | None,
     allocations: Sequence[Mapping[str, Any]] = (),
+    cost_basis: str = COST_BASIS_WORKED_TIME,
+    fixed_amount: Decimal | None = None,
+    fixed_amount_currency: str | None = None,
 ) -> StaffingPositionView | None:
     """Insert one position, with the month rows given for it — or refuse, or answer `None`.
+
+    `cost_basis`/`fixed_amount`/`fixed_amount_currency` (SC-5-03; ADR-0013, aneks 2026-09-25
+    SC-5-03) default to the backward-compatible worked-time basis with no stated amount — the same
+    guarantee the column's own `server_default` gives a row written outside this function. They
+    travel through the **same** `INSERT ... SELECT ... WHERE status <> 'approved'` as every other
+    column of the row (criterion K-03: one statement, one guard, no new mechanism for the two new
+    columns); the database's own `fixed_amount_required_for_its_basis` CHECK is what refuses a
+    `fixed_amount` basis with no amount or no currency (criterion K-06), never a check in this
+    function.
 
     `None` means "no such scenario *for this caller*" and is the same answer for every reason
     (`scenario_in_scope`), which is also what gives the 404-before-409 precedence ADR-0007
@@ -536,6 +612,13 @@ def create_position(
         sa.literal(headcount, type_=_POSITION_TABLE.c.headcount.type).label("headcount"),
         sa.literal(start_date, type_=_POSITION_TABLE.c.start_date.type).label("start_date"),
         sa.literal(end_date, type_=_POSITION_TABLE.c.end_date.type).label("end_date"),
+        sa.literal(cost_basis, type_=_POSITION_TABLE.c.cost_basis.type).label("cost_basis"),
+        sa.literal(fixed_amount, type_=_POSITION_TABLE.c.fixed_amount.type).label(
+            "fixed_amount"
+        ),
+        sa.literal(
+            fixed_amount_currency, type_=_POSITION_TABLE.c.fixed_amount_currency.type
+        ).label("fixed_amount_currency"),
     ).select_from(open_scenario)
     statement = (
         sa.insert(_POSITION_TABLE)
@@ -550,6 +633,9 @@ def create_position(
                 "headcount",
                 "start_date",
                 "end_date",
+                "cost_basis",
+                "fixed_amount",
+                "fixed_amount_currency",
             ],
             source,
         )
@@ -755,6 +841,16 @@ def update_allocation(
     return _position_by_id(session, position_id)
 
 
+class PositionNotFound(RuntimeError):
+    """There is no such staffing position inside that scenario (SC-5-03).
+
+    Raised by `update_position_cost_basis`, the counterpart of `AllocationMonthNotFound` one level
+    up the aggregate: this edit never leaves the position row, so "the position itself is missing"
+    is a fact this module needs its own name for, distinct from "the month row is missing" (which
+    presupposes the position exists) and from "the absence is missing" one table over.
+    """
+
+
 class AllocationMonthNotFound(RuntimeError):
     """There is no such month row under that position, inside that scenario.
 
@@ -825,6 +921,186 @@ def _diagnose_allocation_refusal(
             "This scenario is approved, so its staffing is part of an approved calculation and "
             "cannot be changed. Copy the scenario to open a new version and change the copy."
         )
+    return ConcurrentStaffingEditConflict(
+        "The staffing position changed since it was read. Re-read it and apply the edit again."
+    )
+
+
+# --- the personnel-cost basis (F-07, SC-5-03; ADR-0013, aneks 2026-09-25) ------------------------
+#
+# One more write path, and it introduces no mechanism either: the same shape `update_allocation`
+# already has, except the guard and the write land on the **same** table (`staffing_position`
+# itself, not a child of it), so the CTE that shape needs to bridge two tables collapses into one
+# `UPDATE` — the guard, the token rotation and the write to `cost_basis`/`fixed_amount`/
+# `fixed_amount_currency` are the same statement (criterion K-03, "TEJ SAMEJ instrukcji zapisu co
+# pozostałe kolumny staffing_position").
+
+
+def update_position_cost_basis(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    changes: Mapping[str, Any],
+) -> StaffingPositionView | None:
+    """Edit a position's personnel-cost basis, or refuse — `None` when there is nothing there.
+
+    ```
+    UPDATE staffing_position
+       SET updated_at = now(), <changes>
+     WHERE id = :position_id AND scenario_id = :scenario_id
+       AND updated_at = :expected                      -- ADR-0007, the position's own token
+       AND scenario_id IN (SELECT id FROM scenarios
+                            WHERE id = :scenario_id AND status <> 'approved'
+                              FOR UPDATE)                -- ADR-0004, and the lock (K-20)
+     RETURNING id
+    ```
+
+    One statement, not two: unlike the allocation edit (a grandchild row reached through a CTE on
+    the position), `cost_basis`/`fixed_amount`/`fixed_amount_currency` are columns of the position
+    row itself, so the guard, the token rotation and the write are one `UPDATE` — the construction
+    ADR-0004's aneks of this date names as the property this task must prove, not assume ("żaden
+    nowy kształt strażnika, żaden nowy token współpieżności").
+
+    The database's own `fixed_amount_required_for_its_basis`/`fixed_amount_positive`/currency CHECKs
+    are what refuse an inconsistent combination (e.g. `cost_basis = 'fixed_amount'` with no amount)
+    — this function performs no such check itself and passes `changes` straight into the `UPDATE`,
+    exactly as `update_allocation` does for the hours fields.
+
+    **One guard those CHECKs do not cover, added to the same `WHERE`** (bramka 1 SC-5-03, Guardian
+    finding): a request naming `fixed_amount`/`fixed_amount_currency` without also naming
+    `cost_basis` (the one combination `StaffingPositionCostBasisEditRequest`'s own validator cannot
+    refuse, having no view of the row) must not silently land on a `worked_time` row — the database
+    CHECKs allow it (a `worked_time` row may carry a stray amount, by design, see
+    `test_staffing_cost_basis_schema.py`), but the invariant this module and every reader of it
+    relies on is that it never does. `_requires_an_existing_fixed_amount_basis` adds `cost_basis =
+    'fixed_amount'` to the `WHERE` exactly in that one case, so the guard, the token rotation and
+    the write stay the *same* statement (`CostBasisMismatch`, diagnosed the same way as
+    `ApprovedScenarioFrozen`/`ConcurrentStaffingEditConflict` are).
+    """
+    forbidden = sorted(set(changes) - EDITABLE_POSITION_FIELDS)
+    if forbidden:
+        raise AllocationFieldNotEditable(
+            "These position fields cannot be edited through this function: "
+            + ", ".join(forbidden)
+            + f". Editable: {', '.join(sorted(EDITABLE_POSITION_FIELDS))}."
+        )
+    if not changes:
+        raise AllocationFieldNotEditable(
+            "A position edit must name at least one field to change."
+        )
+
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+        return None
+
+    conditions = [
+        _POSITION_TABLE.c.id == position_id,
+        _POSITION_TABLE.c.scenario_id == scenario_id,
+        _POSITION_TABLE.c.updated_at == expected_updated_at,
+        _POSITION_TABLE.c.scenario_id.in_(unapproved_scenario(scenario_id)),
+    ]
+    if _requires_an_existing_fixed_amount_basis(changes):
+        conditions.append(_POSITION_TABLE.c.cost_basis == COST_BASIS_FIXED_AMOUNT)
+
+    statement = (
+        sa.update(_POSITION_TABLE)
+        .where(*conditions)
+        .values(updated_at=sa.func.now(), **dict(changes))
+        .returning(_POSITION_TABLE.c.id)
+    )
+
+    try:
+        applied = session.execute(statement).one_or_none()
+        if applied is None:
+            raise _diagnose_position_refusal(
+                session,
+                scenario_id,
+                position_id,
+                expected_updated_at=expected_updated_at,
+                changes=changes,
+            )
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    return _position_by_id(session, position_id)
+
+
+def _diagnose_position_refusal(
+    session: Session,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    changes: Mapping[str, Any],
+) -> Exception:
+    """Name the reason the position edit matched no row — after the refusal, never as the guard.
+
+    The same order as `_diagnose_allocation_refusal`/`_diagnose_absence_refusal`: the position's own
+    existence first, then the permanent reason (`approved`), then the token — and only *after* the
+    token is confirmed still fresh does `CostBasisMismatch` get to name anything (Reviewer R-02,
+    correcting this function's first version).
+
+    **`CostBasisMismatch` is not a second permanent reason beside `approved` — it must not be
+    checked before the token.** Unlike `approved` (one-directional: a scenario never returns from
+    `approved` to `draft`), `cost_basis` toggles in both directions — `test_the_cost_basis_edit_
+    endpoint_changes_the_basis_and_is_reflected_in_the_cost` switches a position from `worked_time`
+    to `fixed_amount` and back on the same row. So a *stale read* of the current `cost_basis` here
+    (this `SELECT` runs after the failed `UPDATE`, in the same transaction, and therefore observes
+    whatever a concurrent committer has already changed under `READ COMMITTED`) can name a mismatch
+    that is an artefact of a race, not of the caller's request: a competing edit that switched the
+    position to `worked_time` *after* this caller's token was issued makes today's `cost_basis` look
+    like the reason, when the real reason is that the caller's whole view of the row is stale — and
+    `CostBasisMismatch`'s own advice ("name `cost_basis='fixed_amount'` and retry") would then walk
+    the caller straight into silently overwriting the very edit that raced them, with no re-read and
+    no warning to either side. The token is compared explicitly here (not "second-guessing the
+    database", as `_diagnose_absence_refusal`'s own note might suggest a comparison never belongs in
+    Python) because this function — unlike its two siblings — has *two* independent dynamic
+    conditions in its guarded `WHERE`, not one: elimination genuinely cannot tell them apart once
+    `approved` is ruled out, so at least one of the two must be checked directly. The token is the
+    one chosen, because it is the one whose staleness makes every other fact about the row
+    unreliable to report.
+    """
+    position = session.execute(
+        sa.select(StaffingPosition).where(
+            StaffingPosition.id == position_id, StaffingPosition.scenario_id == scenario_id
+        )
+    ).scalars().one_or_none()
+    if position is None:
+        return PositionNotFound("No such staffing position in this scenario.")
+    approved = session.execute(
+        sa.select(
+            sa.exists().where(
+                Scenario.id == scenario_id, Scenario.status == ScenarioStatus.APPROVED
+            )
+        )
+    ).scalar_one()
+    if approved:
+        return ApprovedScenarioFrozen(
+            "This scenario is approved, so its staffing is part of an approved calculation and "
+            "cannot be changed. Copy the scenario to open a new version and change the copy."
+        )
+    if position.updated_at != expected_updated_at:
+        return ConcurrentStaffingEditConflict(
+            "The staffing position changed since it was read. Re-read it and apply the edit again."
+        )
+    if (
+        _requires_an_existing_fixed_amount_basis(changes)
+        and position.cost_basis != COST_BASIS_FIXED_AMOUNT
+    ):
+        return CostBasisMismatch(
+            "fixed_amount/fixed_amount_currency can only be edited without also naming "
+            "cost_basis when the position's current basis is already 'fixed_amount'. Name "
+            "cost_basis='fixed_amount' in the same request to switch it."
+        )
+    # Defensive only — unreachable in practice: if the token still matches, the scenario is not
+    # approved and the basis condition (if any) already holds, the guarded `UPDATE` would have
+    # matched the row. Named as a concurrency conflict rather than raised as an assertion, so an
+    # unforeseen fourth condition added later fails the same way every other unmodelled case here
+    # does, not with a stack trace.
     return ConcurrentStaffingEditConflict(
         "The staffing position changed since it was read. Re-read it and apply the edit again."
     )

@@ -20,6 +20,14 @@ catalogue has no cost rate" and "you may not see the cost rate" one answer. The 
 (`paid_absence_*`, ADR-0013 aneks 2026-09-23 SC-5-06) — beside the base amount and never summed with
 it. Its amount, its budget part and its assumptions are personnel costs and join
 `SCENARIO_COST_FIELDS`; its state and currency do not.
+
+**Since SC-5-03 a third, named component** — the fixed-amount basis's own cost (`fixed_amount_*`,
+ADR-0013 aneks 2026-09-25 SC-5-03), beside the base amount and the paid-absence one and never summed
+with either. The same split: `fixed_amount_amount` and `fixed_amount_assumptions_used` are personnel
+costs and join `SCENARIO_COST_FIELDS`; `fixed_amount_state` and `fixed_amount_currency` do not
+(ADR-0005, aneks 2026-09-25 SC-5-03, point 1 — a caller without the conjunction may learn that this
+scenario's fixed-amount cost is, say, `currency_mismatch`, never the amount or the currency of any
+line that produced it).
 """
 
 import uuid
@@ -108,6 +116,30 @@ class UnresolvedPaidAbsenceMonthRead(BaseModel):
     reason: Literal["no_calendar", "no_statutory_leave_type", "no_budget", "no_cost_rate"]
 
 
+FixedAmountCostState = Literal["calculated", "currency_mismatch", "no_cost_currency"]
+"""The fixed-amount basis's own states (ADR-0013, aneks 2026-09-25 SC-5-03, point 1) — its own,
+independent vocabulary, not the worked-time basis's `PersonnelCostState` reused: the two formulas
+are two independent predicates (K-01), and the values happen to read the same because both mirror
+`ADR-0014` point 7, not because one is derived from the other."""
+
+
+class FixedAmountLineRead(BaseModel):
+    """One `fixed_amount` position's contribution to the fixed-amount component."""
+
+    position_id: uuid.UUID
+    amount: DecimalString
+    currency: str
+
+
+class FixedAmountAssumptionsRead(BaseModel):
+    """What the fixed-amount component — or its absence — depends on, gated with its amount
+    exactly as `CostAssumptionsRead` is (it names a stated cost, one `headcount = 1` position away
+    from naming what one person costs — ADR-0005, aneks 2026-09-25 SC-5-03, point 2)."""
+
+    lines: list[FixedAmountLineRead]
+    currencies: list[str]
+
+
 class PaidAbsenceAssumptionsRead(BaseModel):
     """What the paid-absence component depends on — gated with its amount. No cost rate here: the
     rates are the base cost's, in `assumptions_used.rate_windows`."""
@@ -144,6 +176,20 @@ class PersonnelCostRead(BaseModel):
     amount (point 6)."""
     paid_absence_currency: str | None
     paid_absence_assumptions_used: PaidAbsenceAssumptionsRead | None
+    """`null` when the caller may not see personnel costs of this scenario's project."""
+
+    fixed_amount_state: FixedAmountCostState
+    """The fixed-amount basis's own state (SC-5-03) — independent of `state` above and shown to
+    every caller, like it: naming *why* a fixed-amount figure cannot be stated carries no amount and
+    no currency by itself (ADR-0005, aneks 2026-09-25 SC-5-03, point 1 — the property this field's
+    own gate test proves, not assumes)."""
+    fixed_amount_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The scenario's `fixed_amount` positions, summed — a **third**, independent figure beside
+    `amount` (worked time) and `paid_absence_amount`, never added to either (SC-5-03 out of scope:
+    "suma kosztu scenariusza łącząca podstawy"). `"n/a"` for a named state; `null` when the caller
+    may not see personnel costs of this scenario's project."""
+    fixed_amount_currency: str | None
+    fixed_amount_assumptions_used: FixedAmountAssumptionsRead | None
     """`null` when the caller may not see personnel costs of this scenario's project."""
 
 

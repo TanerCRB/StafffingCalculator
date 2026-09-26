@@ -30,12 +30,20 @@ decides four things, each of them written down in an accepted decision rather th
 `staffing_position.scenario_id`, ADR-0007's quotes `staffing_position.updated_at`), and a table
 whose name differs from the decision that created it cannot be found by reading the decision.
 
-**What is deliberately absent: any cost, rate or amount of money.** A position carries a dimension
-tuple, a headcount, its own period and hours — nothing a currency could be attached to (ADR-0005,
-addendum 2026-09-19, point 5). The conjunction gate of SC-1-08 is therefore not activated by this
-table, and the first task that does put a resolved rate on a position (F-07, plan block 5) has to
-prove that gate with a criterion of its own.
-"""
+**Until SC-5-03, no cost, rate or amount of money.** A position carried a dimension tuple, a
+headcount, its own period and hours — nothing a currency could be attached to (ADR-0005, addendum
+2026-09-19, point 5).
+
+**Since SC-5-03: `cost_basis`, `fixed_amount` and `fixed_amount_currency` (F-07; ADR-0013, aneks
+2026-09-25 SC-5-03).** Own data of the scenario, group 2 like every other column of this table
+(ADR-0004, aneks 2026-09-25 SC-5-03) — protected after approval by the same write guard as the rest
+of the row, not by a snapshot: nothing outside the scenario ever changes them, so there is nothing
+for an approval to freeze (point 2 of that aneks; contrast with `catalog_default_rates`, whose value
+*is* inherited and therefore *is* snapshotted). `fixed_amount`/`fixed_amount_currency` are `NULL`
+for the default basis (`worked_time`) and are the position's own stated amount for the other. They
+are **never** part of `GET .../staffing-positions`'s response schema (ADR-0005, aneks 2026-09-25
+SC-5-03, Q4) — visible only through the cost endpoint the SC-1-08 conjunction already gates
+(`app.api.personnel_cost`), the same treatment `default_cost_rate` gets on the catalogue."""
 
 import uuid
 from datetime import date, datetime
@@ -49,6 +57,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    String,
     UniqueConstraint,
     func,
 )
@@ -119,6 +128,47 @@ which is what would catch a truncation returning by the back door."""
 POSITION_ID_SCENARIO_UNIQUE = "uq_staffing_position_id_scenario_id"
 """`UNIQUE (id, scenario_id)` on the position — added by SC-5-05 so that an additional cost can
 point at "this position **of this scenario**" with a composite foreign key (ADR-0014, point 1)."""
+
+
+COST_BASIS_WORKED_TIME = "worked_time"
+COST_BASIS_FIXED_AMOUNT = "fixed_amount"
+COST_BASIS_VALUES: tuple[str, ...] = (COST_BASIS_WORKED_TIME, COST_BASIS_FIXED_AMOUNT)
+"""The two personnel-cost bases a position may choose (F-07; ADR-0013, aneks 2026-09-25 SC-5-03).
+`worked_time` is the default (K-02: every position that existed before this task keeps costing
+exactly as it did) — `assigned_fte` is a third value F-07 names but SC-5-04 has not built the
+FTE→hours conversion it would need, so it is not in this tuple yet."""
+
+FIXED_AMOUNT_PRECISION = 14
+FIXED_AMOUNT_SCALE = 4
+"""`NUMERIC(14,4)` — the same precision as every other stored amount in this schema
+(`additional_cost.amount`, `catalog_default_rates.default_cost_rate`): more digits than any
+currency's minor unit, so an input is stored exactly and not silently rounded (ADR-0008,
+point 6)."""
+
+COST_BASIS_KNOWN_EXPRESSION = "cost_basis IN ('worked_time', 'fixed_amount')"
+FIXED_AMOUNT_REQUIRES_ITS_OWN_BASIS_EXPRESSION = (
+    "cost_basis <> 'fixed_amount' OR "
+    "(fixed_amount IS NOT NULL AND fixed_amount_currency IS NOT NULL)"
+)
+"""ADR-0013, aneks 2026-09-25 SC-5-03, point 2 (Q2 = A): a CHECK, not an application validation —
+`cost_basis = 'fixed_amount' → fixed_amount IS NOT NULL`, widened here to require the currency too
+(the open question the aneks names for this task to settle, point 2, second half). Reasoning: a
+`fixed_amount` with no currency is exactly the shape ADR-0013's "two shapes, never a third" forbids
+for the worked-time basis (an amount nobody can state a currency for), so the same rule applies to
+its own basis rather than being left to a `NULL` currency nobody decided the meaning of. Named here
+so the choice is not a silent one (the aneks requires it named in "Done when", not left implicit).
+Mirrors `ck_additional_cost_amount_positive`/G-1 (ADR-0014, D-10) in spelling the guarantee once, in
+the database, so a fixture, a seed script or a future import can never write the unnamed state."""
+FIXED_AMOUNT_POSITIVE_EXPRESSION = "fixed_amount IS NULL OR fixed_amount > 0"
+FIXED_AMOUNT_CURRENCY_ISO4217_EXPRESSION = (
+    "fixed_amount_currency IS NULL OR char_length(fixed_amount_currency) = 3"
+)
+FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION = (
+    "fixed_amount_currency IS NULL OR fixed_amount_currency = upper(fixed_amount_currency)"
+)
+"""The CHECK expressions as SQL, each spelled once here and once in migration `a8f18e00172b`, and
+asserted identical to that copy by the accompanying schema-drift test (the pattern `HOURS_COLUMNS`'s
+module docstring and `additional_cost`'s `_EXPRESSION` constants both already use)."""
 
 
 class StaffingPosition(Base):
@@ -233,6 +283,27 @@ class StaffingPosition(Base):
     back differently. `delete-orphan` is an ORM statement about the aggregate, not a database
     cascade — the foreign key stays `NO ACTION`."""
 
+    cost_basis: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=COST_BASIS_WORKED_TIME
+    )
+    """Which formula prices this position's personnel cost (F-07; ADR-0013, aneks 2026-09-25
+    SC-5-03) — `worked_time` (the default, K-02) or `fixed_amount`. A stored, persistent choice, not
+    a parameter of a read: two callers reading the same position on the same day must see the same
+    basis. `server_default` rather than an application default alone, so a row written outside the
+    request schema (a fixture, a future import) still lands on the backward-compatible value."""
+
+    fixed_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(FIXED_AMOUNT_PRECISION, FIXED_AMOUNT_SCALE), nullable=True
+    )
+    """The position's personnel cost, stated directly, when `cost_basis = 'fixed_amount'` — `NULL`
+    otherwise. Read by nothing but its own formula (`app.domain.fixed_amount_cost`): no catalogue
+    lookup, no dependency on `planned_allocation_hours` (K-01)."""
+
+    fixed_amount_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    """`fixed_amount`'s own currency (ADR-0013, aneks 2026-09-25 SC-5-03, Q1 = A) — not inherited
+    from `scenarios.currency`: the two are compared by the formula, and disagreement is the named
+    `currency_mismatch` state, never a silent conversion (ADR-0006)."""
+
     scenario: Mapped["Scenario"] = relationship()
 
     __table_args__ = (
@@ -250,6 +321,21 @@ class StaffingPosition(Base):
         # constraint on exactly the referenced columns. The same construction as
         # `uq_commercial_terms_id_model_type` (SC-4-01).
         UniqueConstraint("id", "scenario_id", name=POSITION_ID_SCENARIO_UNIQUE),
+        # SC-5-03 (F-07; ADR-0013, aneks 2026-09-25 SC-5-03, points 2 and 6; K-06). The
+        # database, not the request schema, is what makes "fixed_amount basis with no amount" a
+        # state nobody can write — a fixture, a seed script or a future import included.
+        CheckConstraint(COST_BASIS_KNOWN_EXPRESSION, name="cost_basis_known"),
+        CheckConstraint(
+            FIXED_AMOUNT_REQUIRES_ITS_OWN_BASIS_EXPRESSION,
+            name="fixed_amount_required_for_its_basis",
+        ),
+        CheckConstraint(FIXED_AMOUNT_POSITIVE_EXPRESSION, name="fixed_amount_positive"),
+        CheckConstraint(
+            FIXED_AMOUNT_CURRENCY_ISO4217_EXPRESSION, name="fixed_amount_currency_iso4217"
+        ),
+        CheckConstraint(
+            FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION, name="fixed_amount_currency_is_upper"
+        ),
     )
 
 

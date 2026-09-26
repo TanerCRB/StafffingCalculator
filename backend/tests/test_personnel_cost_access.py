@@ -272,6 +272,11 @@ def test_k_04_the_scenario_cost_fields_are_their_own_set_and_the_projects_stays_
             "paid_absence_amount",
             "paid_absence_budget_amount",
             "paid_absence_assumptions_used",
+            # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 5; ADR-0005, aneks 2026-09-25
+            # SC-5-03, point 1): re-armed again, still an equality — the fixed-amount basis's own
+            # amount and its assumptions, gated identically to the worked-time pair above (K-05).
+            "fixed_amount_amount",
+            "fixed_amount_assumptions_used",
         }
     )
     assert PERSONNEL_COST_FIELDS == frozenset()
@@ -360,3 +365,115 @@ def test_k_06_the_revenue_carries_no_cost_field_even_for_a_caller_the_cost_gate_
     assert revenue.json()["revenue"]["state"] == "calculated"
     assert COST_RATE_TEXT not in revenue.text
     assert COST_AMOUNT_TEXT not in revenue.text
+
+
+# --- SC-5-03, K-05: the fixed-amount basis under the same conjunction -----------------------------
+#
+# ADR-0005, aneks 2026-09-25 SC-5-03, point 1: "dowieść, że nowe wartości `state` same nie niosą
+# kwoty ani stawki — test kontrastowy: wołający bez koniunkcji widzi `state = currency_mismatch` dla
+# pozycji `fixed_amount`, nigdy samą kwotę ani walutę pozycji." The tests below are that contrast,
+# plus the "identically to worked time" half of K-05 (the fixed-amount amount and its assumptions
+# vanish and reappear exactly where the worked-time pair already does).
+
+FIXED_AMOUNT_TEXT = "999.9900"
+
+
+def _fixed_amount_scenario(
+    session: Session,
+    *,
+    name: str = "Fixed",
+    cost_visible: bool = False,
+    scenario_currency: str | None = "PLN",
+    currency: str = "PLN",
+):
+    """A project in scope (flag as asked), a draft scenario, one `fixed_amount` position and no
+    worked-time position at all — so the payload's `state`/`amount` (worked time) stay `no_cost_
+    currency`/`"n/a"` throughout and cannot be mistaken for the fixed-amount figures under test."""
+    project = make_project(
+        session,
+        name=name,
+        accessible_to=(IN_SCOPE_USER,),
+        cost_visible_to=(IN_SCOPE_USER,) if cost_visible else (),
+    )
+    scenario = make_scenario(session, project, name="Baseline", currency=scenario_currency)
+    dimensions = make_dimension_tuple(session, suffix=f" {name}")
+    position = make_staffing_position(
+        session,
+        scenario,
+        dimensions,
+        start_date=MAR,
+        cost_basis="fixed_amount",
+        fixed_amount=Decimal(FIXED_AMOUNT_TEXT),
+        fixed_amount_currency=currency,
+    )
+    return project, scenario, position
+
+
+def test_sc_5_03_k_05_the_fixed_amount_and_its_assumptions_are_gated_identically_to_worked_time(
+    client: TestClient, db_session: Session
+) -> None:
+    """SC-5-03, K-05 — the same four-corner table `test_k_04_…conjunction` proves for worked time,
+    for `fixed_amount_amount`/`fixed_amount_assumptions_used`: `null` unless both halves of the
+    conjunction are true, then the stated figure. `fixed_amount_state`/`fixed_amount_currency` are
+    visible throughout — never gated (ADR-0005, aneks 2026-09-25 SC-5-03, point 1).
+    """
+    project, scenario, _ = _fixed_amount_scenario(db_session)
+    path = personnel_cost_path(project.id, scenario.id)
+
+    withheld = _read(client, path, WITHOUT_COST_PERMISSION).json()["personnel_cost"]
+    assert withheld["fixed_amount_state"] == "calculated"
+    assert withheld["fixed_amount_amount"] is None
+    # Never gated — the same design as the worked-time `currency` field (ADR-0005, aneks 2026-09-23
+    # SC-5-01, point 7): a currency code alone names no amount.
+    assert withheld["fixed_amount_currency"] == "PLN"
+    assert withheld["fixed_amount_assumptions_used"] is None
+    assert FIXED_AMOUNT_TEXT not in _read(client, path, WITHOUT_COST_PERMISSION).text
+
+    grant_personnel_cost_visibility(db_session, project_id=project.id, user_id=IN_SCOPE_USER)
+    shown = _read(client, path, EVERYTHING).json()["personnel_cost"]
+    # The sum is rounded once, through `app.core.money.round_money` (ADR-0002): "999.9900" -> the
+    # one line's own, unrounded figure lives in `assumptions_used.lines`, checked separately below.
+    assert (shown["fixed_amount_state"], shown["fixed_amount_amount"]) == (
+        "calculated",
+        "999.99",
+    )
+    assert shown["fixed_amount_currency"] == "PLN"
+    assert shown["fixed_amount_assumptions_used"]["lines"][0]["amount"] == FIXED_AMOUNT_TEXT
+
+
+def test_sc_5_03_k_05_a_named_state_is_visible_without_the_conjunction_but_never_the_amount(
+    client: TestClient, db_session: Session
+) -> None:
+    """The contrast the ADR-0005 aneks names by quotation: two `fixed_amount` positions in
+    different currencies → `currency_mismatch`, visible to a caller **without**
+    `PERSONNEL_COSTS_READ` — but neither position's amount or currency (`EUR`, `123.4500`) is
+    anywhere in that caller's body. The same caller **with** the conjunction sees the state and the
+    two lines.
+    """
+    project, scenario, position = _fixed_amount_scenario(db_session, scenario_currency=None)
+    make_staffing_position(
+        db_session,
+        scenario,
+        make_dimension_tuple(db_session, suffix=" second"),
+        start_date=MAR,
+        cost_basis="fixed_amount",
+        fixed_amount=Decimal("123.4500"),
+        fixed_amount_currency="EUR",
+    )
+    path = personnel_cost_path(project.id, scenario.id)
+
+    withheld = _read(client, path, WITHOUT_COST_PERMISSION)
+    body = withheld.json()["personnel_cost"]
+    assert body["fixed_amount_state"] == "currency_mismatch"
+    assert body["fixed_amount_amount"] is None
+    assert body["fixed_amount_currency"] is None
+    assert body["fixed_amount_assumptions_used"] is None
+    assert "123.4500" not in withheld.text
+    assert "EUR" not in withheld.text
+    assert FIXED_AMOUNT_TEXT not in withheld.text
+
+    grant_personnel_cost_visibility(db_session, project_id=project.id, user_id=IN_SCOPE_USER)
+    shown = _read(client, path, EVERYTHING).json()["personnel_cost"]
+    assert shown["fixed_amount_state"] == "currency_mismatch"
+    assert shown["fixed_amount_amount"] == "n/a"
+    assert sorted(shown["fixed_amount_assumptions_used"]["currencies"]) == ["EUR", "PLN"]

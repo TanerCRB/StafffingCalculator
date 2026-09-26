@@ -4,7 +4,12 @@ Under `/projects/{project_id}/scenarios/{scenario_id}/staffing-positions`:
 
 - `GET    ""` — the whole grid of one scenario, with each month's derived capacity
   (`STAFFING_READ`)
-- `POST   ""` — one position with the months it plans for (`STAFFING_WRITE`)
+- `POST   ""` — one position with the months it plans for (`STAFFING_WRITE`; also
+  `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` when the request's `cost_basis` is
+  `fixed_amount` — F-07, SC-5-03; Security-Auditor finding, bramka 1 SC-5-03)
+- `PATCH  "/{position_id}"` — the position's personnel-cost basis (`STAFFING_WRITE` ∧
+  `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`, F-07, SC-5-03; Security-Auditor finding,
+  bramka 1 SC-5-03)
 - `PATCH  "/{position_id}/allocations/{period_month}"` — one month of one position
   (`STAFFING_WRITE`)
 - `GET    "/{position_id}/absences"` — the absences of one position (`STAFFING_READ`)
@@ -33,9 +38,12 @@ exists, which is why the scope is resolved before any of them can be reached (se
 `app.data.staffing`).
 
 **Nothing here returns a rate, a cost or a currency** (ADR-0005, addendum 2026-09-19, point 5) — the
-response schema has no such field at all, so there is no gate to apply and none is applied. The
-first endpoint that does show a resolved rate on a position (F-07) reinstates the SC-1-08
-conjunction.
+response schema has no such field at all, so there is no gate to apply and none is applied on the
+*read* side of any endpoint on this router. Two write paths are the exception (F-07, SC-5-03): the
+cost-basis `PATCH` unconditionally, and the position `POST` when its `cost_basis` is `fixed_amount`
+— both persist `fixed_amount`, a personnel-cost figure, so both reinstate the SC-1-08 conjunction on
+the write itself, even though neither response carries such a field either (bramka 1 SC-5-03,
+Security-Auditor finding — see `_require_personnel_cost_write_access`).
 """
 
 import uuid
@@ -56,6 +64,7 @@ from app.api.schemas.staffing import (
     StaffingAbsenceDeleteRequest,
     StaffingAbsenceList,
     StaffingAllocationEditRequest,
+    StaffingPositionCostBasisEditRequest,
     StaffingPositionCreateRequest,
     StaffingPositionList,
     StaffingPositionRead,
@@ -64,6 +73,7 @@ from app.core.identity import CallerIdentity, Permission
 from app.data.staffing import (
     AbsenceNotFound,
     AllocationMonthNotFound,
+    PositionNotFound,
     StaffingWriteRefused,
     StaffingWriteRejected,
     create_absence,
@@ -71,9 +81,12 @@ from app.data.staffing import (
     delete_absence,
     list_absences,
     list_positions,
+    scenario_view_in_scope,
     update_allocation,
+    update_position_cost_basis,
 )
 from app.db.session import get_session
+from app.models.staffing import COST_BASIS_FIXED_AMOUNT
 
 router = APIRouter(
     prefix="/projects/{project_id}/scenarios/{scenario_id}/staffing-positions",
@@ -103,6 +116,42 @@ decides whether it may exist."""
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=STAFFING_NOT_FOUND_DETAIL)
+
+
+_PERSONNEL_COST_WRITE_DENIED_DETAIL = (
+    "Caller lacks the personnel-cost visibility needed to write a position's cost basis."
+)
+"""`fixed_amount` is, at `headcount = 1`, directly the cost of the position (ADR-0005, aneks
+2026-09-25 SC-5-03, Q4) — the same figure the read side never shows without the SC-1-08
+conjunction. Security-Auditor finding, bramka 1 SC-5-03: a caller could set that figure while
+holding only `STAFFING_WRITE`, without ever holding `PERSONNEL_COSTS_READ` or this project's
+`can_view_personnel_costs`, and never read it back — a write-side hole beside a read side that is
+fully gated. Shared by both write paths that can persist `fixed_amount`: `create_staffing_position`
+(only when the request's `cost_basis='fixed_amount'` — a `worked_time` create writes no
+personnel-cost figure and needs no conjunction) and `edit_staffing_position_cost_basis`
+(unconditionally, since it edits *only* the three cost-basis fields)."""
+
+
+def _require_personnel_cost_write_access(
+    session: Session, caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
+) -> None:
+    """Refuse a write that would persist `fixed_amount` unless the caller holds the SC-1-08
+    conjunction for this scenario's project — the read side's own gate, applied here to a write.
+
+    `404` before `403` (the same precedence every refusal on this path keeps, ADR-0005 addendum
+    2026-09-19 point 4): the scope is resolved through `scenario_view_in_scope`, the same function
+    the read path (`app.data.personnel_cost.scenario_cost_for_caller`) uses, so a caller outside the
+    project's scope never learns from the status code alone that the project or scenario exists.
+    Only once the scenario is confirmed in scope is the conjunction itself checked.
+    """
+    in_scope = scenario_view_in_scope(session, caller, project_id, scenario_id)
+    if in_scope is None:
+        raise _not_found()
+    project_view, _scenario = in_scope
+    if not (caller.has(Permission.PERSONNEL_COSTS_READ) and project_view.can_view_personnel_costs):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=_PERSONNEL_COST_WRITE_DENIED_DETAIL
+        )
 
 
 @router.get(
@@ -139,6 +188,7 @@ def list_staffing_positions(
     status_code=status.HTTP_201_CREATED,
     summary="Add a staffing position to one scenario, with the months it plans for",
     responses={
+        403: {"description": _PERSONNEL_COST_WRITE_DENIED_DETAIL},
         404: {"description": STAFFING_NOT_FOUND_DETAIL},
         409: {
             "description": "Refused: the scenario is approved (its staffing is part of an approved "
@@ -157,7 +207,16 @@ def create_staffing_position(
 ) -> StaffingPositionRead:
     """Create one position and the month rows given with it — or refuse.
 
-    Every decision this endpoint reports is taken one layer down, in `create_position`:
+    **The SC-1-08 conjunction, but only when the request would persist `fixed_amount`**
+    (Security-Auditor finding, bramka 1 SC-5-03, extended from `PATCH` to this endpoint on the
+    human's explicit follow-up: `create_position` has the identical gap `edit_staffing_position_
+    cost_basis` had). A request whose `cost_basis` is (still) `worked_time` — the default, and every
+    request this repository's tests sent before SC-5-03 — writes no personnel-cost figure at all, so
+    it needs no conjunction and is unaffected: `_require_personnel_cost_write_access` is not even
+    called. Only `cost_basis == 'fixed_amount'` calls it, before `create_position` runs, through the
+    same `scenario_view_in_scope` the `PATCH` endpoint and the personnel-cost read use.
+
+    Every other decision this endpoint reports is taken one layer down, in `create_position`:
 
     - **404** — the scenario is not in the caller's scope, does not exist, or belongs to a different
       project. Indistinguishable by construction, not by a rule someone has to remember.
@@ -170,11 +229,14 @@ def create_staffing_position(
     - **500** — a write that broke for a reason no SQLSTATE classified. It must not arrive as a
       `409` describing a conflict nobody observed (R-01), which is why only `StaffingWriteRefused`
       is caught here and its parent class is not.
-    - **403** — the permission dependency, before any of the above and before the database.
+    - **403** — the permission dependency, before any of the above and before the database; for a
+      `fixed_amount` create, the SC-1-08 conjunction above, before `create_position` as well.
 
     The `409` bodies name the mechanism and quote no row value (NF-11) — the exception carries the
     SQLSTATE and the constraint name only, through `app.data.write_errors`.
     """
+    if payload.cost_basis == COST_BASIS_FIXED_AMOUNT:
+        _require_personnel_cost_write_access(session, caller, project_id, scenario_id)
     try:
         created = create_position(
             session,
@@ -191,6 +253,9 @@ def create_staffing_position(
             allocations=[
                 allocation.model_dump() for allocation in payload.allocations
             ],
+            cost_basis=payload.cost_basis,
+            fixed_amount=payload.fixed_amount,
+            fixed_amount_currency=payload.fixed_amount_currency,
         )
     except StaffingWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
@@ -253,6 +318,85 @@ def edit_staffing_allocation(
             changes=payload.changes(),
         )
     except AllocationMonthNotFound:
+        raise _not_found() from None
+    except StaffingWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except StaffingWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if edited is None:
+        raise _not_found()
+    return shape_staffing_position(edited)
+
+
+@router.patch(
+    "/{position_id}",
+    response_model=StaffingPositionRead,
+    summary="Edit the personnel-cost basis of one staffing position",
+    responses={
+        403: {"description": _PERSONNEL_COST_WRITE_DENIED_DETAIL},
+        404: {"description": STAFFING_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the scenario is approved, the position changed since it was "
+            "read (ADR-0007 concurrency token), or fixed_amount/fixed_amount_currency were named "
+            "without cost_basis while the position's stored basis is not already fixed_amount."
+        },
+    },
+)
+def edit_staffing_position_cost_basis(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    payload: StaffingPositionCostBasisEditRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> StaffingPositionRead:
+    """Change `cost_basis`/`fixed_amount`/`fixed_amount_currency` (F-07, SC-5-03), and answer with
+    the position and its new token.
+
+    **`STAFFING_WRITE` on the endpoint, `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` on the
+    write itself** (Security-Auditor finding, bramka 1 SC-5-03) — unlike every other write on this
+    path, because this one persists a personnel-cost figure rather than a dimension, a headcount or
+    an hours count. The conjunction is the read side's own (`app.data.personnel_cost`,
+    `app.api.response_shaping`), resolved here through the same `scenario_view_in_scope` the read
+    path calls, not a second predicate invented at this call site. Refused as a `403` naming no
+    project and no scenario (NF-11), evaluated **before** the write and before the `404`/`409`
+    branches below can be reached — a caller who cannot view personnel costs learns nothing about
+    whether the position exists from the status code it gets instead, because both a missing
+    position and a denied write short-circuit before `update_position_cost_basis` ever runs. This
+    is a stricter rule than the catalogue's own `default_cost_rate` write (`CATALOG_WRITE` may set
+    it without `PERSONNEL_COSTS_READ`, ADR-0014 point 11 Q-7=B): a catalogue rate is organisational
+    data shared by every dimension tuple, while `fixed_amount` is one identified position's own cost
+    figure — the two are not the same write and this task does not claim they must agree.
+
+    The three `409` reasons, decided by the database inside the single statement that writes both
+    the guard and the change (`app.data.staffing.update_position_cost_basis`):
+
+    - the scenario is `approved` — permanent;
+    - `fixed_amount`/`fixed_amount_currency` were named without `cost_basis` while the position's
+      stored basis is not already `fixed_amount` (Guardian finding, bramka 1 SC-5-03) — resolved by
+      also naming `cost_basis='fixed_amount'`, or by re-reading to confirm the basis first;
+    - the position changed since it was read — resolved by re-reading.
+
+    `cost_basis`/`fixed_amount`/`fixed_amount_currency` are never part of the response body
+    (`StaffingPositionRead` has no such field — ADR-0005, aneks 2026-09-25 SC-5-03, Q4): this
+    endpoint answers with the same dimension-and-hours shape every other write on this path does, so
+    a caller reading back what it just wrote here has to go through the personnel-cost endpoint,
+    exactly as it would for a resolved catalogue rate.
+    """
+    _require_personnel_cost_write_access(session, caller, project_id, scenario_id)
+    try:
+        edited = update_position_cost_basis(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            position_id,
+            expected_updated_at=payload.updated_at,
+            changes=payload.changes(),
+        )
+    except PositionNotFound:
         raise _not_found() from None
     except StaffingWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
