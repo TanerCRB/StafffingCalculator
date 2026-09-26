@@ -16,6 +16,7 @@ conversion to PostgreSQL's half-open form happens only inside the generated `val
 
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -37,6 +38,7 @@ from app.models.catalog import (
     RATE_SCALE,
     RATE_UNIT_HOUR,
 )
+from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
 NotApplicableValue = Literal[NOT_APPLICABLE]
 """`"n/a"` as a type — the project's one sentinel for a figure that cannot be computed.
@@ -70,6 +72,14 @@ Not `date.max`: `valid_period` adds a day to `effective_to`, so `9999-12-31` ask
 the range the driver can carry (R-01). Not "today + N years" either — that would make the same
 request valid or invalid depending on when it is sent, which is the class of thing an injected time
 source exists to prevent."""
+
+SurchargePercent = Annotated[
+    DecimalString, Field(ge=0, max_digits=PERCENT_PRECISION, decimal_places=PERCENT_SCALE)
+]
+"""A personnel-cost surcharge on the way in (SC-5-02, F-07): non-negative — a negative surcharge is
+a sign error, not a discount — and exactly as precise as `NUMERIC(6, 3)` is, for the reason
+`RateAmount` gives its own bound: without it, a value more precise than the column would be
+silently rounded at write time instead of refused at the boundary."""
 
 RateUnit = str
 """The unit as it crosses the boundary: a plain string, validated against `RATE_UNIT_HOUR` below.
@@ -174,6 +184,18 @@ class CatalogRate(BaseModel):
     currency: str
     unit: str
 
+    surcharge_percent: DecimalString
+    """The personnel-cost surcharge as a percentage of `default_cost_rate` (SC-5-02, F-07;
+    ADR-0013, aneks 2026-09-25, Q4). **Never gated**, unlike `default_cost_rate` above: a percentage
+    that only multiplies an already-gated figure is an organisational parameter, not a personnel
+    cost of its own (ADR-0005, aneks 2026-09-25, Q4 — mirrors the leave budget of SC-3-03, not
+    `default_cost_rate`), so it is present for every caller who holds `CATALOG_READ`, gated by
+    nothing more (criterion K-04)."""
+
+    includes_surcharge: bool
+    """Whether `default_cost_rate` already carries the surcharge above (criterion K-02). Same
+    treatment as `surcharge_percent`: an organisational parameter, never gated."""
+
     effective_from: date
     effective_to: date | None = None
     """Inclusive, and `None` for an open-ended window (ADR-0008, point 2) — not a `9999-12-31`
@@ -228,6 +250,11 @@ class CatalogRateCreateRequest(BaseModel):
 
     currency: Iso4217Code
     unit: RateUnit = RATE_UNIT_HOUR
+
+    surcharge_percent: SurchargePercent = Decimal("0")
+    """Defaults to `0` — the same "no surcharge configured" a request that predates SC-5-02 would
+    have meant, never an unanswered question."""
+    includes_surcharge: bool = False
 
     effective_from: date
     effective_to: date | None = None
@@ -627,6 +654,14 @@ class CatalogRateEditRequest(BaseModel):
 
     default_selling_rate: RateAmount | None = None
     currency: Iso4217Code | None = None
+
+    surcharge_percent: SurchargePercent | None = None
+    """Omitted = unchanged. `NOT NULL` in the database, like `default_cost_rate`, so an explicit
+    `null` here stays a `422` — it is not in `NULLABLE_RATE_EDIT_FIELDS` (SC-5-02)."""
+    includes_surcharge: bool | None = None
+    """Omitted = unchanged. `False` is a real, present value here — Pydantic's `model_fields_set`
+    is what tells "the caller set it to false" apart from "the caller said nothing", not this
+    default (the same distinction `changes()` already relies on for every other field)."""
 
     effective_from: date | None = None
     effective_to: date | None = None

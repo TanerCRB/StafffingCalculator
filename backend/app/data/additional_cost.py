@@ -163,6 +163,13 @@ class ScenarioAdditionalCostView:
     scenario: Scenario
     costs: Sequence[AdditionalCostRow]
     total: AdditionalCostAnswer
+    status_at_read: ScenarioStatus
+    """The scenario's status **as this read saw it**, copied into an immutable value right after
+    this read's own `session.refresh` (SC-7-03, reviewer R-01; ADR-0015, aneks SC-7-03, point 8).
+    This read never branches on it — draft and approved read the same live rows — but its refresh
+    moves the shared, identity-mapped `Scenario` that the composed reads
+    (`app.data.scenario_results`, `app.data.scenario_what_if`) go on to branch on and serialise, so
+    the race guard there compares this value too. Never serialised by this module's own endpoint."""
 
 
 def _rows(session: Session, scenario_id: uuid.UUID) -> list[AdditionalCostRow]:
@@ -220,6 +227,7 @@ def additional_costs_for_caller(
     # Refreshed, not trusted from the identity map: the currency and status may have changed since
     # the object was loaded earlier in the same session.
     session.refresh(scenario)
+    status_at_read = scenario.status
     rows = _rows(session, scenario.id)
     return ScenarioAdditionalCostView(
         scenario=scenario,
@@ -227,6 +235,7 @@ def additional_costs_for_caller(
         total=additional_cost_total(
             [_line_of(row) for row in rows], scenario_currency=scenario.currency
         ),
+        status_at_read=status_at_read,
     )
 
 

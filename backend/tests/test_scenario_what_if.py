@@ -512,7 +512,7 @@ def test_k_06_an_approved_scenario_gets_the_same_404_as_out_of_scope_never_a_dis
 # --- S-01 (Invariant Guardian, 2026-09-24): the endpoint's own 409, closed at unit level ----------
 
 
-def test_race_guard_a_disagreeing_real_rate_source_answers_409_with_a_generic_message(
+def test_race_guard_a_disagreeing_status_at_read_answers_409_with_a_generic_message(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """S-01 (Invariant Guardian, 2026-09-24) — `app.data.scenario_what_if` inherits
@@ -523,16 +523,19 @@ def test_race_guard_a_disagreeing_real_rate_source_answers_409_with_a_generic_me
     what-if is a separate, larger gap, named and accepted open for now (see the module docstring's
     "What this change does not prove"). This test closes the narrower "literally zero proof" gap:
     it forces the two REAL reads (before any raise is applied) to disagree, the same shape
-    `revenue_source != cost_source` takes when an approval genuinely lands between them.
+    `commercial.status_at_read != cost_view.status_at_read` takes when an approval genuinely lands
+    between them (SC-7-03, gate-1 Q1/A: the injection point moved from `rate_source` to the status
+    each read froze — the assertions below are unchanged; the real-concurrency what-if proof is now
+    `tests/test_scenario_results_status_guard.py`, K-04).
 
     `scenario_cost_for_caller` is patched **inside `app.data.scenario_what_if`'s own namespace**
     (the name a plain `from app.data.personnel_cost import scenario_cost_for_caller` bound there,
     not the origin module's attribute — patching `app.data.personnel_cost.scenario_cost_for_caller`
     would not affect the already-bound reference `scenario_what_if.py` calls). It still delegates to
-    the real function and only swaps `cost.assumptions_used.rate_source` afterwards, so everything
-    else about the view — scope, the personnel-cost flag, the real amount — is genuine; the real
-    revenue stays `live_catalog` (this scenario is a real draft), so the two disagree exactly as
-    they would under an actual race, and the `409` this produces runs the endpoint's real
+    the real function and only swaps the view's `status_at_read` to `approved` afterwards, so
+    everything else about the view — scope, the personnel-cost flag, the real amount — is genuine;
+    the revenue read really saw `draft` (this scenario is a real draft), so the two disagree exactly
+    as they would under an actual race, and the `409` this produces runs the endpoint's real
     `except ScenarioResultsRaceDetected` handler, not a stand-in for it.
     """
     _ensure_statutory_bypass(db_session)
@@ -547,13 +550,7 @@ def test_race_guard_a_disagreeing_real_rate_source_answers_409_with_a_generic_me
         view = real_scenario_cost_for_caller(session, caller, project_id, scenario_id)
         if view is None:
             return None
-        disagreeing_answer = dataclass_replace(
-            view.cost,
-            assumptions_used=dataclass_replace(
-                view.cost.assumptions_used, rate_source="approved_snapshot"
-            ),
-        )
-        return dataclass_replace(view, cost=disagreeing_answer)
+        return dataclass_replace(view, status_at_read=ScenarioStatus.APPROVED)
 
     monkeypatch.setattr(
         scenario_what_if_module, "scenario_cost_for_caller", _disagreeing_cost_view

@@ -893,6 +893,17 @@ nie ujawnia kwoty bez stawki bazowej, która jest już bramkowana osobno".
    czytelnik migawkowego procentu (przyszłe zadanie kosztu w pełni obciążonego zatwierdzonego
    scenariusza) podlega tej samej koniunkcji co dziś `default_cost_rate` migawkowe (ADR-0005, aneks
    2026-09-23 SC-5-01 pkt 2) — SC-5-02 sam nie musi wystawiać żadnej ścieżki, która to pole zwraca.
+4. **B-01 (aneks 2026-09-23 SC-5-01 pkt 5, uśpione, zaakceptowane) rozszerza się jakościowo o
+   PEŁNY ładunek, nie tylko dziedziczy — nazwane wprost tu, nie odkryte później (security-auditor,
+   weryfikacja diffu SC-5-02, 2026-09-25).** Wołający z globalnym `PERSONNEL_COSTS_READ`, bez flagi
+   `can_view_personnel_costs` na projekcie, już przed SC-5-02 mógł odtworzyć koszt BAZOWY konkretnej
+   osoby (`headcount = 1`) przeliczeniem `default_cost_rate` (ścieżka katalogowa jednoczynnikowa,
+   pkt 2 wyżej) razem z krotką wymiarów widoczną przez `STAFFING_READ`. Ten sam wołający ma dziś
+   (od SC-5-02) na tej samej krotce katalogowej także `surcharge_percent`/`includes_surcharge` —
+   wystarczy do przeliczenia kosztu W PEŁNI OBCIĄŻONEGO, nie tylko bazowego, dokładnie tej samej
+   osoby. Warunek dormant (`PLACEHOLDER_PERMISSIONS` bez `PERSONNEL_COSTS_READ`) i warunek ponownego
+   otwarcia (ADR uwierzytelniania) bez zmian — rozszerza się wyłącznie WYPŁATA uśpionego ryzyka, nie
+   jego uśpienie.
 4. **`PLACEHOLDER_PERMISSIONS` bez zmian.** `CATALOG_READ` jest w zestawie od aneksu 2026-09-19
    (SC-2-01) pkt 6; ten punkt nie dodaje nowego uprawnienia, tylko klasyfikuje nowe pole pod istniejące.
 5. **Warunek ponownego otwarcia — bez zmian wobec zobowiązania z aneksu 2026-09-22 SC-3-03 pkt 4/5.**
@@ -943,3 +954,55 @@ nie ujawnia kwoty bez stawki bazowej, która jest już bramkowana osobno".
    może przyjąć (`fixed_amount` obok `worked_time`/`base`, ADR-0013 aneks SC-5-06 pkt 5), nie
    zmienia klasyfikacji samego pola. Nic w tym punkcie nie wymaga nowego aneksu poza tym
    potwierdzeniem — pkt 7 aneksu SC-5-01 obowiązuje bez zmian.
+
+**Aneks — parametry reguły outcome widoczne pod `RESULTS_READ` (2026-09-25, SC-4-03, Issue #67,
+runda weryfikacji 1, decyzja człowieka).**
+
+1. `category_revenues` (liczba jednostek, prawdopodobieństwo, kwota per kategoria) i
+   `expected_amount` są widoczne w `/results`, what-if i porównaniu pod samym `RESULTS_READ`, bez
+   `COMMERCIAL_READ` — wołający bez prawa odczytu reguły poznaje jej parametry (pełny zakres —
+   pkt 3). Przyjęte świadomie przez człowieka.
+2. Dziś nieeksploatowalne: `PLACEHOLDER_PERMISSIONS` nadaje oba uprawnienia naraz (aneks
+   2026-09-18). **Warunek ponownego otwarcia:** zadanie wprowadzające role/rozdział uprawnień
+   między realne osoby — ten sam co dla pozostałych nazwanych skrzyżowań tej rodziny.
+3. **Pełny zakres ujawnienia (uzupełnienie po rundzie weryfikacji 2, 2026-09-25, decyzja
+   człowieka; ustalenie B-01 audytu bezpieczeństwa).** Pkt 1 nie ogranicza się do pól podanych
+   wprost: z `amount` (przychód gwarantowany) i `category_revenues` (jednostki, prawdopodobieństwo
+   i kwota per kategoria) wołający z samym `RESULTS_READ`, bez `COMMERCIAL_READ`, zwykle odtwarza
+   również opłatę stałą (`fixed_fee`), stawkę za jednostkę (`unit_rate`), premię
+   (`success_bonus`), walutę reguły (`currency`) oraz — gdy ograniczenie min/max zadziała w
+   którejś kategorii albo w przychodzie gwarantowanym — `revenue_min`/`revenue_max`. W praktyce
+   jest to prawie cała reguła outcome odczytywalna pod `GET` tylko z `COMMERCIAL_READ` (ADR-0003,
+   aneks 2026-09-25 SC-4-03 pkt 11). Akceptacja pkt 1 **utrzymana przez człowieka w tym pełnym
+   zakresie**; dziś nieeksploatowalne z powodu z pkt 2 (`PLACEHOLDER_PERMISSIONS`). **Warunek
+   ponownego otwarcia bez zmian:** zadanie ról/rozdziału uprawnień — wtedy rozstrzygnięcie musi
+   objąć cały zakres z tego punktu, nie tylko pola wymienione w pkt 1.
+4. **Story Points pod `RESULTS_READ` (runda weryfikacji 3, 2026-09-25, uwaga audytu
+   bezpieczeństwa).** Po merge z SC-4-04 scenariusz Story Points odpowiada na `/results`, what-if
+   i porównaniu `200` (ADR-0003, aneks SC-4-03 pkt 12b). Wołający z samym `RESULTS_READ` widzi
+   wyłącznie iloczyn `price_per_point × accepted_points` i walutę reguły — tę samą klasę "figury
+   rozliczeniowej" co przychód T&M (aneks SC-7-01 pkt 1 i 4); ceny punktu ani liczby punktów
+   osobno nie odtworzy, bo `assumptions_used` Story Points ich nie niesie. Skala inna niż
+   outcome z pkt 3 — do uwzględnienia przy tym samym zadaniu ról.
+
+**Aneks — przyczyna `currency_mismatch` na ekranie przy zamkniętej bramce kosztu osobowego
+(2026-09-25, bramka 1, SC-4-07, Issue #125, decyzja człowieka Q-A=B).**
+
+1. **Zakres "bez ujawniania powodu" doprecyzowany.** Decyzja Q2=b bramki 1 SC-7-02 (2026-09-24,
+   `docs/PLAN.md` SC-7-02: stan `null` bramki renderowany jako generyczne "niedostępne") i
+   ostrożność aneksu SC-7-01 pkt 4 wobec B-01 dotyczą **pól** bramkowanych (`profit`/`margin`/
+   `markup`, część osobowa `included_cost`). Nie obejmują linii stanu sekcji wyników niosącej
+   `profitability_state`. Na polach bez zmian — SC-7-02 K-02 obowiązuje.
+2. **Linia stanu sekcji niezależna od bramki.** `profitability_state` jest poza bramką kosztu
+   osobowego już w odpowiedzi (ADR-0003, aneks SC-4-03 pkt 7, "Kształt") — ekran pokazujący go przy
+   zamkniętej bramce nie ujawnia niczego, czego ładunek pod `RESULTS_READ` nie niesie. Ujawnia się
+   wyłącznie fakt niezgodności walut; waluty składników są już w ładunku. Żadna kwota ani wartość
+   pochodna kosztu osobowego nie trafia do tej linii.
+3. **Uzasadnienie:** `PLACEHOLDER_PERMISSIONS` nigdy nie nadaje `PERSONNEL_COSTS_READ` (aneks
+   2026-09-19 pkt 5), więc w działającej aplikacji bramka jest zawsze zamknięta — pierwszeństwo
+   bramki nad przyczyną czyniłoby przyczynę widoczną wyłącznie w fixture testowym.
+4. **Granica:** ten wyjątek obejmuje wyłącznie wartość `profitability_state = "currency_mismatch"`
+   (`not_applicable` odsyła do stanów składników, które mają własne komunikaty — bez zmian).
+   Każda nowa wartość tego pola lub nowa linia stanu wyprowadzana z danych
+   kosztu osobowego wymaga własnego aneksu i potwierdzenia security-auditora; B-01 i warunek
+   ponownego otwarcia (zadanie ról) — bez zmian. Kontrola: ADR-0003, aneks 2026-09-25 SC-4-07, F-4.

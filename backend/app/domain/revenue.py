@@ -7,9 +7,10 @@ value: there is no `revenue` attribute on `RevenueUnavailable` to read a `0` fro
 on `RevenueResult` to forget to check.
 
 This module is the model-independent vocabulary only. The formula of each model lives in its own
-module (`app.domain.revenue_time_and_material`, `app.domain.revenue_story_points` since SC-4-04),
-which imports from here and from nothing of another model's, and never from any cost calculation
-(F-06: independent calculation per model; backend checklist; rule 10 of the Invariant Guardian).
+module (`app.domain.revenue_time_and_material`, `app.domain.revenue_story_points` since SC-4-04,
+`app.domain.revenue_outcome_based` since SC-4-03), which imports from here and from nothing of
+another model's, and never from any cost calculation (F-06: independent calculation per model;
+backend checklist; rule 10 of the Invariant Guardian).
 """
 
 import uuid
@@ -17,6 +18,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Final
+
+from app.core.money import NOT_APPLICABLE
 
 # --- the named states (ADR-0003, point 9) --------------------------------------------------------
 
@@ -30,7 +33,8 @@ of a details row, not its *existence*, so this state is reachable and has to be 
 UNSUPPORTED_MODEL_TYPE: Final = "unsupported_model_type"
 """The rule names a model **this version of the code** has no formula for (R-02, gate 2 of SC-4-01).
 
-Unreachable while the discriminator CHECK admits `time_and_material` alone. It exists for the
+Unreachable in a single-version deployment (the CHECK admits only models this code knows). It
+exists for the
 mixed-version window of ADR-0001's expand → deploy → contract: the migration of a later model widens
 the CHECK and a row of that model can be written while an instance still runs this code. Such an
 instance answers with this state — never an unhandled `KeyError`, never a price computed by the
@@ -72,13 +76,31 @@ never the catalogue and never a snapshot of it (ADR-0003 addendum 2026-09-25: `s
 is "an own datum of the scenario", not a rate the approval snapshot mechanism ever touches). Naming
 `live_catalog`/`approved_snapshot` here instead would claim a source this model never reads."""
 
+RATE_SOURCE_NOT_APPLICABLE: Final = "not_applicable"
+"""`rate_source` modelu, który nie czyta żadnej stawki (Outcome-based; ADR-0003, aneks 2026-09-25
+SC-4-03, pkt 8 i 10a) — ta sama pisownia co `HOURS_SOURCE_NOT_APPLICABLE` i
+`VENDOR_AXIS_NOT_APPLICABLE` niżej.
+
+Nie udaje `live_catalog`/`approved_snapshot`: przychód Outcome-based czyta wyłącznie własne wiersze
+scenariusza, więc nie zależy od statusu scenariusza."""
+
+STATUS_DEPENDENT_SOURCES: Final = frozenset({LIVE_CATALOG, APPROVED_SNAPSHOT})
+"""Wartości `rate_source` wybierane ze statusu scenariusza — jedyne, których porównanie mówi coś o
+zmianie statusu między dwoma odczytami (ADR-0003, aneks SC-4-03, pkt 8).
+
+Każda inna wartość (`RATE_SOURCE_NOT_APPLICABLE`, `RATE_SOURCE_STORY_POINTS_TERMS`) nazywa daną
+własną scenariusza, niezależną od statusu — strażnik wyścigu `/results`
+(`app.data.scenario_results.refuse_a_status_race`) nie traktuje jej ani jako dowodu wyścigu, ani
+jako dowodu jego braku (decyzja człowieka 2026-09-25, merge SC-4-03 z SC-4-04)."""
+
 HOURS_SOURCE_BILLABLE: Final = "billable_hours"
 """The only source of hours a T&M revenue has (ADR-0003, point 6) — named in `assumptions_used` so a
 reader of the result is told, not left to assume, that neither the plan nor the availability was
 used."""
 
 HOURS_SOURCE_NOT_APPLICABLE: Final = "not_applicable"
-"""A Story Points revenue has no hours at all (SC-4-04, criterion K-02): `accepted_points` is not an
+"""Also the hours source of an Outcome-based revenue (SC-4-03, pkt 8). A Story Points revenue has
+no hours at all (SC-4-04, criterion K-02): `accepted_points` is not an
 hour figure and nothing here converts one into the other. Naming `billable_hours` for this model
 would claim an hours source it never reads."""
 
@@ -87,7 +109,8 @@ VENDOR_AXIS_INTERNAL: Final = "internal"
 own price — never "any vendor"."""
 
 VENDOR_AXIS_NOT_APPLICABLE: Final = "not_applicable"
-"""A Story Points rule prices no rate row, so it has no vendor axis to name (SC-4-04): there is no
+"""Also the vendor axis of an Outcome-based revenue (SC-4-03, pkt 8). A Story Points rule prices no
+rate row, so it has no vendor axis to name (SC-4-04): there is no
 catalogue lookup here for `vendor_id IS NULL` to be true or false of."""
 
 
@@ -148,13 +171,52 @@ class AssumptionsUsed:
     currencies: tuple[str, ...] = ()
 
 
+EXPECTED_CALCULATED: Final = "calculated"
+"""Przychód oczekiwany policzony z prawdopodobieństw kategorii (F-06.3)."""
+
+NO_PROBABILITIES: Final = "no_probabilities"
+"""Reguła Outcome-based bez prawdopodobieństw — nazwany stan przychodu **oczekiwanego**, nigdy `0` i
+nigdy kopia gwarantowanego (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 5c). Przychód gwarantowany i per
+kategoria są wtedy nadal podawane."""
+
+EXPECTED_NOT_APPLICABLE: Final = "not_applicable"
+"""Model bez przychodu oczekiwanego (T&M) — albo przychód w ogóle niepodany (nazwany stan w
+`reason`/`state`, który mówi dlaczego)."""
+
+
+@dataclass(frozen=True)
+class CategoryRevenue:
+    """Przychód jednej kategorii wyniku Outcome-based, po ograniczeniu min/max (pkt 5b, 6).
+
+    `revenue` jest zaokrąglony raz, przez `round_money`, **do prezentacji** — przychód oczekiwany
+    liczony jest z wartości niezaokrąglonych, nigdy z tego pola (pkt 5b).
+    """
+
+    category: str
+    units: Decimal | None
+    """`None` — jednostek nie podano (dozwolone tylko bez stawki za jednostkę); nigdy `0`."""
+    probability: Decimal | None
+    revenue: Decimal
+
+
 @dataclass(frozen=True)
 class RevenueResult:
-    """A stated revenue: rounded once, at the end, through `app.core.money.round_money`."""
+    """A stated revenue: rounded once, at the end, through `app.core.money.round_money`.
+
+    `revenue` to przychód, na który scenariusz może liczyć — dla Outcome-based **przychód
+    gwarantowany** (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 5a); od niego liczą zysk `/results` i
+    porównanie scenariuszy. Trzy pola niżej są addytywne (pkt 5b/5d): model bez przychodu
+    oczekiwanego (T&M) zostawia wartości domyślne.
+    """
 
     revenue: Decimal
     currency: str
     assumptions_used: AssumptionsUsed
+    expected_revenue: Decimal | str = NOT_APPLICABLE
+    """Kwota tylko przy `expected_state == EXPECTED_CALCULATED`; w każdym innym stanie
+    `NOT_APPLICABLE` (`"n/a"`) — nigdy `0` i nigdy `None`."""
+    expected_state: str = EXPECTED_NOT_APPLICABLE
+    category_revenues: tuple[CategoryRevenue, ...] = ()
 
 
 @dataclass(frozen=True)

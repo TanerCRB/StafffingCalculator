@@ -74,6 +74,7 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
 RATE_UNIT_HOUR = "hour"
 """The only unit a rate row may carry today (gate-1 decision 4).
@@ -479,6 +480,36 @@ class CatalogDefaultRate(Base):
         String(20), nullable=False, server_default=RATE_UNIT_HOUR, default=RATE_UNIT_HOUR
     )
 
+    surcharge_percent: Mapped[Decimal] = mapped_column(
+        Numeric(PERCENT_PRECISION, PERCENT_SCALE),
+        nullable=False,
+        server_default=text("0"),
+        default=Decimal("0"),
+    )
+    """Personnel overheads/bonuses/benefits, as a percentage of `default_cost_rate` — SC-5-02 (F-07,
+    ADR-0013 aneks 2026-09-25, Q4). **A parameter, not a cost figure**: the classification decided
+    at gate 1 (ADR-0005, aneks 2026-09-25) rests entirely on the shape — a percentage of a rate that
+    is already gated separately reveals nothing on its own — so this column is gated by
+    `CATALOG_READ` alone (`app.api.response_shaping.shape_catalog_rate` passes it through
+    ungated, never added to `CATALOG_PERSONNEL_COST_FIELDS`). The day this becomes an absolute
+    amount instead of a percentage, that classification has to be re-decided, not inherited
+    (ADR-0005, same aneks, point 1).
+
+    **The same row as `default_cost_rate`, deliberately** (Q5): a new value opens a new
+    `effective_from`/`effective_to` window through the same `EXCLUDE` constraint as a rate change,
+    with no second time mechanism to build. `NOT NULL DEFAULT 0`: an un-configured tuple carries no
+    surcharge, not an unanswered question — `0` is a legal, meaningful percentage here (unlike a
+    missing cost rate, which is a named state, not a number)."""
+
+    includes_surcharge: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    """Whether `default_cost_rate` **already** carries the surcharge above (ADR-0013, aneks
+    2026-09-25 SC-5-02, Q5 — the flag named forward as part of SC-5-01, pt 5). `True` means the
+    fully loaded cost formula must not add `surcharge_percent` on top a second time (criterion
+    K-02) — the fully loaded cost then equals the base cost for this window. The same row, the same
+    window as `default_cost_rate` and `surcharge_percent`, for the same reason."""
+
     # Calendar dates, not points in time (invariant-guardian rule 15): "this rate applies from
     # 1 March" has no timezone.
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
@@ -551,6 +582,9 @@ class CatalogDefaultRate(Base):
             "effective_to IS NULL OR effective_to >= effective_from",
             name="effective_period_ordered",
         ),
+        # SC-5-02 (F-07, ADR-0013 aneks 2026-09-25 Q4): a negative surcharge is a sign error, not a
+        # discount — the same reasoning `RateAmount`/`BudgetDays` give their own non-negative rules.
+        CheckConstraint("surcharge_percent >= 0", name="surcharge_percent_not_negative"),
         # Five elements, and the fifth is an expression rather than a column (`RATE_EXCLUDE_KEY`):
         # `COALESCE(vendor_id, '00000000-0000-0000-0000-000000000000'::uuid)` — the literal
         # `VENDOR_KEY_SENTINEL`, not `uuid_nil()`. `uuid_nil()` would return the identical value

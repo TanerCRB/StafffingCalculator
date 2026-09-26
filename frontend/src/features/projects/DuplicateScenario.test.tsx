@@ -98,7 +98,7 @@ function noRuleTerms(scenarioId: string, status: ScenarioStatus): ScenarioCommer
     scenario_id: scenarioId,
     scenario_status: status,
     commercial_terms: null,
-    revenue: { state: "no_commercial_terms", amount: "n/a", currency: null, assumptions_used: NO_ASSUMPTIONS },
+    revenue: { state: "no_commercial_terms", amount: "n/a", currency: null, assumptions_used: NO_ASSUMPTIONS, expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [] },
   };
 }
 

@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.data.commercial_terms import DETAIL_TABLE_BY_MODEL, REVENUE_BY_MODEL
 from app.models.catalog import VALID_PERIOD_EXPRESSION
 from app.models.commercial_terms import (
+    MODEL_TYPE_KNOWN_EXPRESSION,
     MODEL_TYPES,
     TM_MODEL_TYPE_EXPRESSION,
     TYPE_AGREEMENT_FOREIGN_KEY,
@@ -53,11 +54,20 @@ MIGRATION_PATH = (
     / "versions"
     / "e7b41c9d2a58_create_commercial_terms_tm_terms_and_the_rate_snapshot.py"
 )
+# The newest migration recreating `ck_commercial_terms_model_type_known` with the full `IN` list
+# (ADR-0003, addendum 2026-09-25 SC-4-03, point 10c). The next commercial model repoints this path
+# at its own migration; that model's schema test pins the history through its downgrade.
+LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "migrations"
+    / "versions"
+    / "b9e3c7a1f264_create_outcome_terms_and_widen_the_model_type_check.py"
+)
 
 
-def _migration() -> ModuleType:
+def _migration(path: Path = MIGRATION_PATH, name: str = "sc_4_01_migration") -> ModuleType:
     """Import the migration by path — `migrations/versions` is not a package."""
-    spec = importlib.util.spec_from_file_location("sc_4_01_migration", MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -218,8 +228,9 @@ in the database and in `app.models.commercial_terms.MODEL_TYPE_KNOWN_EXPRESSION`
 point 2: "every later model widens this CHECK in the migration that creates its own details table")
 — comparing the *first* migration's copy against the model's *current* constant would fail on
 purpose from the day a second model lands, which says nothing about either being wrong. The live
-drift guard going forward is `d2f6a91c4b58`'s own copy, asserted against the model in
-`tests/test_story_points_terms.py`."""
+drift guard going forward is the copy in the newest migration recreating the CHECK
+(`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` — `b9e3c7a1f264` since SC-4-03 was linearised on top of
+SC-4-04), asserted against the model below."""
 
 
 def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
@@ -233,7 +244,11 @@ def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
     migration (ADR-0001: a migration keeps describing the schema it produced).
     """
     migration = _migration()
+    latest_check = _migration(
+        LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH, "latest_model_type_check_migration"
+    )
 
+    assert latest_check._MODEL_TYPE_KNOWN_EXPRESSION == MODEL_TYPE_KNOWN_EXPRESSION
     assert migration._MODEL_TYPE_KNOWN_EXPRESSION == _MODEL_TYPE_KNOWN_EXPRESSION_AT_E7B41C9D2A58
     assert migration._TM_MODEL_TYPE_EXPRESSION == TM_MODEL_TYPE_EXPRESSION
     assert migration._VALID_PERIOD_EXPRESSION == VALID_PERIOD_EXPRESSION

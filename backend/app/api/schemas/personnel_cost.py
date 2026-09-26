@@ -1,17 +1,22 @@
-"""Response schema for a scenario's base personnel cost (F-07, SC-5-01; ADR-0013).
+"""Response schema for a scenario's personnel cost (F-07, SC-5-01/SC-5-02; ADR-0013).
 
 Three boundary decisions are visible in the shapes below.
 
-**The figure is explicitly the base cost** (ADR-0013, point 5): `cost_basis` is the literal
-`"base"`, and no field anywhere in this payload is, or could be read as, a fully loaded cost, an
-overhead, a bonus, a profit or a margin. Criterion K-03 asserts the whole field set by *equality*,
-so such a field added later fails a test on the day it is added.
+**The base figure is still explicitly the base cost** (ADR-0013, point 5): `cost_basis` is the
+literal `"base"`, and `amount`/`currency`/`assumptions_used` are untouched by SC-5-02 — no overhead,
+bonus, profit or margin was ever mixed into them, and none is now. **Since SC-5-02, a second, named
+figure sits beside it**: `fully_loaded_amount` and `surcharge_amount` (criteria K-01/K-02), the
+field set change ADR-0013's aneks of 2026-09-25 (point 8) pre-announced for exactly this task — the
+equality assertion `test_personnel_cost.py::_assert_field_sets` (K-03) grows with it, deliberately,
+rather than a fully loaded field hiding inside the base one.
 
 **Two fields are personnel costs and are removed for a caller the gate refuses** — `amount` and
-`assumptions_used` (which names every cost rate used). They are `null` then, never `"0.00"`, never
-`"n/a"`: `"n/a"` is the named-state sentinel, and reusing it for "withheld" would make "the
-catalogue has no cost rate" and "you may not see the cost rate" one answer. The removal is done by
-`app.api.response_shaping`, before serialisation (ADR-0005, aneks 2026-09-23 SC-5-01, points 2–3).
+`assumptions_used` (which names every cost rate used, and — since SC-5-02 — every window's surcharge
+percentage and flag alongside it). They are `null` then, never `"0.00"`, never `"n/a"`: `"n/a"` is
+the named-state sentinel, and reusing it for "withheld" would make "the catalogue has no cost rate"
+and "you may not see the cost rate" one answer. The removal is done by `app.api.response_shaping`,
+before serialisation (ADR-0005, aneks 2026-09-23 SC-5-01, points 2–3). `fully_loaded_amount` and
+`surcharge_amount` are removed alongside `amount`, through the same `SCENARIO_COST_FIELDS` set.
 
 **Money crosses the boundary as a fixed-point string** (`DecimalString`), never a JSON float
 (ADR-0002).
@@ -19,15 +24,19 @@ catalogue has no cost rate" and "you may not see the cost rate" one answer. The 
 **Since SC-5-06 the payload carries a second, named component** — the cost of paid absences
 (`paid_absence_*`, ADR-0013 aneks 2026-09-23 SC-5-06) — beside the base amount and never summed with
 it. Its amount, its budget part and its assumptions are personnel costs and join
-`SCENARIO_COST_FIELDS`; its state and currency do not.
+`SCENARIO_COST_FIELDS`; its state and currency do not. **Since SC-5-02 (criterion K-05) the
+component has its own fully loaded pair too** — `paid_absence_fully_loaded_amount`/
+`paid_absence_surcharge_amount` — gated the same way.
 
-**Since SC-5-03 a third, named component** — the fixed-amount basis's own cost (`fixed_amount_*`,
+**Since SC-5-03 a fourth, named component** — the fixed-amount basis's own cost (`fixed_amount_*`,
 ADR-0013 aneks 2026-09-25 SC-5-03), beside the base amount and the paid-absence one and never summed
 with either. The same split: `fixed_amount_amount` and `fixed_amount_assumptions_used` are personnel
 costs and join `SCENARIO_COST_FIELDS`; `fixed_amount_state` and `fixed_amount_currency` do not
 (ADR-0005, aneks 2026-09-25 SC-5-03, point 1 — a caller without the conjunction may learn that this
 scenario's fixed-amount cost is, say, `currency_mismatch`, never the amount or the currency of any
-line that produced it).
+line that produced it). **Carries no fully loaded/surcharge pair of its own** (SC-5-02 crossed with
+SC-5-03): a fixed amount is not a rate a surcharge multiplies, so there is no second figure to gate
+beside `fixed_amount_amount` the way `paid_absence` and the base cost each gained one.
 """
 
 import uuid
@@ -57,6 +66,12 @@ class CostRateWindowRead(BaseModel):
     """Inclusive, `null` when open-ended — passed through as stored (ADR-0008, point 3)."""
     default_cost_rate: DecimalString
     currency: str
+    surcharge_percent: DecimalString
+    """The window's own surcharge percentage (SC-5-02) — present here, ungated like the catalogue's
+    own field (`app.api.schemas.catalog.CatalogRate.surcharge_percent`, K-04), even though this
+    payload as a whole sits behind the SC-1-08 conjunction: the percentage was never the gated part,
+    the amount it multiplies is."""
+    includes_surcharge: bool
 
 
 class UnresolvedCostMonthRead(BaseModel):
@@ -166,6 +181,17 @@ class PersonnelCostRead(BaseModel):
     assumptions_used: CostAssumptionsRead | None
     """`null` when the caller may not see personnel costs of this scenario's project."""
 
+    fully_loaded_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The fully loaded cost — `amount` plus its surcharge (SC-5-02, criterion K-01). A field of its
+    own, in the identical `currency` as `amount`, under the identical `state`: a month `amount`
+    cannot state is a month this figure cannot state either (`app.domain.personnel_cost.
+    fully_loaded_personnel_cost` shares its three checks with `base_personnel_cost`). Gated exactly
+    like `amount` (K-03); `null` for the same reason `amount` is."""
+    surcharge_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The surcharge alone — `fully_loaded_amount` minus `amount`, from one unrounded sum, never
+    computed by subtracting the two rounded fields back out. `"0.00"` for a scenario whose rates all
+    carry `includes_surcharge = true` (K-02), never `null` unless the whole figure is withheld."""
+
     paid_absence_state: PaidAbsenceCostState
     """The component's own state — independent of `state`. Shown to every caller, like `state`."""
     paid_absence_amount: DecimalString | Literal[NOT_APPLICABLE] | None
@@ -178,16 +204,23 @@ class PersonnelCostRead(BaseModel):
     paid_absence_assumptions_used: PaidAbsenceAssumptionsRead | None
     """`null` when the caller may not see personnel costs of this scenario's project."""
 
+    paid_absence_fully_loaded_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The paid-absence component's fully loaded cost (SC-5-02, criterion K-05) — the same
+    treatment `fully_loaded_amount` gets for the base cost, applied to `paid_absence_amount`."""
+    paid_absence_surcharge_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The surcharge alone, on the paid-absence component — the mirror of `surcharge_amount`."""
+
     fixed_amount_state: FixedAmountCostState
     """The fixed-amount basis's own state (SC-5-03) — independent of `state` above and shown to
     every caller, like it: naming *why* a fixed-amount figure cannot be stated carries no amount and
     no currency by itself (ADR-0005, aneks 2026-09-25 SC-5-03, point 1 — the property this field's
     own gate test proves, not assumes)."""
     fixed_amount_amount: DecimalString | Literal[NOT_APPLICABLE] | None
-    """The scenario's `fixed_amount` positions, summed — a **third**, independent figure beside
-    `amount` (worked time) and `paid_absence_amount`, never added to either (SC-5-03 out of scope:
-    "suma kosztu scenariusza łącząca podstawy"). `"n/a"` for a named state; `null` when the caller
-    may not see personnel costs of this scenario's project."""
+    """The scenario's `fixed_amount` positions, summed — a **fourth**, independent figure beside
+    `amount` (worked time), `fully_loaded_amount`/`surcharge_amount` and `paid_absence_amount`,
+    never added to any of them (SC-5-03 out of scope: "suma kosztu scenariusza łącząca podstawy").
+    `"n/a"` for a named state; `null` when the caller may not see personnel costs of this
+    scenario's project."""
     fixed_amount_currency: str | None
     fixed_amount_assumptions_used: FixedAmountAssumptionsRead | None
     """`null` when the caller may not see personnel costs of this scenario's project."""

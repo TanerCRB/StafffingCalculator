@@ -21,6 +21,14 @@ amount on the second, so "no cost rate" can never be read as a cost of `0`.
 overheads, bonuses and benefits. Nothing here adds any of them, and nothing in either shape is
 called or could be read as a loaded cost, an overhead, a profit or a margin. `COST_BASIS_BASE` is
 the explicit label.
+
+**Since SC-5-02 (F-07), a second, named field beside it: the fully loaded cost**
+(`fully_loaded_personnel_cost`, `COST_BASIS_FULLY_LOADED`) — base cost plus a per-tuple surcharge
+percentage (`catalog_default_rates.surcharge_percent`), or `0` for a tuple whose row already
+carries it (`includes_surcharge`, criterion K-02). The two figures share one resolution
+(`_resolve_months`): a month uncosted for the base cost is uncosted for the fully loaded cost too,
+in the same currency, for the same reason — never a second, independent judgement of the same
+months.
 """
 
 import uuid
@@ -92,13 +100,22 @@ class CostRateWindow:
 
     The cost rate only: nothing on this type carries `default_selling_rate`, so the cost path
     cannot read the revenue's column by accident (ADR-0013, point 1).
-    """
+
+    **`surcharge_percent`/`includes_surcharge` since SC-5-02** (ADR-0013, aneks 2026-09-25, Q4/Q5):
+    the two new columns of `catalog_default_rates`, on the same row and therefore in every window
+    this type already carries — no second window type, no second predicate. The SQL predicate that
+    produces `WorkedMonth.rate` (`app.data.personnel_cost.month_has_cost_rate`) requires these two
+    to agree across the windows of one month exactly as it already required `cost_rate`/`currency`
+    to (closing the gap Guardian/Reviewer named at gate 2 review, 2026-09-25): a boundary that moves
+    only the surcharge or its flag is exactly as disqualifying as one that moves the cost rate."""
 
     source_rate_id: uuid.UUID
     effective_from: date
     effective_to: date | None
     cost_rate: Decimal
     currency: str
+    surcharge_percent: Decimal
+    includes_surcharge: bool
 
 
 @dataclass(frozen=True)
@@ -106,14 +123,19 @@ class MonthCostRate:
     """The cost rate one (position, month) is costed at, and every window it came from.
 
     More than one window when catalogue boundaries fall inside the month but none of them changes
-    the cost rate or its currency — e.g. a mid-month change of the *selling* rate alone. The windows
-    then share `cost_rate` and `currency` by construction: that equality is part of the SQL
-    predicate that produced this value, not something checked here.
+    the cost rate, its currency, its surcharge percentage or its "already includes it" flag — e.g. a
+    mid-month change of the *selling* rate alone. The windows then share all four values by
+    construction: that equality is part of the SQL predicate that produced this value, not something
+    checked here (SC-5-02 extended the predicate to the surcharge pair — a window boundary that
+    moves only one of them makes the whole month unresolved, and `MonthCostRate` is never built from
+    it).
     """
 
     cost_rate: Decimal
     currency: str
     windows: tuple[CostRateWindow, ...]
+    surcharge_percent: Decimal
+    includes_surcharge: bool
 
 
 @dataclass(frozen=True)
@@ -179,28 +201,17 @@ class PersonnelCostUnavailable:
 PersonnelCostAnswer = PersonnelCostResult | PersonnelCostUnavailable
 
 
-def base_personnel_cost(
-    months: Sequence[WorkedMonth],
-    *,
-    rate_source: str,
-    scenario_currency: str | None,
-) -> PersonnelCostAnswer:
-    """The base personnel cost of one scenario, or the named state that withholds it.
+def _resolve_months(
+    months: Sequence[WorkedMonth], *, rate_source: str, scenario_currency: str | None
+) -> tuple[CostAssumptionsUsed, str | None, str | None]:
+    """The three checks every cost figure over `WorkedMonth` shares, extracted once (SC-5-02) so
+    `base_personnel_cost` and `fully_loaded_personnel_cost` cannot silently disagree about which
+    months are costed and in which currency.
 
-    The order of the checks is the order of what a reader can act on:
-
-    1. **Any month without one cost rate over the whole month → `no_cost_rate`**, for the whole
-       cost, naming every (position, month) that caused it. Never the sum of the months that did
-       resolve and never a `0` product for the missing month (ADR-0013, point 2). A month with zero
-       planned hours still needs its rate: "is this month costed" is a question about the
-       catalogue, not about the hours (point 4, the mirror of the revenue's R-04).
-    2. **More than one currency among the costed months, or one other than the scenario's →
-       `currency_mismatch`**. Nothing is converted.
-    3. **No allocation row at all** — the sum is `0.00` in the scenario's currency when it declares
-       one, otherwise the named state `no_cost_currency`.
-    4. Otherwise the sum, in `Decimal` with no intermediate rounding, rounded **once** through
-       `app.core.money.round_money` (ADR-0002; ADR-0013, point 3) — never per month, never per
-       position.
+    Returns `(assumptions, currency, reason)`, with exactly one of `currency`/`reason` not `None` —
+    unless the plan is empty and the scenario names no currency either, in which case `reason` is
+    `NO_COST_CURRENCY` and `currency` stays `None`. A caller checks `reason is not None` first,
+    exactly as `base_personnel_cost` always has.
     """
     windows = _distinct_windows(months)
     currencies = tuple(sorted({month.rate.currency for month in months if month.rate}))
@@ -216,14 +227,45 @@ def base_personnel_cost(
         currencies=currencies,
     )
     if unresolved:
-        return PersonnelCostUnavailable(reason=NO_COST_RATE, assumptions_used=assumptions)
+        return assumptions, None, NO_COST_RATE
     if len(currencies) > 1 or (
         scenario_currency is not None and currencies and currencies != (scenario_currency,)
     ):
-        return PersonnelCostUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
+        return assumptions, None, CURRENCY_MISMATCH
     currency = currencies[0] if currencies else scenario_currency
     if currency is None:
-        return PersonnelCostUnavailable(reason=NO_COST_CURRENCY, assumptions_used=assumptions)
+        return assumptions, None, NO_COST_CURRENCY
+    return assumptions, currency, None
+
+
+def base_personnel_cost(
+    months: Sequence[WorkedMonth],
+    *,
+    rate_source: str,
+    scenario_currency: str | None,
+) -> PersonnelCostAnswer:
+    """The base personnel cost of one scenario, or the named state that withholds it.
+
+    The order of the checks is the order of what a reader can act on (`_resolve_months`):
+
+    1. **Any month without one cost rate over the whole month → `no_cost_rate`**, for the whole
+       cost, naming every (position, month) that caused it. Never the sum of the months that did
+       resolve and never a `0` product for the missing month (ADR-0013, point 2). A month with zero
+       planned hours still needs its rate: "is this month costed" is a question about the
+       catalogue, not about the hours (point 4, the mirror of the revenue's R-04).
+    2. **More than one currency among the costed months, or one other than the scenario's →
+       `currency_mismatch`**. Nothing is converted.
+    3. **No allocation row at all** — the sum is `0.00` in the scenario's currency when it declares
+       one, otherwise the named state `no_cost_currency`.
+    4. Otherwise the sum, in `Decimal` with no intermediate rounding, rounded **once** through
+       `app.core.money.round_money` (ADR-0002; ADR-0013, point 3) — never per month, never per
+       position.
+    """
+    assumptions, currency, reason = _resolve_months(
+        months, rate_source=rate_source, scenario_currency=scenario_currency
+    )
+    if reason is not None:
+        return PersonnelCostUnavailable(reason=reason, assumptions_used=assumptions)
 
     total = sum(
         (
@@ -235,6 +277,105 @@ def base_personnel_cost(
     )
     return PersonnelCostResult(
         cost=round_money(total), currency=currency, assumptions_used=assumptions
+    )
+
+
+# --- the fully loaded personnel cost (SC-5-02, F-07; ADR-0013, aneks 2026-09-25) ------------------
+
+COST_BASIS_FULLY_LOADED: Final = "fully_loaded"
+"""The fully loaded cost: `default_cost_rate` **plus** its surcharge (ADR-0013, aneks 2026-09-25
+SC-5-02, Q4). A field of its own, never `COST_BASIS_BASE` widened — criterion K-01: the base cost
+stays exactly the figure SC-5-01 proved, and the fully loaded cost is a second, named field beside
+it, never a silent replacement."""
+
+
+def surcharge_fraction(rate: MonthCostRate) -> Decimal:
+    """The fraction of `rate.cost_rate` this month's surcharge adds — `0` when the row already
+    carries it (criterion K-02).
+
+    The one place `surcharge_percent` and `includes_surcharge` are read together: they share one row
+    of `catalog_default_rates` (ADR-0013, aneks 2026-09-25 SC-5-02, Q5), so a formula that read one
+    without the other could double the surcharge on a tuple whose base rate already includes it. A
+    flag read here and a percent read elsewhere is exactly the shape the mutation "delete the
+    `includes_surcharge` branch, always add the percent" would produce undetected.
+    """
+    if rate.includes_surcharge:
+        return Decimal("0")
+    return rate.surcharge_percent / Decimal("100")
+
+
+@dataclass(frozen=True)
+class FullyLoadedPersonnelCostResult:
+    """A stated fully loaded cost: the base cost plus its surcharge, and the surcharge alone —
+    each rounded once, at the end, through `app.core.money.round_money` (never a second rounding of
+    an already-rounded figure)."""
+
+    cost: Decimal
+    """Base cost + surcharge, computed from one unrounded sum (ADR-0013, point 3) — never
+    `base_personnel_cost(...).cost + surcharge_amount`, which would round twice."""
+    surcharge_amount: Decimal
+    """The surcharge alone — `0.00` for every month whose row already includes it (K-02)."""
+    currency: str
+    assumptions_used: CostAssumptionsUsed
+    """The same rate windows `base_personnel_cost` names for the identical months — not a second,
+    parallel list: the fully loaded cost is a second consumer of the same resolved rates, never a
+    second resolution of them (ADR-0013, aneks 2026-09-24 "granica reużycia", applied one task
+    over)."""
+    basis: str = COST_BASIS_FULLY_LOADED
+
+
+@dataclass(frozen=True)
+class FullyLoadedPersonnelCostUnavailable:
+    """A named state: no fully loaded cost can be stated, for the identical reason the base cost
+    cannot (`_resolve_months` is shared) — never a reason of its own."""
+
+    reason: str
+    assumptions_used: CostAssumptionsUsed
+    basis: str = COST_BASIS_FULLY_LOADED
+
+
+FullyLoadedPersonnelCostAnswer = (
+    FullyLoadedPersonnelCostResult | FullyLoadedPersonnelCostUnavailable
+)
+
+
+def fully_loaded_personnel_cost(
+    months: Sequence[WorkedMonth],
+    *,
+    rate_source: str,
+    scenario_currency: str | None,
+) -> FullyLoadedPersonnelCostAnswer:
+    """The fully loaded personnel cost of one scenario, or the named state that withholds it.
+
+    Exactly `base_personnel_cost`'s three checks (`_resolve_months`, shared) — a month that cannot
+    be costed cannot be fully loaded either, and the two functions must never disagree about which
+    months those are or which currency the result is in.
+
+    The sum itself is one unrounded pass over the same months, base and surcharge together
+    (`total = Σ hours × rate × (1 + surcharge_fraction)`) — never `base_personnel_cost(...).cost +
+    fully_loaded... .surcharge_amount`, which would compound two already-rounded figures and could
+    disagree with the single-pass sum by a cent (ADR-0013, point 3: one rounding, at the end).
+    """
+    assumptions, currency, reason = _resolve_months(
+        months, rate_source=rate_source, scenario_currency=scenario_currency
+    )
+    if reason is not None:
+        return FullyLoadedPersonnelCostUnavailable(reason=reason, assumptions_used=assumptions)
+
+    base_total = Decimal("0")
+    surcharge_total = Decimal("0")
+    for month in months:
+        if month.rate is None:  # always false here; narrows the type
+            continue
+        base_amount = month.planned_allocation_hours * month.rate.cost_rate
+        base_total += base_amount
+        surcharge_total += base_amount * surcharge_fraction(month.rate)
+
+    return FullyLoadedPersonnelCostResult(
+        cost=round_money(base_total + surcharge_total),
+        surcharge_amount=round_money(surcharge_total),
+        currency=currency,
+        assumptions_used=assumptions,
     )
 
 

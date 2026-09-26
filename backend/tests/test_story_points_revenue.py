@@ -37,6 +37,7 @@ from tests.conftest import (
     make_rate,
     make_scenario,
     make_staffing_position,
+    make_story_points_terms,
 )
 from tests.test_commercial_terms_access import (  # reuse the pinned field sets (K-05)
     ASSUMPTIONS_FIELDS,
@@ -251,7 +252,9 @@ def test_k_03_the_registries_are_keyed_by_exactly_the_two_real_models() -> None:
     a silent skip is exactly what this equality forbids.
     """
     assert set(REVENUE_BY_MODEL) == set(MODEL_TYPES) == set(DETAIL_TABLE_BY_MODEL)
-    assert {"time_and_material", "story_points"} == set(MODEL_TYPES)
+    # Rozszerzone jawnie o `outcome_based` przy merge SC-4-03 (decyzja człowieka 2026-09-25);
+    # nazwa testu zostaje, bo wiersz mutation log SC-4-04 w capabilities.md się do niej odwołuje.
+    assert {"time_and_material", "story_points", "outcome_based"} == set(MODEL_TYPES)
 
 
 def test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_real_models(
@@ -434,3 +437,47 @@ def test_r_01_end_to_end_a_story_points_rule_in_a_different_currency_than_the_sc
     assert (matched["state"], matched["amount"], matched["currency"]) == (
         "calculated", "25000.00", "EUR",
     )
+
+
+# --- R-01 (weryfikacja SC-4-07, runda 1): one source triple on every Story Points answer --------
+
+STORY_POINTS_SOURCE_TRIPLE = ("story_points_terms", "not_applicable", "not_applicable")
+"""`rate_source` / `hours_source` / `vendor_axis` of a Story Points answer (ADR-0003, aneks SC-4-07,
+pkt 5a) — the pairing the frontend renders, identical on the priced and the named-state shape."""
+
+
+def _source_triple(revenue: dict) -> tuple[str, str, str]:
+    used = revenue["assumptions_used"]
+    return (used["rate_source"], used["hours_source"], used["vendor_axis"])
+
+
+def test_r_01_sc_4_07_an_incomplete_story_points_rule_names_its_own_sources_not_tm_defaults(
+    client: TestClient, db_session: Session
+) -> None:
+    """R-01 (SC-4-07, weryfikacja runda 1) — a Story Points rule **without** its
+    `story_points_terms` row is `incomplete_commercial_terms` and still says `story_points_terms` /
+    `not_applicable` / `not_applicable`, never the T&M defaults of `AssumptionsUsed`
+    (`billable_hours` / `internal`).
+
+    Contrast: a sibling scenario whose Story Points rule has its details row is `calculated` with
+    **the same** triple — so the assertion above is about the named-state branch, not about a triple
+    this model never emits. Mutation this kills: `_story_points` building `AssumptionsUsed` with
+    only `model_type`/`rate_source` again (hybrid `story_points_terms` + `billable_hours` +
+    `internal`, contradicting pkt 5a).
+    """
+    project = make_project(db_session, name="Aurora", accessible_to=(IN_SCOPE_USER,))
+    incomplete = make_scenario(db_session, project, name="No details", currency="PLN")
+    complete = make_scenario(db_session, project, name="With details", currency="PLN")
+    make_story_points_terms(db_session, incomplete, with_details=False)
+    make_story_points_terms(db_session, complete)
+
+    missing = _revenue(client, project.id, incomplete.id)
+    assert (missing["state"], missing["amount"]) == ("incomplete_commercial_terms", "n/a")
+    assert missing["assumptions_used"]["model_type"] == "story_points"
+    assert _source_triple(missing) == STORY_POINTS_SOURCE_TRIPLE
+
+    priced = _revenue(client, project.id, complete.id)
+    assert (priced["state"], priced["amount"], priced["currency"]) == (
+        "calculated", "25000.00", "PLN",
+    )
+    assert _source_triple(priced) == STORY_POINTS_SOURCE_TRIPLE

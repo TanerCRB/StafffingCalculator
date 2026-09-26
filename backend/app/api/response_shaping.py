@@ -62,7 +62,11 @@ from app.api.schemas.catalog import (
     WorkingCalendarList,
 )
 from app.api.schemas.commercial_terms import (
+    CategoryRevenueRead,
     CommercialTermsRead,
+    OutcomeCategoriesRead,
+    OutcomeCategoryRead,
+    OutcomeTermsRead,
     RateWindowRead,
     RevenueAssumptionsRead,
     RevenueRead,
@@ -120,11 +124,20 @@ from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
 from app.domain.fixed_amount_cost import CALCULATED as FIXED_AMOUNT_CALCULATED
 from app.domain.fixed_amount_cost import FixedAmountCostAnswer, FixedAmountCostResult
-from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
+from app.domain.paid_absence_cost import (
+    FullyLoadedPaidAbsenceCostAnswer,
+    FullyLoadedPaidAbsenceCostResult,
+    PaidAbsenceCostAnswer,
+    PaidAbsenceCostResult,
+)
 from app.domain.personnel_cost import CALCULATED as COST_CALCULATED
-from app.domain.personnel_cost import PersonnelCostResult
+from app.domain.personnel_cost import (
+    FullyLoadedPersonnelCostAnswer,
+    FullyLoadedPersonnelCostResult,
+    PersonnelCostResult,
+)
 from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
-from app.domain.revenue import RevenueResult, RevenueUnavailable
+from app.domain.revenue import EXPECTED_NOT_APPLICABLE, RevenueResult, RevenueUnavailable
 from app.domain.scenario_readiness import assess
 from app.domain.scenario_results import scenario_profitability
 from app.models.catalog import (
@@ -132,6 +145,12 @@ from app.models.catalog import (
     AbsenceType,
     CatalogDefaultRate,
     WorkingCalendar,
+)
+from app.models.commercial_terms import (
+    OUTCOME_CATEGORIES,
+    OutcomeTerms,
+    probability_column,
+    units_column,
 )
 from app.models.project import Project, ProjectStatus
 from app.models.scenario import Scenario, ScenarioStatus
@@ -163,9 +182,19 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
         "paid_absence_amount",
         "paid_absence_budget_amount",
         "paid_absence_assumptions_used",
+        # SC-5-02 (Issue #77, K-01/K-03/K-05; ADR-0013 aneks 2026-09-25): the fully loaded cost and
+        # its surcharge, for the base component and for the paid-absence component — the identical
+        # conjunction as `amount`/`paid_absence_amount`, through this same set (K-03), never a
+        # second mechanism for a second money figure.
+        "fully_loaded_amount",
+        "surcharge_amount",
+        "paid_absence_fully_loaded_amount",
+        "paid_absence_surcharge_amount",
         # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 5; ADR-0005, aneks 2026-09-25
         # SC-5-03, point 1): the fixed-amount basis's own amount and its assumptions —
-        # identically to `amount` and `assumptions_used` above (criterion K-05).
+        # identically to `amount` and `assumptions_used` above (criterion K-05). No fully
+        # loaded/surcharge pair of its own (SC-5-02 crossed with SC-5-03): a fixed amount has no
+        # rate for a surcharge to multiply.
         # `fixed_amount_state` and `fixed_amount_currency` are deliberately **not** here, for the
         # same reason `state` and `currency` are not: naming why a figure cannot be stated
         # carries no figure by itself.
@@ -173,7 +202,7 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
         "fixed_amount_assumptions_used",
     }
 )
-"""Fields of a scenario's base personnel cost that carry a personnel cost (SC-5-01, SC-5-06).
+"""Fields of a scenario's personnel cost that carry a personnel cost (SC-5-01, SC-5-06, SC-5-02).
 
 A third set, next to `PERSONNEL_COST_FIELDS` (project payloads — still empty, and deliberately left
 so: ADR-0005, aneks 2026-09-23 SC-5-01, point 3) and `CATALOG_PERSONNEL_COST_FIELDS` (catalogue
@@ -598,6 +627,13 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
             default_selling_rate=rate.default_selling_rate,
             currency=rate.currency,
             unit=rate.unit,
+            # Passed through for every caller, exactly like `vendor_id` above and for the identical
+            # reason (SC-5-02, criterion K-04): a percentage/flag that only multiplies an
+            # already-gated `default_cost_rate` is an organisational parameter classified under
+            # `CATALOG_READ` alone (ADR-0005, aneks 2026-09-25, Q4) — never added to
+            # `CATALOG_PERSONNEL_COST_FIELDS`, which stays the one-element set it always was.
+            surcharge_percent=rate.surcharge_percent,
+            includes_surcharge=rate.includes_surcharge,
             effective_from=rate.effective_from,
             effective_to=rate.effective_to,
             # ADR-0007's concurrency marker (SC-2-04), on every representation of the row and for
@@ -804,10 +840,38 @@ def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCom
             None
             if terms is None
             else CommercialTermsRead(
-                id=terms.id, model_type=terms.model_type, updated_at=terms.updated_at
+                id=terms.id,
+                model_type=terms.model_type,
+                updated_at=terms.updated_at,
+                outcome_terms=_outcome_terms_read_of(view.outcome_terms),
             )
         ),
         revenue=revenue,
+    )
+
+
+def _outcome_terms_read_of(details: OutcomeTerms | None) -> OutcomeTermsRead | None:
+    """Parametry reguły Outcome-based przepisane z wiersza (R-04, runda 2 SC-4-03) — bez
+    zaokrąglenia i bez wartości domyślnej: `NULL` w bazie to `null` w odpowiedzi, nigdy `"0"`.
+    Nazwy kolumn kategorii przez `units_column`/`probability_column` — jedna pisownia z modelem."""
+    if details is None:
+        return None
+    return OutcomeTermsRead(
+        currency=details.currency,
+        fixed_fee=details.fixed_fee,
+        success_bonus=details.success_bonus,
+        unit_rate=details.unit_rate,
+        revenue_min=details.revenue_min,
+        revenue_max=details.revenue_max,
+        categories=OutcomeCategoriesRead(
+            **{
+                category: OutcomeCategoryRead(
+                    units=getattr(details, units_column(category)),
+                    probability=getattr(details, probability_column(category)),
+                )
+                for category in OUTCOME_CATEGORIES
+            }
+        ),
     )
 
 
@@ -844,17 +908,34 @@ def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
         currencies=list(assumptions.currencies),
     )
     if isinstance(answer, RevenueResult):
+        # Przychód oczekiwany i per kategoria (SC-4-03) przechodzą tak, jak je podała domena —
+        # zaokrąglone tam raz, tutaj niczego nie liczy się ani nie zaokrągla ponownie.
         return RevenueRead(
             state=REVENUE_CALCULATED,
             amount=answer.revenue,
             currency=answer.currency,
             assumptions_used=assumptions_read,
+            expected_state=answer.expected_state,
+            expected_amount=answer.expected_revenue,
+            category_revenues=[
+                CategoryRevenueRead(
+                    category=category.category,
+                    units=category.units,
+                    probability=category.probability,
+                    amount=category.revenue,
+                )
+                for category in answer.category_revenues
+            ],
         )
+    # Nazwany stan przychodu: żadnej kwoty w żadnym polu (ADR-0003, aneks SC-4-03, pkt 7; O-4).
     return RevenueRead(
         state=answer.reason,
         amount=NOT_APPLICABLE,
         currency=None,
         assumptions_used=assumptions_read,
+        expected_state=EXPECTED_NOT_APPLICABLE,
+        expected_amount=NOT_APPLICABLE,
+        category_revenues=[],
     )
 
 
@@ -983,6 +1064,33 @@ def _fixed_amount_fields(answer: FixedAmountCostAnswer) -> dict[str, Any]:
     }
 
 
+def _fully_loaded_fields(answer: FullyLoadedPersonnelCostAnswer) -> dict[str, Any]:
+    """The base cost's fully loaded pair (SC-5-02, K-01/K-02) as the two `PersonnelCostRead`
+    fields — `fully_loaded_amount`/`surcharge_amount`, spread the same way `_paid_absence_fields`
+    is, and gated through the same `SCENARIO_COST_FIELDS`/`_without_scenario_personnel_costs`
+    mechanism, never a second gate for a second money figure."""
+    if isinstance(answer, FullyLoadedPersonnelCostResult):
+        return {"fully_loaded_amount": answer.cost, "surcharge_amount": answer.surcharge_amount}
+    return {"fully_loaded_amount": NOT_APPLICABLE, "surcharge_amount": NOT_APPLICABLE}
+
+
+def _paid_absence_fully_loaded_fields(
+    answer: FullyLoadedPaidAbsenceCostAnswer,
+) -> dict[str, Any]:
+    """The paid-absence component's fully loaded pair (SC-5-02, K-05) — the mirror of
+    `_fully_loaded_fields`, on `paid_absence_fully_loaded_amount`/
+    `paid_absence_surcharge_amount`."""
+    if isinstance(answer, FullyLoadedPaidAbsenceCostResult):
+        return {
+            "paid_absence_fully_loaded_amount": answer.cost,
+            "paid_absence_surcharge_amount": answer.surcharge_amount,
+        }
+    return {
+        "paid_absence_fully_loaded_amount": NOT_APPLICABLE,
+        "paid_absence_surcharge_amount": NOT_APPLICABLE,
+    }
+
+
 def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
     """Build one **ungated** base-cost payload from a `ScenarioCostView` — shared by
     `shape_scenario_personnel_cost` below (SC-5-01/SC-5-06) and the results endpoint (SC-7-01,
@@ -1009,6 +1117,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
                 effective_to=window.effective_to,
                 default_cost_rate=window.cost_rate,
                 currency=window.currency,
+                surcharge_percent=window.surcharge_percent,
+                includes_surcharge=window.includes_surcharge,
             )
             for window in assumptions.rate_windows
         ],
@@ -1022,6 +1132,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
     )
     paid_absence = _paid_absence_fields(view.paid_absence)
     fixed_amount = _fixed_amount_fields(view.fixed_amount)
+    fully_loaded = _fully_loaded_fields(view.fully_loaded_cost)
+    paid_absence_fully_loaded = _paid_absence_fully_loaded_fields(view.fully_loaded_paid_absence)
     if isinstance(answer, PersonnelCostResult):
         return PersonnelCostRead(
             state=COST_CALCULATED,
@@ -1030,6 +1142,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             currency=answer.currency,
             assumptions_used=assumptions_read,
             **paid_absence,
+            **fully_loaded,
+            **paid_absence_fully_loaded,
             **fixed_amount,
         )
     return PersonnelCostRead(
@@ -1039,6 +1153,8 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         currency=None,
         assumptions_used=assumptions_read,
         **paid_absence,
+        **fully_loaded,
+        **paid_absence_fully_loaded,
         **fixed_amount,
     )
 
@@ -1248,6 +1364,7 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
         profit=profitability.profit,
         margin=profitability.margin,
         markup=profitability.markup,
+        profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)
 
@@ -1270,8 +1387,11 @@ def shape_scenario_what_if_salary_raise(
     `_additional_cost_total_read_of`, `_without_scenario_profitability`,
     `app.domain.scenario_results.scenario_profitability`) — never `shape_scenario_results` itself:
     that function's own `ScenarioResultsView` is documented as built only by
-    `scenario_results_for_caller`, from two reads of the scenario that are known to agree about its
-    real status. A `ScenarioWhatIfView` makes no such claim about the *hypothetical* cost view it
+    `scenario_results_for_caller`, from the three reads that refresh the scenario (revenue,
+    personnel cost, additional cost), whose frozen `status_at_read` values are known to agree — any
+    further read that refreshes the scenario must join that comparison (ADR-0015, aneks SC-7-03,
+    point 8).
+    A `ScenarioWhatIfView` makes no such claim about the *hypothetical* cost view it
     carries, so this is its own, small composition rather than a call that would misrepresent what
     it was handed (ADR-0015, point 4).
     """
@@ -1295,5 +1415,6 @@ def shape_scenario_what_if_salary_raise(
         profit=profitability.profit,
         margin=profitability.margin,
         markup=profitability.markup,
+        profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)

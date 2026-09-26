@@ -181,3 +181,35 @@ export function formatMoneyString(value: string, currency: string): string {
 export function formatRatePerUnit(value: string, currency: string, unit: string): string {
   return `${formatMoneyString(value, currency)} / ${unit}`;
 }
+
+/**
+ * How many decimal places an Outcome-based rule's own amount keeps on screen — the scale of its
+ * column, `NUMERIC(14,4)` (`OUTCOME_AMOUNT_SCALE`, backend `app/models/commercial_terms.py`).
+ *
+ * ADR-0003, addendum 2026-09-25 SC-4-07, point 9 (Q5 = A): a rule parameter is shown **as stored**,
+ * not as money rounded to two places — "12.3456" stays "12.3456", and a PM checking what was saved
+ * sees exactly that. A computed revenue is still `formatMoneyString`'s (two places).
+ */
+const RULE_AMOUNT_FRACTION_DIGITS = 4;
+
+/**
+ * Renders a commercial rule's stored amount (fixed fee, bonus, unit rate, bounds) with the scale of
+ * its column, in the rule's own currency ("12.3456", "PLN" → "12.3456 PLN"). Rounds on the decimal
+ * string, never through `Number()` — the same guarantee as `formatMoneyString`.
+ */
+export function formatRuleAmountString(value: string, currency: string): string {
+  return `${roundDecimalString(value, RULE_AMOUNT_FRACTION_DIGITS)} ${currency}`;
+}
+
+/**
+ * Renders a percentage a rule stores (an outcome category's probability, `NUMERIC(5,2)`) exactly as
+ * the server wrote it, with the percent sign ("70.00" → "70.00%"). No rounding and no `Number()`:
+ * the value is what the user entered and the server checked to sum to 100.00 (SC-4-03, point 4).
+ * Throws on a value that is not a fixed-point decimal string, like every formatter here.
+ */
+export function formatStoredPercentString(value: string): string {
+  if (!isDecimalString(value)) {
+    throw new Error(NOT_A_DECIMAL_STRING);
+  }
+  return `${value}%`;
+}

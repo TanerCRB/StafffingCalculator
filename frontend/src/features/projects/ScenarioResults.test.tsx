@@ -76,11 +76,11 @@ const NO_ASSUMPTIONS: RevenueAssumptionsRead = {
 };
 
 function revenueCalculated(amount: string, currency: string): RevenueRead {
-  return { state: "calculated", amount, currency, assumptions_used: NO_ASSUMPTIONS };
+  return { state: "calculated", amount, currency, assumptions_used: NO_ASSUMPTIONS, expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [] };
 }
 
 function revenueWithheld(state: WithheldRevenueState): RevenueRead {
-  return { state, amount: "n/a", currency: null, assumptions_used: NO_ASSUMPTIONS };
+  return { state, amount: "n/a", currency: null, assumptions_used: NO_ASSUMPTIONS, expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [] };
 }
 
 function personnelCostCalculated(amount: string, currency: string): PersonnelCostSource {
@@ -113,6 +113,7 @@ function baseResults(id: string, overrides: Partial<ScenarioResults> = {}): Scen
     profit: "550.00",
     margin: "55.00",
     markup: "122.22",
+    profitability_state: "calculated",
     ...overrides,
   };
 }

@@ -265,10 +265,12 @@ def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
 
 # --- the migration is reversible ------------------------------------------------------------------
 
-_PREVIOUS_REVISION = "d2f6a91c4b58"
+_PREVIOUS_REVISION = "9b3f6a1d0c47"
 """What `a8f18e00172b` revises — the target of `command.downgrade`, spelled as a revision id rather
 than `"-1"` for the reason `test_working_calendar_schema_constraints.py`'s reversibility test
-records: a relative step goes stale the next time a migration is added on top."""
+records: a relative step goes stale the next time a migration is added on top. Repointed after
+merging `origin/main` (SC-5-02's migration chain now sits between `d2f6a91c4b58` and this
+migration), the same symmetric fix `dc9c9b4` made for `test_sc_4_03_merge_qa.py`."""
 
 
 @pytest.fixture

@@ -47,8 +47,14 @@ position's `updated_at` already covers every column of this row).
    `env.py` more than one transaction per migration.
 
 Revision ID: a8f18e00172b
-Revises: d2f6a91c4b58
+Revises: 9b3f6a1d0c47
 Create Date: 2026-09-25
+
+**Repointed after merging `origin/main`** (SC-5-02 landed in the meantime and forked its own
+migration chain from the same parent, `d2f6a91c4b58`): `down_revision` moved from `d2f6a91c4b58` to
+`9b3f6a1d0c47`, the new tip of that chain (`d2f6a91c4b58 -> b7e3f19a6c52 -> b9e3c7a1f264 ->
+9b3f6a1d0c47`), so Alembic has one head again. Content unchanged, same linearisation pattern as
+`dc9c9b4` ("SC-5-02: zlinearyzuj migracje po merge z main (SC-4-05)").
 """
 
 from collections.abc import Sequence
@@ -57,7 +63,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a8f18e00172b"
-down_revision: str | None = "d2f6a91c4b58"
+down_revision: str | None = "9b3f6a1d0c47"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

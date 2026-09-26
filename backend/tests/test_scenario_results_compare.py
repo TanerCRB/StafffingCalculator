@@ -30,7 +30,7 @@ import app.api.scenario_results as scenario_results_module
 from app.api.scenario_results import MAX_COMPARE_SCENARIOS, SCENARIO_RESULTS_NOT_FOUND_DETAIL
 from app.core.identity import Permission
 from app.data.scenario_results import ScenarioResultsRaceDetected
-from app.models import Project, ProjectAccess, Scenario
+from app.models import Project, ProjectAccess, Scenario, ScenarioStatus
 from tests.conftest import (
     IN_SCOPE_USER,
     caller_holding,
@@ -490,7 +490,9 @@ def test_a_race_on_any_named_scenario_refuses_the_whole_response_with_409(
     ) -> Any:
         if scenario_id == second.id:
             raise ScenarioResultsRaceDetected(
-                revenue_source="live_catalog", cost_source="approved_snapshot"
+                revenue_status=ScenarioStatus.DRAFT,
+                cost_status=ScenarioStatus.APPROVED,
+                additional_cost_status=ScenarioStatus.APPROVED,
             )
         return real(session, caller, project_id, scenario_id)
 
