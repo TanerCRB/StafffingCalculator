@@ -1322,8 +1322,23 @@ history / this file's own change log, not as tracked product work.
   aneks 2026-09-25 (SC-5-02); `ADR-0015-przeliczenie-bez-zapisu.md` aneks 2026-09-25 (SC-5-02);
   `docs/PLAN.md` SC-5-01, SC-5-06.
 
-- [ ] **SC-5-03** — Kwota stała jako podstawa kosztu, wybór podstawy per pozycja (F-07), rozszerzenie
+- [x] **SC-5-03** — Kwota stała jako podstawa kosztu, wybór podstawy per pozycja (F-07), rozszerzenie
   ADR-0013 (Issue #78).
+  **Done 2026-09-26:** PR #133 (scalone `4876e8a`). Developer: 837 testów backendu (potem 995 po
+  scaleniu z SC-5-02, które w trakcie tego zadania zostało w pełni zaimplementowane), `ruff` czyste,
+  migracja `a8f18e00172b` (zlinearyzowana po merge na `9b3f6a1d0c47`), `backend/tests/test_fixed_amount_cost.py`
+  + `test_staffing_cost_basis*.py` (K-01..K-06). QA: cztery mutacje uruchomione i zabite (CHECK waluty,
+  filtr dyspozytora, kopiarka, `SCENARIO_COST_FIELDS`), trzy luki dowodu domknięte (what-if, 403 na PATCH,
+  422 walidatorów). Invariant Guardian: PASS WITH RESERVATIONS → naprawione (osierocony `fixed_amount`
+  na wierszu `worked_time` bez `cost_basis`, `CostBasisMismatch`). Reviewer: PASS WITH RESERVATIONS →
+  R-01 migracji zaakceptowany jako nazwany wyjątek (właściciel nieprzypisany, wygasa przed pierwszym
+  wdrożeniem produkcyjnym); R-02 (kolejność diagnozy: konflikt tokenu ADR-0007 musi mieć pierwszeństwo
+  przed `CostBasisMismatch`, inaczej nieaktualny token dostaje mylącą podpowiedź prowadzącą do cichego
+  nadpisania cudzej, świeższej zmiany) — naprawione, dowiedzione dwoma realnymi połączeniami. Security-Auditor:
+  PASS WITH RESERVATIONS → naprawione (koniunkcja `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`
+  wymagana też na zapisie `fixed_amount`, `POST` i `PATCH`, nie tylko na odczycie). Merge z origin/main
+  (SC-5-02 w międzyczasie w pełni zaimplementowane w tych samych modułach) zweryfikowany osobno przez
+  Guardian i Reviewer, PASS.
   *Done when:* `backend/tests` dowodzą kryteriów K-01..K-06 (analyst + architect, bramka 1,
   2026-09-25):
   1. (K-01) Dwie formuły kosztu (`worked_time`/`fixed_amount`) — osobne ścieżki dispatchowane z tej
