@@ -74,6 +74,13 @@ COPIED_POSITION_FIELDS: tuple[str, ...] = (
     "headcount",
     "start_date",
     "end_date",
+    # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 3; ADR-0004, aneks of the same date, point
+    # 3): the personnel-cost basis travels with the position row the existing copier already copies
+    # by reflection — no new entry in `SCENARIO_CHILD_COPIERS`, and this drift guard is what proves
+    # it rather than assumes it.
+    "cost_basis",
+    "fixed_amount",
+    "fixed_amount_currency",
 )
 """Position attributes the copy must carry over, written out by hand on purpose.
 
@@ -393,6 +400,67 @@ def test_every_allocation_column_is_either_copied_or_explicitly_excluded() -> No
     mapped = {attribute.key for attribute in sa.inspect(StaffingPositionAllocation).column_attrs}
 
     assert mapped == set(COPIED_ALLOCATION_FIELDS) | ALLOCATION_COLUMNS_NOT_COPIED
+
+
+# --- SC-5-03, K-04: cost_basis/fixed_amount travel with the position, on an independent row -------
+
+
+def test_k_04_a_fixed_amount_positions_basis_and_amount_copy_onto_an_independent_row(
+    client: TestClient, db_session: Session
+) -> None:
+    """SC-5-03, K-04 — a `fixed_amount` position's `cost_basis`/`fixed_amount`/
+    `fixed_amount_currency` land on the copy with the source's values, on the copy's **own** row: a
+    change to the source's `fixed_amount` after copying does not change the copy's.
+
+    The general drift guard (`test_every_staffing_position_column_is_either_copied_or_
+    explicitly_excluded`) proves the *columns* are not silently dropped from the copy; every
+    other copy test in this file uses positions whose `cost_basis` is the default
+    (`worked_time`, `fixed_amount NULL`), so none of them would notice a copier that returned
+    `cost_basis`'s **default** regardless of the source (ADR-0004, aneks 2026-09-25 SC-5-03,
+    point 3's own named mutation). This test's fixture is built so that mutation fails it
+    specifically.
+    """
+    project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Baseline")
+    position = make_staffing_position(
+        db_session,
+        scenario,
+        make_dimension_tuple(db_session),
+        start_date=MARCH,
+        cost_basis="fixed_amount",
+        fixed_amount=Decimal("4321.0000"),
+        fixed_amount_currency="EUR",
+    )
+    make_allocation(db_session, position, period_month=MARCH)
+    db_session.commit()
+
+    response = client.post(f"/projects/{project.id}/copy", headers=as_caller(IN_SCOPE_USER))
+    assert response.status_code == 201, response.text
+    copy_project_id = uuid.UUID(response.json()["id"])
+    copy_scenario_id = _copied_scenario_id(db_session, copy_project_id)
+
+    copied = db_session.execute(
+        sa.select(StaffingPosition).where(StaffingPosition.scenario_id == copy_scenario_id)
+    ).scalar_one()
+    assert copied.id != position.id
+    assert (copied.cost_basis, copied.fixed_amount, copied.fixed_amount_currency) == (
+        "fixed_amount",
+        Decimal("4321.0000"),
+        "EUR",
+    )
+
+    # The contrast K-04 asks for by name: the source changes after the copy exists, the copy does
+    # not follow it — an independent value, not a shared reference or a re-read of the source.
+    db_session.execute(
+        sa.update(StaffingPosition)
+        .where(StaffingPosition.id == position.id)
+        .values(fixed_amount=Decimal("1.0000"))
+    )
+    db_session.flush()
+    db_session.expire(copied)
+    assert copied.fixed_amount == Decimal("4321.0000"), (
+        "the copy's fixed_amount followed a change made to the source after copying"
+    )
 
 
 # --- SC-3-02, K-14: the third pass of the cascade ------------------------------------------------

@@ -26,9 +26,17 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from app.api.schemas.common import DecimalString
+from app.api.schemas.common import DecimalString, Iso4217Code
 from app.core.money import NOT_APPLICABLE
-from app.models.staffing import HOURS_COLUMNS, HOURS_PRECISION, HOURS_SCALE
+from app.models.staffing import (
+    COST_BASIS_FIXED_AMOUNT,
+    COST_BASIS_WORKED_TIME,
+    FIXED_AMOUNT_PRECISION,
+    FIXED_AMOUNT_SCALE,
+    HOURS_COLUMNS,
+    HOURS_PRECISION,
+    HOURS_SCALE,
+)
 
 HoursAmount = Annotated[
     DecimalString, Field(ge=0, max_digits=HOURS_PRECISION, decimal_places=HOURS_SCALE)
@@ -61,6 +69,21 @@ Deliberately **not** mirrored as a CHECK constraint in the database. `headcount 
 schema because zero people is a meaningless row whoever writes it; an upper limit is a plausibility
 rule about API input, and a fixture or an import legitimately testing the column's range must not
 have to argue with it."""
+
+CostBasis = Literal["worked_time", "fixed_amount"]
+"""The personnel-cost basis of a position (F-07, SC-5-03; ADR-0013, aneks 2026-09-25 SC-5-03) —
+spelled here as a closed literal rather than imported as `COST_BASIS_VALUES`, the same convention
+`CostType`/`FundingSource` (`app.api.schemas.additional_cost`) already use for a CHECK-backed
+string column: the schema names the same two values the database's `cost_basis_known` CHECK does,
+independently, so the two can be compared for drift rather than one silently defining the other."""
+
+FixedAmount = Annotated[
+    DecimalString, Field(gt=0, max_digits=FIXED_AMOUNT_PRECISION, decimal_places=FIXED_AMOUNT_SCALE)
+]
+"""A fixed personnel-cost amount on the way in: strictly positive (mirrors
+`ck_staffing_position_fixed_amount_positive`) and exactly as precise as `NUMERIC(14,4)` is — the
+same construction as `additional_cost.CostAmount`, so a fifth decimal place is a `422` naming the
+field rather than a silent rounding at write time."""
 
 MAX_ALLOCATION_MONTHS = 60
 """The most month rows one create request may carry — five years, per position (R-04).
@@ -164,6 +187,38 @@ class StaffingPositionCreateRequest(BaseModel):
     ever runs, so the bound is what makes the work bounded; the validator's complexity is a second,
     independent fix (see there)."""
 
+    cost_basis: CostBasis = COST_BASIS_WORKED_TIME
+    """The personnel-cost basis this position plans against (F-07, SC-5-03). Defaults to
+    `worked_time`, so a body written before this task exists still creates exactly the position it
+    always did (K-02)."""
+
+    fixed_amount: FixedAmount | None = None
+    fixed_amount_currency: Iso4217Code | None = None
+    """The two fields `cost_basis = 'fixed_amount'` requires (ADR-0013, aneks 2026-09-25
+    SC-5-03, Q1/Q2) — validated together below so a client's mistake is a `422` naming the
+    field, not the database's `fixed_amount_required_for_its_basis` CHECK reached as a `409`.
+    The guarantee stays the CHECK (criterion K-06); the schema only clarifies the error."""
+
+    @model_validator(mode="after")
+    def _fixed_amount_matches_its_basis(self) -> Self:
+        if self.cost_basis == COST_BASIS_FIXED_AMOUNT:
+            missing = [
+                name
+                for name in ("fixed_amount", "fixed_amount_currency")
+                if getattr(self, name) is None
+            ]
+            if missing:
+                raise ValueError(
+                    "cost_basis 'fixed_amount' needs both fixed_amount and fixed_amount_currency: "
+                    "missing " + ", ".join(missing)
+                )
+        elif self.fixed_amount is not None or self.fixed_amount_currency is not None:
+            raise ValueError(
+                "fixed_amount and fixed_amount_currency may only be set together with "
+                "cost_basis 'fixed_amount'"
+            )
+        return self
+
     @model_validator(mode="after")
     def _period_is_ordered(self) -> Self:
         """Same boundary check as on a project and on a rate window; the database's
@@ -241,6 +296,92 @@ class StaffingAllocationEditRequest(BaseModel):
         """
         changed = self.__pydantic_fields_set__ - {"updated_at"}
         return {field: getattr(self, field) for field in HOURS_COLUMNS if field in changed}
+
+
+POSITION_COST_BASIS_FIELDS: tuple[str, ...] = (
+    "cost_basis",
+    "fixed_amount",
+    "fixed_amount_currency",
+)
+
+
+class StaffingPositionCostBasisEditRequest(BaseModel):
+    """The body of `PATCH …/staffing-positions/{position_id}`: the personnel-cost basis to change,
+    plus the position's token (F-07, SC-5-03; ADR-0013, aneks 2026-09-25 SC-5-03).
+
+    Partial, like `StaffingAllocationEditRequest`, and edits the same row that edit does — through a
+    **different** endpoint, because the allocation edit addresses a month (a different row) while
+    this one addresses the position itself. `role_id`/`headcount`/the dates have no edit path yet
+    (out of scope of SC-5-03) and are not fields here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    updated_at: AwareDatetime
+    """The **position's** `updated_at` (ADR-0007, addendum 2026-09-19 — the token is the position's,
+    the same one the allocation and absence edits already share)."""
+
+    cost_basis: CostBasis | None = None
+    fixed_amount: FixedAmount | None = None
+    fixed_amount_currency: Iso4217Code | None = None
+    """`fixed_amount`/`fixed_amount_currency` accept an explicit `null` **only** to clear them when
+    switching `cost_basis` back to `worked_time` in the same request — every other field on this
+    schema forbids `null` for the reason `StaffingAllocationEditRequest` gives (an explicit `null`
+    reaching the `UPDATE` as `NULL` against a column the caller did not mean to blank)."""
+
+    @model_validator(mode="after")
+    def _at_least_one_field_and_consistent_with_its_basis(self) -> Self:
+        changed = self.__pydantic_fields_set__ - {"updated_at"}
+        if not changed:
+            raise ValueError("An edit must name at least one field to change.")
+        new_basis = self.cost_basis
+        amount_given = "fixed_amount" in changed
+        currency_given = "fixed_amount_currency" in changed
+        if new_basis == COST_BASIS_FIXED_AMOUNT:
+            missing = [
+                name
+                for name, given, value in (
+                    ("fixed_amount", amount_given, self.fixed_amount),
+                    ("fixed_amount_currency", currency_given, self.fixed_amount_currency),
+                )
+                if not given or value is None
+            ]
+            if missing:
+                raise ValueError(
+                    "switching cost_basis to 'fixed_amount' needs both fixed_amount and "
+                    "fixed_amount_currency in the same request, both non-null: missing "
+                    + ", ".join(missing)
+                )
+        elif new_basis == COST_BASIS_WORKED_TIME:
+            if (amount_given and self.fixed_amount is not None) or (
+                currency_given and self.fixed_amount_currency is not None
+            ):
+                raise ValueError(
+                    "switching cost_basis to 'worked_time' cannot also set a non-null "
+                    "fixed_amount/fixed_amount_currency in the same request; omit them or set "
+                    "them to null"
+                )
+        elif amount_given != currency_given:
+            raise ValueError(
+                "fixed_amount and fixed_amount_currency must be changed together when "
+                "cost_basis is not also changing"
+            )
+        # What this validator cannot refuse, having no view of the row: both fields named,
+        # together, with cost_basis not also changing — legal when the position is already
+        # 'fixed_amount' (an amount correction), illegal when it is still 'worked_time' (an amount
+        # would land on the default basis, breaking the model's own invariant). That half of bramka
+        # 1's Guardian finding is closed one layer down, in the same statement that writes the row
+        # (`app.data.staffing.update_position_cost_basis`, `CostBasisMismatch`) — not here, because
+        # a Pydantic validator has no session to ask.
+        return self
+
+    def changes(self) -> dict[str, Any]:
+        """The requested changes, in declaration order — `None` included, for the two fields whose
+        explicit `null` is meaningful (clearing them alongside a switch to `worked_time`)."""
+        changed = self.__pydantic_fields_set__ - {"updated_at"}
+        return {
+            field: getattr(self, field) for field in POSITION_COST_BASIS_FIELDS if field in changed
+        }
 
 
 NotApplicable = Literal[NOT_APPLICABLE]

@@ -1,5 +1,16 @@
 """The only path by which a scenario's base personnel cost is read (F-07, SC-5-01; ADR-0013).
 
+**Since SC-5-03, also the one dispatcher between the two cost bases** (ADR-0013, aneks 2026-09-25
+SC-5-03, point 5 of the "Decyzja" section it adds: "Dispatch po `cost_basis` żyje w jednej, wspólnej
+funkcji wywołującej (nowej albo istniejącej w `app.data.personnel_cost`/`app.domain.personnel_
+cost`)"). This module is explicitly named as an allowed home for it, and it is the only module
+allowed to import *both* formulas — `app.domain.personnel_cost.base_personnel_cost` (worked time)
+and `app.domain.fixed_amount_cost.fixed_amount_cost` (fixed amount) — because dispatching between
+two independent formulas is a different thing from being either of them (K-01: "same dwie formuły są
+dwiema niezależnymi funkcjami"). Neither formula module imports the other, and neither imports this
+one; the structural test proving that lives beside each formula's own module
+(`tests/test_personnel_cost.py`'s C-5 mirror, `tests/test_fixed_amount_cost.py`'s).
+
 Three mechanisms, none of them new — each is an existing mechanism of this repository applied to
 the first calculation that reads `default_cost_rate`:
 
@@ -50,6 +61,11 @@ from app.data.rate_windows import (
     internal_catalog_windows_overlapping,
 )
 from app.data.staffing import scenario_view_in_scope
+from app.domain.fixed_amount_cost import (
+    FixedAmountCostAnswer,
+    FixedAmountLine,
+    fixed_amount_cost,
+)
 from app.domain.paid_absence_cost import (
     FullyLoadedPaidAbsenceCostAnswer,
     PaidAbsenceCostAnswer,
@@ -70,7 +86,11 @@ from app.domain.personnel_cost import (
 from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
 from app.models.scenario import Scenario, ScenarioStatus
-from app.models.staffing import StaffingPosition, StaffingPositionAllocation
+from app.models.staffing import (
+    COST_BASIS_FIXED_AMOUNT,
+    StaffingPosition,
+    StaffingPositionAllocation,
+)
 
 # --- the cost-rate predicate (ADR-0013, point 1) --------------------------------------------------
 #
@@ -269,6 +289,39 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
     return source, months
 
 
+# --- the fixed-amount basis (SC-5-03; ADR-0013, aneks 2026-09-25) --------------------------------
+
+
+def _fixed_amount_lines(session: Session, scenario: Scenario) -> list[FixedAmountLine]:
+    """Every `cost_basis = 'fixed_amount'` position of this scenario, as the formula reads them.
+
+    **No catalogue join, no allocation join, no snapshot branch.** Unlike `_worked_months`, this
+    query has nothing to resolve *for a month*: `fixed_amount`/`fixed_amount_currency` are a
+    position's own columns, read live before and after approval alike (ADR-0004, aneks 2026-09-25
+    SC-5-03, point 2 — "brak trzeciego miejsca migawkowego": the write guard protects an approved
+    scenario's row, not a copy of it). Rows are ordered by `id` for a deterministic
+    `assumptions_used.lines`, the same reason `_distinct_windows` sorts the worked-time windows.
+    """
+    statement = (
+        sa.select(
+            StaffingPosition.id,
+            StaffingPosition.fixed_amount,
+            StaffingPosition.fixed_amount_currency,
+        )
+        .where(
+            StaffingPosition.scenario_id == scenario.id,
+            StaffingPosition.cost_basis == COST_BASIS_FIXED_AMOUNT,
+        )
+        .order_by(StaffingPosition.id)
+    )
+    return [
+        FixedAmountLine(
+            position_id=row.id, amount=row.fixed_amount, currency=row.fixed_amount_currency
+        )
+        for row in session.execute(statement)
+    ]
+
+
 @dataclass(frozen=True)
 class ScenarioCostView:
     """One scenario's base personnel cost **as one caller may see it**, resolved in one read.
@@ -292,6 +345,16 @@ class ScenarioCostView:
     paid_absence: PaidAbsenceCostAnswer
     """The paid-absence component (SC-5-06; ADR-0013, aneks 2026-09-23 SC-5-06) — beside `cost`,
     never added to it. Carried on the same view so the same conjunction gates it (point 6)."""
+    fixed_amount: FixedAmountCostAnswer
+    """The fixed-amount basis's own component (SC-5-03; ADR-0013, aneks 2026-09-25 SC-5-03) — a
+    **third**, independent figure beside `cost` (worked time) and `paid_absence`, never summed
+    with either (Out of scope of SC-5-03: "suma kosztu scenariusza łącząca podstawy"). Carried on
+    the same view for the same reason `paid_absence` is: one conjunction, one place it is
+    decided. **Never carries a surcharge** (SC-5-02): `fixed_amount_cost` takes no rate at all to
+    apply one to (K-01 of both tasks — the fixed-amount formula does not import the worked-time
+    formula, the surcharge formula, or anything the surcharge is computed from); a fixed amount is
+    the stated cost as entered, not a base the fully-loaded figure marks up.
+    """
     status_at_read: ScenarioStatus
     """The scenario's status **as this read saw it** — the status that chose live catalogue versus
     snapshot for `cost` — copied into an immutable value right after this read's own
@@ -343,6 +406,9 @@ def scenario_cost_for_caller(
         paid_absence=paid_absence_cost(absence_months, scenario_currency=scenario.currency),
         fully_loaded_cost=fully_loaded_personnel_cost(
             months, rate_source=source, scenario_currency=scenario.currency
+        ),
+        fixed_amount=fixed_amount_cost(
+            _fixed_amount_lines(session, scenario), scenario_currency=scenario.currency
         ),
         fully_loaded_paid_absence=fully_loaded_paid_absence_cost(
             absence_months, scenario_currency=scenario.currency

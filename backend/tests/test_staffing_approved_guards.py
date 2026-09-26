@@ -40,6 +40,7 @@ from sqlalchemy import Engine, event
 from sqlalchemy.orm import Session
 
 from app.api.staffing import STAFFING_NOT_FOUND_DETAIL
+from app.core.identity import Permission
 from app.models import ScenarioStatus, StaffingPosition
 from tests.conftest import (
     IN_SCOPE_USER,
@@ -48,6 +49,7 @@ from tests.conftest import (
     allocation_path,
     approve_path,
     as_caller,
+    caller_holding,
     count_positions,
     count_snapshot_rows,
     make_absence,
@@ -147,6 +149,47 @@ def _committing_a_competing_edit_before(
     return interleave
 
 
+def _committing_a_competing_cost_basis_switch_before(
+    engine: Engine, fired: list[str], position_id: uuid.UUID, *, statement_prefix: str
+) -> Listener:
+    """A hook that performs *another editor's* switch back to `worked_time`, committed on another
+    connection, just before the guarded statement of the edit under test runs (Reviewer R-02,
+    bramka 1 SC-5-03).
+
+    The competitor does exactly what a second `PATCH` naming `cost_basis='worked_time'` does: it
+    clears `fixed_amount`/`fixed_amount_currency` and rotates the position's `updated_at`. It
+    commits in the window between "the token was read" and "the write happens" — the same interval
+    `_committing_a_competing_edit_before` exploits for the allocation edit, one column group over.
+
+    Fires once (`fired` guards re-entry: the competitor's own statement, which starts with the same
+    `statement_prefix` as the statement under test, goes through the same class-level listener).
+    """
+
+    def interleave(
+        connection: Any,
+        cursor: Any,
+        statement: str,
+        parameters: Any,
+        context: Any,
+        executemany: bool,
+    ) -> None:
+        if fired or not statement.lstrip().lower().startswith(statement_prefix):
+            return
+        fired.append(statement)
+        with engine.begin() as competitor:
+            competitor.execute(
+                sa.text(
+                    "UPDATE staffing_position"
+                    " SET cost_basis = 'worked_time', fixed_amount = NULL,"
+                    " fixed_amount_currency = NULL, updated_at = now()"
+                    " WHERE id = :id"
+                ),
+                {"id": position_id},
+            )
+
+    return interleave
+
+
 def _committed_project_with_two_scenarios(engine: Engine) -> dict[str, Any]:
     """A project in scope, one `draft` and one `approved` scenario, a dimension tuple — committed.
 
@@ -156,7 +199,15 @@ def _committed_project_with_two_scenarios(engine: Engine) -> dict[str, Any]:
     limit of the proof, and it is the one the plan entry names as "fundament nieudowodniony".
     """
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
-        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+        # `cost_visible_to` (bramka 1 SC-5-03, fix 3): the cost-basis PATCH tests below (K-03) need
+        # `can_view_personnel_costs` for this project; harmless to every other test sharing this
+        # fixture, none of which reads a personnel-cost field.
+        project = make_project(
+            setup,
+            name="Aurora migration",
+            accessible_to=(IN_SCOPE_USER,),
+            cost_visible_to=(IN_SCOPE_USER,),
+        )
         draft = make_scenario(setup, project, name="Baseline")
         approved = make_scenario(
             setup, project, name="Approved v1", status=ScenarioStatus.APPROVED
@@ -762,7 +813,14 @@ def _k20_state(engine: Engine) -> dict[str, Any]:
         calendar = make_working_calendar(
             setup, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
         )
-        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
+        # `cost_visible_to` (bramka 1 SC-5-03, fix 3): needed by the K-20 cost-basis race test
+        # below; harmless to the other two K-20 tests sharing this fixture.
+        project = make_project(
+            setup,
+            name="Aurora migration",
+            accessible_to=(IN_SCOPE_USER,),
+            cost_visible_to=(IN_SCOPE_USER,),
+        )
         draft = make_scenario(setup, project, name="Baseline")
         dimensions = make_dimension_tuple(setup, calendar=calendar)
         position = make_staffing_position(
@@ -1123,3 +1181,228 @@ def test_a_refused_insert_leaves_the_transaction_usable_for_the_next_request(
     assert refused.status_code == 409, refused.text
     assert accepted.status_code == 201, accepted.text
     assert count_positions(db_session) == 1
+
+
+# --- SC-5-03, K-03: editing the personnel-cost basis of an approved scenario ----------------------
+#
+# The same shape as K-07 above, one column group over: `cost_basis`/`fixed_amount`/
+# `fixed_amount_currency` are columns of `staffing_position` itself, so this write's guard,
+# token and change are ONE statement (`UPDATE staffing_position SET updated_at = now(),
+# <changes> WHERE …`), unlike the allocation edit's CTE bridging two tables. The two runs below
+# (plain refusal, then the race) mirror K-07's, and the third — two real connections — is the
+# one criterion K-03 asks for by name ("jak dla każdej pozostałej kolumny tej tabeli"),
+# mirroring K-20's allocation-edit run.
+
+
+def _cost_basis_of(engine: Engine, position_id: uuid.UUID) -> str:
+    with engine.connect() as connection:
+        return connection.execute(
+            sa.text("SELECT cost_basis FROM staffing_position WHERE id = :id"),
+            {"id": position_id},
+        ).scalar_one()
+
+
+def test_k_03_editing_the_cost_basis_of_an_approved_scenario_is_refused_and_changes_nothing(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-03, first run — the refusal names `approved`, and the column is untouched.
+
+    Contrast: the identical edit against the draft scenario's position is applied and its token
+    rotates — the same pair of properties K-07 proves for the hours columns.
+    """
+    state = _committed_project_with_two_scenarios(engine)
+    token = _token_of(committing_client, state["project_id"], state["approved_id"])
+
+    # Fix 3 (Security-Auditor, bramka 1 SC-5-03): the cost-basis write needs the read side's own
+    # conjunction (`STAFFING_WRITE` no longer suffices on its own).
+    with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
+        refused = committing_client.patch(
+            f"{staffing_path(state['project_id'], state['approved_id'])}"
+            f"/{state['approved_position_id']}",
+            json={"updated_at": token, "cost_basis": "fixed_amount", "fixed_amount": "50.0000",
+                  "fixed_amount_currency": "PLN"},
+        )
+
+    assert refused.status_code == 409, refused.text
+    assert "approved" in refused.json()["detail"], refused.text
+    assert _cost_basis_of(engine, state["approved_position_id"]) == "worked_time"
+
+    draft_token = _token_of(committing_client, state["project_id"], state["draft_id"])
+    with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
+        accepted = committing_client.patch(
+            f"{staffing_path(state['project_id'], state['draft_id'])}/{state['draft_position_id']}",
+            json={"updated_at": draft_token, "cost_basis": "fixed_amount",
+                  "fixed_amount": "50.0000", "fixed_amount_currency": "PLN"},
+        )
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["updated_at"] != draft_token, "the ADR-0007 token did not rotate"
+    assert _cost_basis_of(engine, state["draft_position_id"]) == "fixed_amount"
+
+
+def test_k_03_an_approval_committed_just_before_the_cost_basis_edit_still_refuses_it(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-03, second run — the mutation K-07's own second run exists for, one column group over:
+    `if scenario.status == APPROVED: refuse` in Python would pass the first run and let this one
+    through, a basis of an approved calculation changed after a caller was told `200`.
+
+    The hook aims at `UPDATE staffing_position SET updated_at = now(), cost_basis = …`, the one
+    statement in which the token, the scenario's status and the write are all evaluated together.
+    """
+    state = _committed_project_with_two_scenarios(engine)
+    token = _token_of(committing_client, state["project_id"], state["draft_id"])
+    fired: list[str] = []
+    interleave = _committing_the_approval_before(
+        engine, fired, state["draft_id"], statement_prefix="update staffing_position set"
+    )
+
+    event.listen(Engine, "before_cursor_execute", interleave)
+    try:
+        # Fix 3 (Security-Auditor, bramka 1 SC-5-03): the same conjunction the read side needs.
+        with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
+            response = committing_client.patch(
+                f"{staffing_path(state['project_id'], state['draft_id'])}"
+                f"/{state['draft_position_id']}",
+                json={"updated_at": token, "cost_basis": "fixed_amount",
+                      "fixed_amount": "50.0000", "fixed_amount_currency": "PLN"},
+            )
+    finally:
+        event.remove(Engine, "before_cursor_execute", interleave)
+
+    assert fired, "the approval never landed inside the window — nothing here is about the race"
+    assert response.status_code == 409, response.text
+    assert "approved" in response.json()["detail"], response.text
+    assert _cost_basis_of(engine, state["draft_position_id"]) == "worked_time", (
+        "the basis of a scenario approved before the UPDATE ran was changed anyway — the guard is "
+        "not in the statement"
+    )
+
+
+def test_k_03_an_approval_committing_concurrently_with_a_cost_basis_edit_changes_nothing(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """K-03, the third run — two **real** connections, the run the criterion names explicitly
+    ("dowiedziony na dwóch połączeniach jak dla każdej pozostałej kolumny tej tabeli"), mirroring
+    `test_k_20_an_approval_committing_concurrently_with_an_allocation_edit_changes_nothing`.
+
+    The approval holds the scenario row's lock (`app.data.scenario_guard`) from its first statement;
+    the cost-basis edit runs on a background thread and blocks on that lock until the approval
+    commits — proven by `wait_until_a_lock_request_is_pending`, not assumed from timing.
+    """
+    state = _k20_state(engine)
+    token = _token(committing_client, state)
+
+    def edit_the_basis() -> Any:
+        # Fix 3 (Security-Auditor, bramka 1 SC-5-03): the same conjunction the read side needs.
+        # Set only around this one call, on the background thread that issues it — the approval
+        # request's own identity is already resolved by the time this runs (see the fixture's
+        # docstring: the hook fires after the approval holds its lock, mid-request).
+        with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
+            return committing_client.patch(
+                f"{staffing_path(state['project_id'], state['draft_id'])}/{state['position_id']}",
+                json={"updated_at": token, "cost_basis": "fixed_amount",
+                      "fixed_amount": "50.0000", "fixed_amount_currency": "PLN"},
+            )
+
+    outcome = _race_a_child_write_against_the_approval(
+        committing_client, engine, state, edit_the_basis
+    )
+
+    assert outcome["approval"].status_code == 200, outcome["approval"].text
+    assert outcome["blocked"], "the cost-basis edit never waited for a lock"
+    approved = _scenario_is_approved(engine, state["draft_id"])
+    basis = _cost_basis_of(engine, state["position_id"])
+    assert not (approved and basis == "fixed_amount"), (
+        "a position's cost basis was changed under a scenario that was already being approved"
+    )
+    assert approved
+    assert outcome["response"].status_code == 409, outcome["response"].text
+
+
+# --- Reviewer R-02 (2026-09-26): a stale token must win the diagnosis over a basis mismatch ------
+#
+# `_diagnose_position_refusal`'s first version checked `CostBasisMismatch` before the token,
+# treating `cost_basis` as a one-directional fact like `approved`. It is not: a position can switch
+# back to `worked_time`, and a diagnosis that reads `cost_basis` *after* a competing switch has
+# already committed sees "not fixed_amount" and reports `CostBasisMismatch` — "name
+# cost_basis='fixed_amount' and retry" — the exact advice that makes a caller with a stale view of
+# the row silently overwrite the competitor's fresh, deliberate switch, with no warning to either
+# side. The test below reproduces the race on two real connections and proves the corrected order:
+# the token is checked first, so the answer is always `ConcurrentStaffingEditConflict`, never
+# `CostBasisMismatch`.
+
+
+def test_r_02_a_stale_token_beats_a_racing_cost_basis_switch(
+    committing_client: TestClient, engine: Engine
+) -> None:
+    """Reviewer R-02, bramka 1 SC-5-03 — the exact scenario named in the finding: position P is
+    `fixed_amount`, caller A reads its token and asks to change only the amount (a legal request,
+    the contrast `test_fix_1_an_amount_alone_still_edits_an_already_fixed_amount_position` needs);
+    caller B commits a switch to `worked_time` first, on a separate connection, in the window
+    between A's read and A's write. A's `UPDATE` matches nothing — its token is stale *and* the
+    basis is no longer `fixed_amount` — and the diagnosis must name the token, not the basis, or
+    A's next retry (naming `cost_basis='fixed_amount'` on the mistaken belief that is the only
+    problem) would silently undo B's switch.
+
+    Two real connections, mirroring `test_k_07_a_competing_edit_committed_just_before_the_update_
+    refuses_it_and_keeps_its_value`: the hook commits B's switch on its own connection,
+    synchronously, right before A's statement executes — so A's token is fresh when the request is
+    built and stale by the time its own `UPDATE` runs.
+    """
+    state = _committed_project_with_two_scenarios(engine)
+
+    # The draft position starts as `fixed_amount` — the state the race needs, reached through a
+    # real PATCH so its token is the one a real caller would hold.
+    draft_token = _token_of(committing_client, state["project_id"], state["draft_id"])
+    with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
+        set_up = committing_client.patch(
+            f"{staffing_path(state['project_id'], state['draft_id'])}"
+            f"/{state['draft_position_id']}",
+            json={"updated_at": draft_token, "cost_basis": "fixed_amount",
+                  "fixed_amount": "50.0000", "fixed_amount_currency": "PLN"},
+        )
+    assert set_up.status_code == 200, set_up.text
+    token = set_up.json()["updated_at"]
+
+    fired: list[str] = []
+    interleave = _committing_a_competing_cost_basis_switch_before(
+        engine,
+        fired,
+        state["draft_position_id"],
+        statement_prefix="update staffing_position set",
+    )
+
+    event.listen(Engine, "before_cursor_execute", interleave)
+    try:
+        with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
+            response = committing_client.patch(
+                f"{staffing_path(state['project_id'], state['draft_id'])}"
+                f"/{state['draft_position_id']}",
+                json={"updated_at": token, "fixed_amount": "999.0000",
+                      "fixed_amount_currency": "USD"},
+            )
+    finally:
+        event.remove(Engine, "before_cursor_execute", interleave)
+
+    assert fired, "the competing switch never landed inside the window — this proves no race"
+    assert response.status_code == 409, response.text
+    assert "changed since it was read" in response.json()["detail"], response.text
+    assert "cost_basis='fixed_amount'" not in response.json()["detail"], (
+        "the caller was told to name cost_basis='fixed_amount' and retry — the exact advice that "
+        "would let it silently overwrite the competitor's switch"
+    )
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            sa.text(
+                "SELECT cost_basis, fixed_amount, fixed_amount_currency FROM staffing_position"
+                " WHERE id = :id"
+            ),
+            {"id": state["draft_position_id"]},
+        ).one()
+    assert (row.cost_basis, row.fixed_amount, row.fixed_amount_currency) == (
+        "worked_time",
+        None,
+        None,
+    ), "the competitor's switch to worked_time must survive the refused amount edit untouched"

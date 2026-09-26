@@ -749,11 +749,16 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
     """The full `GET …/results` body for `_literal_t_and_m_fixture`, as served by the production
     code of 1739f1e — plus the four fields SC-4-03 (Outcome-based, `origin/main` 56f1d65) added to
     every answer (`profitability_state`; `revenue.category_revenues`/`expected_amount`/
-    `expected_state`), and the six SC-5-02 (surcharges, `origin/main` e807349) added to
+    `expected_state`), the six SC-5-02 (surcharges, `origin/main` e807349) added to
     `personnel_cost` (`surcharge_amount`, `fully_loaded_amount`, `paid_absence_surcharge_amount`,
     `paid_absence_fully_loaded_amount`; per rate window `surcharge_percent`, `includes_surcharge`),
-    with the values `main` serves for T&M. Verified green against the production code of 56f1d65
-    and of e807349 without SC-7-03 (reports of SC-7-03, rounds 3 and 4)."""
+    and the four `fixed_amount_*` fields SC-5-03 added to `personnel_cost` (a fourth, independent
+    component beside the base/paid-absence ones — this fixture has no `fixed_amount` position, so
+    the scenario's declared currency alone resolves it to a `calculated` `0.00`, never a named
+    state), with the values `main` serves for T&M. Verified green against the production code of
+    56f1d65 and of e807349 without SC-7-03 (reports of SC-7-03, rounds 3 and 4); the
+    `fixed_amount_*` fields added when reconciling SC-5-03 with `origin/main` after SC-5-02
+    merged."""
     return {
         "scenario_id": ids["scenario_id"],
         "scenario_status": "Draft",
@@ -827,6 +832,10 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
                 "unresolved_months": [],
                 "currencies": ["PLN"],
             },
+            "fixed_amount_state": "calculated",
+            "fixed_amount_amount": "0.00",
+            "fixed_amount_currency": "PLN",
+            "fixed_amount_assumptions_used": {"lines": [], "currencies": []},
         },
         "additional_cost": {
             "state": "calculated",

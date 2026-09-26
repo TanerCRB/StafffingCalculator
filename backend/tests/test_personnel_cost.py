@@ -634,7 +634,17 @@ COST_FIELDS = {
     "surcharge_amount",
     "paid_absence_fully_loaded_amount",
     "paid_absence_surcharge_amount",
+    # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 1: the fixed-amount basis lives beside the
+    # base cost in this same payload) — re-armed again, still an equality. No fully loaded/surcharge
+    # pair of its own (crossed with SC-5-02): a fixed amount has no rate for a surcharge to
+    # multiply.
+    "fixed_amount_state",
+    "fixed_amount_amount",
+    "fixed_amount_currency",
+    "fixed_amount_assumptions_used",
 }
+FIXED_AMOUNT_ASSUMPTIONS_FIELDS = {"lines", "currencies"}
+FIXED_AMOUNT_LINE_FIELDS = {"position_id", "amount", "currency"}
 ASSUMPTIONS_FIELDS = {
     "hours_source",
     "vendor_axis",
@@ -670,6 +680,9 @@ def _assert_field_sets(body: dict[str, Any]) -> None:
         assert set(window) == WINDOW_FIELDS
     for month in cost["assumptions_used"]["unresolved_months"]:
         assert set(month) == UNRESOLVED_FIELDS
+    assert set(cost["fixed_amount_assumptions_used"]) == FIXED_AMOUNT_ASSUMPTIONS_FIELDS
+    for line in cost["fixed_amount_assumptions_used"]["lines"]:
+        assert set(line) == FIXED_AMOUNT_LINE_FIELDS
 
 
 def test_k_03_the_answer_is_explicitly_the_base_cost_and_carries_nothing_else(

@@ -252,6 +252,15 @@ def scenario_what_if_salary_raise_for_caller(
         status_at_read=cost_view.status_at_read,
         fully_loaded_cost=hypothetical_fully_loaded_cost,
         fully_loaded_paid_absence=hypothetical_fully_loaded_paid_absence,
+        # The fixed-amount component (SC-5-03) is carried through **unraised**: a salary raise is a
+        # multiplier on `catalog_default_rates.default_cost_rate` (ADR-0015, point 3), and a
+        # `fixed_amount` position reads no such rate at all (it is the position's own stated figure,
+        # `app.domain.fixed_amount_cost`) — there is nothing for this what-if to substitute, and
+        # that includes the fully loaded/surcharge pair SC-5-02 added: a fixed amount has none to
+        # begin with (crossed with SC-5-02, see `ScenarioCostView.fixed_amount`'s own docstring in
+        # `app.data.personnel_cost`). Named here rather than silently inherited: a future what-if
+        # that *should* touch fixed amounts is a decision this module does not make on its own.
+        fixed_amount=cost_view.fixed_amount,
     )
     return ScenarioWhatIfView(
         scenario=scenario,

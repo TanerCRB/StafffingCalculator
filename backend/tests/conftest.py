@@ -916,6 +916,9 @@ def make_staffing_position(
     headcount: int = 2,
     start_date: date = date(2026, 3, 1),
     end_date: date | None = None,
+    cost_basis: str = "worked_time",
+    fixed_amount: Decimal | None = None,
+    fixed_amount_currency: str | None = None,
 ) -> StaffingPosition:
     """Insert one staffing position directly — no endpoint, no request schema.
 
@@ -937,6 +940,9 @@ def make_staffing_position(
         headcount=headcount,
         start_date=start_date,
         end_date=end_date,
+        cost_basis=cost_basis,
+        fixed_amount=fixed_amount,
+        fixed_amount_currency=fixed_amount_currency,
     )
     session.add(position)
     session.flush()
