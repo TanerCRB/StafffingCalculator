@@ -876,6 +876,46 @@ history / this file's own change log, not as tracked product work.
   potwierdzone testem planu zapytania (`EXPLAIN`) i testem dryfu model/migracja/baza). Zob.
   `docs/architecture/capabilities.md`.
 
+- [x] **SC-3-06** — Ekran Working calendars: kalendarze robocze (wzorzec tygodnia, dni wyjątkowe) i
+  budżet urlopowy (odczyt + formularz dodania) (F-05, frontend), Issue #140 — konsument API
+  SC-3-02/SC-3-03 (`GET /catalog/working-calendars`, `GET`/`POST /catalog/absence-budgets`).
+  Odwrotna strona monety SC-3-04: tam liczba+stan per pozycja obsady, tu organizacyjne dane
+  źródłowe (sam kalendarz, sam budżet) niezależnie od żadnego scenariusza.
+  *Done when:* `frontend/src` (vitest) dowodzi kryteriów K-01..K-06 (analyst, 2026-09-27), każde z
+  zarejestrowanym i wykonanym przebiegiem mutacyjnym: `week_pattern` interpretowany po dniach
+  tygodnia (poniedziałek pierwszy, nigdy surowy string); `days[].kind` rozróżnialne tekstowo;
+  `statutory_leave_state`/`generates_cost`/`generates_revenue` trójwartościowe (bool/"n/a", nigdy
+  ciche false); formularz budżetu — jeden `POST`, świeży odczyt po zapisie (nie echo), brak
+  klienckiej walidacji okna/nakładania duplikującej serwer; pole `source` nigdy nie sugeruje
+  autora. Zamontowane jako nowy `ScreenKey` `"working-calendars"` na `RAIL_WORKSPACE`
+  (`AppShell.tsx`), osiągalne z działającej aplikacji.
+  **Decyzje bramki 1 (2026-09-27):** zakres — Opcja B (odczyt + zapis budżetu, nie tylko odczyt —
+  `POST` nie ma warstwy ryzyka tokenu współbieżności ani strażnika `approved`, identyczny wzorzec
+  co "add dictionary entry" z `CatalogScreen`); montaż — nowy `ScreenKey` (mechanicznie jak
+  `roles-and-rates`), nie sekcja istniejącego `CatalogScreen`; render wzorca tygodnia — biblioteka
+  kalendarza (`react-day-picker@10.0.1`, nie lista/tabela — koszt: nowa zależność, wymagany
+  przegląd security-auditora); `budget_days` jako czwarta nazwana klasa wartości dziesiętnej —
+  nowy osobny moduł `lib/days.ts`, nigdy `formatHoursString`/rozszerzenie `money.ts`.
+  **Out of scope (explicit):** edycja/dodawanie/usuwanie kalendarza lub budżetu — brak endpointów
+  `PATCH`/`DELETE`; osobna sekcja typów nieobecności — renderowane wyłącznie pośrednio przez
+  `statutory_leave` osadzony w odpowiedzi budżetu; filtrowanie/paginacja — oba `GET` zwracają
+  całość (endpointy sprzed `ADR-0017`, prospektywnego wzorca — nie naruszenie); mobile/responsive;
+  router jako mechanizm ogólny — rozszerzenie unii `ScreenKey`, nie nowy mechanizm nawigacji.
+  **Done 2026-09-27:** PR #141 (scalone). Dowód: `frontend/src/features/catalog/WorkingCalendarsScreen.test.tsx`,
+  `WorkingCalendarsWrite.test.tsx`, `frontend/src/lib/days.test.ts`,
+  `frontend/src/api/client.test.ts` (parowanie kształtu `isAbsenceBudgetShape`),
+  `frontend/src/styles/tokens.test.ts` — 375 testów frontendowych zielono (było 368 po pierwszej
+  implementacji, 350 przed nią). Trzy rundy weryfikacji (Invariant Guardian PASS, security-auditor
+  PASS — przegląd supply chain `react-day-picker`/`date-fns`, `pnpm audit` czysty, reviewer PASS
+  WITH RESERVATIONS) + poprawki: **QA** (luka realna — reguła parowania `statutory_leave_state`
+  na granicy `client.ts` nie miała testu na tym poziomie, tylko pośrednio przez komponent z
+  fixture'ami już poprawnie sparowanymi; domknięte nowym testem, mutacja killed, test komponentu
+  pod tą samą mutacją pozostał zielony — potwierdza realność luki); **R-01** (reviewer, Medium —
+  brak testu abort/unmount dla `readScreen` mimo deklarowanego mirror `CatalogScreen`; naprawione
+  dwoma testami mirror `CatalogScreen` R-01/R-06, RESOLVED); **R-02** (reviewer, Low — N instancji
+  `react-day-picker` bez `content-visibility`; naprawione mirror SC-3-04 R-02, RESOLVED). Zob.
+  `docs/architecture/capabilities.md`.
+
 - [x] **SC-2-05** — Dostosuj wygląd ekranu Roles & rates (katalog) do makiety UI-15 i rozbuduj rail
   nawigacji `AppShell` do pełnej listy 11 wpisów z tej samej makiety, bez zmiany zachowania ani
   kontraktów API (Issue #59).
