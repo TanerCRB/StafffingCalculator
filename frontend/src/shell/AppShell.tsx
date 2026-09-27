@@ -10,8 +10,8 @@ import "./AppShell.css";
  *
  * Visual reference: `Wymagania/prototyp/` (design proposal, UI-01). A reference, not a
  * specification: nothing here is pixel-checked. Since SC-2-05 the rail shows the eleven entries of
- * `15-catalog.png` — three live since SC-3-06, eight planned and saying so (see `RAIL_WORKSPACE`,
- * `RAIL_PROJECT`).
+ * `15-catalog.png` — four live since SC-7-04 ("Compare scenarios" joined "Roles & rates" and
+ * "Working calendars"), seven planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
  * The topbar does not follow the mockup's identity chip, "Internal workspace" badge or currency
  * footer: this product has no identity endpoint, no workspace entity and no conversion to state
  * (gate-1 decision Q-3), and the backend indicator the mockup drops is kept.
@@ -44,7 +44,11 @@ export type BackendStatus = "checking" | "ok" | "unreachable";
  * router library, no URL, no history. That is a named limitation, not an oversight — a screen is not
  * linkable or bookmarkable yet, and choosing a router is a separate architectural decision.
  */
-export type ScreenKey = "projects" | "roles-and-rates" | "working-calendars";
+export type ScreenKey =
+  | "projects"
+  | "compare-scenarios"
+  | "roles-and-rates"
+  | "working-calendars";
 
 /**
  * The name of each screen, in one place: the rail entry and the breadcrumb are the same word by
@@ -52,6 +56,7 @@ export type ScreenKey = "projects" | "roles-and-rates" | "working-calendars";
  */
 const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
   projects: "Projects",
+  "compare-scenarios": "Compare scenarios",
   "roles-and-rates": "Roles & rates",
   "working-calendars": "Working calendars",
 };
@@ -94,7 +99,11 @@ function planned(label: string, reason: string): RailEntry {
 /** The workspace-level entries. */
 const RAIL_WORKSPACE: readonly RailEntry[] = [
   { kind: "screen", key: "projects" },
-  planned("Compare scenarios", "scenario comparison, F-09 (Issue #11)"),
+  // SC-7-04 (Issue #108): the screen behind this entry now exists — a project, then a multi-select
+  // of that project's scenarios, then a table comparing their whole-life results (SC-6-02's
+  // `/compare`). The reservation this entry held since SC-2-05 is the reason gate 1 put the new
+  // screen at workspace level rather than folding it into `ProjectListScreen`.
+  { kind: "screen", key: "compare-scenarios" },
   { kind: "screen", key: "roles-and-rates" },
   { kind: "screen", key: "working-calendars" },
   planned("Organization defaults", "organization-level defaults, F-02 (Issue #4)"),

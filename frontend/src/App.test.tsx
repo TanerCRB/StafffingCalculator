@@ -160,6 +160,41 @@ describe("App", () => {
     );
   });
 
+  // --- SC-7-04 ---------------------------------------------------------------------------------
+
+  it("makes the compare-scenarios screen reachable from the running application, not only from its own test", async () => {
+    const fetchMock = stubRunningBackend();
+
+    render(<App />);
+    const main = screen.getByRole("main");
+
+    expect(await within(main).findByRole("heading", { name: "Projects" })).toBeVisible();
+    expect(within(main).queryByRole("heading", { name: "Compare scenarios" })).toBeNull();
+    expect(requestedPaths(fetchMock).filter((path) => path === "/projects")).toHaveLength(1);
+
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Sections" })).getByRole("button", {
+        name: "Compare scenarios",
+      }),
+    );
+
+    expect(within(main).getByRole("heading", { name: "Compare scenarios" })).toBeVisible();
+    // Its own read of `/projects` — a second call, made by the new screen, not a reuse of the
+    // project list screen's own state (the two screens are unmounted from one another).
+    await waitFor(() =>
+      expect(requestedPaths(fetchMock).filter((path) => path === "/projects")).toHaveLength(2),
+    );
+
+    // The project list is unmounted, not merely hidden behind it.
+    expect(within(main).queryByRole("heading", { name: "Projects" })).toBeNull();
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByText("Compare scenarios")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
   // --- Reviewer R-03 -----------------------------------------------------------------------------
 
   it("moves keyboard focus to the new screen's heading after a rail activation, in both directions", async () => {

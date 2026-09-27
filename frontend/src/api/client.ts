@@ -52,6 +52,7 @@ import {
   type AdditionalCostSource,
   type PersonnelCostSource,
   type ScenarioResults,
+  type ScenarioResultsComparison,
 } from "./contracts/scenarioResults";
 import {
   ABSENCE_BUDGET_STATES,
@@ -1487,6 +1488,77 @@ export async function getScenarioResults(
       }
       const payload: unknown = await response.json();
       if (!isScenarioResultsShape(payload, scenarioId)) {
+        throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
+function scenarioResultsComparisonPath(projectId: string): string {
+  return `/projects/${projectId}/scenarios/compare`;
+}
+
+/**
+ * Whether a response is the `ScenarioResultsComparison` `GET …/scenarios/compare` promises
+ * (SC-7-04, Issue #108).
+ *
+ * `results` is validated element by element, each one through `isScenarioResultsShape` — the same
+ * function `getScenarioResults` uses for the single-scenario endpoint, reused rather than
+ * re-guessed, and applied independently per row (K-01, K-02, K-03): a malformed row never
+ * invalidates its neighbours' shape by itself, and a row's own `scenario_id` is read from the row
+ * itself, never assumed from its position. This function does not reorder or renumber `results`
+ * — count and order are exactly what `response.json()` returned (K-05); the screen is the one
+ * place that must not sort or re-key it either.
+ */
+function isScenarioResultsComparisonShape(value: unknown): value is ScenarioResultsComparison {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.results) &&
+    value.results.every(
+      (item) => isRecord(item) && typeof item.scenario_id === "string" && isScenarioResultsShape(item, item.scenario_id),
+    )
+  );
+}
+
+/**
+ * N scenarios of one project, compared in one call (`GET …/scenarios/compare`, SC-6-02). Read
+ * only, all-or-nothing on the wire: a `scenario_id` outside the caller's scope or belonging to
+ * another project refuses the *whole* response with `404`, never a partial `results` with the
+ * missing one marked (K-04) — this function does not fall back to N calls of `getScenarioResults`
+ * on any failure; a caller that wants that fallback would have to build it, deliberately, on top of
+ * this one failing.
+ *
+ * `scenarioIds` is sent as a repeated `scenario_id` query parameter, in the order given —
+ * `URLSearchParams` preserves insertion order, and this function appends none of its own, so the
+ * order the caller asked in is the order the backend receives (SC-7-04, K-05).
+ *
+ * `signal`, when given, ends the read early — the screen that asked for it has unmounted, or asked
+ * again (ADR-0010, point 7, the same discipline `getScenarioResults` already keeps).
+ */
+export async function getScenarioResultsComparison(
+  projectId: string,
+  scenarioIds: readonly string[],
+  signal?: AbortSignal,
+): Promise<ScenarioResultsComparison> {
+  const path = scenarioResultsComparisonPath(projectId);
+  const params = new URLSearchParams();
+  for (const scenarioId of scenarioIds) {
+    params.append("scenario_id", scenarioId);
+  }
+  const query = params.toString();
+  const url = `${API_BASE_URL}${path}${query.length > 0 ? `?${query}` : ""}`;
+  return requestWithDeadline(
+    url,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isScenarioResultsComparisonShape(payload)) {
         throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
       }
       return payload;
