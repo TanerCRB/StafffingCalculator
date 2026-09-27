@@ -1,4 +1,6 @@
 import type {
+  CatalogAbsenceTypeEntry,
+  CatalogAbsenceTypeList,
   CatalogDimension,
   CatalogRate,
   CatalogRateCreateRequest,
@@ -42,6 +44,15 @@ import {
   type PersonnelCostSource,
   type ScenarioResults,
 } from "./contracts/scenarioResults";
+import {
+  ABSENCE_BUDGET_STATES,
+  CAPACITY_STATES,
+  HOURS_NOT_APPLICABLE,
+  type StaffingAbsence,
+  type StaffingAllocation,
+  type StaffingPositionList,
+  type StaffingPositionRead,
+} from "./contracts/staffing";
 
 const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -170,6 +181,98 @@ async function requestWithDeadline<T>(
     // Only now: the race has settled, so the body has either been read or been given up on.
     clearTimeout(timeoutHandle);
   }
+}
+
+// --- Concurrent-request coalescing (Reviewer R-01, gate 2 of SC-3-04/Issue #135) -----------------
+//
+// Not a cache of data — nothing here answers a caller with a value that might already be stale.
+// An entry exists only from the moment one `GET` starts to the moment it settles (or the moment
+// nobody is left waiting on it, whichever comes first — see `leave` below), and is dropped from
+// the map at exactly that point. A later, non-concurrent call to the same key always makes its own
+// fresh request; the only thing this removes is the fan-out of *identical, concurrent* requests.
+//
+// That fan-out is real, not hypothetical: `StaffingPlanSection` mounts one instance per scenario
+// card and every instance calls the same five name-resolving reads on mount
+// (`readCatalogNames`) — a project with N scenarios turned five dictionaries, none of which
+// depend on `scenarioId` or `projectId`, into N×5 identical `GET`s in flight together. This sits
+// under `getCatalogDimension`/`getCatalogAbsenceTypes`'s existing signatures rather than as a
+// second mechanism: `CatalogScreen`'s own five-dimension read (`readCatalogue`, including
+// `vendors`) goes through the very same function and gets the same deduplication with no change
+// to its call site.
+//
+// Cancellation stays real, not merely cosmetic, once more than one caller shares a request: each
+// caller's own `AbortSignal`, when given, is one vote to keep the shared request alive, not a
+// unilateral cancellation of a read others are still waiting on — one `StaffingPlanSection`
+// instance unmounting must not cancel the read fourteen still-mounted siblings need. Only once
+// every caller who asked for this key has left does the underlying request actually abort. When
+// that happens, the entry is evicted from the map in the same tick — not on the promise's own
+// eventual settling — so an immediate next call (React 18 `StrictMode`'s mount → cleanup → mount,
+// in particular) starts a fresh request of its own rather than joining one already given up on.
+interface CoalescedRead<T> {
+  readonly promise: Promise<T>;
+  readonly controller: AbortController;
+  subscribers: number;
+}
+
+const pendingReads = new Map<string, CoalescedRead<unknown>>();
+
+function evict(key: string, entry: CoalescedRead<unknown>): void {
+  // Guarded: by the time this runs, a fresher entry may already occupy `key` (the immediate
+  // eviction in `leave` below can race the promise's own `.finally`), and it must not be the one
+  // that gets deleted.
+  if (pendingReads.get(key) === entry) {
+    pendingReads.delete(key);
+  }
+}
+
+/**
+ * Runs `start` at most once per `key` among callers whose calls overlap in time, and hands every
+ * caller who asked while it was in flight the same, single settling of it.
+ *
+ * `signal`, when given, is this caller's own vote to keep the shared request alive (see the
+ * section docstring above) — it does not hand this caller a private cancellation of a request
+ * others still want.
+ */
+function coalesced<T>(
+  key: string,
+  signal: AbortSignal | undefined,
+  start: (sharedSignal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  let entry = pendingReads.get(key) as CoalescedRead<T> | undefined;
+  if (entry === undefined) {
+    const controller = new AbortController();
+    const promise = start(controller.signal);
+    entry = { controller, subscribers: 0, promise };
+    pendingReads.set(key, entry as CoalescedRead<unknown>);
+    const settledEntry = entry;
+    // A second observer, deliberately not the one returned to callers: settling — success or
+    // failure alike — is also a reason to stop coalescing new callers onto this request, because a
+    // later, non-concurrent call must make its own. The `.catch` here only exists to keep this
+    // second chain from becoming an unhandled rejection of its own; the real rejection is still
+    // `promise` itself, already returned below to whoever calls this.
+    promise
+      .finally(() => evict(key, settledEntry as CoalescedRead<unknown>))
+      .catch(() => {
+        /* observed above only to run `evict`; the caller's own `promise` still carries it. */
+      });
+  }
+  const live = entry;
+  live.subscribers += 1;
+  if (signal !== undefined) {
+    const leave = () => {
+      live.subscribers -= 1;
+      if (live.subscribers <= 0) {
+        evict(key, live as CoalescedRead<unknown>);
+        live.controller.abort();
+      }
+    };
+    if (signal.aborted) {
+      leave();
+    } else {
+      signal.addEventListener("abort", leave, { once: true });
+    }
+  }
+  return live.promise;
 }
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -435,31 +538,84 @@ export async function getCatalogRates(signal?: AbortSignal): Promise<CatalogRate
  * cannot be spelled at a call site.
  *
  * `signal`, when given, ends the read early — typically because the screen that asked for it has
- * unmounted (Reviewer R-01).
+ * unmounted (Reviewer R-01) — but only once every other concurrent caller of this same dimension
+ * has too: this function is coalesced (Reviewer R-01, gate 2 of SC-3-04, see `coalesced` above),
+ * so `CatalogScreen`'s own five-dimension read and `StaffingPlanSection`'s four-dimension read
+ * share one network request per dimension whenever they overlap in time, with no change to either
+ * call site.
  */
 export async function getCatalogDimension(
   dimension: CatalogDimension,
   signal?: AbortSignal,
 ): Promise<DimensionEntryList> {
   const path = `/catalog/dimensions/${dimension}`;
-  return requestWithDeadline(
-    `${API_BASE_URL}${path}`,
-    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
-    async (response) => {
-      if (!response.ok) {
-        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
-      }
-      const payload = (await response.json()) as DimensionEntryList | null;
-      if (!Array.isArray(payload?.entries) || !payload.entries.every(isDimensionEntryShape)) {
-        throw new ApiError(
-          response.status,
-          `GET ${path} returned a payload without a valid entry list`,
-        );
-      }
-      return payload;
-    },
-    REQUEST_TIMEOUT_MS,
-    signal,
+  return coalesced(path, signal, (sharedSignal) =>
+    requestWithDeadline(
+      `${API_BASE_URL}${path}`,
+      { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+      async (response) => {
+        if (!response.ok) {
+          throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+        }
+        const payload = (await response.json()) as DimensionEntryList | null;
+        if (!Array.isArray(payload?.entries) || !payload.entries.every(isDimensionEntryShape)) {
+          throw new ApiError(
+            response.status,
+            `GET ${path} returned a payload without a valid entry list`,
+          );
+        }
+        return payload;
+      },
+      REQUEST_TIMEOUT_MS,
+      sharedSignal,
+    ),
+  );
+}
+
+/** Whether one row has the shape `CatalogAbsenceTypeEntry` promises — only the two fields this
+ * client reads (`contracts/catalog.ts`: this endpoint's row carries more, unread by this client). */
+function isCatalogAbsenceTypeShape(value: unknown): value is CatalogAbsenceTypeEntry {
+  return isRecord(value) && typeof value.id === "string" && typeof value.name === "string";
+}
+
+/**
+ * Every absence type the catalogue holds (`GET /catalog/absence-types`, SC-3-02). Read only.
+ *
+ * Its own route, not `/catalog/dimensions/{dimension}` (SC-3-04, `contracts/catalog.ts`) — consumed
+ * by SC-3-04 to resolve a staffing absence's `absence_type_id` to a name, the sixth name-resolving
+ * read this client performs alongside the four dimension dictionaries `getCatalogDimension` serves
+ * (`CATALOG_READ`, independently of `STAFFING_READ` — gate 1, Q4/Q6).
+ *
+ * `signal`, when given, ends the read early — the card that asked for it has unmounted (Reviewer
+ * R-01) — but only once every other concurrent caller has too: this function is coalesced
+ * (Reviewer R-01, gate 2 of SC-3-04, see `coalesced` above), so N scenario cards mounting
+ * `StaffingPlanSection` together share one `GET /catalog/absence-types`, not N of them.
+ */
+export async function getCatalogAbsenceTypes(signal?: AbortSignal): Promise<CatalogAbsenceTypeList> {
+  const path = "/catalog/absence-types";
+  return coalesced(path, signal, (sharedSignal) =>
+    requestWithDeadline(
+      `${API_BASE_URL}${path}`,
+      { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+      async (response) => {
+        if (!response.ok) {
+          throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+        }
+        const payload = (await response.json()) as CatalogAbsenceTypeList | null;
+        if (
+          !Array.isArray(payload?.absence_types) ||
+          !payload.absence_types.every(isCatalogAbsenceTypeShape)
+        ) {
+          throw new ApiError(
+            response.status,
+            `GET ${path} returned a payload without a valid absence-type list`,
+          );
+        }
+        return payload;
+      },
+      REQUEST_TIMEOUT_MS,
+      sharedSignal,
+    ),
   );
 }
 
@@ -1150,6 +1306,143 @@ export async function getScenarioResults(
       const payload: unknown = await response.json();
       if (!isScenarioResultsShape(payload, scenarioId)) {
         throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
+// --- A scenario's staffing plan (SC-3-04, Issue #135, consuming SC-3-01/SC-3-02/SC-3-03) --------
+// Read only: no function here, and nothing that calls one, reaches a write endpoint of this router
+// (`PATCH`/`POST`/`DELETE` under `.../staffing-positions`) — out of scope by construction, not by a
+// check this file performs (see Issue #135, "Out of scope").
+
+/** Whether a value is a fixed-point decimal string an hours field is allowed to carry — the grammar
+ * `lib/hours.ts` rounds with, read through the same `isDecimalString` money.ts owns (ADR-0002,
+ * addendum 2026-09-26 SC-3-04: one grammar, not a second reading of it for hours). */
+function isStaffingHoursShape(value: unknown): boolean {
+  return typeof value === "string" && isDecimalString(value);
+}
+
+/**
+ * Whether one allocation month has the shape `StaffingAllocation` promises — including the two
+ * pairings the backend's schema docstrings state in prose (`backend/app/api/schemas/staffing.py`):
+ * `derived_capacity_hours`/`absence_budget_hours` are decimal strings **exactly when** their own
+ * state is `"resolved"`, and the sentinel `"n/a"` **exactly otherwise** — never a real number beside
+ * a non-resolved state, and never `"n/a"` beside `"resolved"`. A row that breaks either pairing is
+ * not admissible: it would reach `formatHoursString` and throw mid render, or would let a
+ * `"no_calendar"` row carry a plausible-looking number (SC-3-04, K-02/K-03; the same discipline
+ * `isPersonnelCostSourceShape` already applies to its own gated fields).
+ */
+function isStaffingAllocationShape(value: unknown): value is StaffingAllocation {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.period_month !== "string" ||
+    !isStaffingHoursShape(value.availability_hours) ||
+    !isStaffingHoursShape(value.planned_allocation_hours) ||
+    !isStaffingHoursShape(value.billable_hours) ||
+    !isOneOf(value.derived_capacity_state, CAPACITY_STATES) ||
+    !isOneOf(value.absence_budget_state, ABSENCE_BUDGET_STATES)
+  ) {
+    return false;
+  }
+  const capacityPaired =
+    value.derived_capacity_state === "resolved"
+      ? isStaffingHoursShape(value.derived_capacity_hours)
+      : value.derived_capacity_hours === HOURS_NOT_APPLICABLE;
+  const budgetPaired =
+    value.absence_budget_state === "resolved"
+      ? isStaffingHoursShape(value.absence_budget_hours)
+      : value.absence_budget_hours === HOURS_NOT_APPLICABLE;
+  return capacityPaired && budgetPaired;
+}
+
+/** Whether one absence has the shape `StaffingAbsence` promises — exactly its four fields
+ * (ADR-0005, addendum 2026-09-22 SC-3-02, point 6; this check does not forbid a fifth field being
+ * *present*, since `response.json()` cannot un-send one, but this client declares and reads only
+ * these four regardless of what else a row might carry). */
+function isStaffingAbsenceShape(value: unknown): value is StaffingAbsence {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.absence_type_id === "string" &&
+    typeof value.start_date === "string" &&
+    typeof value.end_date === "string"
+  );
+}
+
+/**
+ * Whether one position has the shape `StaffingPositionRead` promises, field by field, including
+ * both nested lists (`allocations`, `absences`) — checked one level deeper than any predicate in
+ * this file has had to go before (Architect's impact map, SC-3-04): a position whose `allocations`
+ * array is `[]` is a legal draft with no months planned yet, exactly as a position list that is
+ * itself `[]` is a legal scenario with no positions — neither empty array may be treated as, or
+ * produced by, a shape failure (K-05's contrast, generalised one level down).
+ */
+function isStaffingPositionShape(value: unknown): value is StaffingPositionRead {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.role_id === "string" &&
+    typeof value.seniority_id === "string" &&
+    typeof value.location_id === "string" &&
+    typeof value.engagement_type_id === "string" &&
+    typeof value.headcount === "number" &&
+    typeof value.start_date === "string" &&
+    isRequiredNullableString(value.end_date) &&
+    typeof value.updated_at === "string" &&
+    Array.isArray(value.allocations) &&
+    value.allocations.every(isStaffingAllocationShape) &&
+    Array.isArray(value.absences) &&
+    value.absences.every(isStaffingAbsenceShape)
+  );
+}
+
+function isStaffingPositionListShape(value: unknown): value is StaffingPositionList {
+  return (
+    isRecord(value) && Array.isArray(value.positions) && value.positions.every(isStaffingPositionShape)
+  );
+}
+
+function staffingPositionsPath(projectId: string, scenarioId: string): string {
+  return `/projects/${projectId}/scenarios/${scenarioId}/staffing-positions`;
+}
+
+/**
+ * A scenario's whole staffing grid — its positions, their monthly allocations and their planned
+ * absences (`GET …/staffing-positions`, SC-3-01). Read only (Issue #135: no write path is reachable
+ * from this function or from anything that calls it).
+ *
+ * `403` (the caller lacks `STAFFING_READ`) and `404` (the scenario is out of the caller's scope, or
+ * does not exist) both stay on the `ApiError`'s `status`, exactly as `getScenarioResults` keeps them
+ * — the merge into one rendered "unavailable" state (gate 1, Q3 = option A, mirroring K-04 of
+ * SC-7-02) happens in `StaffingPlanSection`, not here.
+ *
+ * `signal`, when given, ends the read early — the card that asked for it has unmounted (ADR-0010,
+ * point 7).
+ */
+export async function getStaffingPositions(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+): Promise<StaffingPositionList> {
+  const path = staffingPositionsPath(projectId, scenarioId);
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isStaffingPositionListShape(payload)) {
+        throw new ApiError(
+          response.status,
+          `GET ${path} returned a payload without a valid position list`,
+        );
       }
       return payload;
     },
