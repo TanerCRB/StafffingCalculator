@@ -655,9 +655,16 @@ class StaffingPositionRead(BaseModel):
 
 
 class StaffingPositionList(BaseModel):
-    """An object, not a bare array — room for filtering or pagination later without breaking the
-    contract, as `ProjectListResponse` and `CatalogRateList`. NF-03 (200 positions × 36 months) is
-    not measured by SC-3-01; that is named in the plan entry, and this shape is what leaves room to
-    answer it."""
+    """An object, not a bare array — the room `ProjectListResponse` and `CatalogRateList` already
+    keep. SC-3-01 named it "room for filtering or pagination later without breaking the contract";
+    SC-3-05 (ADR-0017) is that later, and `total` is the field the room was for."""
 
     positions: list[StaffingPositionRead]
+    total: int
+    """The count of every position of this scenario, before `limit`/`offset` are applied — never
+    `len(positions)`, which is only true while the whole grid fits in one page (K-02, K-04).
+    Computed in the same read as the page (`app.data.staffing.list_positions`), never a second
+    query that could disagree with it (ADR-0017 point 5). A client compares the two to know whether
+    it is holding the whole grid or page one of more — and, without any `limit`/`offset` named at
+    all, the two are always equal (K-01): the default answer is still the whole grid, exactly as
+    before this task."""

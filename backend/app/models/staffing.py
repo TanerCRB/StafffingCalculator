@@ -55,6 +55,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -169,6 +170,26 @@ FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION = (
 """The CHECK expressions as SQL, each spelled once here and once in migration `a8f18e00172b`, and
 asserted identical to that copy by the accompanying schema-drift test (the pattern `HOURS_COLUMNS`'s
 module docstring and `additional_cost`'s `_EXPRESSION` constants both already use)."""
+
+
+STAFFING_POSITION_PAGE_INDEX = "ix_staffing_position_scenario_start_date_id"
+"""The btree index that makes one page of `GET .../staffing-positions` a bounded top-N (SC-3-05,
+gate-2 review R-02 — mirrored from `app.models.catalog.RATE_PAGE_INDEX`, the identical gap on the
+identical shape of query).
+
+Before it, this table carried the primary key (on `id` alone) and the single-column index on
+`scenario_id` alone (`ForeignKey(..., index=True)` above) — neither can produce
+`app.data.staffing._staffing_position_page_statement`'s order, `ORDER BY start_date, id` filtered by
+one `scenario_id`. Without a composite index leading on all three, the planner has to fetch every
+row of the scenario before it can sort and cut, so the docstring `_staffing_position_page_statement`
+carried before this fix ("an index scan that stops after limit + offset rows") was true of no index
+this table actually had — the same false promise `RATE_PAGE_INDEX`'s own module docstring records
+having been the reason for its addition.
+
+Created by migration `f1a2c4b6d8e0` (`op.create_index`, expand-only — the same shape as
+`e2c7b04d9a31`: nothing dropped, nothing rewritten, a query plan improves and no result changes).
+Declared here as well, so the model keeps describing the database that exists; a schema-drift test
+compares the two copies of the name and the columns, the same pattern `RATE_PAGE_INDEX` uses."""
 
 
 class StaffingPosition(Base):
@@ -336,6 +357,10 @@ class StaffingPosition(Base):
         CheckConstraint(
             FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION, name="fixed_amount_currency_is_upper"
         ),
+        # Not an integrity constraint — the one index this table has for *paging* a scenario's
+        # grid (SC-3-05, R-02). Declared here as well as created by migration `f1a2c4b6d8e0`, so the
+        # model keeps describing the database that exists. See `STAFFING_POSITION_PAGE_INDEX`.
+        Index(STAFFING_POSITION_PAGE_INDEX, "scenario_id", "start_date", "id"),
     )
 
 

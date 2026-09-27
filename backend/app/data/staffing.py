@@ -443,33 +443,158 @@ def position_view(
     return StaffingPositionView(position=position, capacity=capacity)
 
 
+DEFAULT_STAFFING_POSITION_LIST_LIMIT = 200
+"""The page size assumed when a caller names `offset` but not `limit` (SC-3-05, ADR-0017 point 6).
+
+Not the default for "no parameters at all" — that case stays "the whole grid" (K-01), unchanged
+from the shape SC-3-01 shipped. This constant only fills in the other half of a partial request, and
+its value is NF-03's own reference scale (200 positions), so a caller who names only `offset` still
+gets a realistic page rather than an arbitrarily small or unbounded one."""
+
+MAX_STAFFING_POSITION_LIST_LIMIT = 1000
+"""The ceiling `limit` may name — refused (`422`) above it, never silently clamped (K-06), for the
+reason `app.data.catalog.MAX_RATE_LIST_LIMIT` gives: a clamp would answer fewer rows than asked for
+without saying so. Five times NF-03's reference scale (200 positions), the same headroom reasoning
+`MAX_ALLOCATION_MONTHS` applies to a single position's grid."""
+
+MAX_STAFFING_POSITION_LIST_OFFSET = 1_000_000
+"""The ceiling `offset` may name — refused (`422`) above it, exactly as `limit` is, and for the
+same two reasons `app.data.catalog.MAX_RATE_LIST_OFFSET` documents: an unbounded value reaches the
+driver as a `bigint` a client can type by accident, and `OFFSET n` still walks and discards `n`
+rows before the first row of the page, so the server side is bounded by `limit + offset`, not by
+`limit` alone."""
+
+
+def _staffing_position_page_statement(
+    scenario_id: uuid.UUID, *, limit: int, offset: int
+) -> sa.Select[tuple[uuid.UUID, int]]:
+    """The **one** statement that decides which position ids are on this page, and the total.
+
+    Public shape mirrored from `app.data.catalog.rate_page_statement` (ADR-0017 point 5): `total` is
+    a scalar subquery in the same `SELECT` as the page, evaluated in the same snapshot, so no
+    concurrent write between the two halves can make the response describe a scenario that never
+    existed at any instant. The page itself is a bounded top-N (`ORDER BY … LIMIT … OFFSET`) over
+    `(start_date, id)` — the existing total order of `list_positions` (K-03) — filtered by one
+    `scenario_id`.
+
+    **The planner can answer it with an index scan that stops after `limit + offset` rows, and not
+    merely as an aspiration** (gate-2 review R-02, Reviewer finding — this docstring used to claim
+    that sentence with no supporting index, the identical gap `RATE_PAGE_INDEX`'s own module
+    docstring records having existed for `GET /catalog/rates`): the composite btree
+    `app.models.staffing.STAFFING_POSITION_PAGE_INDEX`, leading on `scenario_id` then `start_date`
+    then `id`, is exactly this statement's `WHERE` column followed by its `ORDER BY` columns, so a
+    scan of it can walk straight to this scenario's rows in the order the page needs and stop after
+    `limit + offset` of them — never sorting the rest of the scenario's positions, let alone the
+    table's. Proven against the real plan, not asserted from the shape of the SQL alone:
+    `test_r_02_a_page_is_read_as_a_bounded_top_n_not_a_sort_of_the_scenario`
+    (`tests/test_staffing_pagination.py`), the same construction
+    `test_r_01_a_page_is_read_as_a_bounded_top_n_not_a_sort_of_the_whole_catalogue` uses for its
+    catalogue counterpart.
+
+    Returns `(id, total)` rather than the mapped entity: the page's own month rows and absences
+    still need `selectinload`, which does not compose with a subquery built from bare columns, so
+    the positions themselves are re-read by id once the page is known (`list_positions`).
+    """
+    page = (
+        sa.select(StaffingPosition.id, StaffingPosition.start_date)
+        .where(StaffingPosition.scenario_id == scenario_id)
+        .order_by(StaffingPosition.start_date, StaffingPosition.id)
+        .limit(limit)
+        .offset(offset)
+        .subquery()
+    )
+    total = (
+        sa.select(sa.func.count())
+        .select_from(StaffingPosition)
+        .where(StaffingPosition.scenario_id == scenario_id)
+        .scalar_subquery()
+    )
+    return sa.select(page.c.id, total.label("total")).order_by(page.c.start_date, page.c.id)
+
+
+def _staffing_position_total_statement(scenario_id: uuid.UUID) -> sa.Select[tuple[int]]:
+    """`count(*)` over one scenario's positions — the fallback for the one case the page cannot
+    carry: an empty page (`offset` past the end, or a scenario with no positions at all), which
+    has no row to attach a `total` to (the same shape `app.data.catalog.rate_total_statement`
+    answers)."""
+    return (
+        sa.select(sa.func.count())
+        .select_from(StaffingPosition)
+        .where(StaffingPosition.scenario_id == scenario_id)
+    )
+
+
 def list_positions(
-    session: Session, caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
-) -> Sequence[StaffingPositionView] | None:
-    """Every staffing position of one scenario, each with its month rows — or `None` for "no such".
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> tuple[Sequence[StaffingPositionView], int] | None:
+    """Every staffing position of one scenario, each with its month rows, and the total count — or
+    `None` for "no such" (SC-3-01; paginated since SC-3-05, ADR-0017).
 
     `None`, not an empty list: a scenario the caller may not see and a scenario with no positions
     must not be the same answer, or the absence of staffing would be indistinguishable from the
     absence of access. The `None` itself carries no reason (see `scenario_in_scope`).
 
-    Ordered by period, then by id, so a grid read twice comes back in the same order; the month rows
-    are ordered by `period_month` and the absences by start date then id, by the relationships
-    themselves. `selectinload` rather than a lazy load per row: the months and absences of 200
-    positions are two extra statements, not 400 (NF-03 — unmeasured here, and named as such in the
-    plan entry).
+    **`limit=None` means "the whole grid", not "page one of a default size"** (K-01, gate-1 decision
+    Q-4/A): the exact query SC-3-01 always ran, unchanged, because there is no frontend consumer of
+    this endpoint yet to leave holding a silently truncated page. `total` in that branch is `len` of
+    what was just read — every position of the scenario, so it always equals the number returned.
+
+    **A named `limit` runs a bounded top-N instead** (K-02, K-04):
+    `_staffing_position_page_statement` decides the page's ids and the total in one snapshot, and
+    this function then re-reads exactly those ids with the same `selectinload` two extra statements
+    the unbounded branch uses (NF-03 — 200 positions in three statements, not 400, whichever branch
+    runs). An empty page — `offset` past the end of an in-scope scenario — is `([], total)`, a
+    `200` with an empty list (K-05): the scope decision already happened above, through
+    `scenario_in_scope`, and applying `limit`/`offset` after it is what keeps pagination from
+    becoming a second channel that could answer for scope (`out of range` must read exactly like
+    "this page happens to be empty", never like "no such scenario").
+
+    Ordered by period, then by id, so a grid read twice comes back in the same order (K-03) — the
+    same total order on both branches, the page's own `ORDER BY` and the unbounded branch's.
+    `selectinload` rather than a lazy load per row: the months and absences of one page of positions
+    are two extra statements, not one per position.
     """
     if scenario_in_scope(session, caller, project_id, scenario_id) is None:
         return None
+
+    if limit is None:
+        statement = (
+            sa.select(StaffingPosition)
+            .where(StaffingPosition.scenario_id == scenario_id)
+            .options(
+                selectinload(StaffingPosition.allocations),
+                selectinload(StaffingPosition.absences),
+            )
+            .order_by(StaffingPosition.start_date, StaffingPosition.id)
+        )
+        positions = list(session.execute(statement).scalars().all())
+        return _views_of(session, positions), len(positions)
+
+    page_rows = session.execute(
+        _staffing_position_page_statement(scenario_id, limit=limit, offset=offset)
+    ).all()
+    if not page_rows:
+        total = session.execute(_staffing_position_total_statement(scenario_id)).scalar_one()
+        return [], total
+    page_ids = [row.id for row in page_rows]
+    total = page_rows[0].total
     statement = (
         sa.select(StaffingPosition)
-        .where(StaffingPosition.scenario_id == scenario_id)
+        .where(StaffingPosition.id.in_(page_ids))
         .options(
             selectinload(StaffingPosition.allocations),
             selectinload(StaffingPosition.absences),
         )
-        .order_by(StaffingPosition.start_date, StaffingPosition.id)
     )
-    return _views_of(session, list(session.execute(statement).scalars().all()))
+    by_id = {position.id: position for position in session.execute(statement).scalars().all()}
+    ordered = [by_id[position_id] for position_id in page_ids]
+    return _views_of(session, ordered), total
 
 
 def list_absences(
@@ -1127,6 +1252,50 @@ class AbsenceNotFound(RuntimeError):
     """
 
 
+MAX_ABSENCES_PER_POSITION = 60
+"""The most absence rows one position may ever hold (SC-3-05, gate-1 decision Q-B).
+
+**Mirrors `app.api.schemas.staffing.MAX_ALLOCATION_MONTHS`** — the same headroom reasoning (five
+years, one row per month at the most granular a booked absence gets in practice) applied to a table
+that grows one row at a time through `POST` instead of arriving in a single request: `allocations`
+is bounded because a create request names all its months at once and Pydantic can refuse a request
+too large to hold; `absences` has no such natural bound, because nothing stops a caller from calling
+this endpoint sixty-one times. Left unbounded, a position's absences were the one axis of growth
+`list_positions`'s own pagination (this same task) does not address — pagination limits how many
+*positions* one response carries, not how large one position's own nested lists become (architect's
+impact map, Q-B).
+
+**Not a CHECK constraint.** Counting the rows of a *different* table from inside a `CHECK` on
+`staffing_position` is not expressible without a trigger, and this repository's existing pattern for
+a bound on "how many child rows may a parent accumulate" is the request-schema bound
+(`MAX_ALLOCATION_MONTHS`) precisely because the accumulation happens in one request there — here it
+does not, so the bound instead lives in the one write statement that would cross it
+(`create_absence`), evaluated by a correlated `count(*)` in the same guarded `UPDATE ... WHERE` that
+rotates the token, never a separate `SELECT` before the `INSERT` (a check-then-act window two
+concurrent callers at the limit could both pass — the shape ADR-0008 and this module's own
+`INSERT ... SELECT` guards exist to avoid)."""
+
+
+class AbsenceLimitReached(StaffingWriteRejected):
+    """This position already holds `MAX_ABSENCES_PER_POSITION` absence rows (SC-3-05, K-07).
+
+    Refused *by state*, exactly like `ApprovedScenarioFrozen`/`ConcurrentStaffingEditConflict` — the
+    same guarded `UPDATE` decides it, in the same `WHERE`, not a second check bolted on afterwards
+    (criterion K-07's mutation: removing the correlated `count(*)` condition from that `WHERE` must
+    make this exception unreachable and let the insert through).
+
+    **Reported only when the caller's own token is still fresh** (the same caution
+    `CostBasisMismatch` documents, applied here): the count, like `cost_basis`, moves in both
+    directions — an absence added, then removed, then added again — so a count re-read *after* a
+    concurrent write has already changed it is not a fact about the caller's own request. A stale
+    token is always `ConcurrentStaffingEditConflict`, never this.
+
+    Not permanent the way `ApprovedScenarioFrozen` is: deleting an absence of this position frees a
+    slot, and the identical request then succeeds — the message says so, so the caller has a way
+    forward rather than only a wall.
+    """
+
+
 def _guarded_position(
     *,
     scenario_id: uuid.UUID,
@@ -1203,14 +1372,32 @@ def create_absence(
     Overlapping absences are accepted on purpose: two people of a `headcount = 3` position may be
     away over the same days, and the capacity formula counts them both (criterion K-06). There is no
     `EXCLUDE` constraint on this table and its absence is the decision.
+
+    **Capped at `MAX_ABSENCES_PER_POSITION` (SC-3-05, K-07).** The bound is a fourth condition of
+    the same guarded `UPDATE` — a correlated `count(*)` against `staffing_position_absence` for
+    this position, compared inside the statement's own `WHERE` — never a `SELECT` run first in
+    Python: two concurrent callers at the limit would both read "59, not yet at 60" and both
+    insert, exactly the check-then-act window `create_position`'s own `INSERT ... SELECT` guard
+    exists to avoid one table over. The row lock the guarded `UPDATE` already takes on
+    `staffing_position` (to rotate the token) is what serialises two concurrent inserts on the
+    *same* position: the second one blocks until the first commits, and PostgreSQL re-evaluates the
+    whole `WHERE` — the correlated count included — against the now-current data before deciding
+    whether it still matches.
     """
     if scenario_in_scope(session, caller, project_id, scenario_id) is None:
         return None
 
+    absences_below_cap = (
+        sa.select(sa.func.count())
+        .select_from(_ABSENCE_TABLE)
+        .where(_ABSENCE_TABLE.c.position_id == _POSITION_TABLE.c.id)
+        .scalar_subquery()
+    ) < MAX_ABSENCES_PER_POSITION
     guarded = _guarded_position(
         scenario_id=scenario_id,
         position_id=position_id,
         expected_updated_at=expected_updated_at,
+        extra=(absences_below_cap,),
     )
     absence_id = uuid.uuid4()
     # Typed literals, for the reason `create_position` gives: an untyped `sa.literal(uuid)` inside
@@ -1339,12 +1526,30 @@ def _diagnose_absence_refusal(
     "no such absence" is never an answer about a row in a project the caller cannot see. It reaches
     the caller as the same `404` body as every other absence on this path.
 
-    `expected_updated_at` is accepted and deliberately not compared here: the comparison happened
-    inside the `UPDATE`, and repeating it in Python would be a second answer to a question the
-    database has already answered — the shape this module exists to avoid. It is in the signature so
-    that the diagnosis cannot be called from a path that has no token at all.
+    `expected_updated_at` is accepted and, on every branch but one, deliberately not compared here:
+    the comparison happened inside the `UPDATE`, and repeating it in Python would be a second
+    answer to a question the database has already answered — the shape this module exists to
+    avoid. It is in the signature so that the diagnosis cannot be called from a path that has no
+    token at all.
+
+    **SC-3-05 adds one exception, on the insert path only** (`absence_id is None`): once `approved`
+    is ruled out, the guarded `UPDATE`'s `WHERE` still has *two* independent dynamic conditions left
+    — the token and the cap (`MAX_ABSENCES_PER_POSITION`) — and elimination alone cannot tell them
+    apart, exactly the reason `_diagnose_position_refusal` compares `cost_basis` explicitly rather
+    than falling through to it by default. The token is checked first and the cap only when it is
+    still fresh, for the identical reason `CostBasisMismatch` is: the absence count moves in both
+    directions (added, then removed), so a count re-read after a concurrent write already changed
+    it would name a limit that is an artefact of the caller's whole view of the row being stale,
+    not of the caller's own request. A stale token is always `ConcurrentStaffingEditConflict`,
+    checked or not — the delete path has no cap to protect against, so it keeps its original,
+    purely eliminative shape.
     """
-    if not _position_exists(session, scenario_id, position_id):
+    position = session.execute(
+        sa.select(StaffingPosition).where(
+            StaffingPosition.id == position_id, StaffingPosition.scenario_id == scenario_id
+        )
+    ).scalars().one_or_none()
+    if position is None:
         return AbsenceNotFound("No such staffing position in this scenario.")
     if absence_id is not None:
         absence_exists = session.execute(
@@ -1369,6 +1574,17 @@ def _diagnose_absence_refusal(
             "This scenario is approved, so its staffing is part of an approved calculation and "
             "cannot be changed. Copy the scenario to open a new version and change the copy."
         )
+    if absence_id is None and position.updated_at == expected_updated_at:
+        absence_count = session.execute(
+            sa.select(sa.func.count())
+            .select_from(StaffingPositionAbsence)
+            .where(StaffingPositionAbsence.position_id == position_id)
+        ).scalar_one()
+        if absence_count >= MAX_ABSENCES_PER_POSITION:
+            return AbsenceLimitReached(
+                f"This position already holds the maximum of {MAX_ABSENCES_PER_POSITION} planned "
+                "absences. Remove one before adding another."
+            )
     return ConcurrentStaffingEditConflict(
         "The staffing position changed since it was read. Re-read it and apply the change again."
     )
