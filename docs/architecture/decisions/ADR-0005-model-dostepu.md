@@ -1033,3 +1033,115 @@ osiągalne przez `curl` z `STAFFING_READ`, jak dotąd.
    countermeasure (agregację, ukrycie szczegółu przy `headcount = 1`, albo osobne uprawnienie do
    widoku szczegółu nieobecności) potrzebuje własnego Issue i własnego aneksu — nie rozszerza tego
    punktu przez implementację w locie.
+
+### 2026-09-27 — osoba nazwana jako osobny rekord, nie konto użytkownika; `PEOPLE_READ`/`PEOPLE_WRITE`; przeadresowanie warunków "Issue #31, ADR uwierzytelniania" (SC-2-06)
+
+> Przyjęty przez człowieka na bramce 1 SC-2-06 (Issue #31), 2026-09-27. Ocena wpływu na dane
+> osobowe: `ADR-0019-dane-osobowe-rejestr-osob.md` (Accepted).
+
+Aneksy SC-3-02 pkt 6 i 11, SC-3-03 pkt 7, SC-5-05 pkt 2 i 6 oraz SC-3-04 pkt 2 wiązały osobę przy
+pozycji obsady z parą "Issue #31, ADR uwierzytelniania". Decyzja człowieka **P-2 = (a)**
+(2026-09-27) usuwa drugi człon tej pary: osoba nazwana z F-03 jest **osobnym rekordem
+osoby/pracownika, nie kontem użytkownika systemu** — bez powiązania z `project_access.user_id`
+ani z tożsamością wołającego. Ten wpis zapisuje tę decyzję i przeadresowuje każdy warunek, który na
+niej stał, zamiast zostawić je cicho nieaktualne.
+
+1. **P-2 zapisane.** Osoba nazwana nie jest podmiotem uwierzytelniania i nie jest "użytkownikiem" w
+   rozumieniu "Decyzji" (rola × zasięg projektu). Powiązanie osoby z kontem użytkownika jest poza
+   zakresem SC-2-06; zamknięcie: SC-1-12 albo nowa decyzja człowieka. ADR uwierzytelniania **nie
+   jest** poprzednikiem Issue #31 (P-1 = B); pozostaje potrzebny z powodów wymienionych w
+   dotychczasowych aneksach.
+2. **Rejestr osób — dane organizacyjne bez zasięgu projektu, ale z odmową zasobu, nie pola.**
+   Kryterium strukturalne aneksu 2026-09-19 (SC-2-01) pkt 1 spełnione: wiersz osoby nie ma kolumny
+   wiążącej go z projektem, użytkownikiem (P-2), jednostką biznesową ani najemcą, i żaden endpoint
+   nie zawęża go po tożsamości wołającego. Zwolnienie z funkcji-strażnika (ADR-0001 aneks
+   2026-09-19 SC-2-01) obowiązuje. **Różnica wobec katalogu, zapisana wprost:** pkt 5 aneksu SC-2-01
+   ("sam fakt istnienia roli … nie jest daną chronioną", więc `200` z wybielonym polem) **nie
+   rozciąga się na rejestr osób** — fakt istnienia osoby jest daną osobową. Odmowa odczytu rejestru
+   to `403` bez żadnego imienia w ciele; odmowa zapisu to `403` bez wiersza.
+3. **Uprawnienia `PEOPLE_READ` i `PEOPLE_WRITE`, nowe (Q-3 = a).** Nie reużycie `CATALOG_*`: rejestr
+   osób nie jest "kolejnym słownikiem katalogu" (precedens aneksu 2026-09-21 pkt 2 nie przenosi się —
+   tamte słowniki nie niosą danych osobowych, a krąg czytających katalog, "każdy, kto planuje
+   staffing", jest właśnie tym kręgiem, którego F-13/NF-11 nie chcą z automatu dopuścić do
+   rejestru osób). Każde z obowiązkowym testem odmowy, w którym odmawiany wołający trzyma wszystkie
+   pozostałe uprawnienia.
+4. **`PLACEHOLDER_PERMISSIONS` nie rośnie.** `PEOPLE_READ`/`PEOPLE_WRITE` nie należą do zestawu
+   placeholdera; kanarek równości zbioru placeholdera (`test_access_control.py`) zostaje **bez
+   przezbrajania**. Kanarki równości/liczności **całego** `Permission` (nie placeholdera) są
+   przezbrajane o dwa nowe elementy — dopisanie, nie poluzowanie (lista: mapa wpływu SC-2-06, L-1).
+   **Konsekwencja przyjęta razem z tym aneksem:** gałąź pozytywna (odczyt imienia, zapis osoby,
+   przypisanie) jest w działającym systemie nieosiągalna i daje się dowieść wyłącznie przez
+   `app.dependency_overrides[get_caller_identity]` — rejestr możliwości musi to nazwać wprost, wzorem
+   aneksu 2026-09-19 pkt 4/5.
+5. **Zapis przypisania osoby do pozycji — wymaga `STAFFING_WRITE` ∧ `PEOPLE_READ` (rekomendacja
+   Architekta, L-1b; do potwierdzenia na bramce 1).** Przypisanie jest czynnością planisty (stąd
+   `STAFFING_WRITE`, nie `PEOPLE_WRITE`, które należy do utrzymania rejestru), ale wybór osoby
+   wymaga wiedzy, kim ona jest (stąd `PEOPLE_READ`). Precedens koniunkcji na zapisie: SC-5-03 fix 3
+   (utworzenie pozycji `fixed_amount` wymaga koniunkcji kosztowej). Skutki: (a) wołający, który
+   przypisuje, zawsze może odczytać przypisanie z powrotem — nie powstaje kierunek "zapisuję, czego
+   nie widzę" (aneks 2026-09-21 SC-2-04); (b) wołający bez `PEOPLE_READ` nie ma wyroczni istnienia
+   identyfikatora osoby — odmowa z braku `PEOPLE_READ` zapada przed jakimkolwiek odczytem pozycji
+   lub osoby i nie zależy od ich istnienia; (c) kolejność dla wołającego z kompletem uprawnień:
+   pozycja/scenariusz spoza zasięgu → `404` przed odmową z powodu nieistniejącej osoby i przed `409`
+   (aneks 2026-09-18 pkt 3, SC-3-01 pkt 4).
+6. **Każda ścieżka zapisu pozycji, która nie przypisuje osoby, nie może jej zdjąć.** Wołający z
+   `STAFFING_WRITE` bez `PEOPLE_READ` edytujący pozycję (alokacje, nieobecności, podstawa kosztu)
+   nie widzi przypisania — więc pominięcie pola osoby w żądaniu znaczy "bez zmiany", nigdy "zdejmij"
+   (wzorem aneksu 2026-09-21 SC-2-04 pkt 1, Q-2: częściowy `PATCH`). Inaczej wołający cicho
+   usuwałby dane, których nigdy nie odczytał.
+7. **Kształtowanie odpowiedzi pozycji — nowa klasa bramki w istniejącej warstwie, nazwana.** Pole
+   osoby przy pozycji podlega `PEOPLE_READ` w warstwie kształtowania (`shape_staffing_position`,
+   jedyne miejsce budowy `StaffingPositionRead`) — nie w odczycie z bazy i nie w UI. Aneks SC-5-01
+   pkt 4 i SC-7-01 pkt 2 liczyły funkcje usuwające **pola kosztowe**; bramka osobowa nie jest
+   piątą funkcją kosztową, ale jest piątym miejscem decydującym o widoczności pola — nazwana tu, żeby
+   nie powstała cicho. Kształt odmowy **różny od bramki kosztowej, świadomie**: bramka kosztowa zwraca
+   pole z `null` (SC-1-08 K-03); bramka osobowa **nie emituje klucza** — dla wołającego bez
+   `PEOPLE_READ` odpowiedź pozycji ma zbiór pól sprzed SC-2-06, więc pozycja z osobą jest
+   nieodróżnialna od anonimowej na każdej ścieżce zwracającej pozycję.
+8. **Rejestr nie ujawnia przypisań.** Odpowiedź rejestru niesie wyłącznie wiersze osób — bez pozycji,
+   scenariuszy, projektów. Pierwsze zapytanie odwrotne (osoba → przypisania) przechodzi przez
+   `project_for_caller` per projekt, wygasza dla tej ścieżki zwolnienie z funkcji-strażnika i wymaga
+   własnego wpisu tutaj i w ADR-0001.
+9. **Dane w dev/test: wyłącznie fikcyjne osoby.** Rozszerzenie aneksu 2026-09-21 pkt 6 (syntetyczne
+   cenniki) na rejestr osób; warunki wpuszczenia danych rzeczywistych — ADR-0019 pkt 8.
+10. **Przeadresowanie warunków "Issue #31, ADR uwierzytelniania":**
+    - **SC-3-02 pkt 6** (nieobecność na anonimowej pozycji; "ten sam argument, którym
+      `staffing_position` odmawia kolumny na osobę (Issue #31, ADR uwierzytelniania)"): warunek
+      kolumny osoby na `staffing_position` jest od teraz **ADR-0019 przyjęty + ten aneks przyjęty**,
+      nie ADR uwierzytelniania. Granica samej tabeli nieobecności (brak kolumny na osobę, notatkę,
+      uzasadnienie) **bez zmian** — nieobecność nadal wisi na pozycji, nie na osobie (Issue #31, Out
+      of scope pkt 8).
+    - **SC-3-02 pkt 11, SC-3-03 pkt 7, SC-3-04 pkt 2** (pseudonimizacja przy `headcount = 1`;
+      warunek "przeniesienie nieobecności na osobę (Issue #31, ADR uwierzytelniania)"): SC-2-06
+      nieobecności na osobę **nie** przenosi, ale przypisanie osoby do pozycji z `headcount = 1`
+      (Q-7) zamienia dla wołającego z `STAFFING_READ` ∧ `PEOPLE_READ` pseudonimizację w
+      **identyfikację wprost** — lista nieobecności i budżet urlopowy takiej pozycji są listą i
+      budżetem nazwanej osoby. Warunek ponownego otwarcia jest tym samym **uruchomiony przez
+      SC-2-06**, a rozstrzygnięcie przeniesione do **Story Q-4 = (c)** (ekspozycja nieobecności i
+      kosztów dodatkowych pozycji z przypisaną osobą), obowiązkowo scalonej **przed Story ekranu osób
+      i przed pierwszym nadaniem `PEOPLE_READ` komukolwiek w działającym systemie**. Do tego czasu
+      uśpione: nikt poza testem nie ma `PEOPLE_READ` (pkt 4).
+    - **SC-5-05 pkt 2 i 6** (koszt dodatkowy i `category_name` przy pozycji; warunek "pierwsze
+      zadanie łączące pozycję obsady z osobą imienną (F-13, Issue #31)"): **SC-2-06 jest tym
+      zadaniem — warunek się spełnia.** Rozstrzygnięcie przeniesione do tej samej Story Q-4 = (c),
+      z tym samym terminem i tym samym uśpieniem. Nazwane, nie przemilczane: od SC-2-06 koszt
+      dodatkowy przy pozycji z osobą "wskazuje ją wprost" dla wołającego z `PEOPLE_READ`.
+    - **SC-3-02 pkt 7** nie zawiera warunku z Issue #31 (dotyczy bramki kosztowej nieobecności) —
+      bez zmian.
+11. **Warunek zamknięcia wobec ADR uwierzytelniania/ról (SC-1-12, SC-1-13), nowy.** `PEOPLE_READ`
+    jest dziś globalne, per wołający (Q-3 = a). ADR uwierzytelniania/ról musi rozstrzygnąć, czy
+    pozostaje globalne, czy jest wyprowadzane z przypisań projektowych, oraz kto je nadaje — zanim
+    pierwszy wołający inny niż placeholder je otrzyma (wzorem aneksu 2026-09-19 pkt 3 dla
+    `PERSONNEL_COSTS_READ`).
+12. **Przyszła stawka indywidualna** (Q-1/Q-2, poza SC-2-06): stawka kosztowa osoby nazwanej jest
+    indywidualnym kosztem osobowym — wyjątek jednoczynnikowy katalogu (aneks SC-2-01 pkt 3) **nie
+    rozciąga się na rejestr osób**; szczegóły ADR-0019 pkt 5.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| A5-31-1 | Odczyt rejestru bez `PEOPLE_READ` (wołający trzyma wszystkie inne uprawnienia) → `403`, ciało bez imienia; zapis bez `PEOPLE_WRITE` → `403` i brak wiersza; z uprawnieniem → sukces (kontrast). |
+| A5-31-2 | Bez `PEOPLE_READ` pozycja z przypisaną osobą ma na każdej ścieżce zwracającej pozycję zbiór pól sprzed SC-2-06 i te same wartości co anonimowa; z `PEOPLE_READ` przypisanie widoczne (kontrast). |
+| A5-31-3 | Przypisanie bez wymaganego zestawu uprawnień odmówione bez zapisu, niezależnie od istnienia pozycji i osoby; w zasięgu z kompletem uprawnień → sukces (kontrast). |
+| A5-31-4 | Przypisanie do pozycji w scenariuszu spoza zasięgu → `404`, nigdy `403`/`409`/`422`, bez zapisu. |
+| A5-31-5 | Zapis pozycji bez pola osoby, wykonany przez wołającego bez `PEOPLE_READ`, nie zmienia przypisania. |
+| A5-31-6 | `PLACEHOLDER_PERMISSIONS` bez zmian (kanarek równości zbioru zielony bez edycji). |
