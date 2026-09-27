@@ -1,0 +1,84 @@
+/*
+ * SC-7-04 — layout only. `.card`, `.button`, `.button--primary`/`.button--secondary` and
+ * `.visually-hidden` come from `src/styles/app.css`; nothing here restates a colour those rules
+ * already set. Every selector is scoped to `.cs`/`.cs__*` so this stylesheet cannot restyle
+ * another screen (the same discipline `WorkingCalendarsScreen.css`/`CatalogScreen.css` are held
+ * to, see `src/styles/tokens.test.ts`).
+ */
+
+.cs__description {
+  margin-bottom: var(--sc-space-4);
+}
+
+.cs__message {
+  margin: var(--sc-space-2) 0;
+}
+
+.cs__message--attention {
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+  padding: var(--sc-space-2) var(--sc-space-3);
+  border-radius: var(--sc-radius-sm);
+}
+
+.cs__grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-4);
+}
+
+.cs__panel {
+  padding: var(--sc-space-4);
+}
+
+.cs__panel-title {
+  font-size: var(--sc-font-size-lg);
+  font-weight: var(--sc-font-weight-bold);
+  margin-bottom: var(--sc-space-2);
+}
+
+.cs__project-list,
+.cs__scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-2);
+}
+
+.cs__project-button {
+  background: none;
+  border: none;
+  padding: var(--sc-space-1) 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cs__project-button[aria-pressed="true"] {
+  font-weight: var(--sc-font-weight-bold);
+}
+
+.cs__scenario-picker {
+  border: none;
+  padding: 0;
+  margin: 0 0 var(--sc-space-3) 0;
+}
+
+.cs__scenario-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sc-space-2);
+}
+
+.cs__actions {
+  margin: var(--sc-space-3) 0;
+}
+
+.cs__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.cs__table th,
+.cs__table td {
+  padding: var(--sc-space-2) var(--sc-space-3);
+  text-align: left;
+}

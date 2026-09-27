@@ -107,3 +107,17 @@ export interface ScenarioResults {
    */
   profitability_state: ProfitabilityState;
 }
+
+/**
+ * `GET /projects/{project_id}/scenarios/compare` (SC-6-02) — the same `ScenarioResults` shape
+ * above, once per named `scenario_id`, in request order (SC-7-04, Issue #108).
+ *
+ * A set of independent rows, never an aggregate: nothing here sums, nets or averages a field
+ * across the compared scenarios (mirrors `backend/app/api/schemas/scenario_results.py`'s own
+ * docstring for this type). All-or-nothing on the wire — this shape is only ever returned once
+ * every named `scenario_id` resolved for the caller; a `404`/`409` is the whole response, never a
+ * row-shaped marker inside `results` (K-04).
+ */
+export interface ScenarioResultsComparison {
+  results: ScenarioResults[];
+}

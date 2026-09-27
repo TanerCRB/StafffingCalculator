@@ -29,10 +29,15 @@ const ALL_RAIL_ENTRIES = [
   "Versions & approval",
 ];
 
-/** The eight of them this application does not have (SC-3-06: "Working calendars" moved from
- * planned to live, mirroring "Roles & rates" at SC-2-02 — see the test below this filter feeds). */
+/** The seven of them this application does not have (SC-7-04: "Compare scenarios" moved from
+ * planned to live, mirroring "Roles & rates" at SC-2-02 and "Working calendars" at SC-3-06 — see
+ * the tests below this filter feeds). */
 const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
-  (label) => label !== "Projects" && label !== "Roles & rates" && label !== "Working calendars",
+  (label) =>
+    label !== "Projects" &&
+    label !== "Compare scenarios" &&
+    label !== "Roles & rates" &&
+    label !== "Working calendars",
 );
 
 interface ShellOptions {
@@ -110,6 +115,32 @@ describe("AppShell", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("offers the Compare scenarios entry as a live control that reports the choice instead of taking it", () => {
+    // SC-7-04 reverses this entry's own "Not implemented yet" tooltip the same way SC-2-02 and
+    // SC-3-06 reversed theirs: the screen behind it now exists.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const onNavigate = vi.fn();
+
+    renderShell("ok", { onNavigate });
+
+    const entry = within(rail()).getByRole("button", { name: "Compare scenarios" });
+
+    expect(entry).toBeVisible();
+    expect(entry.tagName).toBe("BUTTON");
+    expect(entry).toHaveAttribute("type", "button");
+    expect(entry.tabIndex).toBe(0);
+    expect(entry).not.toHaveAttribute("aria-disabled");
+    expect(entry.getAttribute("title")).toBeNull();
+
+    fireEvent.click(entry);
+
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith("compare-scenarios");
+    expect(screen.getByText(SCREEN_CONTENT)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("offers the Working calendars entry as a live control that reports the choice instead of taking it", () => {
     // SC-3-06 reverses this entry's own "Not implemented yet" tooltip the same way SC-2-02 reversed
     // "Roles & rates"'s (see the test above): the screen behind it now exists, so the rail's claim —
@@ -175,8 +206,8 @@ describe("AppShell", () => {
     // SC-2-05 (Issue #59, gate-1 decision Q-1) rewrote this test. Until then the rail had two
     // entries and this asserted that the mockup's other screens were absent. The rail now shows the
     // mockup's eleven entries, so the claim — the rail says truthfully what exists — is asserted
-    // the other way round and more strictly: every entry is pinned by name and position, the three
-    // that exist (SC-3-06 added the third) are live, and each of the eight that do not says so, in
+    // the other way round and more strictly: every entry is pinned by name and position, the four
+    // that exist (SC-7-04 added the fourth) are live, and each of the seven that do not says so, in
     // the one convention `lib/notImplemented.ts` owns, and does nothing when pressed.
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -186,7 +217,7 @@ describe("AppShell", () => {
     const entries = within(rail()).getAllByRole("listitem");
     expect(entries.map((entry) => entry.textContent)).toEqual(ALL_RAIL_ENTRIES);
 
-    // The nine planned entries: a button each, reachable and announced, marked as not available
+    // The seven planned entries: a button each, reachable and announced, marked as not available
     // with the tooltip every such control carries, and naming why.
     for (const label of PLANNED_RAIL_ENTRIES) {
       const entry = within(rail()).getByRole("button", { name: label });
@@ -197,11 +228,14 @@ describe("AppShell", () => {
       expect(entry, label).not.toHaveAttribute("aria-current");
     }
 
-    // The three that exist carry none of that.
+    // The four that exist carry none of that.
     const projects = within(rail()).getByRole("button", { name: "Projects" });
     expect(projects).not.toHaveAttribute("aria-disabled");
     expect(projects.getAttribute("title")).toBeNull();
     expect(within(rail()).getByText("Roles & rates")).toHaveAttribute("aria-current", "page");
+    const compareScenarios = within(rail()).getByRole("button", { name: "Compare scenarios" });
+    expect(compareScenarios).not.toHaveAttribute("aria-disabled");
+    expect(compareScenarios.getAttribute("title")).toBeNull();
     const workingCalendars = within(rail()).getByRole("button", { name: "Working calendars" });
     expect(workingCalendars).not.toHaveAttribute("aria-disabled");
     expect(workingCalendars.getAttribute("title")).toBeNull();
@@ -253,7 +287,6 @@ describe("AppShell", () => {
     );
 
     // The rest name the requirement and the Issue that owns it.
-    expect(hint("Compare scenarios")).toContain("F-09 (Issue #11)");
     expect(hint("Organization defaults")).toContain("F-02 (Issue #4)");
     expect(hint("Overview")).toContain("F-10 and F-11 (Issues #12, #13)");
     expect(hint("Additional costs")).toContain("F-08 (Issue #10)");
@@ -279,7 +312,7 @@ describe("AppShell", () => {
         <h2 tabIndex={-1}>First screen</h2>
       </AppShell>,
     );
-    const planned = within(rail()).getByRole("button", { name: "Compare scenarios" });
+    const planned = within(rail()).getByRole("button", { name: "Organization defaults" });
     planned.focus();
     fireEvent.click(planned);
 
