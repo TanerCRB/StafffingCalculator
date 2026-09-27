@@ -966,6 +966,27 @@ history / this file's own change log, not as tracked product work.
   zweryfikowany jako nieszkodliwy — `--frozen-lockfile` przechodzi). Zob.
   `docs/architecture/capabilities.md`.
 
+- [ ] **SC-2-06** — Wprowadź rejestr osób nazwanych i opcjonalne przypisanie osoby do pozycji obsady
+  (F-03 pkt 3, backend; bez stawki indywidualnej, bez ekranu). Osoba nazwana to osobny rekord, nie
+  konto użytkownika (decyzja P-2 = a, 2026-09-27) — zadanie nie czeka na ADR uwierzytelniania.
+  Blocked by: ocena wpływu na dane osobowe + aneks ADR-0005 (Architekt, przed bramką 1). Kryteria
+  i decyzje bramki 1 w Issue #31.
+  *Done when:* wiersz osoby ma dokładnie zatwierdzony zbiór kolumn (równość zbioru); rejestr odmawia
+  domyślnie (`PEOPLE_READ`/`PEOPLE_WRITE`, placeholder ich nie nadaje); pozycja z osobą jest
+  nieodróżnialna od anonimowej dla wołającego bez odczytu osób, na każdej ścieżce zwracającej
+  pozycję; przypisanie nie zmienia kosztu, przychodu ani pojemności; przypisanie tylko do pozycji z
+  `headcount = 1`; przypisanie w scenariuszu `approved` odmawiane w warstwie danych (odmowa +
+  wyścig), spoza zasięgu → `404`; duplikat zachowuje odwołanie do tej samej osoby; sprostowanie
+  imienia widoczne przy scenariuszu `approved` bez zmiany migawki; nieudany zapis nie loguje imienia
+  (NF-11); żaden istniejący test niezmieniony. Kryteria K-xx ustala Analityk.
+  **Out of scope (explicit):** stawka indywidualna sprzedażowa i kosztowa (osobna Story po ADR-0013
+  Accepted; kosztowa wymaga aneksu do wymagań); własna lokalizacja osoby; ekran (osobna Story FE);
+  zapis z UI (ADR-0009); usuwanie/anonimizacja i retencja (osobna Story, scalona przed pierwszymi
+  rzeczywistymi danymi); ekspozycja nieobecności/kosztów dodatkowych pozycji z osobą (osobna Story,
+  scalona przed ekranem osób); powiązanie z kontem użytkownika (SC-1-12); nieobecności na osobie
+  (blok 3); nadalokacja między pozycjami/projektami (§6); osoby poddostawcy (F-03 aneks); integracja
+  HR (§6).
+
 - [x] **SC-1-10** — Rozstrzygaj założenia scenariusza z łańcucha organizacja → projekt →
   scenariusz ze wskazaniem źródła wartości (F-02), na dwóch reprezentatywnych polach: marża
   docelowa i próg przeciążenia alokacji; napraw wyścig współbieżności między zapisem pól grupy 2
