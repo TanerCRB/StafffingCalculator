@@ -2260,6 +2260,40 @@ history / this file's own change log, not as tracked product work.
   `/results`); wyścig "live–live" (edycja okna katalogu) — nazwana luka.
   Zob. `docs/architecture/capabilities.md`.
 
+- [x] **SC-7-04** — Ekran Compare scenarios: wybór projektu + multi-select scenariuszy + tabela
+  porównania metryk N scenariuszy (F-09, F-11, frontend), Issue #108 — konsument API SC-6-02
+  (`GET /projects/{project_id}/scenarios/compare`).
+  *Done when:* `frontend/src` (vitest) dowodzi kryteriów K-01..K-05 (analyst, 2026-09-27), każde z
+  zarejestrowanym i wykonanym przebiegiem mutacyjnym: brak mieszania danych między wierszami;
+  bramka kosztu osobowego czytana niezależnie per wiersz, nigdy raz dla całej tabeli; stan nazwany
+  niepoliczalny jednego wiersza nie zawala pozostałych, nie zwija się do wspólnego sentinela;
+  all-or-nothing `404` renderowane jako jeden stan całego widoku, nigdy fallback na N osobnych
+  wywołań `getScenarioResults`; kolejność/liczność wierszy = dokładnie żądanie (backend gwarantuje
+  strukturalnie, front nie sortuje). Zamontowane jako nowy `ScreenKey` `"compare-scenarios"` na
+  `RAIL_WORKSPACE`.
+  **Decyzje bramki 1 (2026-09-27):** mechanizm wyboru — nowy `ScreenKey` workspace-level z własnym
+  dwupoziomowym stanem (wybór projektu, potem multi-select scenariuszy tego projektu), zgodnie z
+  tym co rail już rezerwował; brak formalizacji odłożonej decyzji D-2 (routing/stan wyboru) jako
+  osobnego ADR — punktowa decyzja bramki 1 jak w SC-4-06/SC-7-02/SC-3-04; brak limitu
+  `MAX_COMPARE_SCENARIOS=50` w UI — `422` renderuje się jak każdy inny błąd (spójne z precedensem
+  `MAX_ALLOCATION_MONTHS`, zero odpowiednika frontendowego).
+  **Out of scope (explicit):** obsada/FTE jako metryka — F-10 niezbudowane; nowa kalkulacja
+  backendowa — zero zmian w SC-6-02; analiza wrażliwości (Issue #88), widoczność rezerw ryzyka
+  (Issue #89); eksport/druk zestawienia (F-11); test regresyjny na zmianę projektu w trakcie
+  trwającego żądania porównania (reviewer, nieblokująca rekomendacja — mechanizm poprawny,
+  prześledzony przez inspekcję kodu, bez dedykowanego testu).
+  **Done 2026-09-27:** PR #143 (scalone). Dowód:
+  `frontend/src/features/compare/CompareScenariosScreen.test.tsx` (15 testów, K-01..K-05 + abort/
+  unmount dla obu niezależnych odczytów, dodane od razu nie jako poprawka po recenzji) —
+  `pnpm test` 392/392 zielone (było 375 po SC-3-06), `pnpm lint`/`pnpm build` czyste. Guardian PASS,
+  reviewer PASS (jedna nieblokująca rekomendacja). **QA** znalazł i domknął dwie realne luki:
+  walidacja kształtu odpowiedzi porównania (`isScenarioResultsComparisonShape`) sprawdzała tylko
+  pierwszy wiersz zamiast każdego — **PROOF IS EMPTY** w pierwszej wersji testów (żaden fixture nie
+  miał złego kształtu poza pierwszym wierszem), domknięte nowym testem; brak resetu zaznaczenia
+  scenariuszy przy zmianie wybranego projektu — realny błąd UX (przycisk "Compare selected"
+  zostawał aktywny mimo braku widocznego zaznaczenia w nowym projekcie), naprawiony kodem i testem.
+  Zob. `docs/architecture/capabilities.md`.
+
 - [x] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
   F-06.4, frontend): konsument istniejącego API, zamyka ograniczenie D-9 SC-4-03 (ADR-0003 aneks
   SC-4-03 pkt 8) i nienazwaną dotąd degradację po SC-4-04 — scenariusz Outcome-based i Story Points
