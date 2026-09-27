@@ -1006,3 +1006,30 @@ runda weryfikacji 1, decyzja człowieka).**
    Każda nowa wartość tego pola lub nowa linia stanu wyprowadzana z danych
    kosztu osobowego wymaga własnego aneksu i potwierdzenia security-auditora; B-01 i warunek
    ponownego otwarcia (zadanie ról) — bez zmian. Kontrola: ADR-0003, aneks 2026-09-25 SC-4-07, F-4.
+
+### 2026-09-26 — pierwszy render czlowiekowi pozycji obsady z nieobecnościami i budżetem urlopowym (SC-3-04)
+
+Decyzja człowieka na bramce 1 SC-3-04 (Opcja A, rekomendacja Architekta). SC-3-04 (ekran Staffing
+plan, frontend, wyłącznie odczyt) jest dokładnie zadaniem, które aneks 2026-09-22 (SC-3-02) pkt 11
+i aneks 2026-09-22 (SC-3-03) pkt 7 nazwały i zostawiły uśpione jako warunek ponownego otwarcia:
+pierwsze miejsce, w którym krotka wymiarów katalogowych pozycji (rola/seniority/lokalizacja/typ
+zaangażowania) jest widoczna **człowiekowi na ekranie**, obok dat urlopu i wyliczonego budżetu tej
+samej pozycji — przy `headcount = 1` to identyfikacja jednej osoby i jej urlopów, nie tylko
+osiągalne przez `curl` z `STAFFING_READ`, jak dotąd.
+
+1. **Rozstrzygnięcie: ryzyko przyjęte świadomie, bez countermeasure w tym zadaniu.** Ekran renderuje
+   dokładnie to, co niesie `GET .../staffing-positions` — bez agregacji, ukrywania szczegółu
+   nieobecności czy dodatkowej bramki ponad `STAFFING_READ` przy `headcount = 1`. Uzasadnienie:
+   ekspozycja istnieje już na poziomie API (dowiedzione, SC-3-02/SC-3-03) — to zadanie czyni ją
+   widoczną innemu konsumentowi (człowiekowi zamiast klienta API), nie tworzy nowej ścieżki dostępu
+   ani nowego uprawnienia.
+2. **Warunek ponownego otwarcia z aneksów SC-3-02 pkt 11 / SC-3-03 pkt 7 pozostaje bez zmian, NIE
+   domknięty przez tę decyzję.** Ten aneks rozstrzyga tylko, że SC-3-04 sam nie wprowadza
+   countermeasure — nie zamyka pytania o docelowe rozwiązanie (przeniesienie nieobecności na osobę,
+   Issue #31/ADR uwierzytelniania, albo pierwsze zadanie faktycznie różnicujące zachowanie po
+   `headcount`). Każde kolejne zadanie renderujące te same dane (edycja, block 5 dalsze ekrany)
+   dziedziczy tę samą, jawnie nazwaną, nieaktywnie zamkniętą ekspozycję — nie nową decyzję.
+3. **Zakres tego rozstrzygnięcia:** wyłącznie SC-3-04 (render read-only). Zadanie, które doda
+   countermeasure (agregację, ukrycie szczegółu przy `headcount = 1`, albo osobne uprawnienie do
+   widoku szczegółu nieobecności) potrzebuje własnego Issue i własnego aneksu — nie rozszerza tego
+   punktu przez implementację w locie.

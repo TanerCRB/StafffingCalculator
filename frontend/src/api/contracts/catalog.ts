@@ -114,6 +114,29 @@ export const CATALOG_DIMENSIONS = [
 
 export type CatalogDimension = (typeof CATALOG_DIMENSIONS)[number];
 
+/**
+ * One row of `GET /catalog/absence-types` (SC-3-04, Issue #135), as much of the backend's
+ * `AbsenceTypeEntry` as this client reads: an id and a name, to resolve a staffing absence's
+ * `absence_type_id` (`contracts/staffing.ts`). `generates_cost`/`generates_revenue`/
+ * `is_statutory_leave` are not declared here — this client renders no flag, only the name, the
+ * same "a field this client never reads is a field this contract does not need to promise a shape
+ * for" rule `contracts/scenarioResults.ts` states for `assumptions_used`.
+ *
+ * **Not one of the five `CATALOG_DIMENSIONS`** — the absence-type dictionary has its own route
+ * (`/catalog/absence-types`, not `/catalog/dimensions/{dimension}`), for the same reason
+ * `working-calendars` does (see backend `app.api.catalog` module docstring: "the first attribute
+ * beyond `name` takes a dictionary out of" the shared route). Read through `getCatalogAbsenceTypes`
+ * (`api/client.ts`), not `getCatalogDimension`.
+ */
+export interface CatalogAbsenceTypeEntry {
+  id: string;
+  name: string;
+}
+
+export interface CatalogAbsenceTypeList {
+  absence_types: CatalogAbsenceTypeEntry[];
+}
+
 // --- Request shapes (SC-2-04, ADR-0009) --------------------------------------------------------
 // Mirrors the four request models in backend/app/api/schemas/catalog.py. They live here, beside the
 // response shapes, for the reason the file header gives: one contracts layer. A form that assembled

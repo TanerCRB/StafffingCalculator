@@ -357,6 +357,67 @@
   margin-top: var(--sc-space-2);
 }
 
+/* SC-3-04 — the staffing-plan section of a scenario card. Same layout convention as
+   `.scenario-results`/`.commercial-terms`: colour comes from `.scenario-card__metric` /
+   `.scenario-card__gaps` above. */
+.staffing-plan {
+  margin-top: var(--sc-space-3);
+  padding-top: var(--sc-space-3);
+  border-top: 1px solid var(--sc-color-border);
+}
+
+.staffing-plan__title {
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.staffing-plan__positions,
+.staffing-plan__allocations,
+.staffing-plan__absences {
+  margin: var(--sc-space-2) 0 0;
+  padding-left: var(--sc-space-4);
+}
+
+/* Reviewer R-02, gate 2 of SC-3-04: NF-03's scale (200 positions × 36 months) turns a
+   fully-expanded staffing plan into up to ~7,200 allocation rows. `content-visibility: auto` is
+   native and dependency-free — a supporting browser skips layout and paint for a subtree carrying
+   it while that subtree is off screen, and resumes normally as it nears the viewport. It removes
+   nothing from the DOM or the accessibility tree (unlike `display: none`), so every row stays
+   reachable to `getByRole`/`getByText` and to assistive technology exactly as before; jsdom, which
+   has no layout engine, does not act on the property at all, so no test here observes anything
+   being skipped — this is the CSS declaration, not a runtime proof of the skip (see QA).
+   `contain-intrinsic-size` gives the browser a placeholder size to reserve before a row has ever
+   been laid out, so the sticky details panel and the page's scrollbar do not jump on every first
+   approach to an off-screen block; the `auto` keyword lets the browser remember each row's real,
+   very-variable height (headcount, allocation count, absence count all differ per position) once
+   it has actually been rendered once, rather than living with one fixed guess forever. */
+.staffing-plan__position {
+  margin-top: var(--sc-space-3);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
+}
+
+/* Same mechanism as `.staffing-plan__position` above, one level down: within a position that is
+   itself on screen (or estimated tall enough to still overlap the viewport), an individual month's
+   block skips layout/paint while it is the part still off screen. Smaller placeholder: one month's
+   own five/six lines, not a whole position's. */
+.staffing-plan__allocation {
+  margin-top: var(--sc-space-2);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 140px;
+}
+
+.staffing-plan__allocation-month {
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
+.staffing-plan__absences-heading {
+  margin-top: var(--sc-space-2);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
 /* SC-6-03 — the "Duplicate" control, below the results section. Colour comes from
    `.scenario-card__metric` / `.scenario-card__gaps` above, same as the section it follows. */
 .duplicate-scenario {

@@ -131,3 +131,26 @@ wyliczonego źródła kosztu; w przeciwnym razie `profit`/`margin`/`markup` = na
 zamyka także przypadek istniejący przed SC-4-03: koszt dodatkowy w walucie innej niż koszt osobowy.
 Zasada "nazwij źródło, nie zwijaj" z aneksu 2026-09-24 pozostaje bez zmian. Szczegóły: ADR-0003,
 aneks 2026-09-25 SC-4-03 pkt 7.
+
+### 2026-09-26 — godziny jako trzecia, jawnie dopuszczona klasa wielkości dziesiętnej (SC-3-04)
+
+Decyzja człowieka na bramce 1 SC-3-04 (rekomendacja Architekta). Godziny (`availability_hours`/
+`planned_allocation_hours`/`billable_hours`/`derived_capacity_hours`/`absence_budget_hours`,
+`NUMERIC(10,2)`) przekraczają granicę API jako fixed-point string z tego samego powodu co pieniądz
+— backend już to zakładał bez formalnego aneksu (`backend/app/api/schemas/staffing.py`: "hours are
+one multiplication away from it", NF-01). Niniejszy aneks czyni to jawnym.
+
+1. **Osobny moduł, nie rozszerzenie `money.ts`.** Formatowanie godzin ląduje w
+   `frontend/src/lib/hours.ts`, reużywającym `roundDecimalString`/`isDecimalString` z
+   `frontend/src/lib/money.ts` — `money.ts` zostaje dokładnie tym, co obiecuje jego nagłówek
+   ("money/percentage only"); godziny nie mają ani waluty, ani procentu, więc dzielą gramatykę
+   fixed-point, nie tożsamość modułu.
+2. Zaokrąglanie wyłącznie przez `roundDecimalString` — zakaz `Number()`/`toFixed()` ad hoc na
+   wartości godzinowej, tak samo jak dla pieniądza.
+3. Sentinel `"n/a"` (`derived_capacity_hours`, `absence_budget_hours` przy stanie niekalkulowalnym)
+   czytany identycznie jak dla marży/markupu — jedno znaczenie tego stringa w całej aplikacji.
+4. `working_days`/`absence_day_equivalents` (liczby całkowite, nie decimal-string) nie przechodzą
+   przez ten moduł — inny przypadek, nierozróżniany przypadkowo z godzinami.
+5. **Warunek ponownego otwarcia:** pierwsze zadanie potrzebujące trzeciej wielkości bez waluty i
+   bez procentu w tym module (nie godzin) rozstrzyga, czy `hours.ts` staje się ogólniejszym
+   "unit.ts", czy dostaje rodzeństwo — nie rozszerza tego punktu przez milczenie.

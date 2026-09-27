@@ -8,6 +8,7 @@ import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplem
 import { DuplicateScenarioControl } from "./DuplicateScenarioControl";
 import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
+import { StaffingPlanSection } from "./StaffingPlanSection";
 import { missingInputLabel } from "./scenarioInputLabels";
 import "./ProjectListScreen.css";
 
@@ -377,6 +378,10 @@ function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps
               scenarioId={scenario.id}
               scenarioName={scenario.name}
             />
+            {/* SC-3-04: a third, independent read on the same card — its own two state machines
+                (positions, catalogue names), its own abort on unmount/re-select (ADR-0010,
+                point 7). Read only, no `scenarioName`: it mounts no button (K-07). */}
+            <StaffingPlanSection projectId={project.id} scenarioId={scenario.id} />
             {/* SC-6-03: available regardless of scenario.status — duplication never writes to the
                 source, so it is not subject to the approved-immutability hiding rule above (K-02). */}
             <DuplicateScenarioControl

@@ -731,6 +731,17 @@ describe("project list layout rules", () => {
     }
   });
 
+  it("declares content-visibility: auto with a size estimate on the staffing plan's position and allocation rows (Reviewer R-02, gate 2 of SC-3-04)", () => {
+    // NF-03's scale (200 positions × 36 months) can put ~7,200 allocation rows on one card. This is
+    // the CSS declaration only — jsdom has no layout engine and does not act on `content-visibility`
+    // at all, so no test here can observe a row's layout/paint actually being skipped; that half is
+    // for QA to weigh (a mutation deleting these declarations passes every other suite unchanged).
+    expect(declares(".staffing-plan__position", "content-visibility", /^auto$/)).toBe(true);
+    expect(declares(".staffing-plan__position", "contain-intrinsic-size", /^auto\s/)).toBe(true);
+    expect(declares(".staffing-plan__allocation", "content-visibility", /^auto$/)).toBe(true);
+    expect(declares(".staffing-plan__allocation", "contain-intrinsic-size", /^auto\s/)).toBe(true);
+  });
+
   it("gives every not-yet-implemented control the same quietened appearance", () => {
     // Reviewer R-05: opacity over a full-strength brand colour still reads as a live call to
     // action. One rule, every variant, so "not yet" cannot look different in two places.
