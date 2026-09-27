@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { getHealth } from "./api/client";
 import { CatalogScreen } from "./features/catalog/CatalogScreen";
+import { WorkingCalendarsScreen } from "./features/catalog/WorkingCalendarsScreen";
 import { ProjectListScreen } from "./features/projects/ProjectListScreen";
 import { AppShell, type BackendStatus, type ScreenKey } from "./shell/AppShell";
 
@@ -28,7 +29,13 @@ export function App() {
       activeScreen={activeScreen}
       onNavigate={setActiveScreen}
     >
-      {activeScreen === "projects" ? <ProjectListScreen /> : <CatalogScreen />}
+      {activeScreen === "projects" ? (
+        <ProjectListScreen />
+      ) : activeScreen === "roles-and-rates" ? (
+        <CatalogScreen />
+      ) : (
+        <WorkingCalendarsScreen />
+      )}
     </AppShell>
   );
 }

@@ -137,6 +137,132 @@ export interface CatalogAbsenceTypeList {
   absence_types: CatalogAbsenceTypeEntry[];
 }
 
+// --- Working calendars (F-05, SC-3-02, consumed by SC-3-06) --------------------------------------
+// Mirrors backend/app/api/schemas/catalog.py's WorkingCalendarDayEntry/WorkingCalendarEntry/
+// WorkingCalendarList. Read only — no PATCH/POST exists for a calendar, its basis or its days
+// (Issue #140, "Out of scope": SC-3-02 shipped no edit form and none has been added since).
+
+/** One exceptional day of one calendar — an override of what `week_pattern` would otherwise say for
+ * that date. */
+export interface WorkingCalendarDayEntry {
+  day: CalendarDate;
+  /** `"non_working"` (a holiday the week pattern would have made a working day) or `"working"` (an
+   * extra working day the pattern would not have) — a plain string validated by the database's enum
+   * type, not a closed union here, for the reason `RateUnit` above gives for its own field: the
+   * schema is not where the list of values belongs. Rendered through `calendarDayKindLabel`
+   * (`features/catalog/workingCalendarLabels.ts`), never printed as this raw string (criterion
+   * K-02). */
+  kind: string;
+}
+
+export interface WorkingCalendarEntry {
+  id: string;
+  name: string;
+  /** Fixed-point decimal string (`NUMERIC(4,2)`) — an hours figure, "one multiplication away from
+   * money" (the backend schema's own phrase). Rendered through `lib/hours.ts`'s
+   * `formatHoursString`, the established convention for an hours value (ADR-0002, addendum
+   * 2026-09-26) — never through `lib/days.ts`, which is for `budget_days` alone. */
+  standard_hours_per_day: string;
+  /** Seven characters, Monday first, `'1'` for a working day (`backend/app/api/schemas/catalog.py`).
+   * Never rendered as this raw string — always interpreted per weekday through `weekPatternDays`
+   * (`features/catalog/workingCalendarLabels.ts`, criterion K-01). */
+  week_pattern: string;
+  days: WorkingCalendarDayEntry[];
+  updated_at: ConcurrencyMarker;
+}
+
+export interface WorkingCalendarList {
+  calendars: WorkingCalendarEntry[];
+}
+
+// --- The absence budget (F-05, SC-3-03, consumed by SC-3-06) --------------------------------------
+// Mirrors backend/app/api/schemas/catalog.py's StatutoryLeaveRegime/AbsenceBudgetEntry/
+// AbsenceBudgetList/AbsenceBudgetCreateRequest. `CATALOG_READ`/`CATALOG_WRITE` gate it, the same pair
+// as every other catalogue dictionary and no new permission (ADR-0005, addendum 2026-09-22 SC-3-03,
+// points 2-3) — `budget_days` is a day count, not a personnel cost, and stays that way only while no
+// response derives a monetary figure from it (see `docs/architecture/architecture-sensitive-paths.md`).
+
+/** The backend's `NOT_APPLICABLE` sentinel (`app.core.money`), exactly as `generates_cost`/
+ * `generates_revenue` carry it when `statutory_leave_state` is `"no_statutory_leave_type"` — each
+ * domain names its own copy of this literal rather than sharing one constant across domains (the
+ * established convention: `contracts/staffing.ts`'s `HOURS_NOT_APPLICABLE`,
+ * `contracts/scenarioResults.ts`'s `RESULTS_NOT_APPLICABLE`). */
+export const BUDGET_REGIME_NOT_APPLICABLE = "n/a";
+
+/** Every `statutory_leave_state` the backend can emit — exactly the backend's closed set
+ * (`AbsenceBudgetEntry.statutory_leave_state` docstring). */
+export const STATUTORY_LEAVE_STATES = ["resolved", "no_statutory_leave_type"] as const;
+
+export type StatutoryLeaveState = (typeof STATUTORY_LEAVE_STATES)[number];
+
+/** The regime a resolved budget's statutory-leave type carries, nested under
+ * `AbsenceBudgetEntry.statutory_leave` — read from the single absence type flagged
+ * `is_statutory_leave`, never recomputed by this client from any other dictionary. */
+export interface StatutoryLeaveRegime {
+  absence_type_id: string;
+  name: string;
+  generates_cost: boolean;
+  generates_revenue: boolean;
+}
+
+export interface AbsenceBudgetEntry {
+  id: string;
+  calendar_id: string;
+  engagement_type_id: string;
+
+  /** Fixed-point decimal string (`NUMERIC(6,2)`) — the fourth named class of decimal value in this
+   * codebase, after money, percentage and hours (ADR-0002, addendum 2026-09-27 SC-3-06). Rendered
+   * through `lib/days.ts`'s `formatBudgetDaysString`, never `formatHoursString` (wrong unit suffix)
+   * and never a call site's own `toFixed()`. */
+  budget_days: string;
+  unit: string;
+  /** Mandatory and non-blank — a number nobody can trace to a rule is a number nobody can check.
+   * **Never the author of the entry**: there is no column for one (ADR-0005, addendum 2026-09-22
+   * SC-3-03, point 6; criterion K-06). */
+  source: string;
+
+  /** Inclusive at both ends and never absent/`null` — this is the one table of ADR-0008's pattern
+   * whose window may not be open-ended (addendum SC-3-03, point 10b): a screen has no "unbounded"
+   * case to render here, unlike a catalogue rate's `effective_to`. */
+  effective_from: CalendarDate;
+  effective_to: CalendarDate;
+
+  statutory_leave_state: StatutoryLeaveState;
+  statutory_leave: StatutoryLeaveRegime | null;
+  /** The regime, flattened beside the budget's own fields for a table to render directly.
+   * `"n/a"` — never `false` — **exactly when** `statutory_leave_state` is
+   * `"no_statutory_leave_type"` (criterion K-03): a `false` there would read as a decided answer
+   * ("this leave never costs money") that nobody, in fact, decided. */
+  generates_cost: boolean | typeof BUDGET_REGIME_NOT_APPLICABLE;
+  generates_revenue: boolean | typeof BUDGET_REGIME_NOT_APPLICABLE;
+
+  updated_at: ConcurrencyMarker;
+}
+
+export interface AbsenceBudgetList {
+  budgets: AbsenceBudgetEntry[];
+}
+
+/** The unit every absence budget is counted in, as the database's CHECK constraint enforces it —
+ * the budget's counterpart to `RATE_UNIT_HOUR` below. */
+export const BUDGET_UNIT_DAY = "day";
+
+/**
+ * The body of `POST /catalog/absence-budgets` (SC-3-03). `extra="forbid"` on the backend: a body
+ * naming `author`/`entered_by`/`user`/`approved_by` is a `422` naming the field, not a silently
+ * dropped one — there is no column for a person's name, and this type carries none to send
+ * (criterion K-06).
+ */
+export interface AbsenceBudgetCreateRequest {
+  calendar_id: string;
+  engagement_type_id: string;
+  budget_days: string;
+  unit?: string;
+  source: string;
+  effective_from: CalendarDate;
+  effective_to: CalendarDate;
+}
+
 // --- Request shapes (SC-2-04, ADR-0009) --------------------------------------------------------
 // Mirrors the four request models in backend/app/api/schemas/catalog.py. They live here, beside the
 // response shapes, for the reason the file header gives: one contracts layer. A form that assembled

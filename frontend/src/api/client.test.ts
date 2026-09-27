@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getProjects } from "./client";
+import { getCatalogAbsenceBudgets, getProjects } from "./client";
 
 /**
  * SC-1-09, K-05, second proof: `getProjects` does not merely *accept* an `AbortSignal`, it hands it
@@ -98,5 +98,79 @@ describe("getProjects and the caller's abort signal", () => {
 
     await expect(getProjects(AbortSignal.abort())).rejects.toThrow();
     expect(signalGivenToFetch(fetchMock).aborted).toBe(true);
+  });
+});
+
+/**
+ * SC-3-06 (Issue #140), gap flagged by the developer at handover: `isAbsenceBudgetShape`'s pairing
+ * rule between `statutory_leave_state` and `statutory_leave`/`generates_cost`/`generates_revenue`
+ * (criterion K-03) had no test at the `client.ts` boundary itself — only through
+ * `WorkingCalendarsScreen.test.tsx`, whose fixtures are already correctly paired, which a mutation
+ * removing the pairing check would not disturb. This is that missing boundary test: a payload
+ * broken exactly on the pairing, never on an individual field's own type.
+ */
+describe("getCatalogAbsenceBudgets and the statutory-leave pairing", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const VALID_RESOLVED_BUDGET = {
+    id: "b0000000-0000-0000-0000-000000000001",
+    calendar_id: "c0000000-0000-0000-0000-000000000001",
+    engagement_type_id: "d0000000-0000-0000-0000-000000000001",
+    budget_days: "20.00",
+    unit: "day",
+    source: "Staff regulations §12, 2026 edition",
+    effective_from: "2026-01-01",
+    effective_to: "2026-12-31",
+    statutory_leave_state: "resolved",
+    statutory_leave: {
+      absence_type_id: "a0000000-0000-0000-0000-000000000001",
+      name: "Annual leave",
+      generates_cost: true,
+      generates_revenue: false,
+    },
+    generates_cost: true,
+    generates_revenue: false,
+    updated_at: "2026-01-01T00:00:00+00:00",
+  };
+
+  function stubBudgets(budgets: unknown[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ budgets }) })),
+    );
+  }
+
+  it("accepts a budget whose state and regime fields are correctly paired (control)", async () => {
+    stubBudgets([VALID_RESOLVED_BUDGET]);
+    const result = await getCatalogAbsenceBudgets();
+    expect(result.budgets).toHaveLength(1);
+  });
+
+  it("rejects a 'resolved' state carrying no statutory-leave regime (statutory_leave: null)", async () => {
+    stubBudgets([{ ...VALID_RESOLVED_BUDGET, statutory_leave: null }]);
+    await expect(getCatalogAbsenceBudgets()).rejects.toThrow();
+  });
+
+  it("rejects a 'no_statutory_leave_type' state carrying a real statutory-leave regime", async () => {
+    stubBudgets([
+      {
+        ...VALID_RESOLVED_BUDGET,
+        statutory_leave_state: "no_statutory_leave_type",
+        // generates_cost/generates_revenue left as real booleans, and statutory_leave left as a
+        // real object — exactly the "server forgot to blank the regime out" mistake the pairing
+        // rule exists to catch. A shape check that only typed each field separately would accept
+        // this: every individual field is still one of its allowed types.
+      },
+    ]);
+    await expect(getCatalogAbsenceBudgets()).rejects.toThrow();
+  });
+
+  it("rejects a 'resolved' state carrying the 'n/a' sentinel instead of real booleans", async () => {
+    stubBudgets([
+      { ...VALID_RESOLVED_BUDGET, generates_cost: "n/a", generates_revenue: "n/a" },
+    ]);
+    await expect(getCatalogAbsenceBudgets()).rejects.toThrow();
   });
 });

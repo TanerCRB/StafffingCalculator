@@ -20,6 +20,8 @@ function stubRunningBackend() {
       "/catalog/dimensions/locations": { entries: [] },
       "/catalog/dimensions/engagement-types": { entries: [] },
       "/catalog/dimensions/vendors": { entries: [] },
+      "/catalog/working-calendars": { calendars: [] },
+      "/catalog/absence-budgets": { budgets: [] },
     }[path] ?? {};
     return { ok: true, status: 200, json: async () => body };
   });
@@ -117,6 +119,45 @@ describe("App", () => {
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(within(breadcrumb).getByText("Roles & rates")).toHaveAttribute("aria-current", "page");
     expect(within(breadcrumb).queryByText("Projects")).toBeNull();
+  });
+
+  // --- SC-3-06 -------------------------------------------------------------------------------------
+
+  it("makes the working calendars screen reachable from the running application, not only from its own test", async () => {
+    const fetchMock = stubRunningBackend();
+
+    render(<App />);
+    const main = screen.getByRole("main");
+
+    expect(await within(main).findByRole("heading", { name: "Projects" })).toBeVisible();
+    expect(within(main).queryByRole("heading", { name: "Working calendars" })).toBeNull();
+    expect(requestedPaths(fetchMock)).not.toContain("/catalog/working-calendars");
+
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Sections" })).getByRole("button", {
+        name: "Working calendars",
+      }),
+    );
+
+    expect(within(main).getByRole("heading", { name: "Working calendars" })).toBeVisible();
+    await waitFor(() =>
+      expect(requestedPaths(fetchMock)).toEqual(
+        expect.arrayContaining([
+          "/catalog/working-calendars",
+          "/catalog/absence-budgets",
+          "/catalog/dimensions/engagement-types",
+        ]),
+      ),
+    );
+
+    // The project list is unmounted, not merely hidden behind it.
+    expect(within(main).queryByRole("heading", { name: "Projects" })).toBeNull();
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByText("Working calendars")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   // --- Reviewer R-03 -----------------------------------------------------------------------------

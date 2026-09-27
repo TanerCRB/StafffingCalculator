@@ -742,6 +742,16 @@ describe("project list layout rules", () => {
     expect(declares(".staffing-plan__allocation", "contain-intrinsic-size", /^auto\s/)).toBe(true);
   });
 
+  it("declares content-visibility: auto with a size estimate on each working-calendar card (Reviewer R-02 of SC-3-06)", () => {
+    // Mirrors the test above: a catalogue with many working calendars renders one full
+    // `react-day-picker` month grid per card (`WeekPatternCalendar.tsx`), on screen and off. Again
+    // the CSS declaration only — jsdom does not act on `content-visibility` at all, so no test here
+    // can observe a card's layout/paint actually being skipped; that half is for QA to weigh (a
+    // mutation deleting these declarations passes every other suite unchanged).
+    expect(declares(".wc__calendar-card", "content-visibility", /^auto$/)).toBe(true);
+    expect(declares(".wc__calendar-card", "contain-intrinsic-size", /^auto\s/)).toBe(true);
+  });
+
   it("gives every not-yet-implemented control the same quietened appearance", () => {
     // Reviewer R-05: opacity over a full-strength brand colour still reads as a live call to
     // action. One rule, every variant, so "not yet" cannot look different in two places.
