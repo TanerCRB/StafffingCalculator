@@ -48,9 +48,9 @@ Security-Auditor finding — see `_require_personnel_cost_write_access`).
 
 import uuid
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -71,6 +71,10 @@ from app.api.schemas.staffing import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.staffing import (
+    DEFAULT_STAFFING_POSITION_LIST_LIMIT,
+    MAX_ABSENCES_PER_POSITION,
+    MAX_STAFFING_POSITION_LIST_LIMIT,
+    MAX_STAFFING_POSITION_LIST_OFFSET,
     AbsenceNotFound,
     AllocationMonthNotFound,
     PositionNotFound,
@@ -81,6 +85,7 @@ from app.data.staffing import (
     delete_absence,
     list_absences,
     list_positions,
+    scenario_in_scope,
     scenario_view_in_scope,
     update_allocation,
     update_position_cost_basis,
@@ -154,32 +159,203 @@ def _require_personnel_cost_write_access(
         )
 
 
+_STAFFING_POSITION_LIMIT_DESCRIPTION = (
+    "Rows per page. Omitted together with offset: the whole grid, exactly as before pagination "
+    f"existed (ADR-0017, SC-3-05, K-01). Named: refused (422) outside [1, "
+    f"{MAX_STAFFING_POSITION_LIST_LIMIT}], never silently clamped (K-06)."
+)
+
+_STAFFING_POSITION_OFFSET_DESCRIPTION = (
+    "Rows to skip before the page, for stable paging together with limit. Refused (422) outside "
+    f"[0, {MAX_STAFFING_POSITION_LIST_OFFSET}], never silently clamped (K-06). An offset past the "
+    "end of an in-scope scenario is a 200 with an empty list, not a 404 (K-05) — pagination is not "
+    "a second channel that could answer for scope."
+)
+
+
+def _query_int_violation(
+    field: str, *, error_type: str, message: str, raw: str, ctx: dict[str, int] | None = None
+) -> HTTPException:
+    """One entry of FastAPI/Pydantic's own error shape for a query-parameter violation (R-01 fix,
+    gate-2 review).
+
+    **Mirrored, not invented** — `detail` is a *list* of `{"type", "loc", "msg", "input", "ctx"?}`
+    objects on every other `422` this API answers, because that is the native shape
+    FastAPI/Pydantic gives a `Query(..., ge=..., le=...)` violation everywhere else `limit`/`offset`
+    are declared with their own bounds (`GET /catalog/rates` — confirmed empirically against this
+    same pydantic/fastapi version: `{"type": "less_than_equal", "loc": ["query", "limit"], "msg":
+    "Input should be less than or equal to 5000", "input": "5001", "ctx": {"le": 5000}}`, and
+    `{"type": "int_parsing", "loc": ["query", "limit"], "msg": "Input should be a valid integer,
+    unable to parse string as an integer", "input": "abc"}` for an unparsable value).
+    `frontend/src/api/client.ts::refusalOf` reads a list `detail` as "422, validation" and a string
+    `detail` as an application refusal (403/404/409) — this was, before this fix, the one place in
+    the backend answering a `422` with a string, breaking that contract for no reason tied to the
+    404-before-422 precedence this function's caller exists to protect (K-08 is unaffected either
+    way: only the *shape* of the 422 changes here, never which status code a given request gets).
+
+    `raw` is the original query string, not the parsed value — `input` on the native errors above is
+    always the string that arrived over HTTP, before Pydantic's own coercion, and this mirrors that
+    rather than showing the value after `int(...)` has already run.
+    """
+    detail: dict[str, Any] = {
+        "type": error_type,
+        "loc": ["query", field],
+        "msg": message,
+        "input": raw,
+    }
+    if ctx is not None:
+        detail["ctx"] = ctx
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=[detail])
+
+
+def _parse_staffing_position_page_int(raw: str | None, field: str) -> int | None:
+    """`raw` (the query string named for `field`, or `None` if it was not named) as an `int` — or
+    refuse with the same `int_parsing` shape FastAPI's own coercion answers for the identical
+    defect elsewhere in this API (R-01 fix).
+
+    `None` is returned unparsed and unchecked: "this parameter was not named" is not a parsing
+    failure, and the caller (`_validated_staffing_position_page`) is what turns an absent parameter
+    into its own default.
+    """
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise _query_int_violation(
+            field,
+            error_type="int_parsing",
+            message="Input should be a valid integer, unable to parse string as an integer",
+            raw=raw,
+        ) from None
+
+
+def _validated_staffing_position_page(
+    limit: str | None, offset: str | None
+) -> tuple[int | None, int]:
+    """Turn the two raw query parameters into `(limit, offset)` for `list_positions` — or refuse.
+
+    **Called only after the scope of the scenario is already confirmed** (criterion K-08): `limit`
+    and `offset` are declared on the endpoint below as `str | None`, with no `int` in their own
+    type annotation, on purpose — a bare `Annotated[int | None, Query(...)]` is enough on its own
+    to make FastAPI/Pydantic coerce and validate the value *before* the handler body ever runs, with
+    no `ge`/`le` required to trigger it (guardian STOP finding, S-01: `limit=abc` — unparsable as an
+    int at all — reached the client as a `422` with no scope check having run, for a scenario
+    entirely outside the caller's project_access). Declaring both as `str | None` defers every
+    parsing and bounds decision to this function, called only after `scenario_in_scope` — the
+    reverse of the order every other refusal on this path (write-specific or parameter-specific)
+    keeps relative to `404` (ADR-0005's addendum). A scenario outside the caller's scope now answers
+    the same `404` regardless of how malformed the pagination parameters also are — proven, not
+    merely argued: `test_s_01_an_unparsable_limit_does_not_leak_past_the_scope_check`.
+
+    `None, None` (neither parameter named) is the one case answered without touching either bound
+    at all: `list_positions(limit=None)` is "the whole grid" (K-01), and there is nothing to
+    validate about an absent request for a page. Naming only one of the two fills in the other from
+    its default — `DEFAULT_STAFFING_POSITION_LIST_LIMIT` for `limit`, `0` for `offset` — the same
+    partial-request shape `GET /catalog/rates` already allows for `on_date` beside `limit`/`offset`.
+    """
+    if limit is None and offset is None:
+        return None, 0
+    parsed_limit = _parse_staffing_position_page_int(limit, "limit")
+    parsed_offset = _parse_staffing_position_page_int(offset, "offset")
+    effective_limit = DEFAULT_STAFFING_POSITION_LIST_LIMIT if parsed_limit is None else parsed_limit
+    effective_offset = 0 if parsed_offset is None else parsed_offset
+    if effective_limit < 1:
+        raise _query_int_violation(
+            "limit",
+            error_type="greater_than_equal",
+            message="Input should be greater than or equal to 1",
+            raw=limit if limit is not None else str(effective_limit),
+            ctx={"ge": 1},
+        )
+    if effective_limit > MAX_STAFFING_POSITION_LIST_LIMIT:
+        raise _query_int_violation(
+            "limit",
+            error_type="less_than_equal",
+            message=f"Input should be less than or equal to {MAX_STAFFING_POSITION_LIST_LIMIT}",
+            raw=limit if limit is not None else str(effective_limit),
+            ctx={"le": MAX_STAFFING_POSITION_LIST_LIMIT},
+        )
+    if effective_offset < 0:
+        raise _query_int_violation(
+            "offset",
+            error_type="greater_than_equal",
+            message="Input should be greater than or equal to 0",
+            raw=offset if offset is not None else str(effective_offset),
+            ctx={"ge": 0},
+        )
+    if effective_offset > MAX_STAFFING_POSITION_LIST_OFFSET:
+        raise _query_int_violation(
+            "offset",
+            error_type="less_than_equal",
+            message=f"Input should be less than or equal to {MAX_STAFFING_POSITION_LIST_OFFSET}",
+            raw=offset if offset is not None else str(effective_offset),
+            ctx={"le": MAX_STAFFING_POSITION_LIST_OFFSET},
+        )
+    return effective_limit, effective_offset
+
+
 @router.get(
     "",
     response_model=StaffingPositionList,
     summary="List the staffing positions of one scenario, with their monthly hours",
-    responses={404: {"description": STAFFING_NOT_FOUND_DETAIL}},
+    responses={
+        404: {"description": STAFFING_NOT_FOUND_DETAIL},
+        422: {
+            "description": "limit or offset named outside their bounds, or unparsable as an "
+            "integer at all — refused, never clamped (K-06), in the same list-of-objects `detail` "
+            "shape every other 422 on this API answers (R-01 fix). Answered only once the scenario "
+            "is confirmed in the caller's scope (K-08): a scenario outside it is always the 404 "
+            "above, whatever these parameters name — including a value FastAPI's own coercion "
+            "would otherwise have rejected before the handler ever ran (S-01 fix)."
+        },
+    },
 )
 def list_staffing_positions(
     project_id: uuid.UUID,
     scenario_id: uuid.UUID,
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_READ))],
     session: Annotated[Session, Depends(get_session)],
+    limit: Annotated[str | None, Query(description=_STAFFING_POSITION_LIMIT_DESCRIPTION)] = None,
+    offset: Annotated[str | None, Query(description=_STAFFING_POSITION_OFFSET_DESCRIPTION)] = None,
 ) -> StaffingPositionList:
-    """The scenario's whole staffing grid, or a `404` that says nothing about whether it exists.
+    """One page of the scenario's staffing grid, and the total, or a `404` that says nothing about
+    whether it exists (paginated since SC-3-05, ADR-0017).
 
     `STAFFING_READ`, not `PROJECT_READ`: planning staffing is routinely a different person's right
     than reading a project header (ADR-0005, addendum 2026-09-19, point 2), and a permission once
     merged into one cannot be narrowed again without breaking its callers.
 
-    There is no `403` branch here and nothing to write one from: the scope filter is inside the
-    query that fetches the rows (`app.data.staffing.list_positions` → `project_for_caller`), so a
-    scenario outside the caller's scope never reaches this function.
+    **`404` before `422`, structurally, not by convention (K-08) — including for a value that is
+    not even a well-formed integer (S-01 fix, guardian STOP finding).** `limit`/`offset` are typed
+    `str | None` here, not `int | None`: an `int` annotation alone, with no `ge`/`le` at all, is
+    already enough for FastAPI/Pydantic to coerce and validate the query string *before* this
+    function's body runs, so `limit=abc` against a scenario entirely outside the caller's scope used
+    to answer `422` — a scope leak through a channel nobody named "scope". `scenario_in_scope` is
+    called here, once, before `limit`/`offset` are looked at in any way — the same function
+    `list_positions` calls again to fetch the rows, the precedent `_require_personnel_cost_write_
+    access` already sets for calling one scope function twice from two layers rather than inventing
+    a second one. A scenario outside the caller's scope therefore never reaches
+    `_validated_staffing_position_page`, whatever the pagination parameters name or whether they
+    parse as integers at all.
+
+    There is no `403` branch here and nothing to write one from: every scope decision goes through
+    `project_for_caller`, so a caller without `project_access` never reaches even the scope check
+    above.
     """
-    positions = list_positions(session, caller, project_id, scenario_id)
-    if positions is None:
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
         raise _not_found()
-    return shape_staffing_position_list(positions)
+    validated_limit, validated_offset = _validated_staffing_position_page(limit, offset)
+    result = list_positions(
+        session, caller, project_id, scenario_id, limit=validated_limit, offset=validated_offset
+    )
+    if result is None:
+        # Reachable only if the scenario left the caller's scope between the two calls above (e.g. a
+        # concurrently revoked project_access row) — not a second scope mechanism, the same function
+        # answering a second time, and its own `None` is still a 404.
+        raise _not_found()
+    positions, total = result
+    return shape_staffing_position_list(positions, total=total)
 
 
 @router.post(
@@ -455,10 +631,11 @@ def list_staffing_absences(
     responses={
         404: {"description": STAFFING_NOT_FOUND_DETAIL},
         409: {
-            "description": "Refused: the scenario is approved (its staffing is part of an approved "
-            "calculation), the position changed since it was read (ADR-0007 concurrency token), or "
-            "the state of the data refused the write — an absence type id that names no dictionary "
-            "row. The message says which."
+            "description": "Refused: the scenario is approved (its staffing is part of an "
+            "approved calculation), the position changed since it was read (ADR-0007 concurrency "
+            f"token), the position already holds the maximum of {MAX_ABSENCES_PER_POSITION} "
+            "planned absences (SC-3-05, K-07), or the state of the data refused the write — an "
+            "absence type id that names no dictionary row. The message says which."
         },
     },
 )
@@ -478,12 +655,17 @@ def create_staffing_absence(
     the recomputed `derived_capacity_hours` of every month, which is the point of adding an absence
     in the first place.
 
-    The three refusals, all decided inside the one statement that writes (`create_absence`):
+    The refusals, all decided inside the one statement that writes (`create_absence`):
 
     - **404** — the scenario or the position is not the caller's, does not exist, or belongs
       somewhere else. Indistinguishable by construction.
     - **409, "approved"** — the scenario is frozen (ADR-0004). Permanent; the way forward is a copy.
     - **409, "changed since it was read"** — the ADR-0007 token moved. Resolved by re-reading.
+    - **409, the maximum of absences** (SC-3-05, K-07) — the position already holds
+      `MAX_ABSENCES_PER_POSITION` planned absences. Not permanent: removing one frees a slot, and
+      the identical request then succeeds. Checked by a correlated `count(*)` in the same guarded
+      `UPDATE` that rotates the token — never a `SELECT` run first, which two concurrent callers at
+      the limit could both pass.
     - **409, refused by the database** — an `absence_type_id` naming no dictionary row is rejected
       by the foreign key, not by this schema.
     - **403** — the permission dependency, before any of the above and before the database.

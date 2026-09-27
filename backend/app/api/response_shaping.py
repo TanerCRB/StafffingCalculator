@@ -803,15 +803,22 @@ def shape_staffing_absence_list(
 
 
 def shape_staffing_position_list(
-    views: Sequence[StaffingPositionView],
+    views: Sequence[StaffingPositionView], *, total: int
 ) -> StaffingPositionList:
     """Shape an already scope-filtered sequence of positions — every row through the function above.
 
     This function decides no access and must never be asked to: the scope is applied in the query
     (`app.data.staffing`, which inherits it from `project_for_caller`), so a position of a scenario
     the caller may not see is never in this sequence in the first place.
+
+    `total` is passed through, not derived from `views` (K-02/K-04, SC-3-05, ADR-0017): `views` is
+    already the bounded page `app.data.staffing.list_positions` returned, and `len()` on it would
+    silently report "the whole scenario" for however many positions fit in one page — exactly the
+    field this parameter exists so a client never has to guess at.
     """
-    return StaffingPositionList(positions=[shape_staffing_position(view) for view in views])
+    return StaffingPositionList(
+        positions=[shape_staffing_position(view) for view in views], total=total
+    )
 
 
 def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCommercialTerms:
