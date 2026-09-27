@@ -41,6 +41,7 @@ from app.models.staffing import (
     FIRST_DAY_OF_MONTH_EXPRESSION,
     HOURS_COLUMNS,
     HOURS_NON_NEGATIVE_CONSTRAINTS,
+    STAFFING_POSITION_PAGE_INDEX,
     StaffingPosition,
     StaffingPositionAllocation,
 )
@@ -437,6 +438,63 @@ def test_the_model_and_the_migration_agree_on_the_month_check(db_session: Sessio
     ).scalar_one()
     assert "date_trunc" in definition
     assert "period_month" in definition
+
+
+_PAGING_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "migrations"
+    / "versions"
+    / "f1a2c4b6d8e0_index_staffing_position_for_paging.py"
+)
+
+
+def _paging_migration_module() -> ModuleType:
+    """Load the SC-3-05 gate-2 (R-02) paging migration as a module — the same construction
+    `_migration_module()` uses for `b6d2f74c3e18`, kept separate because the two migrations spell
+    two different schema facts and a test comparing the wrong pair would pass by accident."""
+    specification = importlib.util.spec_from_file_location(
+        "sc_3_05_paging_migration", _PAGING_MIGRATION_PATH
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def test_the_model_and_the_migration_agree_on_the_staffing_position_page_index(
+    db_session: Session,
+) -> None:
+    """SC-3-05 gate-2, reviewer finding R-02 — the same drift guard `RATE_PAGE_INDEX` already has
+    for `GET /catalog/rates`, applied to this task's own paging index.
+
+    Three assertions, because any one alone is satisfiable without the others: the index's *name*
+    is compared between `app.models.staffing.STAFFING_POSITION_PAGE_INDEX` and the migration's own
+    copy, the *column order* is compared the same way (a name that matches with columns reordered
+    would still sort wrong), and then the *migrated database* is asked what index it actually has —
+    so a migration that was edited but never applied fails here too, not only a model that drifted
+    from a migration nobody ran.
+    """
+    migration = _paging_migration_module()
+
+    assert migration._PAGE_INDEX == STAFFING_POSITION_PAGE_INDEX
+    assert migration._POSITION_TABLE == StaffingPosition.__tablename__
+    assert migration._PAGE_INDEX_COLUMNS == ("scenario_id", "start_date", "id")
+
+    indexed_columns = db_session.execute(
+        sa.text(
+            "SELECT a.attname"
+            " FROM pg_index i"
+            " JOIN pg_class c ON c.oid = i.indexrelid"
+            " JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)"
+            " WHERE c.relname = :index_name"
+            " ORDER BY array_position(i.indkey, a.attnum)"
+        ),
+        {"index_name": STAFFING_POSITION_PAGE_INDEX},
+    ).scalars().all()
+    assert indexed_columns == ["scenario_id", "start_date", "id"], (
+        f"the migrated database's own {STAFFING_POSITION_PAGE_INDEX} does not lead on "
+        f"(scenario_id, start_date, id): found {indexed_columns}"
+    )
 
 
 def test_no_foreign_key_of_either_staffing_table_cascades_a_delete(db_session: Session) -> None:

@@ -34,3 +34,4 @@ the same file — never a silent edit of the original text.
 | [ADR-0014](ADR-0014-koszty-dodatkowe.md) | Koszty dodatkowe (F-08): własność, okres, finansowanie, kształt wyniku | Accepted |
 | [ADR-0015](ADR-0015-przeliczenie-bez-zapisu.md) | Przeliczenie bez zapisu ("what-if"): wzorzec, słownictwo, granica reużycia | Draft — pending approval |
 | [ADR-0016](ADR-0016-segment-dostawy-scenariusza.md) | Segment dostawy scenariusza: encja fazy/workstreamu (F-02, F-06) | Draft — pending approval |
+| [ADR-0017](ADR-0017-paginacja-list-api.md) | Wzorzec paginacji list w API (ogólny) | Accepted |
