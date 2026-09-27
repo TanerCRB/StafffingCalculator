@@ -798,6 +798,84 @@ history / this file's own change log, not as tracked product work.
   75-podziałowy zadeklarowany w komentarzu testu zamiast w logu mutacji, uzupełniony teraz w
   `docs/architecture/capabilities.md`). Zob. `docs/architecture/capabilities.md`.
 
+- [x] **SC-3-04** — Ekran Staffing plan: siatka obsady scenariusza z miesięczną alokacją, wyliczoną
+  pojemnością i budżetem urlopowym (F-04, F-05, część, frontend, odczyt) — konsument API
+  dostarczonego przez SC-3-01/SC-3-02/SC-3-03 (`GET .../staffing-positions`), Issue #135.
+  *Done when:* `frontend/src` (vitest) dowodzi kryteriów K-01..K-07 (analyst, 2026-09-26), każde z
+  zarejestrowanym i wykonanym przebiegiem mutacyjnym: headcount/okres/trzy godziny wejściowe przez
+  wspólny formatter (nowy `lib/hours.ts`, osobny od `money.ts` — ADR-0002 aneks 2026-09-26);
+  `derived_capacity`/`absence_budget` jako liczba+nazwany stan, nigdy ciche `0.00`; nieobecności (4
+  pola) z `absence_type_id` rozwiązanym przez katalog; pięć identyfikatorów katalogowych
+  rozwiązanych do nazw niezależnym odczytem `CATALOG_READ`; `403`/`404` scalone w jeden stan
+  "niedostępne"; zero elementów interaktywnych (ekran czysto odczytowy); zamontowane w karcie
+  scenariusza w `ProjectListScreen`, obok `ScenarioCommercialTermsSection`/`ScenarioResultsSection`.
+  **Decyzje bramki 1 (2026-09-26):** godziny w osobnym module `lib/hours.ts`, nie rozszerzeniu
+  `money.ts`; `403`/`404` (siatki i katalogu) scalone w jeden stan; ryzyko pseudonimizacji
+  (`headcount=1` + daty urlopu identyfikują jedną osobę, pierwszy raz widoczne człowiekowi na
+  ekranie) przyjęte świadomie bez countermeasure — ADR-0005 aneks 2026-09-26, warunek ponownego
+  otwarcia z aneksów SC-3-02 pkt 11/SC-3-03 pkt 7 pozostaje NIE domknięty; brak pełnego rozkładu
+  źródła (`derived_capacity_source`/`absence_budget_source`) w MVP.
+  **Out of scope (explicit):** edycja godzin, dodawanie pozycji, edycja `cost_basis`, zapis
+  nieobecności — osobne zadania frontendowe (inna warstwa ryzyka: token współbieżności ADR-0007,
+  strażnik `approved` ADR-0004, koniunkcja SC-1-08); pełny rozkład źródła pojemności/budżetu;
+  router/globalny stan wybranego projektu-scenariusza (odłożone jak przy SC-4-06/SC-7-02);
+  mobile/responsive (NF-09).
+  **Done 2026-09-27:** PR #138 (scalone). Dowód:
+  `frontend/src/features/projects/StaffingPlanSection.test.tsx` (K-01..K-07 + R-01),
+  `frontend/src/lib/hours.test.ts`, `frontend/src/styles/tokens.test.ts` (R-02) — 350 testów
+  frontendowych zielono. Dwie rundy weryfikacji (Invariant Guardian, reviewer) + poprawki: **R-01**
+  (reviewer, Medium — wachlarz 5 identycznych odczytów katalogu per karta scenariusza, bez cache,
+  N scenariuszy × 5 żądań do zaledwie 5 adresów; naprawione request-coalescing cache w `client.ts`,
+  deduplikacja współbieżnych żądań, nie długożyjący cache danych — obejmuje też istniejącego
+  konsumenta `CatalogScreen`); **R-02** (reviewer, Low/Medium — brak traktowania skali NF-03, do
+  ~7200 wierszy DOM; częściowo złagodzone przez `content-visibility:auto` — adresuje koszt
+  layout/paint, NIE koszt React mount/reconciliation, nazwane wprost w kodzie). **Recorded
+  exception (human, 2026-09-27):** pełne rozwiązanie R-02 wymaga paginacji API (zbudowanej jako
+  SC-3-05, PR #137) + osobnego, przyszłego zadania frontendowego konsumującego strony — numer do
+  nadania po zapriorytetyzowaniu; do tego czasu ekran konsumuje pełną listę (bez parametrów
+  paginacji, zachowanie zachowane przez SC-3-05 jako "jak dziś"), co jest dziś wystarczające (brak
+  ścieżki tworzenia pozycji w produkcji poza fixture — Issue #4). Zob.
+  `docs/architecture/capabilities.md`.
+
+- [x] **SC-3-05** — Paginuj `GET /projects/{project_id}/scenarios/{scenario_id}/staffing-positions`
+  (`limit`/`offset`/`total`, F-04, backend), dodaj cap na nieobecności per pozycja (Issue #136).
+  Pierwsze zadanie formalizujące wzorzec paginacji dla całego API — nowy `ADR-0017`.
+  *Done when:* `backend/tests` dowodzą kryteriów K-01..K-08 (analyst, 2026-09-26) przeciw
+  prawdziwemu PostgreSQL, każde z zarejestrowanym i wykonanym przebiegiem mutacyjnym: brak
+  parametrów = cała lista (K-01); jawny rozmiar strony ogranicza + niesie `total` (K-02);
+  sortowanie `(start_date, id)` to porządek totalny, remis nie gubi/dubluje wiersza (K-03); suma
+  stron = pełna lista (K-04); paginacja nie staje się nowym kanałem potwierdzającym zasięg (K-05);
+  parametr poza granicą → `422`, nigdy ciche przycinanie (K-06); cap absences
+  (`MAX_ABSENCES_PER_POSITION=60`) odrzucony w tej samej strażonej instrukcji co `INSERT`, nie
+  cichy (K-07); `404` (zasięg) zawsze przed `422` (paginacja), strukturalnie — `limit`/`offset`
+  przyjmowane jako string, parsowane ręcznie po sprawdzeniu zasięgu (K-08).
+  **Decyzje bramki 1 (2026-09-26):** nowy `ADR-0017` (wzorzec prospektywny, nie retroaktywny —
+  `/catalog/rates` zostaje niezmieniony, `GET /projects`/SC-1-05 dziedziczy wzorzec gdy zostanie
+  podjęte); `limit`/`offset`/`total` (nie kursor); stałe nazwane per zasób
+  (`DEFAULT_STAFFING_POSITION_LIST_LIMIT` itd.); `absences` też w zakresie (cap zapisu, nie
+  paginacja odczytu drugiego poziomu).
+  **Out of scope (explicit):** konsumpcja stron przez frontend SC-3-04 — osobne, przyszłe zadanie;
+  paginacja `allocations` (drugi poziom zagnieżdżenia) — `MAX_ALLOCATION_MONTHS=60` już ogranicza
+  jedno żądanie tworzące, brak ścieżki dodawania kolejnych miesięcy poza tworzeniem pozycji;
+  zastosowanie wzorca ADR-0017 do innych list API — osobne zadania, każde z własnym numerem;
+  wydajność/czas odpowiedzi (NF-03) — niezmierzone.
+  **Done 2026-09-27:** PR #137 (scalone). Dowód: `backend/tests/test_staffing_pagination.py`
+  (K-01..K-06, K-08), `backend/tests/test_staffing_absence_cap.py` (K-07),
+  `backend/tests/test_staffing_schema_constraints.py::test_the_model_and_the_migration_agree_on_the_staffing_position_page_index`
+  — 1015 testów backendowych zielono (było 1010), migracja
+  `backend/migrations/versions/f1a2c4b6d8e0_index_staffing_position_for_paging.py` (upgrade/
+  downgrade zweryfikowane). Dwie rundy weryfikacji (Invariant Guardian, reviewer, security-auditor)
+  + poprawki: **S-01** (invariant-guardian, STOP — `limit`/`offset` niesparsowalne jako `int` (np.
+  `"abc"`) omijały `scenario_in_scope`, dając `422` przed `404`, wbrew własnej deklaracji ADR-0017
+  pkt 8; naprawione przyjmowaniem parametrów jako `str`, parsowaniem ręcznym po sprawdzeniu
+  zasięgu; potwierdzone empirycznie przez `TestClient`, w tym seria przypadków brzegowych); **R-01**
+  (reviewer, Medium — kształt błędu `422` jako string, łamiący istniejący kontrakt reszty API
+  (lista `{type,loc,msg,input}`); naprawione, potwierdzone bit-identycznym porównaniem z natywną
+  odpowiedzią Pydantic); **R-02** (reviewer, Low — docstring obiecywał plan zapytania z indeksem,
+  którego nie było; naprawione migracją z indeksem złożonym `(scenario_id, start_date, id)`,
+  potwierdzone testem planu zapytania (`EXPLAIN`) i testem dryfu model/migracja/baza). Zob.
+  `docs/architecture/capabilities.md`.
+
 - [x] **SC-2-05** — Dostosuj wygląd ekranu Roles & rates (katalog) do makiety UI-15 i rozbuduj rail
   nawigacji `AppShell` do pełnej listy 11 wpisów z tej samej makiety, bez zmiany zachowania ani
   kontraktów API (Issue #59).
