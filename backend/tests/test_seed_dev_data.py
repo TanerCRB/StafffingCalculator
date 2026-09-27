@@ -1,4 +1,7 @@
-"""`backend/scripts/seed_dev_data.py` — Issue #145. One test per acceptance criterion (K-01..K-06).
+"""`backend/scripts/seed_dev_data.py` — Issues #145 and #147. One test per acceptance criterion
+(K-01..K-06 from #145; the #147 tests below reuse the K-01..K-04 identifiers from that issue's own
+criteria, which is a different set of behaviours than #145's K-01/K-02/K-03/K-04 above — the section
+headers say which issue each block proves).
 
 The script itself is never imported by `app.*` and is not part of any fixture other tests use —
 these tests import it explicitly, the same way they would import any other module under test, and
@@ -16,6 +19,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.data.catalog import resolve_rate
+from app.domain.scenario_readiness import REQUIRED_SCENARIO_INPUTS
 from app.models import (
     AbsenceBudget,
     AbsenceType,
@@ -28,7 +32,9 @@ from app.models import (
     Project,
     ProjectAccess,
     Scenario,
+    ScenarioStatus,
     StaffingPosition,
+    StoryPointsTerms,
     WorkingCalendar,
     WorkingCalendarDay,
 )
@@ -37,6 +43,9 @@ from scripts.seed_dev_data import (
     CALENDAR_WARSAW_NAME,
     LOCATION_KRAKOW_NAME,
     LOCATION_WARSAW_NAME,
+    SCENARIO_SP_DRAFT_NAME,
+    SCENARIO_TM_APPROVED_NAME,
+    SCENARIO_TM_DRAFT_NAME,
     MissingCallerUserIdError,
     resolve_caller_user_id,
     run_seed,
@@ -301,6 +310,282 @@ def test_k_05_three_scenarios_span_two_commercial_models_and_both_statuses(
         {"sid": approved_scenario_id},
     ).scalar_one()
     assert snapshot_rows > 0, "the approval must have actually frozen a calendar, not an empty plan"
+
+
+# --- Issue #147: the six `REQUIRED_SCENARIO_INPUTS` are set on every seeded scenario -----------
+#
+# `backend/scripts/seed_dev_data.py` (Issue #145) seeded three scenarios without ever setting
+# `start_date`, `end_date`, `working_calendar`, `full_time_hours_per_week`, `currency` or
+# `target_margin_percent` — the six columns `app.domain.scenario_readiness.REQUIRED_SCENARIO_
+# INPUTS` names — so every seeded scenario, including the one deliberately approved, reported
+# `ready_for_approval=False`. These four tests reuse the identifiers K-01..K-04 from Issue #147's
+# own acceptance criteria (a different set of behaviours from #145's K-01..K-04 above).
+
+
+def _scenario_items_by_id(client: TestClient, project_id: object, *, caller: str) -> dict:
+    response = client.get(f"/projects/{project_id}", headers=as_caller(caller))
+    assert response.status_code == 200
+    return {item["id"]: item for item in response.json()["scenarios"]}
+
+
+def test_k147_01_both_draft_scenarios_are_ready_independently_of_each_other(
+    client: TestClient, db_session: Session
+) -> None:
+    """Both drafts carry all six required inputs and are reported ready — and the readiness check
+    runs per scenario row, not once for the whole project: making one draft incomplete directly on
+    its own row must not affect the other draft's report.
+    """
+    summary = run_seed(db_session, caller_user_id=SEED_CALLER)
+    tm_draft_id = str(summary.scenario_ids["tm_draft"])
+    sp_draft_id = str(summary.scenario_ids["sp_draft"])
+
+    scenarios = _scenario_items_by_id(client, summary.project_id, caller=SEED_CALLER)
+    assert scenarios[tm_draft_id]["missing_inputs"] == []
+    assert scenarios[tm_draft_id]["ready_for_approval"] is True
+    assert scenarios[sp_draft_id]["missing_inputs"] == []
+    assert scenarios[sp_draft_id]["ready_for_approval"] is True
+
+    # Contrast: blank one field on the TM draft alone (simulating an incomplete row), on the
+    # database directly — never through the seed script. Only that scenario, and only that one
+    # field, must show up as missing; the untouched SP draft must stay fully ready.
+    db_session.execute(
+        sa.update(Scenario).where(Scenario.id == summary.scenario_ids["tm_draft"]).values(
+            currency=None
+        )
+    )
+    db_session.commit()
+
+    scenarios_after = _scenario_items_by_id(client, summary.project_id, caller=SEED_CALLER)
+    assert scenarios_after[tm_draft_id]["missing_inputs"] == ["currency"]
+    assert scenarios_after[tm_draft_id]["ready_for_approval"] is False
+    assert scenarios_after[sp_draft_id]["missing_inputs"] == []
+    assert scenarios_after[sp_draft_id]["ready_for_approval"] is True
+
+
+def test_k147_02_a_second_run_repairs_a_scenario_seeded_by_the_old_script(
+    client: TestClient, db_session: Session
+) -> None:
+    """A `Scenario` row with the natural key of a scenario this script seeds, but with every one
+    of the six assumption columns `NULL` — the exact shape a database seeded by the pre-fix
+    version of this script leaves behind — is repaired (not left alone, and not duplicated) by a
+    subsequent run of the fixed script.
+    """
+    summary = run_seed(db_session, caller_user_id=SEED_CALLER)
+
+    db_session.execute(
+        sa.update(Scenario)
+        .where(Scenario.id == summary.scenario_ids["sp_draft"])
+        .values(
+            start_date=None,
+            end_date=None,
+            working_calendar=None,
+            full_time_hours_per_week=None,
+            currency=None,
+            target_margin_percent=None,
+        )
+    )
+    db_session.commit()
+
+    bugged_row = db_session.execute(
+        sa.select(Scenario).where(Scenario.id == summary.scenario_ids["sp_draft"])
+    ).scalar_one()
+    for field_name in REQUIRED_SCENARIO_INPUTS:
+        assert getattr(bugged_row, field_name) is None, f"setup: {field_name} must start NULL"
+
+    run_seed(db_session, caller_user_id=SEED_CALLER)
+
+    repaired_row = db_session.execute(
+        sa.select(Scenario).where(Scenario.id == summary.scenario_ids["sp_draft"])
+    ).scalar_one()
+    for field_name in REQUIRED_SCENARIO_INPUTS:
+        assert getattr(repaired_row, field_name) is not None, f"not repaired: {field_name}"
+
+    scenarios = _scenario_items_by_id(client, summary.project_id, caller=SEED_CALLER)
+    repaired_item = scenarios[str(summary.scenario_ids["sp_draft"])]
+    assert repaired_item["missing_inputs"] == []
+    assert repaired_item["ready_for_approval"] is True
+
+    scenario_count_after_repair = db_session.execute(
+        sa.select(sa.func.count()).select_from(Scenario)
+    ).scalar_one()
+
+    # A further run — now against an already-repaired, fully-seeded database — must not duplicate
+    # the row or raise (matches #145's own K-02 idempotency guarantee, extended to this column set).
+    run_seed(db_session, caller_user_id=SEED_CALLER)
+    scenario_count_after_third_run = db_session.execute(
+        sa.select(sa.func.count()).select_from(Scenario)
+    ).scalar_one()
+    assert scenario_count_after_third_run == scenario_count_after_repair == 3
+
+
+def test_k147_02c_never_backfills_an_already_approved_row(
+    client: TestClient, db_session: Session
+) -> None:
+    """Rule 7 (ADR-0004): a write to an approved calculation is refused at the data-access layer.
+
+    A database left behind by the pre-#147 script can have `Seed Scenario TM Approved` already
+    `approved` with every assumption column still `NULL` (the old script approved it before this
+    fix ever set them). A re-seed must not silently patch an approved row's own columns — it must
+    leave the gap alone, not raise, and not duplicate the row.
+    """
+    summary = run_seed(db_session, caller_user_id=SEED_CALLER)
+
+    approved_id = summary.scenario_ids["tm_approved"]
+    approved_before = db_session.execute(
+        sa.select(Scenario).where(Scenario.id == approved_id)
+    ).scalar_one()
+    assert approved_before.status == ScenarioStatus.APPROVED, "setup: must already be approved"
+
+    db_session.execute(
+        sa.update(Scenario)
+        .where(Scenario.id == approved_id)
+        .values(
+            start_date=None,
+            end_date=None,
+            working_calendar=None,
+            full_time_hours_per_week=None,
+            currency=None,
+            target_margin_percent=None,
+        )
+    )
+    db_session.commit()
+
+    run_seed(db_session, caller_user_id=SEED_CALLER)
+
+    still_incomplete = db_session.execute(
+        sa.select(Scenario).where(Scenario.id == approved_id)
+    ).scalar_one()
+    for field_name in REQUIRED_SCENARIO_INPUTS:
+        assert getattr(still_incomplete, field_name) is None, (
+            f"an approved row's {field_name} must never be silently backfilled"
+        )
+    assert still_incomplete.status == ScenarioStatus.APPROVED
+
+    scenario_count = db_session.execute(
+        sa.select(sa.func.count()).select_from(Scenario)
+    ).scalar_one()
+    assert scenario_count == 3, "must not duplicate the row while refusing to repair it"
+
+
+def test_k147_02b_a_second_run_does_not_clobber_a_manually_edited_value(
+    db_session: Session,
+) -> None:
+    """QA contrast (Issue #147): `_get_or_create_scenario`'s own docstring claims the found-row
+    branch backfills only the `NULL` columns, "never the ones already set (a manual edit on a real
+    dev database must survive a re-seed)" — but `test_k147_02` above only ever starts from a row
+    with all six columns `NULL`, so it cannot tell a conditional (`if ... is None`) backfill apart
+    from an unconditional overwrite: both would leave that row fully non-null after a second run.
+
+    Mutation record: changing the backfill loop to `setattr(existing, field_name, value)`
+    unconditionally (dropping the `is None` guard) survived the full suite green before this test
+    was added — the flaw was in the test, not in the code, which already guards this correctly.
+
+    This test sets one column to a value a developer could plausibly have hand-edited on a local
+    dev database — deliberately different from every constant this script writes — and asserts a
+    second run leaves exactly that value alone, while every other, still-`NULL` column gets
+    repaired around it in the same run.
+    """
+    summary = run_seed(db_session, caller_user_id=SEED_CALLER)
+
+    db_session.execute(
+        sa.update(Scenario)
+        .where(Scenario.id == summary.scenario_ids["sp_draft"])
+        .values(
+            currency="EUR",  # manual edit — the script only ever writes "PLN"
+            start_date=None,
+            end_date=None,
+            working_calendar=None,
+            full_time_hours_per_week=None,
+            target_margin_percent=None,
+        )
+    )
+    db_session.commit()
+
+    run_seed(db_session, caller_user_id=SEED_CALLER)
+
+    row_after_second_run = db_session.execute(
+        sa.select(Scenario).where(Scenario.id == summary.scenario_ids["sp_draft"])
+    ).scalar_one()
+    assert row_after_second_run.currency == "EUR", (
+        "a re-seed must not clobber a manually-edited, already-non-null column"
+    )
+    for field_name in REQUIRED_SCENARIO_INPUTS:
+        if field_name == "currency":
+            continue
+        assert getattr(row_after_second_run, field_name) is not None, (
+            f"not repaired: {field_name}"
+        )
+
+
+def test_k147_03_scenario_currency_and_story_points_currency_are_separate_columns(
+    db_session: Session,
+) -> None:
+    """`Scenario.currency` (the assumption this task fixes) and `story_points_terms.currency`
+    (the Story Points revenue calculation's own, unrelated column, already seeded correctly by
+    Issue #145) are read from two separate columns and must not collide.
+    """
+    run_seed(db_session, caller_user_id=SEED_CALLER)
+
+    scenario_currencies = dict(
+        db_session.execute(
+            sa.select(Scenario.name, Scenario.currency).where(
+                Scenario.name.in_(
+                    [SCENARIO_TM_DRAFT_NAME, SCENARIO_SP_DRAFT_NAME, SCENARIO_TM_APPROVED_NAME]
+                )
+            )
+        ).all()
+    )
+    assert scenario_currencies == {
+        SCENARIO_TM_DRAFT_NAME: "PLN",
+        SCENARIO_SP_DRAFT_NAME: "PLN",
+        SCENARIO_TM_APPROVED_NAME: "PLN",
+    }, "K-01 requires Scenario.currency to be set (non-null) on every seeded scenario"
+
+    sp_scenario_id = db_session.execute(
+        sa.select(Scenario.id).where(Scenario.name == SCENARIO_SP_DRAFT_NAME)
+    ).scalar_one()
+    story_points_currency = db_session.execute(
+        sa.select(StoryPointsTerms.currency)
+        .join(CommercialTerms, CommercialTerms.id == StoryPointsTerms.commercial_terms_id)
+        .where(CommercialTerms.scenario_id == sp_scenario_id)
+    ).scalar_one()
+    assert story_points_currency == "PLN", (
+        "story_points_terms.currency must stay exactly what #145 already seeds for it, unchanged "
+        "by this task's Scenario.currency fix"
+    )
+
+
+def test_k147_04_the_approved_scenario_is_reported_ready_and_approved_at_once(
+    client: TestClient, db_session: Session
+) -> None:
+    """`Seed Scenario TM Approved` reports `status="Approved"` and `ready_for_approval=True` /
+    `missing_inputs=[]` simultaneously — approval status never masks an incomplete scenario.
+
+    Contrast: omitting one required field only on this scenario's row must flip
+    `ready_for_approval` back to `False` with exactly that field listed, while `status` stays
+    `"Approved"` — proving readiness is a function of completeness alone, never of status.
+    """
+    summary = run_seed(db_session, caller_user_id=SEED_CALLER)
+    approved_id = str(summary.scenario_ids["tm_approved"])
+
+    scenarios = _scenario_items_by_id(client, summary.project_id, caller=SEED_CALLER)
+    approved_item = scenarios[approved_id]
+    assert approved_item["status"] == "Approved"
+    assert approved_item["missing_inputs"] == []
+    assert approved_item["ready_for_approval"] is True
+
+    db_session.execute(
+        sa.update(Scenario)
+        .where(Scenario.id == summary.scenario_ids["tm_approved"])
+        .values(working_calendar=None)
+    )
+    db_session.commit()
+
+    scenarios_after = _scenario_items_by_id(client, summary.project_id, caller=SEED_CALLER)
+    approved_item_after = scenarios_after[approved_id]
+    assert approved_item_after["status"] == "Approved"
+    assert approved_item_after["missing_inputs"] == ["working_calendar"]
+    assert approved_item_after["ready_for_approval"] is False
 
 
 # --- resolve_caller_user_id (no database) -----------------------------------------------------

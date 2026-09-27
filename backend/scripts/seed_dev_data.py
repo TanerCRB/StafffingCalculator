@@ -180,6 +180,26 @@ carrying the flag, a budget row that covers the month still answers `"no_statuto
 never `"resolved"`. Without this row K-04's "resolved" branch would be unreachable from seeded
 data no matter how the budget window itself is set up."""
 
+SCENARIO_ASSUMPTIONS_START_DATE = date(2026, 3, 1)
+SCENARIO_ASSUMPTIONS_END_DATE = date(2026, 5, 31)
+"""Covers the same window the seeded staffing positions and their one allocation month
+(`allocation_month`, below) already use — an assumption period that does not even contain the
+plan it is supposed to bound would be a second, silent inconsistency on top of the one this task
+fixes."""
+SCENARIO_ASSUMPTIONS_WORKING_CALENDAR = CALENDAR_WARSAW_NAME
+"""`Scenario.working_calendar` (`app/models/scenario.py:71`) is a plain string, not a foreign key
+to `working_calendar.name` — this is only required to be non-null for `missing_inputs` to stop
+reporting a gap (`app.domain.scenario_readiness`). Using the name of a real seeded calendar rather
+than a synthetic string keeps the value referentially plausible without pretending there is a
+constraint enforcing it."""
+SCENARIO_ASSUMPTIONS_FULL_TIME_HOURS_PER_WEEK = Decimal("40.00")
+SCENARIO_ASSUMPTIONS_CURRENCY = "PLN"
+"""`Scenario.currency` — the assumption-chain column `app.domain.assumptions` resolves for
+`target_margin_percent`'s neighbours, entirely distinct from `commercial_terms.currency` /
+`story_points_terms.currency` (the columns the revenue calculation actually reads). Both happen to
+be seeded as `"PLN"`, but they are never the same write (K-03, Issue #147)."""
+SCENARIO_ASSUMPTIONS_TARGET_MARGIN_PERCENT = Decimal("15.000")
+
 MONDAY_TO_FRIDAY = "1111100"
 MONDAY_TO_SATURDAY = "1111110"
 """Week patterns, Monday first — the same convention `app.models.catalog.WEEK_PATTERN_EXPRESSION`
@@ -227,6 +247,11 @@ class SeedSummary:
 # existence check is what makes a second run of *this script* a no-op; it is not a substitute for a
 # database constraint and is never used where one exists to race against (this script runs
 # single-threaded, once, by a developer).
+#
+# `_get_or_create_scenario` below is the one exception to "a no-op on the found branch" (Issue
+# #147, K-02): a found scenario row also gets any `NULL` assumption column backfilled, because a
+# database seeded by an older version of this script may carry a row this script itself created
+# incompletely — an existence check alone would leave that gap in place forever.
 
 
 def _get_or_create_dimension(session: Session, model: type, *, name: str) -> tuple[object, bool]:
@@ -447,8 +472,49 @@ def _ensure_project_access(session: Session, *, project_id: object, user_id: str
 
 
 def _get_or_create_scenario(
-    session: Session, project: Project, *, name: str
+    session: Session,
+    project: Project,
+    *,
+    name: str,
+    start_date: date,
+    end_date: date,
+    working_calendar: str,
+    full_time_hours_per_week: Decimal,
+    currency: str,
+    target_margin_percent: Decimal,
 ) -> tuple[Scenario, bool]:
+    """Find-or-create a scenario row, and — Issue #147, K-02 — repair one found incomplete.
+
+    The six `REQUIRED_SCENARIO_INPUTS` (`app.domain.scenario_readiness`) are set here, on both
+    branches, always **before** this function returns — in particular before `run_seed` ever calls
+    `_approve_if_draft` on the same scenario, matching this script's own existing pattern for
+    `commercial_terms`/`staffing_position` on `Seed Scenario TM Approved` (Issue #147's ordering
+    requirement; there is no snapshot mechanism on these six columns that could otherwise tell
+    "set before approval" apart from "set after").
+
+    Unlike every other `_get_or_create_*` helper in this file, the "found existing row" branch is
+    not a pure return: a scenario found with any of these six fields still `NULL` — the shape a
+    database seeded by the pre-fix version of this script leaves behind — has exactly those gaps
+    backfilled by an `UPDATE`, never the ones already set (a manual edit on a real dev database
+    must survive a re-seed). A freshly-created row gets all six unconditionally.
+
+    **Never for an `approved` row (rule 7, ADR-0004).** These six columns carry no write guard
+    anywhere in the application — no endpoint edits them, so `app.data.scenario_guard` never had a
+    reason to cover them — but this script must not become the first place in the codebase that
+    writes to an approved scenario's own row unconditionally. A database left behind by the pre-fix
+    script with an already-`approved`, still-incomplete `Seed Scenario TM Approved` is a known,
+    accepted gap of a one-time re-seed, not something this script silently patches: it is reported
+    and skipped instead. Re-seeding onto a fresh database (the normal case) never hits this path,
+    because this script always sets all six fields before it ever calls `_approve_if_draft`.
+    """
+    assumption_fields: dict[str, object] = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "working_calendar": working_calendar,
+        "full_time_hours_per_week": full_time_hours_per_week,
+        "currency": currency,
+        "target_margin_percent": target_margin_percent,
+    }
     existing = (
         session.execute(
             sa.select(Scenario).where(Scenario.project_id == project.id, Scenario.name == name)
@@ -457,9 +523,30 @@ def _get_or_create_scenario(
         .one_or_none()
     )
     if existing is not None:
+        missing = [
+            field_name
+            for field_name, value in assumption_fields.items()
+            if getattr(existing, field_name) is None
+        ]
+        if missing and existing.status == ScenarioStatus.APPROVED:
+            print(
+                f"Not repairing '{name}': already approved with missing assumption "
+                f"input(s) {missing} — a write to an approved scenario's own row is refused here "
+                "the same way ADR-0004 refuses one on its child tables. Drop and re-seed a fresh "
+                "database instead of re-running against this one.",
+                file=sys.stderr,
+            )
+        elif missing:
+            for field_name in missing:
+                setattr(existing, field_name, assumption_fields[field_name])
+            session.commit()
         return existing, False
     scenario = Scenario(
-        id=uuid.uuid4(), project_id=project.id, name=name, status=ScenarioStatus.DRAFT
+        id=uuid.uuid4(),
+        project_id=project.id,
+        name=name,
+        status=ScenarioStatus.DRAFT,
+        **assumption_fields,
     )
     session.add(scenario)
     session.commit()
@@ -710,16 +797,48 @@ def run_seed(session: Session, *, caller_user_id: str) -> SeedSummary:
     )
     tally.record("project", created=created)
 
+    # Issue #147, K-01: all six `REQUIRED_SCENARIO_INPUTS` are set on every scenario below, each
+    # independently of the other two — the same fixed values in every call is not a shortcut that
+    # weakens K-01, because `missing_inputs`/`ready_for_approval` are computed per row
+    # (`app.domain.scenario_readiness.assess_all`): a gap on one scenario would still show up on
+    # that scenario alone, regardless of what its siblings carry.
     scenario_tm_draft, created = _get_or_create_scenario(
-        session, project, name=SCENARIO_TM_DRAFT_NAME
+        session,
+        project,
+        name=SCENARIO_TM_DRAFT_NAME,
+        start_date=SCENARIO_ASSUMPTIONS_START_DATE,
+        end_date=SCENARIO_ASSUMPTIONS_END_DATE,
+        working_calendar=SCENARIO_ASSUMPTIONS_WORKING_CALENDAR,
+        full_time_hours_per_week=SCENARIO_ASSUMPTIONS_FULL_TIME_HOURS_PER_WEEK,
+        currency=SCENARIO_ASSUMPTIONS_CURRENCY,
+        target_margin_percent=SCENARIO_ASSUMPTIONS_TARGET_MARGIN_PERCENT,
     )
     tally.record("scenario", created=created)
     scenario_sp_draft, created = _get_or_create_scenario(
-        session, project, name=SCENARIO_SP_DRAFT_NAME
+        session,
+        project,
+        name=SCENARIO_SP_DRAFT_NAME,
+        start_date=SCENARIO_ASSUMPTIONS_START_DATE,
+        end_date=SCENARIO_ASSUMPTIONS_END_DATE,
+        working_calendar=SCENARIO_ASSUMPTIONS_WORKING_CALENDAR,
+        full_time_hours_per_week=SCENARIO_ASSUMPTIONS_FULL_TIME_HOURS_PER_WEEK,
+        currency=SCENARIO_ASSUMPTIONS_CURRENCY,
+        target_margin_percent=SCENARIO_ASSUMPTIONS_TARGET_MARGIN_PERCENT,
     )
     tally.record("scenario", created=created)
+    # K-04 / the ordering constraint: these six fields are set here, as part of scenario
+    # find-or-create, which runs well before `_approve_if_draft(...)` is called on this same
+    # scenario further down — never after.
     scenario_tm_approved, created = _get_or_create_scenario(
-        session, project, name=SCENARIO_TM_APPROVED_NAME
+        session,
+        project,
+        name=SCENARIO_TM_APPROVED_NAME,
+        start_date=SCENARIO_ASSUMPTIONS_START_DATE,
+        end_date=SCENARIO_ASSUMPTIONS_END_DATE,
+        working_calendar=SCENARIO_ASSUMPTIONS_WORKING_CALENDAR,
+        full_time_hours_per_week=SCENARIO_ASSUMPTIONS_FULL_TIME_HOURS_PER_WEEK,
+        currency=SCENARIO_ASSUMPTIONS_CURRENCY,
+        target_margin_percent=SCENARIO_ASSUMPTIONS_TARGET_MARGIN_PERCENT,
     )
     tally.record("scenario", created=created)
 
