@@ -1,15 +1,24 @@
-import type {
-  CatalogAbsenceTypeEntry,
-  CatalogAbsenceTypeList,
-  CatalogDimension,
-  CatalogRate,
-  CatalogRateCreateRequest,
-  CatalogRateEditRequest,
-  CatalogRateList,
-  DimensionEntry,
-  DimensionEntryCreateRequest,
-  DimensionEntryEditRequest,
-  DimensionEntryList,
+import {
+  BUDGET_REGIME_NOT_APPLICABLE,
+  STATUTORY_LEAVE_STATES,
+  type AbsenceBudgetCreateRequest,
+  type AbsenceBudgetEntry,
+  type AbsenceBudgetList,
+  type CatalogAbsenceTypeEntry,
+  type CatalogAbsenceTypeList,
+  type CatalogDimension,
+  type CatalogRate,
+  type CatalogRateCreateRequest,
+  type CatalogRateEditRequest,
+  type CatalogRateList,
+  type DimensionEntry,
+  type DimensionEntryCreateRequest,
+  type DimensionEntryEditRequest,
+  type DimensionEntryList,
+  type StatutoryLeaveRegime,
+  type WorkingCalendarDayEntry,
+  type WorkingCalendarEntry,
+  type WorkingCalendarList,
 } from "./contracts/catalog";
 import {
   EXPECTED_REVENUE_STATES,
@@ -619,6 +628,163 @@ export async function getCatalogAbsenceTypes(signal?: AbortSignal): Promise<Cata
   );
 }
 
+/** Whether one exceptional day has the shape `WorkingCalendarDayEntry` promises. */
+function isWorkingCalendarDayShape(value: unknown): value is WorkingCalendarDayEntry {
+  return isRecord(value) && typeof value.day === "string" && typeof value.kind === "string";
+}
+
+/**
+ * Whether one calendar has the shape `WorkingCalendarEntry` promises, including `week_pattern`'s own
+ * grammar (SC-3-06, criterion K-01): seven characters, so a malformed pattern ends in this screen's
+ * named read failure rather than in `weekPatternDays` throwing mid render. `standard_hours_per_day`
+ * is checked against the decimal grammar for the same reason `isCatalogRateShape` checks its
+ * amounts — `formatHoursString` calls `roundDecimalString`, which throws on anything else.
+ */
+function isWorkingCalendarShape(value: unknown): value is WorkingCalendarEntry {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    isDecimalString(value.standard_hours_per_day) &&
+    typeof value.week_pattern === "string" &&
+    value.week_pattern.length === 7 &&
+    Array.isArray(value.days) &&
+    value.days.every(isWorkingCalendarDayShape) &&
+    isConcurrencyMarker(value.updated_at)
+  );
+}
+
+function isWorkingCalendarListShape(value: unknown): value is WorkingCalendarList {
+  return (
+    isRecord(value) && Array.isArray(value.calendars) && value.calendars.every(isWorkingCalendarShape)
+  );
+}
+
+/**
+ * Every working calendar the catalogue holds (`GET /catalog/working-calendars`, SC-3-02, consumed by
+ * SC-3-06). Read only — no edit endpoint exists for a calendar, its basis or its days.
+ *
+ * `signal`, when given, ends the read early — the screen that asked for it has unmounted (Reviewer
+ * R-01).
+ */
+export async function getWorkingCalendars(signal?: AbortSignal): Promise<WorkingCalendarList> {
+  const path = "/catalog/working-calendars";
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isWorkingCalendarListShape(payload)) {
+        throw new ApiError(
+          response.status,
+          `GET ${path} returned a payload without a valid calendar list`,
+        );
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
+/** Whether a value has the shape `StatutoryLeaveRegime` promises. */
+function isStatutoryLeaveRegimeShape(value: unknown): value is StatutoryLeaveRegime {
+  return (
+    isRecord(value) &&
+    typeof value.absence_type_id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.generates_cost === "boolean" &&
+    typeof value.generates_revenue === "boolean"
+  );
+}
+
+/** Whether a value is the three-valued shape `generates_cost`/`generates_revenue` promise: a real
+ * boolean, or the `"n/a"` sentinel — never anything else, and never read as falsy on faith
+ * (criterion K-03; the same discipline `isPersonnelCostSourceShape` already applies to its own
+ * gated fields). */
+function isBudgetRegimeFlagShape(
+  value: unknown,
+): value is boolean | typeof BUDGET_REGIME_NOT_APPLICABLE {
+  return typeof value === "boolean" || value === BUDGET_REGIME_NOT_APPLICABLE;
+}
+
+/**
+ * Whether one budget has the shape `AbsenceBudgetEntry` promises, including the pairing the
+ * backend's schema docstring states in prose: `statutory_leave`/`generates_cost`/`generates_revenue`
+ * carry a real regime **exactly when** `statutory_leave_state === "resolved"`, and `null`/`"n/a"`
+ * **exactly otherwise** — never a real regime beside `"no_statutory_leave_type"`, and never the
+ * sentinel beside `"resolved"` (criterion K-03, the same discipline `isStaffingAllocationShape`
+ * already applies to `derived_capacity_hours`/`absence_budget_hours`).
+ */
+function isAbsenceBudgetShape(value: unknown): value is AbsenceBudgetEntry {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.calendar_id !== "string" ||
+    typeof value.engagement_type_id !== "string" ||
+    !isDecimalString(value.budget_days) ||
+    typeof value.unit !== "string" ||
+    typeof value.source !== "string" ||
+    typeof value.effective_from !== "string" ||
+    typeof value.effective_to !== "string" ||
+    !isOneOf(value.statutory_leave_state, STATUTORY_LEAVE_STATES) ||
+    !(value.statutory_leave === null || isStatutoryLeaveRegimeShape(value.statutory_leave)) ||
+    !isBudgetRegimeFlagShape(value.generates_cost) ||
+    !isBudgetRegimeFlagShape(value.generates_revenue) ||
+    !isConcurrencyMarker(value.updated_at)
+  ) {
+    return false;
+  }
+  const resolved = value.statutory_leave_state === "resolved";
+  const statutoryLeavePaired = resolved
+    ? value.statutory_leave !== null
+    : value.statutory_leave === null;
+  const costPaired = resolved
+    ? typeof value.generates_cost === "boolean"
+    : value.generates_cost === BUDGET_REGIME_NOT_APPLICABLE;
+  const revenuePaired = resolved
+    ? typeof value.generates_revenue === "boolean"
+    : value.generates_revenue === BUDGET_REGIME_NOT_APPLICABLE;
+  return statutoryLeavePaired && costPaired && revenuePaired;
+}
+
+function isAbsenceBudgetListShape(value: unknown): value is AbsenceBudgetList {
+  return isRecord(value) && Array.isArray(value.budgets) && value.budgets.every(isAbsenceBudgetShape);
+}
+
+/**
+ * Every leave budget the catalogue holds (`GET /catalog/absence-budgets`, SC-3-03, consumed by
+ * SC-3-06). Read only.
+ *
+ * `signal`, when given, ends the read early — the screen that asked for it has unmounted (Reviewer
+ * R-01).
+ */
+export async function getCatalogAbsenceBudgets(signal?: AbortSignal): Promise<AbsenceBudgetList> {
+  const path = "/catalog/absence-budgets";
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isAbsenceBudgetListShape(payload)) {
+        throw new ApiError(
+          response.status,
+          `GET ${path} returned a payload without a valid budget list`,
+        );
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
 // --- Writing (SC-2-04, ADR-0009) ---------------------------------------------------------------
 // Four wrappers, one primitive, no retry. ADR-0009 decides the three things they have in common:
 //
@@ -1095,6 +1261,22 @@ export async function createScenarioCommercialTerms(
 /** Add one default rate window (`POST /catalog/rates`). */
 export async function createCatalogRate(body: CatalogRateCreateRequest): Promise<CatalogRate> {
   return write("/catalog/rates", "POST", body, isCatalogRateShape);
+}
+
+/**
+ * Add one leave-budget window (`POST /catalog/absence-budgets`, SC-3-03, consumed by SC-3-06).
+ *
+ * Mirrors `createCatalogRate`/`createDimensionEntry`: the body goes straight to the server, and
+ * nothing here checks the window for an overlap first (ADR-0009, point 4; criterion K-05) — the
+ * `EXCLUDE` constraint inside the `INSERT` is what refuses one, and the caller renders whatever
+ * `describeWriteFailure` makes of the resulting `409`. There is no `unit` choice to omit the way
+ * `createCatalogRate` omits one for `RATE_UNIT_HOUR` — `AbsenceBudgetCreateRequest.unit` is optional
+ * and defaults on the backend to `BUDGET_UNIT_DAY`, so this function does not need to send it either.
+ */
+export async function createAbsenceBudget(
+  body: AbsenceBudgetCreateRequest,
+): Promise<AbsenceBudgetEntry> {
+  return write("/catalog/absence-budgets", "POST", body, isAbsenceBudgetShape);
 }
 
 // --- Duplicating a scenario (SC-6-03, consuming SC-6-01) ----------------------------------------

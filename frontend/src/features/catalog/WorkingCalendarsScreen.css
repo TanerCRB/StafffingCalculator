@@ -1,0 +1,77 @@
+/*
+ * SC-3-06 — layout only. `.card`, `.button`, `.button--primary` and `.input` come from
+ * `src/styles/app.css`; nothing here restates a colour those rules already set. Every selector is
+ * scoped to `.wc`/`.wc__*`/`.wc-week-calendar` so this stylesheet cannot restyle another screen (the
+ * same discipline `CatalogScreen.css` is held to, see `src/styles/tokens.test.ts`).
+ */
+
+.wc__intro {
+  margin-bottom: var(--sc-space-4);
+}
+
+.wc__message {
+  margin: var(--sc-space-2) 0;
+}
+
+.wc__panel {
+  margin-bottom: var(--sc-space-5);
+  padding: var(--sc-space-4);
+}
+
+.wc__panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sc-space-3);
+  margin-bottom: var(--sc-space-3);
+}
+
+/* Reviewer R-02 of SC-3-06, mirroring `ProjectListScreen.css`'s `.staffing-plan__position` (Reviewer
+   R-02, gate 2 of SC-3-04): every calendar card mounts its own `react-day-picker` month grid
+   (`WeekPatternCalendar.tsx`) alongside the pattern list and the exceptional-days list, and a
+   catalogue with many working calendars renders one full instance of that library widget per card,
+   off screen and on. `content-visibility: auto` is native and dependency-free — a supporting browser
+   skips layout and paint for a card carrying it while the card is off screen, and resumes normally as
+   it nears the viewport; nothing is removed from the DOM or the accessibility tree (unlike
+   `display: none`), so every card stays reachable to `getByRole`/`getByText` and to assistive
+   technology exactly as before. jsdom has no layout engine and does not act on the property at all,
+   so no test here observes anything being skipped — this is the CSS declaration, not a runtime proof
+   of the skip (see QA). `contain-intrinsic-size` gives the browser a placeholder size to reserve
+   before a card has ever been laid out, so the page's scrollbar does not jump on every first approach
+   to an off-screen card; `auto` lets the browser remember each card's real height (calendar plus a
+   variable-length exceptions list) once it has actually been rendered once, rather than living with
+   one fixed guess forever. */
+.wc__calendar-card {
+  padding: var(--sc-space-3) 0;
+  border-top: 1px solid var(--sc-color-border);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 500px;
+}
+
+.wc__calendar-card:first-of-type {
+  border-top: none;
+}
+
+.wc__exceptions {
+  padding: 0;
+  margin: var(--sc-space-2) 0;
+  list-style: none;
+}
+
+.wc__exceptions li {
+  padding: var(--sc-space-1) 0;
+  border-bottom: 1px solid var(--sc-color-border);
+}
+
+.wc__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.wc__table th,
+.wc__table td {
+  padding: var(--sc-space-2) var(--sc-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--sc-color-border);
+  overflow-wrap: anywhere;
+}

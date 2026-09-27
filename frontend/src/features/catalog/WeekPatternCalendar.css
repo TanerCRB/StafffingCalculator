@@ -1,0 +1,41 @@
+/*
+ * The visual half of criterion K-01 (`WeekPatternCalendar.tsx`). Every selector below is scoped to
+ * this widget's own class, and every rule that sets a colour sets both halves of the pair together
+ * (`src/styles/tokens.test.ts` — a rule that split `color` and `background-color` across two rules
+ * would have to be listed, by hand, in that file's exhaustive maps; pairing them here keeps this
+ * stylesheet out of that list instead of adding to it).
+ *
+ * The two colour pairs reused below are not new tokens or a new pairing: they are the same
+ * Active/Archived status-badge pair `ProjectListScreen.css`/ `app.css` already use and this file's
+ * own contrast test already proves — "working" borrows the Active pair (a status that is currently
+ * true and in effect), "non-working" the Archived pair (a status that is currently not).
+ */
+
+.wc-week-calendar {
+  margin: var(--sc-space-3) 0;
+}
+
+.wc-week-calendar__day--working {
+  background-color: var(--sc-color-status-active-bg);
+  color: var(--sc-color-status-active-text);
+}
+
+.wc-week-calendar__day--non-working {
+  background-color: var(--sc-color-status-archived-bg);
+  color: var(--sc-color-status-archived-text);
+}
+
+.wc-week-calendar__pattern-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sc-space-2);
+  padding: 0;
+  margin: var(--sc-space-2) 0;
+  list-style: none;
+}
+
+.wc-week-calendar__pattern-list li {
+  padding: var(--sc-space-1) var(--sc-space-2);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-sm);
+}

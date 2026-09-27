@@ -10,7 +10,8 @@ import "./AppShell.css";
  *
  * Visual reference: `Wymagania/prototyp/` (design proposal, UI-01). A reference, not a
  * specification: nothing here is pixel-checked. Since SC-2-05 the rail shows the eleven entries of
- * `15-catalog.png` — two live, nine planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
+ * `15-catalog.png` — three live since SC-3-06, eight planned and saying so (see `RAIL_WORKSPACE`,
+ * `RAIL_PROJECT`).
  * The topbar does not follow the mockup's identity chip, "Internal workspace" badge or currency
  * footer: this product has no identity endpoint, no workspace entity and no conversion to state
  * (gate-1 decision Q-3), and the backend indicator the mockup drops is kept.
@@ -43,7 +44,7 @@ export type BackendStatus = "checking" | "ok" | "unreachable";
  * router library, no URL, no history. That is a named limitation, not an oversight — a screen is not
  * linkable or bookmarkable yet, and choosing a router is a separate architectural decision.
  */
-export type ScreenKey = "projects" | "roles-and-rates";
+export type ScreenKey = "projects" | "roles-and-rates" | "working-calendars";
 
 /**
  * The name of each screen, in one place: the rail entry and the breadcrumb are the same word by
@@ -52,6 +53,7 @@ export type ScreenKey = "projects" | "roles-and-rates";
 const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
   projects: "Projects",
   "roles-and-rates": "Roles & rates",
+  "working-calendars": "Working calendars",
 };
 
 /**
@@ -82,10 +84,11 @@ function planned(label: string, reason: string): RailEntry {
 }
 
 /*
- * The reasons say what is missing, and no more than is true. Two of the screens have a backend
- * already — the calendars (SC-3-02, SC-3-03) and the staffing lines (SC-3-01) are stored and
- * proven — so for them the missing piece is the screen, not the feature, and the tooltip says so
- * (gate-1 decision Q-4). The rest name the requirement block and its open Issue.
+ * The reasons say what is missing, and no more than is true. One of the remaining screens has a
+ * backend already — the staffing lines (SC-3-01) are stored and proven — so for it the missing
+ * piece is the screen, not the feature, and the tooltip says so (gate-1 decision Q-4). The working
+ * calendars (SC-3-02, SC-3-03) were the other such case until SC-3-06 built the screen behind this
+ * entry; the rest name the requirement block and its open Issue.
  */
 
 /** The workspace-level entries. */
@@ -93,10 +96,7 @@ const RAIL_WORKSPACE: readonly RailEntry[] = [
   { kind: "screen", key: "projects" },
   planned("Compare scenarios", "scenario comparison, F-09 (Issue #11)"),
   { kind: "screen", key: "roles-and-rates" },
-  planned(
-    "Working calendars",
-    "the calendars are stored by the backend (SC-3-02, SC-3-03); the screen is not built",
-  ),
+  { kind: "screen", key: "working-calendars" },
   planned("Organization defaults", "organization-level defaults, F-02 (Issue #4)"),
 ];
 

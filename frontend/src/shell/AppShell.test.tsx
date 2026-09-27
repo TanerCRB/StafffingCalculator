@@ -29,9 +29,10 @@ const ALL_RAIL_ENTRIES = [
   "Versions & approval",
 ];
 
-/** The nine of them this application does not have. */
+/** The eight of them this application does not have (SC-3-06: "Working calendars" moved from
+ * planned to live, mirroring "Roles & rates" at SC-2-02 — see the test below this filter feeds). */
 const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
-  (label) => label !== "Projects" && label !== "Roles & rates",
+  (label) => label !== "Projects" && label !== "Roles & rates" && label !== "Working calendars",
 );
 
 interface ShellOptions {
@@ -109,6 +110,33 @@ describe("AppShell", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("offers the Working calendars entry as a live control that reports the choice instead of taking it", () => {
+    // SC-3-06 reverses this entry's own "Not implemented yet" tooltip the same way SC-2-02 reversed
+    // "Roles & rates"'s (see the test above): the screen behind it now exists, so the rail's claim —
+    // that it says truthfully what exists — is asserted for this entry too, not only for the first.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const onNavigate = vi.fn();
+
+    renderShell("ok", { onNavigate });
+
+    const entry = within(rail()).getByRole("button", { name: "Working calendars" });
+
+    expect(entry).toBeVisible();
+    expect(entry.tagName).toBe("BUTTON");
+    expect(entry).toHaveAttribute("type", "button");
+    expect(entry.tabIndex).toBe(0);
+    expect(entry).not.toHaveAttribute("aria-disabled");
+    expect(entry.getAttribute("title")).toBeNull();
+
+    fireEvent.click(entry);
+
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith("working-calendars");
+    expect(screen.getByText(SCREEN_CONTENT)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("marks the screen it was told is active, not one of its own choosing", () => {
     // The mirror image of the two tests around it: with the catalogue active, the two rail states
     // swap. A shell that hardcoded "Projects" as current — the shape this file asserted before
@@ -147,9 +175,9 @@ describe("AppShell", () => {
     // SC-2-05 (Issue #59, gate-1 decision Q-1) rewrote this test. Until then the rail had two
     // entries and this asserted that the mockup's other screens were absent. The rail now shows the
     // mockup's eleven entries, so the claim — the rail says truthfully what exists — is asserted
-    // the other way round and more strictly: every entry is pinned by name and position, the two
-    // that exist are live, and each of the nine that do not says so, in the one convention
-    // `lib/notImplemented.ts` owns, and does nothing when pressed.
+    // the other way round and more strictly: every entry is pinned by name and position, the three
+    // that exist (SC-3-06 added the third) are live, and each of the eight that do not says so, in
+    // the one convention `lib/notImplemented.ts` owns, and does nothing when pressed.
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const onNavigate = vi.fn();
@@ -169,11 +197,14 @@ describe("AppShell", () => {
       expect(entry, label).not.toHaveAttribute("aria-current");
     }
 
-    // The two that exist carry none of that.
+    // The three that exist carry none of that.
     const projects = within(rail()).getByRole("button", { name: "Projects" });
     expect(projects).not.toHaveAttribute("aria-disabled");
     expect(projects.getAttribute("title")).toBeNull();
     expect(within(rail()).getByText("Roles & rates")).toHaveAttribute("aria-current", "page");
+    const workingCalendars = within(rail()).getByRole("button", { name: "Working calendars" });
+    expect(workingCalendars).not.toHaveAttribute("aria-disabled");
+    expect(workingCalendars.getAttribute("title")).toBeNull();
 
     // Pressing a planned entry navigates nowhere and reads nothing.
     for (const label of PLANNED_RAIL_ENTRIES) {
@@ -214,11 +245,9 @@ describe("AppShell", () => {
     const hint = (label: string) =>
       within(rail()).getByRole("button", { name: label }).getAttribute("title") ?? "";
 
-    // Gate-1 decision Q-4: the calendars (SC-3-02, SC-3-03) and the staffing lines (SC-3-01) are
-    // stored and proven. A tooltip saying the feature does not exist would be the false statement.
-    expect(hint("Working calendars")).toBe(
-      `${NOT_IMPLEMENTED_PREFIX} — the calendars are stored by the backend (SC-3-02, SC-3-03); the screen is not built`,
-    );
+    // Gate-1 decision Q-4: the staffing lines (SC-3-01) are stored and proven; the calendars
+    // (SC-3-02, SC-3-03) were the other such case until SC-3-06 built the screen behind that entry
+    // — it is live now (see the test above) and carries no tooltip at all.
     expect(hint("Staffing plan")).toBe(
       `${NOT_IMPLEMENTED_PREFIX} — staffing lines are stored by the backend (SC-3-01); the screen is not built`,
     );
