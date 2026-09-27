@@ -2349,4 +2349,25 @@ history / this file's own change log, not as tracked product work.
   bramki kosztu osobowego dowiedziona tylko na fixture (`PLACEHOLDER_PERMISSIONS`). Zob.
   `docs/architecture/capabilities.md`.
 
+- [ ] **SC-8-01** — Zapisz historię zmian przy zatwierdzeniu scenariusza (audit log zatwierdzenia,
+  F-12 punkt pierwszy).
+  *Done when:* wywołanie `POST /projects/{project_id}/scenarios/{scenario_id}/approve` zapisuje
+  dokładnie jeden wiersz w `audit_log` (autor w granicach dzisiejszej tożsamości placeholder, czas,
+  dotknięty scenariusz/projekt); żadna inna akcja zapisu istniejąca dziś w repozytorium nie tworzy
+  wiersza w tej tabeli.
+  **Out of scope (explicit):** przeglądanie/ekran historii (osobne zadanie, np. `SC-8-02`); zapis
+  zdarzeń dla duplikacji/archiwizacji/edycji/kopiowania (osobne zadania bloku 8); realna atrybucja
+  autorstwa — czeka na ADR uwierzytelniania; kontrola dostępu do zasobu historii (F-13).
+  **Decyzje bramki 1 (2026-09-27, analyst + architect, zaakceptowane przez człowieka):** tabela
+  `audit_log` dedykowana zdarzeniom scenariusza (`action_type` dziś jednoelementowe,
+  `scenario_approved`), nie generyczna tabela systemowa; `affected_data` jako prawdziwe klucze obce
+  (`scenario_id`, `project_id`), nigdy kopia opisowa; zapis w tej samej transakcji co migawka i
+  przestawienie statusu, po potwierdzonym przestawieniu statusu, przed `session.commit()`; brak
+  wpisu w `SNAPSHOT_TABLES`/`SCENARIO_CHILD_COPIERS`.
+  **Nowa/zmieniona decyzja architektoniczna:** aneks 2026-09-27 do **ADR-0004** (kształt tabeli,
+  `affected_data`, miejsce w kolejności transakcji zatwierdzenia).
+  **Podstawa:** Issue #14, `Wymagania/Requirements_EN.md` §4 F-12 (punkt pierwszy), §7 AC-10;
+  `ADR-0004-wersjonowanie-kalkulacji.md` (sekcja "Konsekwencje", aneksy 2026-09-18, SC-3-02 pkt 9,
+  2026-09-27); `ADR-0005-model-dostepu.md` (warunek "ADR uwierzytelniania").
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
