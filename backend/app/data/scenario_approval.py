@@ -93,9 +93,12 @@ always empty, written without an error.
   explicitly: the placeholder identity carries no role dimension, and none of the ten permissions
   distinguishes "may plan" from "may approve". The endpoint declares a permission so that the
   deny-by-default rule holds at all, and that is the whole of the authorisation on this path. The
-  risk was accepted at gate 1 with a named closing condition — the authentication ADR — and it is
-  compounded by the absence of `audit_log` (plan block 8): an approval is irreversible, and nothing
-  records who performed it.
+  risk was accepted at gate 1 with a named closing condition — the authentication ADR. Since SC-8-01
+  (Issue #14, ADR-0004 aneks 2026-09-27) an approval **does** leave exactly one `audit_log` row
+  naming the scenario, the project, `scenario_approved` and the placeholder identity the request
+  carried — but that row carries the same placeholder string every other write path does, not an
+  authenticated identity, so the closing condition for "who may approve" remains the authentication
+  ADR, unchanged.
 - **It does not decide scope.** `app.data.staffing.scenario_in_scope` (hence `project_for_caller`)
   does, before anything here runs, so a refusal built here can never be the answer that confirms a
   scenario exists (criterion K-21).
@@ -139,6 +142,7 @@ from app.models.approved_snapshot import (
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
 )
+from app.models.audit_log import AuditActionType, AuditLog
 from app.models.catalog import (
     AbsenceBudget,
     AbsenceType,
@@ -951,6 +955,21 @@ def approve_scenario(
                 "Approving the scenario failed: the draft row locked for this approval could not "
                 "be frozen."
             )
+
+        # The history row (F-12; ADR-0004, aneks 2026-09-27 SC-8-01, point 3): after the status
+        # update is confirmed, before the commit — not a fifth CTE of `_snapshot_statement`. The
+        # snapshot answers "what was approved"; this answers "who approved it and when", and it may
+        # only be written once the first question's answer is irreversibly true. `caller.user_id`
+        # is the placeholder identity the request carried (`app.core.identity.CallerIdentity`),
+        # read fresh from this request's own context — never a constant, never cached (K-03).
+        session.add(
+            AuditLog(
+                scenario_id=scenario_id,
+                project_id=project_id,
+                action_type=AuditActionType.SCENARIO_APPROVED,
+                performed_by=caller.user_id,
+            )
+        )
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()
