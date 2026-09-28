@@ -2,12 +2,16 @@
 
 **Status:** Accepted (bramka 1 SC-2-06, decyzja człowieka 2026-09-27, Issue #31)
 
-> Szkic przygotowany przez rolę Architekta na bramkę 1 SC-2-06 (Issue #31) jako „wskazana decyzja
-> architektoniczna" wymagana przez hard stop 6 (`TEAM-CONTRACT.md` §4) przed zmianą jakiegokolwiek
-> pliku dotyczącego danych osobowych. Zawiera ocenę wpływu na dane osobowe. Numer 0019, nie 0018:
-> ADR-0018 jest roboczo zarezerwowany dla ADR uwierzytelniania (SC-1-12), który nie ma jeszcze
-> Issue. Pytania PD-1..PD-5 na końcu wymagają decyzji człowieka; do czasu ich rozstrzygnięcia
-> treść pod nimi jest rekomendacją, nie decyzją.
+> „Wskazana decyzja architektoniczna" wymagana przez hard stop 6 (`TEAM-CONTRACT.md` §4) przed
+> zmianą jakiegokolwiek pliku dotyczącego danych osobowych; zawiera ocenę wpływu na dane osobowe.
+> Przygotowana przez rolę Architekta, przyjęta przez człowieka na bramce 1 SC-2-06 (Issue #31,
+> 2026-09-27). Numer 0019, nie 0018: ADR-0018 jest roboczo zarezerwowany dla ADR uwierzytelniania
+> (SC-1-12), który nie ma jeszcze Issue. Rozstrzygnięcia pytań z sekcji „Pytania do człowieka" są
+> zapisane w Issue #31; PD-1 (podstawa prawna) i PD-2 (retencja) należą odpowiednio do
+> administratora danych/IOD i do Story usuwania i działają jako warunki pkt 8 przed danymi
+> rzeczywistymi, nie jako otwarte pytania SC-2-06. Aneksy z datą — na końcu dokumentu.
+> (Korekta redakcyjna 2026-09-28, invariant-guardian L-02, bramka 2 SC-2-06: usunięta resztka
+> brzmienia sprzed bramki 1 „do czasu ich rozstrzygnięcia treść pod nimi jest rekomendacją".)
 
 ## Kontekst
 
@@ -43,7 +47,7 @@ miejscu), Q-7 = (a) (osoba tylko przy `headcount = 1`).
   wynagrodzeniowe, dyscyplinarne, profilowanie wydajności, ewidencja czasu pracy. Każda przyszła
   funkcja, która wyprowadza z rejestru osób wniosek o osobie (np. "wykorzystanie osoby", ranking),
   wychodzi poza ten cel i wymaga własnej decyzji z oceną wpływu.
-- **Podstawa prawna — do potwierdzenia przez administratora danych (pytanie PD-1).** Rekomendacja:
+- **Podstawa prawna — rozstrzygnięta przez człowieka na bramce 1 (PD-1, 2026-09-27):**
   art. 6 ust. 1 lit. f RODO (prawnie uzasadniony interes administratora — planowanie zasobów
   projektu) dla pracowników i współpracowników B2B. Architekt nie jest właściwy do rozstrzygnięcia
   podstawy prawnej; dokument zapisuje wyłącznie, że **zgoda (lit. a) nie jest rekomendowana** —
@@ -293,3 +297,105 @@ formularza (ADR-0005 aneks 2026-09-21 SC-2-04 pkt 2, analogicznie).
 
 F-03, F-11, F-12, F-13, AC-02, AC-06, NF-04, NF-06, NF-11; decyzje człowieka 2026-09-27 (Issue #31):
 P-2, Q-1..Q-7.
+
+## Aneksy
+
+### 2026-09-28 — identyfikator osoby od klienta, postać kanoniczna imienia, echo w `422`, nowe warunki przed danymi rzeczywistymi (SC-2-06, bramka 2)
+
+**Status:** Accepted (decyzja człowieka 2026-09-28, przed bramką 2 SC-2-06, Issue #31)
+
+> Zapis decyzji człowieka z 2026-09-28 (Issue #31), podjętych po weryfikacji przed bramką 2 SC-2-06:
+> D-1 = A, D-2 = B, D-3 = A, D-4 = B, D-5. Treść dokumentu przyjęta 2026-09-27 pozostaje Accepted;
+> ten aneks ją uzupełnia i — tam, gdzie to nazwane — zmienia. Powiązane szkice tej samej daty:
+> ADR-0005 (D-1, D-4 — warstwa dostępu), ADR-0007 (D-4 — znacznik przypisania), ADR-0004 (D-4 —
+> zmiana pkt 5 aneksu 2026-09-27).
+
+**D-1 = A — uprawnienia przypisania.** `PATCH …/staffing-positions/{position_id}/person` wymaga
+`STAFFING_READ` ∧ `STAFFING_WRITE` ∧ `PEOPLE_READ` (reviewer R-01). Pkt 4 („pole osoby … wyłącznie dla
+`STAFFING_READ` ∧ `PEOPLE_READ`") jest od teraz spełniony także na ścieżce zapisu: kto przypisuje, ten
+odczyta przypisanie. Szczegóły: ADR-0005 aneks 2026-09-28.
+
+**D-4 = B — przypisanie nie zdradza się przez `updated_at` pozycji.** Pkt 4 („brak flagi »przypisano«
+— na każdej ścieżce zwracającej pozycję") obejmuje od teraz także znacznik współbieżności: przypisanie
+i zdjęcie przypisania nie zmieniają `staffing_position.updated_at`; mają własny znacznik, widoczny
+wyłącznie za bramką `person_id` (ADR-0007 aneks 2026-09-28; ADR-0005 aneks 2026-09-28 pkt 3). Kontrola
+PD-K3 („te same wartości (poza `id`/`updated_at`)") zostaje, a obok niej PD-K7 niżej porównuje
+**także** `updated_at` — przed i po przypisaniu tej samej pozycji.
+
+**D-2 = B — identyfikator osoby nadaje klient (reviewer R-02: duplikaty z ponowień).**
+
+1. **Kształt `POST /people`: `id` (UUID) wymagane w ciele, obok `full_name`.** Rekomendacja:
+   wymagane, nie opcjonalne — pole opcjonalne przywraca duplikat z ponowienia każdemu klientowi,
+   który go nie poda, a rejestr ma być wolny od „tej samej osoby dwa razy" z przyczyn technicznych
+   (sprostowanie i anonimizacja trafiałyby w jeden z dwóch rekordów). `extra="forbid"` bez zmian —
+   żadne inne pole. Wiersz osoby bez zmian (pkt 3): `id` było już kolumną; zmienia się tylko, kto je
+   nadaje.
+2. **Ponowienie → `409` na kluczu głównym, zawsze — także przy identycznym ciele.** Rozstrzygnięcie
+   (rekomendacja): `409` bez względu na to, czy przesłane imię jest równe zapisanemu. Wariant
+   „identyczne ponowienie → `200`/`201` z wierszem" odrzucony: wymaga porównania przesłanego imienia z
+   zapisanym, więc wołający z `PEOPLE_WRITE` bez `PEOPLE_READ` dostałby wyrocznię „osoba o id X
+   nazywa się Y" — odczyt rejestru bez uprawnienia odczytu (pkt 4). Ciało `409` nie zawiera imienia
+   (ani przesłanego, ani zapisanego), nie zawiera zapisanego wiersza ani jego `updated_at`; nazywa
+   warunek (istniejący identyfikator) w sposób odróżnialny od odmowy z ograniczenia postaci
+   kanonicznej, bez wartości. Konsekwencja dla klienta: `409` na własnym, świeżo wygenerowanym `id`
+   oznacza „już utworzone" — klient z `PEOPLE_READ` może odczytać wiersz, klient bez niego nie
+   dowie się niczego ponad to.
+3. **Wyrocznia istnienia identyfikatora — nazwana, przyjęta.** Wołający z `PEOPLE_WRITE` bez
+   `PEOPLE_READ` może sprawdzić, czy dany UUID istnieje w rejestrze (`409` vs `201`). Nie jest to nowa
+   klasa wyroczni: ścieżka sprostowania (`PATCH /people/{id}`, `404` vs `409`/`200`) dawała ją temu
+   samemu wołającemu od bramki 1. Ograniczenie jej wartości: identyfikatory są UUID v4 (122 bity
+   losowe) — wyrocznia potwierdza wyłącznie identyfikatory już znane wołającemu, nie pozwala ich
+   wyliczać; a identyfikator osoby przy pozycji widzi wyłącznie `PEOPLE_READ` (pkt 4). **Uwaga
+   wiążąca:** każda przyszła ścieżka, która wystawi identyfikator osoby poza `PEOPLE_READ` (np.
+   eksport, audyt, lista kosztów), zmienia bilans tej wyroczni i wymaga aneksu tutaj.
+4. **Wersja UUID (rekomendacja): wymagana wersja 4 w schemacie żądania** (UUID nil i inne wersje →
+   `422`). Higiena, nie gwarancja losowości — klient może podać identyfikator „wyglądający na v4";
+   losowość jest obowiązkiem klienta i warunkiem pkt 3.
+5. **Bez zmian:** identyfikator nigdy nie jest imieniem i nie niesie go; zakaz imienia w URL (pkt 6)
+   bez zmian — identyfikator w ciele `POST`, w ścieżce wyłącznie przy sprostowaniu, jak dotąd.
+
+**D-3 = A — postać kanoniczna odrzuca dowolny biały znak na brzegach.** Ograniczenie
+`ck_person_full_name_canonical` (pkt 3) zmienia regułę z `full_name = btrim(full_name)` (tylko spacja)
+na: brak znaku klasy `[[:space:]]` na początku i na końcu oraz niepusta wartość. Zmiana w tej samej,
+niewdrożonej migracji `c4d7e2a9b1f6` — bez nowej rewizji (migracja nie opuściła gałęzi zadania;
+ADR-0001 expand/contract dotyczy migracji wdrożonych). Rola ograniczenia jako nośnika kontrastu NF-11
+(K-09, PD-K4) bez zmian — wiersz odrzucony nadal niesie imię w `DETAIL`. **Granica nazwana:**
+zakres `[[:space:]]` dla znaków spoza ASCII zależy od klasyfikacji znaków (ctype) bazy docelowej;
+gwarancją reguły są białe znaki ASCII (spacja, `\t`, `\n`, `\r`, `\v`, `\f`). Schemat żądania przycina
+wg Pythona (`str.strip`, pełny Unicode) — więc przez API dociera postać co najmniej tak ścisła jak
+reguła bazy; ewentualna rozbieżność dla znaku, który baza uzna za biały, a Python nie, kończy się
+odmową bazy (`409`) bez imienia w logu (K-09), nie zapisem.
+
+**D-5 — ekspozycje przyjęte świadomie i nowe warunki.**
+
+- **(a) Echo imienia w `422` walidacji schematu — przyjęte świadomie, tylko do nadawcy.** Odpowiedź
+  `422` generowana przez walidację żądania (np. imię dłuższe niż 200 znaków) zawiera przesłaną wartość
+  (`input`). Trafia wyłącznie do wołającego, który ją wysłał; aplikacja jej nie loguje (pkt 6 bez
+  zmian). Pkt 6 („imię nigdy w komunikacie odmowy") czytany od teraz jako „w komunikacie odmowy
+  generowanym przez aplikację i w żadnej odmowie adresowanej do kogoś innego niż nadawca wartości".
+  **Nowy warunek przed danymi rzeczywistymi (g), dopisany do pkt 8:** żaden pośrednik — reverse
+  proxy, gateway API, WAF, APM, moduł raportowania błędów frontendu — nie loguje ciał odpowiedzi 4xx
+  (ani ciał żądań) ścieżek rejestru osób i przypisania; stwierdzone dowodem konfiguracji środowiska
+  docelowego w rejestrze możliwości, jak warunek (d).
+- **(b) Nowy warunek przed danymi rzeczywistymi (f), dopisany do pkt 8: ślad odczytów rejestru
+  osób** — kto (tożsamość wołającego, więc po warunku (b)) i kiedy odczytał rejestr lub pole osoby
+  przy pozycji. Ślad zapisuje identyfikatory, nigdy imię (pkt 11). Forma (tabela, log strukturalny,
+  rozszerzenie SC-8-01) — decyzja jego Story; tu wyłącznie warunek.
+- **(c) Warunek dla przyszłej Story edycji `headcount`.** Ograniczenie
+  `ck_staffing_position_person_requires_single_headcount` (Q-7 = a) odmawia podniesienia `headcount`
+  pozycji z osobą. Dla wołającego z `STAFFING_WRITE` bez `PEOPLE_READ` taka odmowa (albo jej brak)
+  jest wyrocznią „pozycja ma osobę". Dziś uśpione — żadna ścieżka API nie edytuje `headcount`.
+  Story, która taką ścieżkę wprowadzi, musi przed kodem rozstrzygnąć w aneksie tutaj, jak odmowa nie
+  staje się tą wyrocznią (np. przez wymaganie uprawnienia, którego posiadanie nie zależy od stanu
+  przypisania) — nie wolno jej rozwiązać cichym zdjęciem przypisania (ADR-0005 aneks 2026-09-27
+  pkt 6).
+
+**Pkt 8 po tym aneksie:** warunki wpuszczenia pierwszych danych rzeczywistych to (a)–(e) z brzmienia
+przyjętego oraz (f) ślad odczytów rejestru i (g) brak logowania ciał 4xx przez pośredników —
+wszystkie naraz.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| PD-K7 | Odpowiedź pozycji dla wołającego bez `PEOPLE_READ` jest identyczna w całości, łącznie z `updated_at`, przed i po przypisaniu oraz zdjęciu przypisania tej pozycji. |
+| PD-K8 | `POST /people` bez `id` → `422` bez zapisu; ponowienie z tym samym `id` (to samo imię i inne imię) → `409` o identycznym ciele, bez imienia, bez zapisu i bez zmiany istniejącego wiersza; nowe `id` → `201` (kontrast). |
+| PD-K9 | Zapis z pominięciem API imienia z wiodącym lub końcowym znakiem z zestawu spacja, `\t`, `\n`, `\r`, `\v`, `\f` odrzucony przez `ck_person_full_name_canonical`; imię z białym znakiem wewnątrz przyjęte (kontrast). |

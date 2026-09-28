@@ -328,7 +328,11 @@ def test_k_09_the_placeholder_permission_set_is_unchanged_and_no_permission_was_
     both unrelated to this task's additional-cost tables and, like every other action permission,
     also joined to `PLACEHOLDER_PERMISSIONS` so their endpoints stay reachable. Repeated here so
     this task's own suite states its claim rather than borrowing it."""
-    assert len(Permission) == 14
+    # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: 14 -> 16 for
+    # `PEOPLE_READ`/`PEOPLE_WRITE` (ADR-0005, aneks 2026-09-27, point 3) — permissions of the person
+    # register, not of this task's additional-cost tables; neither joins the placeholder (the line
+    # below is unchanged).
+    assert len(Permission) == 16
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
     assert {Permission.STAFFING_READ, Permission.STAFFING_WRITE} <= PLACEHOLDER_PERMISSIONS
     assert len(PLACEHOLDER_PERMISSIONS) == 13

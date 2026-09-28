@@ -157,6 +157,30 @@ class Permission(StrEnum):
     here (point 6 above): the endpoint answers with the duplicate's own representation, so in
     practice this also reads it."""
 
+    PEOPLE_READ = "people:read"
+    """Reading the register of named persons (F-03, SC-2-06; ADR-0019; ADR-0005, aneks 2026-09-27
+    SC-2-06, point 3) — and seeing *which* person a staffing position is assigned to.
+
+    New, and **not** a reuse of `CATALOG_READ`: the register is not "one more catalogue dictionary".
+    Everyone who plans staffing reads the catalogue, and that circle is exactly the one F-13/NF-11
+    do not want admitted to a register of people by default. A refusal here is a refusal of the
+    *resource* (`403`, no name anywhere in the body), not a blanked field: the existence of a person
+    in the register is itself personal data (ADR-0019, point 4), unlike the existence of a role.
+
+    Global, not per project (Q-3 = a): the register has no project column, and whether it stays
+    global or is derived from project assignments is left to the authentication/roles ADR (ADR-0005,
+    aneks 2026-09-27, point 11). **Not granted by the placeholder identity** (point 4): in the
+    running system nobody reads a name through the API; the positive branch is reachable from a test
+    only, through `dependency_overrides`."""
+
+    PEOPLE_WRITE = "people:write"
+    """Adding a person to the register and correcting a person's name (RODO art. 16) — SC-2-06.
+
+    Split from `PEOPLE_READ` like every other read/write pair here, each with its own refusal test.
+    **Not** the permission for assigning a person to a staffing position: that is a planner's act
+    and needs `STAFFING_WRITE` ∧ `PEOPLE_READ` (ADR-0005, aneks 2026-09-27, point 5). Not granted by
+    the placeholder identity either (point 4)."""
+
 
 @dataclass(frozen=True)
 class CallerIdentity:

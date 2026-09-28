@@ -1073,8 +1073,10 @@ niej stał, zamiast zostawić je cicho nieaktualne.
    przypisanie) jest w działającym systemie nieosiągalna i daje się dowieść wyłącznie przez
    `app.dependency_overrides[get_caller_identity]` — rejestr możliwości musi to nazwać wprost, wzorem
    aneksu 2026-09-19 pkt 4/5.
-5. **Zapis przypisania osoby do pozycji — wymaga `STAFFING_WRITE` ∧ `PEOPLE_READ` (rekomendacja
-   Architekta, L-1b; do potwierdzenia na bramce 1).** Przypisanie jest czynnością planisty (stąd
+5. **Zapis przypisania osoby do pozycji — wymaga `STAFFING_WRITE` ∧ `PEOPLE_READ` (L-1b, przyjęte
+   na bramce 1 2026-09-27; zestaw uzupełniony o `STAFFING_READ` — aneks 2026-09-28 pkt 1, szkic).**
+   *(Korekta redakcyjna 2026-09-28, invariant-guardian L-03: usunięta resztka „rekomendacja
+   Architekta … do potwierdzenia na bramce 1".)* Przypisanie jest czynnością planisty (stąd
    `STAFFING_WRITE`, nie `PEOPLE_WRITE`, które należy do utrzymania rejestru), ale wybór osoby
    wymaga wiedzy, kim ona jest (stąd `PEOPLE_READ`). Precedens koniunkcji na zapisie: SC-5-03 fix 3
    (utworzenie pozycji `fixed_amount` wymaga koniunkcji kosztowej). Skutki: (a) wołający, który
@@ -1145,3 +1147,46 @@ niej stał, zamiast zostawić je cicho nieaktualne.
 | A5-31-4 | Przypisanie do pozycji w scenariuszu spoza zasięgu → `404`, nigdy `403`/`409`/`422`, bez zapisu. |
 | A5-31-5 | Zapis pozycji bez pola osoby, wykonany przez wołającego bez `PEOPLE_READ`, nie zmienia przypisania. |
 | A5-31-6 | `PLACEHOLDER_PERMISSIONS` bez zmian (kanarek równości zbioru zielony bez edycji). |
+
+### 2026-09-28 — przypisanie osoby wymaga także `STAFFING_READ`; znacznik przypisania pod tą samą bramką co `person_id` (SC-2-06, bramka 2)
+
+**Status:** Accepted (decyzja człowieka 2026-09-28, przed bramką 2 SC-2-06, Issue #31)
+
+> Zapis decyzji człowieka D-1 = A i skutku D-4 = B dla warstwy dostępu, podjętych 2026-09-28 po
+> weryfikacji przed bramką 2 SC-2-06 (Issue #31; reviewer R-01, security-auditor B-01). Aneks
+> 2026-09-27 pozostaje Accepted; ten wpis go uzupełnia, nie zastępuje po cichu.
+
+**Co było nierozstrzygnięte.** Pkt 5 aneksu 2026-09-27 wymagał `STAFFING_WRITE` ∧ `PEOPLE_READ` i
+uzasadniał to skutkiem (a): „wołający, który przypisuje, zawsze może odczytać przypisanie z
+powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAFFING_READ` ∧
+`PEOPLE_READ` (ADR-0019 pkt 4, pkt 7 wyżej) — wołający z `STAFFING_WRITE` ∧ `PEOPLE_READ` bez
+`STAFFING_READ` mógł przypisać i nie mógł odczytać. Skutek (a) był fałszywy dla tego zestawu
+(reviewer R-01).
+
+1. **`PATCH …/staffing-positions/{position_id}/person` wymaga `STAFFING_READ` ∧ `STAFFING_WRITE` ∧
+   `PEOPLE_READ` (D-1 = A).** Pkt 5(a) aneksu 2026-09-27 staje się prawdziwy: zestaw zapisu jest
+   nadzbiorem zestawu odczytu pola. Kierunek „zapisuję, czego nie widzę" (aneks 2026-09-21 SC-2-04)
+   zamknięty dla tej ścieżki.
+2. **Kolejność odmów bez zmian co do zasady, rozszerzona o trzecie uprawnienie.** Brak któregokolwiek
+   z trzech → `403` zapada w zależności uprawnień, **przed** odczytem scenariusza, pozycji i osoby;
+   ciało odmowy identyczne niezależnie od istnienia pozycji i osoby (pkt 5(b) aneksu 2026-09-27
+   obejmuje teraz także brak `STAFFING_READ`). Dla kompletu uprawnień kolejność pkt 5(c) bez zmian.
+3. **Znacznik współbieżności przypisania jest polem osobowym, nie polem pozycji (skutek D-4 = B,
+   ADR-0007 aneks 2026-09-28).** Kolumna znacznika przypisania na `staffing_position` podlega tej
+   samej bramce kształtowania co `person_id` (pkt 7 aneksu 2026-09-27): klucz emitowany **wtedy i
+   tylko wtedy**, gdy emitowany jest `person_id` (`STAFFING_READ` ∧ `PEOPLE_READ`); dla każdego innego
+   wołającego — brak klucza, nie `null`. Uzasadnienie: znacznik zmienia się wyłącznie przy
+   przypisaniu i zdjęciu przypisania, więc widoczny bez `PEOPLE_READ` byłby dokładnie tą wyrocznią
+   „przypisano/zdjęto", którą D-4 usuwa z `updated_at` pozycji. Zbiór pól pozycji dla wołającego bez
+   `PEOPLE_READ` pozostaje zbiorem sprzed SC-2-06 (A5-31-2 bez zmian brzmienia).
+4. **`updated_at` pozycji przestaje nieść informację o przypisaniu (D-4 = B).** Zdanie z decyzji 8
+   bramki 1 („wołający bez `PEOPLE_READ` widzi, że *coś* się zmieniło, nigdy co") przestaje
+   obowiązywać: po tym aneksie wołający bez `PEOPLE_READ` nie widzi **nic** — ani zmiany znacznika,
+   ani odmowy `409` swojego późniejszego zapisu wywołanej cudzym przypisaniem. Mechanika: ADR-0007
+   aneks 2026-09-28; zmiana wobec ADR-0004 aneksu 2026-09-27 pkt 5: ADR-0004 aneks 2026-09-28.
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| A5-31-7 | Przypisanie odmówione `403` bez zapisu dla wołającego, któremu brakuje dokładnie jednego z `STAFFING_READ`, `STAFFING_WRITE`, `PEOPLE_READ` (trzyma wszystkie pozostałe uprawnienia); ciało odmowy identyczne dla istniejącej i nieistniejącej pozycji i osoby; z kompletem — sukces (kontrast). |
+| A5-31-8 | Bez `PEOPLE_READ` klucz znacznika przypisania nie występuje w żadnej odpowiedzi zwracającej pozycję; z `STAFFING_READ` ∧ `PEOPLE_READ` występuje razem z `person_id` (kontrast). |
+| A5-31-9 | Odpowiedź pozycji odczytana przez wołającego bez `PEOPLE_READ` jest identyczna w całości (łącznie z `updated_at`) przed i po przypisaniu oraz przed i po zdjęciu przypisania wykonanym przez innego wołającego; znacznik `updated_at` odczytany przed przypisaniem jest po nim przyjmowany przez każdą inną ścieżkę zapisu pozycji. |

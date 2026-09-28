@@ -56,6 +56,19 @@ after — `cost_basis`, unlike `approved`, toggles both ways, so a stale token m
 every time, or a race lets one caller's stale retry silently overwrite another's fresh, deliberate
 switch with no warning to either side.
 
+**SC-2-06 adds a sixth write path and no new mechanism**: `assign_person` writes `person_id` — the
+optional named person of the position (F-03; ADR-0019) — in the same single-`UPDATE` shape as the
+cost-basis edit and under the same `unapproved_scenario` guard, plus "the person exists" in the same
+`WHERE`, but against its **own** marker, `person_assignment_updated_at`, leaving the position's
+`updated_at` untouched (D-4 = B; ADR-0007 aneks 2026-09-28): two markers on one row, disjoint
+columns, exactly one marker per write path. It is the **only** function that writes that column:
+every other write here names its columns explicitly and none of them names `person_id`, so omitting
+the person from any other request means "unchanged", never "removed" (ADR-0005, aneks 2026-09-27,
+point 6). The copy cascade carries `person_id` by reflection — the copy points at the same person
+(ADR-0004, aneks 2026-09-27, point 4). Nothing in this module reads a person's *name*: the name
+lives in the register (`app.data.people`), and a position response carries at most the id, gated in
+response shaping.
+
 **Reading a position now also derives its capacity** (`app.domain.capacity`), which is why the read
 functions return a `StaffingPositionView` rather than a bare row. The derived figure travels
 *beside* the typed `availability_hours` and never replaces it: nothing in this module writes a
@@ -102,6 +115,7 @@ from app.domain.capacity import (
     month_capacity,
 )
 from app.models.additional_cost import AdditionalCost
+from app.models.person import Person
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
     COST_BASIS_FIXED_AMOUNT,
@@ -1231,6 +1245,182 @@ def _diagnose_position_refusal(
     )
 
 
+# --- the named person of a position (F-03, SC-2-06; ADR-0019; ADR-0004/0005 aneksy 2026-09-27) ---
+#
+# One more write path, and the only one that writes `person_id` (ADR-0005, aneks 2026-09-27, point
+# 3 of gate 1: "jedna ścieżka zapisu przypisania"). The same single-`UPDATE` shape as
+# `update_position_cost_basis`: `person_id` is a column of the position row itself, so the guard,
+# the token rotation and the write are one statement — no new guard shape, no new token.
+
+
+class AssignedPersonNotFound(StaffingWriteRejected):
+    """The `person_id` named by an assignment is not in the register (SC-2-06, criterion K-05b).
+
+    Refused *by state*, like `ApprovedScenarioFrozen` — decided by the same guarded `UPDATE`, whose
+    `WHERE` requires the person to exist, and backed by `fk_staffing_position_person_id` for any
+    writer that does not come through here. The message names the condition and never a value: not
+    the id the caller sent back to it, and certainly never a name (ADR-0019, point 6).
+
+    Reached only by a caller holding `STAFFING_WRITE` ∧ `PEOPLE_READ` (the endpoint's dependency),
+    i.e. one who may read the whole register anyway — so this is not an existence oracle
+    (ADR-0005, aneks 2026-09-27, point 5b)."""
+
+
+def assign_person(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    *,
+    expected_person_assignment_updated_at: datetime,
+    person_id: uuid.UUID | None,
+) -> StaffingPositionView | None:
+    """Assign a person to a position (`person_id`), or remove the assignment (`None`) — or refuse,
+    or answer `None` when there is no such position for this caller.
+
+    ```
+    UPDATE staffing_position
+       SET person_id = :person_id,
+           person_assignment_updated_at = now(),
+           updated_at = updated_at                         -- unchanged, and said so (see below)
+     WHERE id = :position_id AND scenario_id = :scenario_id
+       AND person_assignment_updated_at = :expected        -- ADR-0007 aneks 2026-09-28
+       AND scenario_id IN (SELECT id FROM scenarios
+                            WHERE id = :scenario_id AND status <> 'approved'
+                              FOR UPDATE)                    -- ADR-0004, and the lock (K-20)
+       AND EXISTS (SELECT 1 FROM person WHERE id = :person_id)   -- only when assigning
+     RETURNING id
+    ```
+
+    One statement: the `approved` guard is **in** the write (ADR-0004, aneks 2026-09-27 SC-2-06,
+    point 2 — criterion K-06), never a status read followed by an `UPDATE`. The database's own
+    `ck_staffing_position_person_requires_single_headcount` refuses a person on a position whose
+    `headcount` is not 1 (Q-7 = a, criterion K-05c) and `fk_staffing_position_person_id` a person
+    that does not exist — this function performs neither check in Python.
+
+    **The order of refusals** (gate 1, decision 3): scope (`None` → `404`) → a position missing from
+    this scenario (`404`) → a person missing from the register (`AssignedPersonNotFound`) →
+    `approved` (`ApprovedScenarioFrozen`) → a stale assignment marker. The person's existence is
+    part of the `WHERE` rather than left to the foreign key precisely so that this order holds when
+    the scenario is also approved: a foreign key is checked only on a row that is actually written,
+    so it would let "approved" answer first. The diagnosis runs *after* the refusal and is never the
+    guard.
+
+    `None` for `person_id` removes the assignment through the same statement and the same guard: an
+    approved scenario refuses the removal exactly as it refuses the assignment (A4-31-2). Every
+    *other* write of this row leaves `person_id` untouched — none of them names the column
+    (ADR-0005, aneks 2026-09-27, point 6).
+
+    **Does not move the position's `updated_at`** (D-4 = B; ADR-0007 aneks 2026-09-28 — this
+    replaces gate 1's decision 8). The assignment has its own marker,
+    `person_assignment_updated_at`, compared and rotated here and nowhere else; `updated_at` is
+    visible without `PEOPLE_READ`, so moving it would tell such a caller that the position was
+    assigned. `updated_at = updated_at` is spelled out in the `SET` on purpose: the model's
+    `onupdate=func.now()` fires on every `UPDATE` of this table that does not name the column, and
+    would move it silently (criterion A7-31-1 kills exactly that). Consequence: a grid edit holding
+    a token read before somebody's assignment still succeeds, and both writes land (A7-31-3) — they
+    write disjoint columns.
+    """
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+        return None
+
+    conditions: list[sa.ColumnElement[bool]] = [
+        _POSITION_TABLE.c.id == position_id,
+        _POSITION_TABLE.c.scenario_id == scenario_id,
+        _POSITION_TABLE.c.person_assignment_updated_at == expected_person_assignment_updated_at,
+        _POSITION_TABLE.c.scenario_id.in_(unapproved_scenario(scenario_id)),
+    ]
+    if person_id is not None:
+        conditions.append(_person_exists(person_id))
+
+    statement = (
+        sa.update(_POSITION_TABLE)
+        .where(*conditions)
+        .values(
+            person_id=person_id,
+            person_assignment_updated_at=sa.func.now(),
+            # Explicit, and load-bearing: without it the column's `onupdate` moves the position's
+            # own token on every assignment (D-4 = B would be silently unmet).
+            updated_at=_POSITION_TABLE.c.updated_at,
+        )
+        .returning(_POSITION_TABLE.c.id)
+    )
+
+    try:
+        applied = session.execute(statement).one_or_none()
+        if applied is None:
+            raise _diagnose_assignment_refusal(
+                session, scenario_id, position_id, person_id=person_id
+            )
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    return _position_by_id(session, position_id)
+
+
+def _person_exists(person_id: uuid.UUID) -> sa.ColumnElement[bool]:
+    """`EXISTS (SELECT 1 FROM person WHERE id = :person_id)` — spelled once for the guarded `WHERE`
+    and for the diagnosis, so the two cannot come to disagree about what "exists" means."""
+    return sa.exists().where(Person.id == person_id)
+
+
+def _diagnose_assignment_refusal(
+    session: Session,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    *,
+    person_id: uuid.UUID | None,
+) -> Exception:
+    """Name the reason the assignment matched no row — after the refusal, never as the guard.
+
+    Gate 1's order (decision 3): the position first (`PositionNotFound` → `404`), then the person
+    (`AssignedPersonNotFound`), then the permanent reason (`approved`), and only then the
+    assignment's own marker (`person_assignment_updated_at`, ADR-0007 aneks 2026-09-28) — which,
+    once every other condition of the `WHERE` is ruled out, is the one left, so it is named by
+    elimination, as `_diagnose_absence_refusal` names it. Its message is distinct from the grid's
+    stale-`updated_at` message (point 4 of that aneks: a different marker to re-read) and carries no
+    value. Every branch is reached only for a
+    scenario `scenario_in_scope` has already returned, and the position lookup is narrowed to that
+    scenario, so nothing here answers about a row the caller cannot see. Persons are never deleted
+    by this system (ADR-0019, point 7), so "the person was missing" cannot become untrue between the
+    statement and this read.
+    """
+    position_exists = session.execute(
+        sa.select(
+            sa.exists().where(
+                StaffingPosition.id == position_id, StaffingPosition.scenario_id == scenario_id
+            )
+        )
+    ).scalar_one()
+    if not position_exists:
+        return PositionNotFound("No such staffing position in this scenario.")
+    if person_id is not None and not session.execute(
+        sa.select(_person_exists(person_id))
+    ).scalar_one():
+        return AssignedPersonNotFound(
+            "No such person in the register. Assign a person that exists, or remove the "
+            "assignment."
+        )
+    approved = session.execute(
+        sa.select(
+            sa.exists().where(
+                Scenario.id == scenario_id, Scenario.status == ScenarioStatus.APPROVED
+            )
+        )
+    ).scalar_one()
+    if approved:
+        return ApprovedScenarioFrozen(
+            "This scenario is approved, so its staffing is part of an approved calculation and "
+            "cannot be changed. Copy the scenario to open a new version and change the copy."
+        )
+    return ConcurrentStaffingEditConflict(
+        "The person assignment of this staffing position changed since it was read. Re-read the "
+        "assignment and apply the change again."
+    )
+
+
 # --- absences (F-05, SC-3-02) -------------------------------------------------------------------
 #
 # Two write paths, and neither introduces a mechanism. Both have the shape `update_allocation`
@@ -1593,7 +1783,7 @@ def _diagnose_absence_refusal(
 # --- the copying cascade (ADR-0004, addendum 2026-09-19) ----------------------------------------
 
 POSITION_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
-    {"id", "scenario_id", "created_at", "updated_at"}
+    {"id", "scenario_id", "created_at", "updated_at", "person_assignment_updated_at"}
 )
 """Position attributes a copy does **not** inherit, and why each one is here:
 
@@ -1603,6 +1793,9 @@ POSITION_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
   version).
 - `created_at` / `updated_at` — the copy is created now, and its ADR-0007 token is its own.
   Inheriting the source's token would hand a caller a token issued for a different row.
+- `person_assignment_updated_at` (SC-2-06; ADR-0007 aneks 2026-09-28, point 5) — the same reason,
+  for the assignment's own marker: the copy gets the database's `now()`. `person_id` itself *is*
+  copied (the same person, never a copy of one).
 
 Everything else is copied by reflection (`app.data.column_copy.values_to_copy`), so a column added
 later is copied by default rather than silently dropped; the accompanying drift-guard test asserts

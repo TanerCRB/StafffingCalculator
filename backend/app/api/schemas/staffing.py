@@ -24,7 +24,15 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from app.api.schemas.common import DecimalString, Iso4217Code
 from app.core.money import NOT_APPLICABLE
@@ -384,6 +392,32 @@ class StaffingPositionCostBasisEditRequest(BaseModel):
         }
 
 
+class StaffingPositionPersonAssignmentRequest(BaseModel):
+    """The body of `PATCH …/staffing-positions/{position_id}/person` (SC-2-06): the person to
+    assign, or `null` to remove the assignment, plus the assignment's own marker.
+
+    **The one request that can change `person_id`** (gate 1, decision 3). Every other request of
+    this router is `extra="forbid"` and has no such field, so a `person_id` sent to any of them is a
+    `422` and never a silent assignment — and omitting it there means "unchanged", never "removed"
+    (ADR-0005, aneks 2026-09-27, point 6).
+
+    `person_id` is **required**, with `null` allowed: "remove the assignment" is an explicit
+    request, not an empty body. A name is not a field here, and never will be — the position
+    references the register by id, and a name in a request body would be one step away from a name
+    in a log.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    person_assignment_updated_at: AwareDatetime
+    """The **assignment's** marker (`person_assignment_updated_at`, ADR-0007 aneks 2026-09-28,
+    D-4 = B) — not the position's `updated_at`, which this path neither compares nor moves. Named
+    differently from `updated_at` on purpose: a client holding the grid's token cannot send it here
+    by accident and get a confusing `409` (P-1)."""
+
+    person_id: uuid.UUID | None
+
+
 NotApplicable = Literal[NOT_APPLICABLE]
 """`"n/a"` as a type — the project's one sentinel for a figure that cannot be computed.
 
@@ -622,6 +656,20 @@ class StaffingAbsenceDeleteRequest(BaseModel):
     updated_at: AwareDatetime
 
 
+PERSON_GATED_FIELDS: frozenset[str] = frozenset({"person_id", "person_assignment_updated_at"})
+"""The fields of a staffing position that identify a named person — the person and the assignment's
+marker, together (SC-2-06; ADR-0019, point 4; ADR-0005 aneksy 2026-09-27 point 7 and 2026-09-28
+point 3). **The one definition**, read by both halves of the gate: response shaping
+(`app.api.response_shaping.shape_staffing_position`) sets exactly these, and only behind
+`STAFFING_READ` ∧ `PEOPLE_READ`; this schema's serializer (`_person_key_only_when_shaped_in`) drops
+each of them that shaping did not set.
+
+A gate on identity, not a fifth personnel-cost gate, and its refusal has a different shape,
+deliberately: the cost gates return the field as `null` (SC-1-08 K-03); this one does not emit the
+key at all, so for a caller without `PEOPLE_READ` a position has exactly the field set it had before
+SC-2-06 and an assigned position is indistinguishable from an anonymous one (criterion K-03)."""
+
+
 class StaffingPositionRead(BaseModel):
     """One staffing position with its whole monthly grid and its absences.
 
@@ -652,6 +700,48 @@ class StaffingPositionRead(BaseModel):
     """The position's planned absences (F-05), on every representation of the position. On the list
     as well as on the single-position payload, for the reason `DimensionEntry.updated_at` gives: a
     field absent from the only read a client performs is a field no client can use."""
+
+    person_id: uuid.UUID | None = None
+    """The named person assigned to this position, or `null` for an anonymous one (SC-2-06, F-03) —
+    an id only, never the name: the name is read from the register (`GET /people`), so a
+    correction there is the only place it ever changes (gate 1, decision 4 = a1).
+
+    **Emitted only when response shaping put it there** — for a caller holding `STAFFING_READ` ∧
+    `PEOPLE_READ` (`app.api.response_shaping.shape_staffing_position`). For every other caller the
+    key is **absent**, not `null` (`_person_key_only_when_shaped_in`): a `null` would still say
+    "this API knows about persons on positions", and a present-or-absent key would be a flag telling
+    an assigned position from an anonymous one. Without the key the position has exactly the field
+    set it had before SC-2-06, so an assigned one is indistinguishable from an anonymous one
+    (ADR-0005, aneks 2026-09-27, point 7; criterion K-03)."""
+
+    person_assignment_updated_at: datetime | None = None
+    """The assignment's own concurrency marker (ADR-0007 aneks 2026-09-28) — the value
+    `PATCH …/person` needs back. **Under the same gate and the same key-absence rule as
+    `person_id`** (ADR-0005 aneks 2026-09-28, point 3): it moves only when a person is assigned or
+    removed, so outside the gate it would itself be the "assigned" flag."""
+
+    @model_serializer(mode="wrap")
+    def _person_key_only_when_shaped_in(self, handler: SerializerFunctionWrapHandler):
+        """Drop `person_id` and `person_assignment_updated_at` from the serialized payload unless
+        each was explicitly set (`PERSON_GATED_FIELDS`).
+
+        "Explicitly set" is `model_fields_set`, i.e. passed to the constructor — which only
+        `shape_staffing_position` does, and only behind the `PEOPLE_READ` gate. A default `None` is
+        therefore never serialized: the schema itself, not a filter in the endpoint or the frontend,
+        is what keeps the key away from a caller without the permission. Survives FastAPI's own
+        dump-and-revalidate of the response (the dropped key is not re-added on revalidation, so it
+        stays unset) and nesting inside `StaffingPositionList`.
+
+        **No return annotation, on purpose**: Pydantic takes a wrap serializer's annotated return
+        type as the serialization schema, so `-> dict[str, Any]` would collapse this model's
+        response schema in `/openapi.json` into an untyped object. Unannotated, the schema stays the
+        model's own (with `person_id` optional).
+        """
+        data = handler(self)
+        if isinstance(data, dict):
+            for field in PERSON_GATED_FIELDS - self.model_fields_set:
+                data.pop(field, None)
+        return data
 
 
 class StaffingPositionList(BaseModel):

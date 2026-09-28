@@ -978,7 +978,10 @@ history / this file's own change log, not as tracked product work.
   `headcount = 1`; przypisanie w scenariuszu `approved` odmawiane w warstwie danych (odmowa +
   wyścig), spoza zasięgu → `404`; duplikat zachowuje odwołanie do tej samej osoby; sprostowanie
   imienia widoczne przy scenariuszu `approved` bez zmiany migawki; nieudany zapis nie loguje imienia
-  (NF-11); żaden istniejący test niezmieniony. Kryteria K-xx ustala Analityk.
+  (NF-11); żaden istniejący test niezmieniony z wyjątkiem ponownego uzbrojenia kanarków (K-10)
+  wyłącznie w `test_catalog_access.py`, `test_absence_budget_access.py`,
+  `test_additional_cost_access.py`, `test_staffing_copy.py`, `test_staffing_schema_constraints.py`
+  — dopisanie elementu, równość zostaje równością. Kryteria K-xx ustala Analityk.
   **Out of scope (explicit):** stawka indywidualna sprzedażowa i kosztowa (osobna Story po ADR-0013
   Accepted; kosztowa wymaga aneksu do wymagań); własna lokalizacja osoby; ekran (osobna Story FE);
   zapis z UI (ADR-0009); usuwanie/anonimizacja i retencja (osobna Story, scalona przed pierwszymi

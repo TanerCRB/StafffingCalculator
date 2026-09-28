@@ -76,6 +76,14 @@ from app.core.identity import CallerIdentity, Permission
 # caller is this one placeholder. Not a decision that everyone may duplicate a scenario — the role
 # dimension arrives with the authentication ADR. Scope is not widened: the duplicate's target is
 # always the source's own project, resolved through `scenario_in_scope`/`project_for_caller`.
+#
+# `PEOPLE_READ` and `PEOPLE_WRITE` (SC-2-06) do **not** join, and that absence is the decision
+# (ADR-0005, aneks 2026-09-27 SC-2-06, point 4; ADR-0019, point 4; Q-3 = a). The person register is
+# the first personal-data register of this system: granting it to "whoever the header says" would
+# hand every dev/test caller the names in it. Consequence accepted with the decision: in the running
+# system nobody reads a name, writes a person or assigns one through the API, and the positive
+# branch is reachable from a test only, through `dependency_overrides`. The set-equality canary over
+# this set (`tests/test_access_control.py`) stays unchanged.
 PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
     {
         Permission.PROJECT_READ,
@@ -184,6 +192,37 @@ def require_permission(permission: Permission) -> Callable[..., CallerIdentity]:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Caller lacks permission {permission.value!r}.",
             )
+        return caller
+
+    return dependency
+
+
+def require_permissions(*permissions: Permission) -> Callable[..., CallerIdentity]:
+    """The conjunction of several permissions, declared as one dependency (SC-2-06).
+
+    For an endpoint whose action needs more than one permission *regardless of the data* — the first
+    one being the assignment of a person to a staffing position, `STAFFING_READ` ∧ `STAFFING_WRITE`
+    ∧ `PEOPLE_READ` (ADR-0005, aneks 2026-09-27 SC-2-06 point 5 and aneks 2026-09-28 point 1).
+    Declared on the endpoint, like `require_permission`, so the refusal happens before the handler
+    runs and before any row is read: a caller missing any of the permissions learns nothing about
+    whether the position, the scenario or the person exists (point 5b — no existence oracle).
+
+    Not a replacement for the SC-1-08 cost conjunction: that one has a per-(caller, project) factor
+    (`project_access.can_view_personnel_costs`) and can only be decided after the scope is resolved.
+    This one is permissions only. Deny by default, checked in the order given; the refusal names the
+    first missing permission and nothing else.
+    """
+    if not permissions:
+        raise ValueError("require_permissions needs at least one permission to require.")
+    required = tuple(permissions)
+
+    def dependency(caller: CallerIdentity = Depends(get_caller_identity)) -> CallerIdentity:  # noqa: B008
+        for permission in required:
+            if not caller.has(permission):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Caller lacks permission {permission.value!r}.",
+                )
         return caller
 
     return dependency

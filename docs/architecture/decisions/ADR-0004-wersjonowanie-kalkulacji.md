@@ -877,8 +877,8 @@ zamiast zostawić je milczeniu, które pkt 4 nazywa ryzykiem.
    grupa potwierdzona na poziomie kolumny** (wzorem aneksu 2026-09-25 SC-5-03 pkt 1): wartość
    ustawia planista w scenariuszu; nic spoza scenariusza jej nie zmienia. Chroni ją strażnik zapisu
    `approved` w tej samej instrukcji co zapis, z testem odmowy i testem wyścigu dwóch połączeń **per
-   ścieżka zapisu przypisania** (warunek aneksu SC-3-01). Kolumna, nie osobna tabela — rekomendacja
-   Architekta (mapa wpływu SC-2-06, model danych), do potwierdzenia na bramce 1.
+   ścieżka zapisu przypisania** (warunek aneksu SC-3-01). Kolumna, nie osobna tabela — decyzja
+   człowieka na bramce 1 SC-2-06 (model A, 2026-09-27).
 3. **Sprostowanie osoby nie jest zapisem do zatwierdzonej kalkulacji.** Wiersz osoby nie jest
    dzieckiem scenariusza; strażnik `approved` go nie obejmuje i nie wolno go na niego rozciągać.
 4. **Kopiowanie (aneks 2026-09-18 pkt 4; reguła 17 Strażnika).** Kopia pozycji niesie **ten sam**
@@ -905,3 +905,24 @@ zamiast zostawić je milczeniu, które pkt 4 nazywa ryzykiem.
 | A4-31-1 | Sprostowanie imienia osoby przypisanej w scenariuszu `approved` się udaje, a liczba wierszy każdej tabeli `approved_snapshot_*` i zbiór tych tabel są identyczne przed i po. |
 | A4-31-2 | Przypisanie i zdjęcie przypisania w scenariuszu `approved` odmówione w tej samej instrukcji co zapis; zatwierdzenie tuż przed instrukcją i wyścig dwóch połączeń dają odmowę bez zapisu; na `draft` — sukces (kontrast). |
 | A4-31-3 | Duplikat scenariusza i kopia projektu wskazują tę samą osobę; liczba wierszy rejestru osób bez zmian; liczba pozycji rośnie (kontrast). |
+
+### 2026-09-28 — przypisanie osoby poza znacznikiem `updated_at` pozycji; zmiana pkt 5 aneksu 2026-09-27 (SC-2-06, bramka 2)
+
+**Status:** Accepted (decyzja człowieka 2026-09-28, przed bramką 2 SC-2-06, Issue #31)
+
+> Skutek decyzji człowieka D-4 = B (2026-09-28, Issue #31; security-auditor B-01). Mechanika:
+> ADR-0007 aneks 2026-09-28. Aneks 2026-09-27 pozostaje Accepted; ten wpis zmienia jego pkt 5 jawnie.
+
+1. **Pkt 5 aneksu 2026-09-27 („kolumna na wierszu pozycji uczestniczy w `staffing_position.updated_at`
+   automatycznie") przestaje obowiązywać dla `person_id`.** `person_id` ma własny znacznik
+   (`person_assignment_updated_at`, nazwa robocza), a `updated_at` pozycji nie zmienia się przy
+   przypisaniu ani zdjęciu. Precedens aneksu SC-5-03 pkt 4 obowiązuje nadal dla każdej innej kolumny
+   pozycji. Uzasadnienie: `updated_at` jest widoczny bez `PEOPLE_READ`, więc jego przesunięcie było
+   wyrocznią przypisania (ADR-0019 pkt 4).
+2. **Grupa danych bez zmian.** Znacznik przypisania jest kolumną grupy 2 na tabeli już w grupie 2 —
+   ustawiany wyłącznie ścieżką przypisania, pod tym samym strażnikiem `approved` w tej samej instrukcji
+   (A4-31-2 obowiązuje bez zmian brzmienia).
+3. **Kopiowanie (pkt 4 aneksu 2026-09-27):** kopia niesie ten sam `person_id` i **nie** niesie
+   znacznika przypisania źródła — dostaje własny (ADR-0007 aneks 2026-09-28 pkt 5). Brak nowego
+   wpisu w `SCENARIO_CHILD_COPIERS`.
+4. **Migawka:** zbiór tabel `approved_snapshot_*` i ich kolumn bez zmian.

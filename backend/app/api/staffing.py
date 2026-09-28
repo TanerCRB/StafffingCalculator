@@ -15,6 +15,16 @@ Under `/projects/{project_id}/scenarios/{scenario_id}/staffing-positions`:
 - `GET    "/{position_id}/absences"` — the absences of one position (`STAFFING_READ`)
 - `POST   "/{position_id}/absences"` — add one absence (`STAFFING_WRITE`)
 - `DELETE "/{position_id}/absences/{absence_id}"` — remove one absence (`STAFFING_WRITE`)
+- `PATCH  "/{position_id}/person"` — assign a named person to the position, or remove the assignment
+  (`STAFFING_READ` ∧ `STAFFING_WRITE` ∧ `PEOPLE_READ`, F-03, SC-2-06; ADR-0019; ADR-0005, aneksy
+  2026-09-27 point 5 and 2026-09-28 point 1)
+
+**The person on a position is visible only to `STAFFING_READ` ∧ `PEOPLE_READ`** (SC-2-06), on every
+endpoint here that returns a position — decided in
+`app.api.response_shaping.shape_staffing_position`, which is why every one of them hands it the
+`caller`. For anybody else the `person_id` key is absent
+and an assigned position is indistinguishable from an anonymous one. Only the assignment endpoint
+writes `person_id`; no other body here has the field (`extra="forbid"`).
 
 **The absence endpoints declare `STAFFING_READ`/`STAFFING_WRITE` and no new permission**
 (ADR-0005, addendum 2026-09-22, point 5). The granularity argument that split staffing from the
@@ -53,7 +63,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_permission
+from app.api.deps import require_permission, require_permissions
 from app.api.response_shaping import (
     shape_staffing_absence_list,
     shape_staffing_position,
@@ -67,6 +77,7 @@ from app.api.schemas.staffing import (
     StaffingPositionCostBasisEditRequest,
     StaffingPositionCreateRequest,
     StaffingPositionList,
+    StaffingPositionPersonAssignmentRequest,
     StaffingPositionRead,
 )
 from app.core.identity import CallerIdentity, Permission
@@ -80,6 +91,7 @@ from app.data.staffing import (
     PositionNotFound,
     StaffingWriteRefused,
     StaffingWriteRejected,
+    assign_person,
     create_absence,
     create_position,
     delete_absence,
@@ -355,7 +367,7 @@ def list_staffing_positions(
         # answering a second time, and its own `None` is still a 404.
         raise _not_found()
     positions, total = result
-    return shape_staffing_position_list(positions, total=total)
+    return shape_staffing_position_list(positions, caller, total=total)
 
 
 @router.post(
@@ -441,7 +453,7 @@ def create_staffing_position(
         ) from None
     if created is None:
         raise _not_found()
-    return shape_staffing_position(created)
+    return shape_staffing_position(created, caller)
 
 
 @router.patch(
@@ -503,7 +515,7 @@ def edit_staffing_allocation(
         ) from None
     if edited is None:
         raise _not_found()
-    return shape_staffing_position(edited)
+    return shape_staffing_position(edited, caller)
 
 
 @router.patch(
@@ -582,7 +594,94 @@ def edit_staffing_position_cost_basis(
         ) from None
     if edited is None:
         raise _not_found()
-    return shape_staffing_position(edited)
+    return shape_staffing_position(edited, caller)
+
+
+# --- the named person of a position (F-03, SC-2-06) --------------------------------------------
+
+
+@router.patch(
+    "/{position_id}/person",
+    response_model=StaffingPositionRead,
+    summary="Assign a named person to one staffing position, or remove the assignment",
+    responses={
+        403: {"description": "The caller lacks staffing:read, staffing:write or people:read."},
+        404: {"description": STAFFING_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the person is not in the register; the scenario is approved; "
+            "the person assignment changed since it was read (its own marker, "
+            "person_assignment_updated_at — not the position's updated_at); or the database "
+            "refused the write — a position whose headcount is not 1 "
+            "(ck_staffing_position_person_requires_single_headcount). The message says which."
+        },
+    },
+)
+def assign_staffing_position_person(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    payload: StaffingPositionPersonAssignmentRequest,
+    caller: Annotated[
+        CallerIdentity,
+        Depends(
+            require_permissions(
+                Permission.STAFFING_READ, Permission.STAFFING_WRITE, Permission.PEOPLE_READ
+            )
+        ),
+    ],
+    session: Annotated[Session, Depends(get_session)],
+) -> StaffingPositionRead:
+    """Assign a person (`person_id`) to the position, or remove the assignment (`null`) — the one
+    write path of `staffing_position.person_id` (gate 1, decision 3).
+
+    **`STAFFING_READ` ∧ `STAFFING_WRITE` ∧ `PEOPLE_READ`, all on the endpoint** (ADR-0005, aneks
+    2026-09-27 point 5, completed by aneks 2026-09-28 point 1 — D-1 = A): assigning is a planner's
+    act, choosing a person requires knowing who they are, and whoever assigns must be able to read
+    the assignment back (the field is gated on `STAFFING_READ` ∧ `PEOPLE_READ`). Declared as one
+    dependency, so a caller missing any of the three is refused `403` before any row is read — its
+    answer does not depend on whether the project, the scenario, the position or the person exists
+    (no existence oracle, point 5b). `PEOPLE_WRITE` is not needed and not sufficient: it maintains
+    the register, it does not plan staffing.
+
+    **The position's `updated_at` is neither compared nor moved here** (D-4 = B; ADR-0007 aneks
+    2026-09-28): the request carries the assignment's own marker, `person_assignment_updated_at`.
+
+    Then, in this order (gate 1, decision 3), each decided one layer down
+    (`app.data.staffing.assign_person`):
+
+    - **404** — the scenario is not in the caller's scope, does not exist, belongs to another
+      project, or the position is not in it. One body for all of them.
+    - **409, "no such person"** — `person_id` names nothing in the register.
+    - **409, "approved"** — refused inside the `UPDATE` itself (ADR-0004); the removal of an
+      assignment is refused exactly like the assignment.
+    - **409, "the person assignment … changed since it was read"** — the assignment's marker moved
+      (another assignment or removal). Distinct from the grid's stale-token message.
+    - **409, refused by the database** — `headcount` is not 1 (Q-7 = a), a CHECK, not a Python rule.
+
+    No message here or below carries a name — there is no name on this path at all, only ids — and
+    none carries the person id the caller sent (ADR-0019, point 6).
+    """
+    try:
+        assigned = assign_person(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            position_id,
+            expected_person_assignment_updated_at=payload.person_assignment_updated_at,
+            person_id=payload.person_id,
+        )
+    except PositionNotFound:
+        raise _not_found() from None
+    except StaffingWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except StaffingWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if assigned is None:
+        raise _not_found()
+    return shape_staffing_position(assigned, caller)
 
 
 # --- absences (F-05, SC-3-02) -------------------------------------------------------------------
@@ -695,7 +794,7 @@ def create_staffing_absence(
         ) from None
     if created is None:
         raise _not_found()
-    return shape_staffing_position(created)
+    return shape_staffing_position(created, caller)
 
 
 @router.delete(
@@ -755,4 +854,4 @@ def delete_staffing_absence(
         ) from None
     if remaining is None:
         raise _not_found()
-    return shape_staffing_position(remaining)
+    return shape_staffing_position(remaining, caller)
