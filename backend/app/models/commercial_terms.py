@@ -1,5 +1,6 @@
-"""The commercial rule of one scenario, its Time & Material, Story Points and Outcome-based details
-(F-06, F-06.1, F-06.3, F-06.4, F-06.5; SC-4-01, SC-4-03, SC-4-04, SC-4-05).
+"""The commercial rule of one scenario, its Time & Material, Story Points, Outcome-based and Fixed
+Price details (F-06, F-06.1, F-06.2, F-06.3, F-06.4, F-06.5; SC-4-01, SC-4-02, SC-4-03, SC-4-04,
+SC-4-05).
 
 SC-4-05 (Issue #69) adds `scope_ref`, a nullable pointer from a rule to one `scenario_delivery_
 segment` of *its own* scenario (ADR-0003 addendum 2026-09-25, D-3=A). It does not add a new entity
@@ -22,10 +23,10 @@ to find either model — never a name compared by hand (D-1..D-6 of the addendum
    `scenario_id → scenarios.project_id`, i.e. through `app.data.project_reads.project_for_caller`,
    with no scope function of its own (ADR-0005, addendum 2026-09-23 SC-4-01, point 1).
 2. **A discriminator closed to the models that have a details table** (point 2). The CHECK below
-   admits `time_and_material`, `story_points` (SC-4-04) and `outcome_based` (SC-4-03); each model
-   widens it in the same migration that creates its details table, recreating the full `IN` list
-   (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 10c). `model_type` is immutable after the write — there
-   is no edit path for it, and changing a rule's model is out of scope of the MVP.
+   admits `time_and_material`, `story_points` (SC-4-04), `outcome_based` (SC-4-03) and `fixed_price`
+   (SC-4-02); each model widens it in the same migration that creates its details table, recreating
+   the full `IN` list (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 10c). `model_type` is immutable after
+   the write — there is no edit path for it, and changing a rule's model is out of scope of the MVP.
 3. **Type agreement is a composite foreign key, not an application check** (point 3; criterion
    K-04). `tm_terms (commercial_terms_id, model_type) → commercial_terms (id, model_type)`, the
    parent side carrying `UNIQUE (id, model_type)` and the child side `CHECK (model_type =
@@ -49,6 +50,23 @@ would be a second, unguarded way for the rows of an `approved` scenario to disap
 scenario, versioned by the copy mechanism), any T&M domain column (hour caps, overtime rates, a
 billable-day length — ADR-0003 points 7 and "Odłożone"), and any rate: the selling rate comes only
 from the catalogue (point 4), so nothing on these rows is priced and nothing is a personnel cost.
+
+**SC-4-02 (Fixed Price, F-06.2, Issue #66) adds its model** exactly the way point 2 and
+"Konsekwencje" of ADR-0003 foresaw — a details table, a value of the discriminator CHECK and a
+branch of the dispatcher, with no other existing table changed (ADR-0003, addendum 2026-09-25
+SC-4-02):
+
+5. **`fixed_price_terms` mirrors `tm_terms`**: primary key `commercial_terms_id`, its own `CHECK
+   (model_type = 'fixed_price')` and its own composite foreign key to `commercial_terms (id,
+   model_type)` (point 1 of the addendum).
+6. **A details table with domain columns** (as `outcome_terms`, SC-4-03, is): the agreed price of
+   the whole project, `NUMERIC(14,4)` and `NOT NULL`, bounded below by `CHECK (agreed_price >= 0)`
+   (D-5 — a revenue of zero, AC-05, is reachable), and its ISO 4217 currency **on the same row** —
+   never inferred from `scenarios.currency`, which may be `NULL` (point 2 of the addendum;
+   ADR-0002).
+7. **Still no `updated_at` on the details row.** The ADR-0007 marker of the aggregate stays
+   `commercial_terms.updated_at`; the price edit rotates it in the statement that writes the price
+   (`app.data.commercial_terms.update_fixed_price`, point 7 of the addendum).
 """
 
 import uuid
@@ -78,7 +96,7 @@ if TYPE_CHECKING:
     from app.models.scenario import Scenario
 
 MODEL_TYPE_TIME_AND_MATERIAL = "time_and_material"
-"""The first commercial model (ADR-0003, point 2)."""
+"""The first commercial model (ADR-0003, point 2; SC-4-01)."""
 
 MODEL_TYPE_STORY_POINTS = "story_points"
 """The second commercial model (SC-4-04, Issue #68; ADR-0003 addendum 2026-09-25, D-1/A): a single
@@ -87,10 +105,15 @@ shape — price per point × accepted points, no "sprint fee" variant (out of sc
 MODEL_TYPE_OUTCOME_BASED = "outcome_based"
 """Model Outcome-based (F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03)."""
 
+MODEL_TYPE_FIXED_PRICE = "fixed_price"
+"""The Fixed Price commercial model (F-06.2; SC-4-02, Issue #66; ADR-0003, addendum 2026-09-25
+SC-4-02)."""
+
 MODEL_TYPES: tuple[str, ...] = (
     MODEL_TYPE_TIME_AND_MATERIAL,
     MODEL_TYPE_STORY_POINTS,
     MODEL_TYPE_OUTCOME_BASED,
+    MODEL_TYPE_FIXED_PRICE,
 )
 """Every model with a details table, as data — the set the discriminator CHECK admits.
 
@@ -99,13 +122,14 @@ adding a model adds its details table, its value here and its branch of the reve
 (`app.data.commercial_terms.REVENUE_BY_MODEL`) together."""
 
 MODEL_TYPE_KNOWN_EXPRESSION = (
-    "model_type IN ('time_and_material', 'story_points', 'outcome_based')"
+    "model_type IN ('time_and_material', 'story_points', 'outcome_based', 'fixed_price')"
 )
 """The discriminator CHECK as SQL — spelled here and in the migration that last recreated it
-(`b9e3c7a1f264`, SC-4-03, linearised on top of `b7e3f19a6c52`, SC-4-05, which leaves this CHECK
-as `d2f6a91c4b58`, SC-4-04, recreated it), and asserted identical to
-that copy by `tests/test_commercial_terms_schema.py` (`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH`, the
-drift guard R-02 introduced for the catalogue) and `tests/test_outcome_terms_schema.py`.
+(`b8f2d6a41c93`, SC-4-02, re-parented on 2026-09-28 onto `c4d7e2a9b1f6`; before it `b9e3c7a1f264`,
+SC-4-03, `d2f6a91c4b58`, SC-4-04, and `e7b41c9d2a58`, SC-4-01), and asserted identical to that copy
+by `tests/test_commercial_terms_schema.py` (`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH`, the drift
+guard R-02 introduced for the catalogue). The constraint keeps its name,
+`ck_commercial_terms_model_type_known`, across every widening.
 
 **Pełna lista `IN`, nie tylko wartość ostatniego modelu** (ADR-0003, aneks 2026-09-25 SC-4-03, pkt
 10c): migracja niosąca wyłącznie własną wartość po cichu unieważniłaby zapisane reguły
@@ -215,6 +239,23 @@ SCENARIO_ID_SCOPE_UNIQUE = "uq_commercial_terms_scenario_id_scope_ref"
 New in SC-4-05: paired with `SCENARIO_ID_WHOLE_SCENARIO_UNIQUE` above, the two admit a
 whole-scenario rule and any number of distinct-segment rules coexisting under one scenario, while
 still refusing a second rule of the *same* scope, whichever scope that is."""
+
+FIXED_PRICE_MODEL_TYPE_EXPRESSION = f"model_type = '{MODEL_TYPE_FIXED_PRICE}'"
+
+AGREED_PRICE_NON_NEGATIVE_EXPRESSION = "agreed_price >= 0"
+"""D-5 of SC-4-02's gate 1: the lower bound of the agreed price, enforced by the database. `>= 0`,
+not `> 0`, so the zero revenue of AC-05 is reachable for Fixed Price as well."""
+
+AGREED_PRICE_PRECISION = 14
+AGREED_PRICE_SCALE = 4
+"""`NUMERIC(14,4)` — the explicit precision of every amount in this schema (ADR-0001; the scale of
+`catalog_default_rates` and `additional_cost.amount`). The price is *input*: `150000.1234` is stored
+as typed, a fifth decimal place is a `422` at the API (ADR-0002, addendum 2026-09-21, point 2), and
+the one rounding happens on the revenue (`app.core.money.round_money`)."""
+
+FIXED_PRICE_TYPE_AGREEMENT_FOREIGN_KEY = "fk_fixed_price_terms_commercial_terms_model_type"
+"""The Fixed Price twin of `TYPE_AGREEMENT_FOREIGN_KEY` (ADR-0003, addendum 2026-09-25 SC-4-02,
+point 1; criterion K-06). Named explicitly for the same reason."""
 
 
 class CommercialTerms(Base):
@@ -505,5 +546,64 @@ class OutcomeTerms(Base):
             ["commercial_terms_id", "model_type"],
             ["commercial_terms.id", "commercial_terms.model_type"],
             name=OUTCOME_TYPE_AGREEMENT_FOREIGN_KEY,
+        ),
+    )
+
+
+class FixedPriceTerms(Base):
+    """The Fixed Price details of one rule: the agreed price of the whole project (F-06.2; D-1).
+
+    1:1 with its rule and type-agreed in the database, like `TmTerms` (ADR-0003, addendum 2026-09-25
+    SC-4-02, point 1). Own data of the scenario (group 2 of ADR-0004): nothing outside the scenario
+    changes it, the approval freezes nothing of it, and a write to it under an `approved` scenario
+    is refused in the statement that writes (ADR-0004, addendum 2026-09-25 SC-4-02, point 1).
+
+    **What is deliberately absent** (gate 1 of SC-4-02): milestones (D-1 = A), price adjustments —
+    bonuses, penalties, scope changes (D-3 = C, Issue #112) — and any hours, rate or cost. The
+    revenue this row yields depends on nothing but the price (F-06.2: "Increasing effort or staffing
+    shall not automatically increase revenue").
+    """
+
+    __tablename__ = "fixed_price_terms"
+
+    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True
+    )
+    model_type: Mapped[str] = mapped_column(
+        String(MODEL_TYPE_LENGTH),
+        nullable=False,
+        server_default=MODEL_TYPE_FIXED_PRICE,
+        default=MODEL_TYPE_FIXED_PRICE,
+    )
+    """Always `fixed_price` (CHECK below) — the second half of the composite foreign key, as on
+    `tm_terms`."""
+
+    agreed_price: Mapped[Decimal] = mapped_column(
+        Numeric(AGREED_PRICE_PRECISION, AGREED_PRICE_SCALE), nullable=False
+    )
+    """The price agreed for the whole project — the revenue of the scenario, with no adjustment
+    (adjustments are out of scope, D-3 = C). `NOT NULL`: a Fixed Price rule without a price is not
+    writable through the API (`422`), and a details row without one is refused here."""
+
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    """ISO 4217, next to the amount (ADR-0002: every money field is an (amount, code) pair). No
+    conversion anywhere (ADR-0006): a price in a currency other than `scenarios.currency` is the
+    named `currency_mismatch` state, never a converted figure."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # No `updated_at`: the marker is the rule's (ADR-0003, "Konsekwencje"; point 7 of the addendum).
+
+    __table_args__ = (
+        CheckConstraint(FIXED_PRICE_MODEL_TYPE_EXPRESSION, name="model_type_is_fixed_price"),
+        CheckConstraint(AGREED_PRICE_NON_NEGATIVE_EXPRESSION, name="agreed_price_non_negative"),
+        # The same two rules `catalog_default_rates` and `additional_cost` carry for a currency.
+        CheckConstraint("char_length(currency) = 3", name="currency_iso4217"),
+        CheckConstraint("currency = upper(currency)", name="currency_is_upper"),
+        ForeignKeyConstraint(
+            ["commercial_terms_id", "model_type"],
+            ["commercial_terms.id", "commercial_terms.model_type"],
+            name=FIXED_PRICE_TYPE_AGREEMENT_FOREIGN_KEY,
         ),
     )

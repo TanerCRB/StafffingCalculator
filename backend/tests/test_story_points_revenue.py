@@ -247,14 +247,16 @@ def test_k_03_time_and_material_and_story_points_coexist_without_interference(
 def test_k_03_the_registries_are_keyed_by_exactly_the_two_real_models() -> None:
     """K-03's drift guard — reading the production registries directly, no `monkeypatch`.
 
-    Mutation named by the criterion: removing the Story Points entry from `REVENUE_BY_MODEL` or
-    `DETAIL_TABLE_BY_MODEL` while the discriminator CHECK still admits it must fail this assertion —
-    a silent skip is exactly what this equality forbids.
+    Mutation named by the criterion: removing the Story Points (or Fixed Price) entry from
+    `REVENUE_BY_MODEL` or `DETAIL_TABLE_BY_MODEL` while the discriminator CHECK still admits it must
+    fail this assertion — a silent skip is exactly what this equality forbids.
     """
+    # SC-4-02 added 'fixed_price' as a real model — the set is widened and the comparison is still
+    # an equality (not `<=`), so every further model has to widen this test deliberately.
     assert set(REVENUE_BY_MODEL) == set(MODEL_TYPES) == set(DETAIL_TABLE_BY_MODEL)
     # Rozszerzone jawnie o `outcome_based` przy merge SC-4-03 (decyzja człowieka 2026-09-25);
     # nazwa testu zostaje, bo wiersz mutation log SC-4-04 w capabilities.md się do niej odwołuje.
-    assert {"time_and_material", "story_points", "outcome_based"} == set(MODEL_TYPES)
+    assert {"time_and_material", "story_points", "outcome_based", "fixed_price"} == set(MODEL_TYPES)
 
 
 def test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_real_models(
@@ -265,10 +267,14 @@ def test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_rea
 
     Staged the same way `test_commercial_terms_schema.py`'s K-04 tests stage a third model: the
     discriminator CHECK is dropped inside the test's own transaction (never committed), a
-    `'fixed_price'` rule is inserted directly, and the CHECK is implicitly restored when the test's
-    transaction rolls back. `fixed_price` has no entry in `DETAIL_TABLE_BY_MODEL` — the same
+    `'not_a_model'` rule is inserted directly, and the CHECK is implicitly restored when the test's
+    transaction rolls back. `not_a_model` has no entry in `DETAIL_TABLE_BY_MODEL` — the same
     contract `time_and_material` and `story_points` satisfy is what this rule fails.
     """
+    # Placeholder 'not_a_model' instead of the former 'fixed_price' (a real model since SC-4-02) — a
+    # value that will never be an F-06 model, so the test is not disarmed by any real model
+    # ('outcome_based' since SC-4-03 included). The test name ("two real models") describes the two
+    # real T&M and SP rows in the database — still true.
     aurora = make_project(db_session, name="Aurora", accessible_to=(IN_SCOPE_USER,))
     tm_scenario = make_scenario(db_session, aurora, name="Time & Material")
     sp_scenario = make_scenario(db_session, aurora, name="Story Points")
@@ -283,14 +289,14 @@ def test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_rea
     _set_sp_rule(client, aurora.id, sp_scenario.id)
 
     borealis = make_project(db_session, name="Borealis", accessible_to=(IN_SCOPE_USER,))
-    staged_scenario = make_scenario(db_session, borealis, name="Fixed price variant")
+    staged_scenario = make_scenario(db_session, borealis, name="Unknown model variant")
     db_session.execute(
         sa.text("ALTER TABLE commercial_terms DROP CONSTRAINT ck_commercial_terms_model_type_known")
     )
     db_session.execute(
         sa.text(
             "INSERT INTO commercial_terms (id, scenario_id, model_type)"
-            " VALUES (gen_random_uuid(), :scenario_id, 'fixed_price')"
+            " VALUES (gen_random_uuid(), :scenario_id, 'not_a_model')"
         ),
         {"scenario_id": staged_scenario.id},
     )
@@ -299,7 +305,7 @@ def test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_rea
     unsupported = _revenue(client, borealis.id, staged_scenario.id)
     assert unsupported["state"] == "unsupported_model_type"
     assert unsupported["amount"] == "n/a"
-    assert unsupported["assumptions_used"]["model_type"] == "fixed_price"
+    assert unsupported["assumptions_used"]["model_type"] == "not_a_model"
 
     # The two real models are unaffected by the unknown third row living in another project.
     assert _revenue(client, aurora.id, tm_scenario.id)["amount"] == "20000.00"
@@ -309,7 +315,7 @@ def test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_rea
         f"/projects/{borealis.id}/copy", headers=as_caller(IN_SCOPE_USER)
     )
     assert refused.status_code == 409, refused.text
-    assert "fixed_price" in refused.json()["detail"]
+    assert "not_a_model" in refused.json()["detail"]
 
     accepted = client.post(f"/projects/{aurora.id}/copy", headers=as_caller(IN_SCOPE_USER))
     assert accepted.status_code == 201, accepted.text

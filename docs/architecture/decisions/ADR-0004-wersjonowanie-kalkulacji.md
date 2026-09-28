@@ -1065,3 +1065,68 @@ zamiast zostawić je milczeniu, które pkt 4 nazywa ryzykiem.
    znacznika przypisania źródła — dostaje własny (ADR-0007 aneks 2026-09-28 pkt 5). Brak nowego
    wpisu w `SCENARIO_CHILD_COPIERS`.
 4. **Migawka:** zbiór tabel `approved_snapshot_*` i ich kolumn bez zmian.
+
+### 2026-09-25 — Fixed Price details as own data; the snapshot unchanged (SC-4-02, gate 1)
+
+The obligation of the SC-3-01 addendum, point 4: a new table gets its group assignment the moment it
+is created. SC-4-02 (Issue #66) creates the Fixed Price details table (ADR-0003, addendum 2026-09-25
+SC-4-02).
+
+1. **Group 2 — write guard, not snapshot.** The agreed price is entered directly into the scenario;
+   nothing outside the scenario changes it (the "direction of inheritance" criterion, SC-3-01
+   addendum). Consequences directly from the SC-4-01 addendum, point 1a: every write path of the
+   table (the creation and the `UPDATE` edit — D-6 resolved at gate 1: editing in a draft allowed) is
+   refused under `approved` in the same statement as the write; a refusal test and a two-connection
+   race test **per write path**. No new shape of the guard.
+2. **Copying: the same aggregate entry in `SCENARIO_CHILD_COPIERS`** (SC-4-01 addendum, point 1b),
+   the details table pointed at by the model registry, never by name. This is the first details
+   table carrying domain values — copied by reflection excluding only the key and the copy's own
+   timestamps. Canary: a copy (scenario duplication SC-6-01 and project copy SC-1-03) has a rule and
+   a details row with new identifiers, with the price and currency equal to the source; a price
+   change on the copy does not change the source (AC-02).
+3. **The snapshot with no new table and no change of scope.** The price is not frozen (group 2). The
+   `_snapshot_statement` copier does not branch on `model_type`: for a Fixed Price scenario with
+   allocations it still freezes the windows of months priced by the selling or the cost predicate
+   (SC-5-01 addendum, point 1). The cost windows are needed (the cost is independent of the revenue
+   model — F-06); the windows priced by the selling predicate alone are frozen for such a scenario
+   with no reader. Named and accepted: `model_type` is immutable, so this is a harmless surplus, and
+   branching the copier on the commercial rule would tie it to the revenue path (the principle of
+   point 3 of the SC-5-01 addendum).
+4. **Price adjustments — outside SC-4-02 (D-3 = C at gate 1); direction for their task:** group 2,
+   a grandchild in the same aggregate (one copier entry), with no concurrency marker of its own. An
+   "approved adjustment" is not an approval of a calculation in the sense of this ADR and does not
+   create a snapshot — two different concepts under one word must have different names in the
+   schema.
+5. The creation and the edit of the price generate events under the deferred `audit_log` condition
+   (addendum 2026-09-18 "historia zmian… odłożona" — change history deferred) — this joins the list
+   of tasks with the same closure.
+
+**Sync with `main` (2026-09-28, human decision on Issue #66, option A).** On `main`,
+`outcome_terms` (SC-4-03) became the first details table carrying domain values before this entry
+landed; point 2 is otherwise unchanged — Fixed Price is copied by the same reflection, with its own
+set of columns not copied (`app.data.commercial_terms.DETAIL_COLUMNS_NOT_COPIED_BY_MODEL`), and
+`scope_ref` (SC-4-05) is remapped above the model dispatch identically for every model. Point 5
+still holds after SC-8-01: the 2026-09-27 addendum creates `audit_log` for the approval of a
+scenario only, with a closed `action_type` vocabulary, so the Fixed Price write events stay on the
+deferred list together with those of SC-6-01 point 5 and SC-2-06 point 7. The approval snapshot
+(SC-8-01 did not change its set of tables) still freezes nothing of the price (point 3).
+
+| Control | Acceptance criterion |
+|---|---|
+| FPS-1 | A price write (creation and edit) to an `approved` scenario is refused, also when the approval commits between the read and the write on a second connection. |
+| FPS-2 | A copy of a scenario with a Fixed Price rule has a rule and details with new identifiers, with an equal price and currency; editing the copy does not change the source. |
+| FPS-3 | A copy of an approved Fixed Price scenario has zero snapshot rows; the revenue of an approved Fixed Price scenario equals the draft revenue before the approval and does not change after a catalogue edit. |
+
+### 2026-09-28 — Fixed Price price edits leave no author or time trace: accepted exception (SC-4-02, Issue #66, post-review)
+
+> Human decision of 2026-09-28 on Issue #66 ("Human decisions after the Reviewer STOP", Security
+> finding 2). It supplements point 5 of the SC-4-02 addendum above. That text stays unchanged.
+
+1. **Accepted exception.** Creating or editing a Fixed Price price on a draft records neither who
+   made the change nor when. `audit_log` covers only the approval of a scenario (the SC-8-01 scope,
+   addendum 2026-09-27, with a closed `action_type` vocabulary). Every other draft edit is in the
+   same position, so this is not a new category of gap.
+2. **Known gap, named for a future task.** A task that logs edits in `audit_log` must include the
+   Fixed Price price writes (creation and `UPDATE`) together with the other deferred draft edits
+   (SC-6-01 point 5, SC-2-06 point 7). Until then, the revenue of a Fixed Price draft can change
+   before approval with no trace of who changed it.

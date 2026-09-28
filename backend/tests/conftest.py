@@ -58,6 +58,7 @@ from app.models import (  # noqa: E402
     CatalogSeniority,
     CatalogVendor,
     CommercialTerms,
+    FixedPriceTerms,
     OrganizationDefaults,
     OutcomeTerms,
     Person,
@@ -259,6 +260,9 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(StoryPointsTerms))
             # SC-4-03: szczegóły Outcome-based przed regułą, z tego samego powodu co `tm_terms`.
             connection.execute(sa.delete(OutcomeTerms))
+            # SC-4-02: the Fixed Price details row, before its rule for the same reason as
+            # `tm_terms` (a composite foreign key with no `ON DELETE` action).
+            connection.execute(sa.delete(FixedPriceTerms))
             connection.execute(sa.delete(CommercialTerms))
             # SC-1-11: the delivery segment points at `scenarios` with no `ON DELETE` action too.
             connection.execute(sa.delete(ScenarioDeliverySegment))
@@ -1338,6 +1342,39 @@ def count_scenario_delivery_segments(session: Session) -> int:
     return session.execute(
         sa.select(sa.func.count()).select_from(ScenarioDeliverySegment)
     ).scalar_one()
+
+
+def make_fixed_price_terms(
+    session: Session,
+    scenario: Scenario,
+    *,
+    agreed_price: Decimal | None = Decimal("150000.0000"),
+    currency: str = "PLN",
+    scope_ref: uuid.UUID | None = None,
+) -> CommercialTerms:
+    """Insert a Fixed Price rule directly — and, unless `agreed_price=None`, its price row
+    (SC-4-02).
+
+    `agreed_price=None` is the only way to reach the Fixed Price `incomplete_commercial_terms`
+    state: the production write path creates both rows in one statement, and the API refuses a
+    Fixed Price rule without a price (`422`). `scope_ref` (SC-4-05) — see `make_commercial_terms`.
+    """
+    terms = CommercialTerms(
+        id=uuid.uuid4(), scenario_id=scenario.id, model_type="fixed_price", scope_ref=scope_ref
+    )
+    session.add(terms)
+    session.flush()
+    if agreed_price is not None:
+        session.add(
+            FixedPriceTerms(
+                commercial_terms_id=terms.id,
+                model_type="fixed_price",
+                agreed_price=agreed_price,
+                currency=currency,
+            )
+        )
+        session.flush()
+    return terms
 
 
 # --- additional costs (F-08, SC-5-05) -----------------------------------------------------------

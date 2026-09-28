@@ -863,3 +863,180 @@ w tym jednym miejscu.
 | F-3 | Wybór renderu i etykiet zależy wyłącznie od `model_type`: podmiana samego `rate_source` przy tym samym `model_type` nie zmienia ścieżki renderu (albo kończy się błędem odczytu z F-2), nigdy innym modelem na ekranie. |
 | F-4 | Zamknięta bramka kosztu osobowego i `profitability_state = "currency_mismatch"` naraz: pola bramkowane renderują "niedostępne", linia stanu sekcji podaje niezgodność walut; linia nie zawiera żadnej kwoty ani kodu waluty spoza ładunku. |
 | F-5 | `revenue.state = "currency_mismatch"`: dla `outcome_based`/`story_points` komunikat o walucie reguły ≠ waluta scenariusza, dla T&M komunikat o stawkach katalogowych — dwa różne teksty, rozróżnione po `model_type`. |
+
+### 2026-09-25 — Fixed Price: details table, agreed price, the `assumptions_used` contract (SC-4-02, gate 1)
+
+The "Odłożone" (Deferred) section requires an entry of its own for `fixed_price_terms` with the task
+of this model. SC-4-02 (Issue #66, F-06.2, AC-07 in its revenue part) is that task and the second
+model in the dispatcher of point 9. Points 1–5 follow from decisions already taken (points 2, 3, 8,
+9, "Konsekwencje"; ADR-0002; ADR-0004); points 6–9 record the human's resolutions D-1..D-6 from gate
+1 (2026-09-25, all as recommended by the analyst/architect).
+
+1. **A details table after the pattern of point 3, with no change to existing tables other than the
+   `CHECK`.** Primary key `commercial_terms_id`; a `model_type` column with a `CHECK` on the Fixed
+   Price value; a composite foreign key `(commercial_terms_id, model_type) → commercial_terms (id,
+   model_type)`. The discriminator `CHECK` is widened in the same migration that creates the table
+   (point 2). *Revision 2026-09-25 (human decision after the merge of SC-4-04, Issue #66):* SC-4-02
+   no longer waits for SC-4-03 (Issue #67) — the Fixed Price migration `b8f2d6a41c93` follows
+   `d2f6a91c4b58` (SC-4-04) and sets `model_type_known` = (`time_and_material`, `story_points`,
+   `fixed_price`); SC-4-03 rebases its migration later. The names of the existing constraints
+   (`ck_commercial_terms_model_type_known`, `ck_tm_terms_model_type_is_tm`,
+   `fk_tm_terms_commercial_terms_model_type`) survive the migration. The existence of the details
+   row is still not enforced by the database: a Fixed Price rule without it is
+   `incomplete_commercial_terms`, never `0`.
+2. **The agreed price is a column of the details row, with the currency on the same row.** `NUMERIC`
+   with explicit precision (ADR-0001), `NOT NULL`, a lower bound enforced by a `CHECK` in the
+   database: price `>= 0` (D-5 — the zero revenue of AC-05 is reachable for Fixed Price as well). The
+   currency is a column next to the price, not an inference from `scenarios.currency`, which may be
+   `NULL` (ADR-0002: "waluta jako para (kwota, kod ISO 4217) w każdym polu pieniężnym" — the
+   currency as an (amount, ISO 4217 code) pair in every money field). An amount typed by a human
+   follows the input direction of ADR-0002 (addendum 2026-09-21): a decimal string, no rounding on
+   input, excess precision refused with `422`. A Fixed Price rule without a price is unwritable
+   (`422`) — the write path creates the rule and the details with the price in one statement
+   (point 3).
+3. **The Fixed Price revenue does not depend on effort or staffing** (F-06.2: "Increasing effort or
+   staffing shall not automatically increase revenue"; AC-07). The formula reads no allocation, no
+   `billable_hours`, no plan, no availability, no catalogue, no rate snapshot and no cost at all; the
+   Fixed Price formula module does not import the T&M formula module, `app.data.rate_windows`, the
+   personnel-cost path or the additional-cost path (rule 10 of the Guardian; control C-5 of the
+   SC-5-01 addendum in ADR-0004 applies). The result is rounded once, at the end, through
+   `app.core.money.round_money` (point 9, ADR-0002).
+4. **Currency without conversion, analogously to point 8.** The revenue is in the price's currency;
+   a price currency other than `scenarios.currency` (when set) → `currency_mismatch`. `no_rate` and
+   `no_revenue_currency` are unreachable for this model (no rates; the price always carries its
+   currency) — no new states are invented for cases that do not exist.
+5. **An approved scenario reads the price from its own tables**, not from the snapshot — the price is
+   own data of the scenario (ADR-0004, addendum 2026-09-25 SC-4-02). Point 10 (rates from the
+   snapshot) does not apply to this model.
+6. **The `assumptions_used` contract (point 9) for a model that reads neither hours nor rates — D-4,
+   resolved at gate 1: variant C; revised 2026-09-25 — see "D-4 revision" at the end of the point.**
+   Today `hours_source` is the constant `billable_hours`, and `rate_source`
+   (`live_catalog`/`approved_snapshot`, set from the scenario status) is at the same time the
+   comparand of the approval race guard in `app.data.scenario_results` and
+   `app.data.scenario_what_if` (ADR-0001, addendum SC-6-02 point 4). Variants: (A) both constants as
+   for T&M — contract unchanged, but `assumptions_used` false (F-06.5), would require an explicit
+   deviation; (B) both values true, a new `rate_source` value for Fixed Price — the race guard must
+   stop comparing `rate_source` and compare the status read by each of the calls, in both modules;
+   (C) `hours_source` true, `rate_source` set from the status for every model. Adopted: **C** — the
+   Fixed Price `hours_source` tells the truth (a new value, a widening of the response contract), and
+   `rate_source` stays a value set from the status, with the semantics made precise by this point:
+   "the basis of the inherited values under which the scenario was read" — for Fixed Price with no
+   window used (`rate_windows` empty). The race guards and their proven tests unchanged. Named risk:
+   `approved_snapshot` on Fixed Price can be misread as "price from the snapshot" — the price is own
+   data of the scenario (point 5).
+   **D-4 revision (2026-09-25, human decision after the merge of SC-4-04, Issue #66).** Supersedes
+   variant C above and the earlier revision from the block-4 coordination (Issue #67:
+   `rate_source = not_applicable` per the SC-4-03 entry, `hours_source = not_used`), which did not
+   reach `main` and is withdrawn by this revision. Fixed Price reports
+   `rate_source = fixed_price_terms`, `hours_source = not_applicable`, `vendor_axis = not_applicable`
+   — following `story_points_terms` from SC-4-04 (addendum above); the value `not_used` is not
+   introduced. For Fixed Price, `rate_source` is not derived from the scenario status: the price is
+   own data of the scenario in a draft and after approval (point 5), so the value is the same in both
+   states, and the named risk of variant C (`approved_snapshot` read as "price from the snapshot")
+   ceases to exist. The Fixed Price assumptions have a response class of their own, chosen by the
+   `model_type` discriminator (point 9: "wybierana wyłącznie po `model_type`, nigdy po kształcie
+   danych" — chosen by `model_type` only, never by the shape of the data); `fixed_price_terms` does
+   not enter the shared `rate_source` `Literal` of the T&M and Story Points models, so the T&M
+   response stays byte for byte unchanged (FP-5). In substance this is variant B, with the fix of the
+   race guard split out of this task: the guards in `app.data.scenario_results` and
+   `app.data.scenario_what_if` today compare the `rate_source` of both reads and answer `409` for
+   every model whose `rate_source` lies outside the catalogue (`live_catalog`/`approved_snapshot`) —
+   a defect already present on `main` for Story Points. Fix: Issue #118 (the guard compares the
+   scenario status read by each of the calls; ADR-0015 addendum). SC-4-02 depends on the merge of
+   #118; control FP-5 stays unchanged, and what-if for an `approved` scenario stays `404` (SC-6-04,
+   ADR-0015 point 5).
+7. **Price edit in a draft — D-6, resolved: editing allowed**, through the ADR-0007 marker on the
+   `commercial_terms` row (already covering the details — "Konsekwencje"), with the comparison of the
+   marker and the `approved` refusal in the same statement as the write (the shape from ADR-0007,
+   addendum 2026-09-22 SC-3-02 point 1); `404` before `409`. `model_type` stays immutable (point 2).
+8. **Price adjustments (bonuses, penalties, scope changes) — D-3, resolved: variant C** (D-2 moot):
+   outside SC-4-02, to a separate Issue; the answer names explicitly in `assumptions_used` that
+   adjustments are not included, and the result is described as "the agreed price", not "price +
+   approved adjustments". Direction for the adjustments task: separate rows (not JSON — "Rozważane
+   alternatywy"), the sign expressed by the kind of adjustment and a non-negative amount with a
+   `CHECK` in the database; approving an adjustment is a concept distinct from approving the scenario
+   and requires a decision on the permission (ADR-0005).
+9. **Milestones — D-1, resolved: variant A** — only the price of the whole project; milestones
+   deferred together with the allocation of revenue to periods ("Odłożone").
+
+**Deferred by this entry:** milestones, separately paid scope changes, allocation of revenue to
+periods, "planned effort and schedule" as contract fields, the frontend displaying and writing the
+Fixed Price rule (until then the card of such a scenario is the named state `unreadable`, ADR-0010
+point 2 — not a screen failure).
+
+**Sync with `main` (2026-09-28, human decision on Issue #66, option A).** #118 (SC-7-03) and SC-4-03
+(Outcome-based) are merged. The Fixed Price migration `b8f2d6a41c93` is re-parented onto the single
+head `c4d7e2a9b1f6` and recreates `model_type_known` with the full list (`time_and_material`,
+`story_points`, `outcome_based`, `fixed_price`; SC-4-03 addendum, point 10c); its `downgrade`
+restores exactly the list `b9e3c7a1f264` (SC-4-03) created. The revision of point 1 above is a
+record of 2026-09-25 and is superseded by this paragraph for the migration order and the `IN` list.
+Fixed Price joins the registries next to Outcome-based and follows its patterns where they
+post-date this entry: the details row is read by the calculator by the rule's id (as
+`_outcome_details_of`), the copy remaps `scope_ref` (SC-4-05) identically for every model, and the
+price edit targets the whole-scenario rule (`scope_ref IS NULL`).
+
+| Control | Acceptance criterion |
+|---|---|
+| FP-1 | The Fixed Price revenue equals the agreed price and does not change after a change of the allocation, `billable_hours`, the catalogue or the personnel cost (AC-07: 150000 stays 150000 at a cost of 100000→120000); the same run for a twin T&M scenario changes the revenue. |
+| FP-2 | A Fixed Price details row for a T&M rule and a `tm_terms` row for a Fixed Price rule are refused by the database by the composite foreign key; a price below the lower bound is refused by the `CHECK`. |
+| FP-3 | A Fixed Price rule without a details row → `incomplete_commercial_terms` with the amount `"n/a"`; price currency ≠ `scenarios.currency` → `currency_mismatch`. |
+| FP-4 | The Fixed Price formula module does not import (at any depth) the T&M formula module, `app.data.rate_windows` or any cost path. |
+| FP-5 | The T&M rule/revenue response byte for byte unchanged; `GET …/results` and `GET …/scenarios/compare` for a Fixed Price scenario (draft and approved) answer `200`, not `409`. |
+| FP-6 | The `assumptions_used` of the Fixed Price revenue reports `model_type = fixed_price`, `rate_source = fixed_price_terms`, `hours_source = not_applicable`, `vendor_axis = not_applicable`, `price_basis = agreed_price`, `price_adjustments = not_included` (adjustments explicitly not included, point 8), empty `rate_windows` and `unresolved_months`, and a field set exactly equal to `FP_ASSUMPTIONS_FIELDS` (the fields listed plus `currencies`) — identically for a draft and for an approved scenario. Test: `backend/tests/test_fixed_price_revenue.py` — the helper `_assert_fixed_price_revenue_fields` called in `test_k_07_the_fixed_price_payload_carries_no_cost_field_on_the_write_and_on_the_read` and `test_k_07_results_compare_and_what_if_of_a_draft_fixed_price_scenario_answer_its_revenue` (draft); for an approved one `test_k_07_an_approved_fixed_price_scenario_answers_results_and_compare_with_the_same_price` (`rate_source == fixed_price_terms` after approval and equality of the whole revenue, `assumptions_used` included, with the draft revenue before approval). Mutation the control kills: the Fixed Price `rate_source` derived from the scenario status (`live_catalog`/`approved_snapshot`). |
+
+### 2026-09-28 — the race guard also includes a revenue with a draft edit path; `fixed_price_terms` in the revenue `rate_source` list (SC-4-02, Issue #66)
+
+> Human decision 2026-09-28 on Issue #66, option A: the Fixed Price revenue returns to component
+> (a) of the ADR-0015 race guard. The rule itself is in ADR-0015 (addendum 2026-09-28). This entry
+> records the deviation from the wording of this ADR, as the last sentence of point 10 of the
+> SC-4-03 addendum requires. The text of earlier entries stays unchanged.
+
+1. **Amends the SC-4-03 addendum (points 8, 10a and 12b) and the SC-7-03 addendum (point 2).**
+   These points say the guard includes a revenue "only when its source is status-dependent". From
+   now on they read: the guard includes a revenue whose `rate_source` is status-dependent
+   (`STATUS_DEPENDENT_SOURCES`), **or** whose rule rows have a draft edit path (ADR-0015, addendum
+   2026-09-28). Unchanged:
+   - A model without a catalogue still uses a value outside `STATUS_DEPENDENT_SOURCES` (point 10a).
+   - That set keeps its meaning and contents.
+   - `rate_source` is still never compared across the revenue and cost vocabularies (SC-7-03
+     addendum, point 2).
+   - Rule 10 of the Guardian still applies (SC-7-03 addendum, point 3).
+2. **The per-model list of revenue `rate_source` values (SC-7-03 addendum, point 1) gets a new
+   entry:** Fixed Price reports `fixed_price_terms`, which is the rule's own data, with no
+   catalogue and no snapshot, and is the same for a draft and for an approved scenario (SC-4-02
+   addendum, points 5 and 6). It is outside `STATUS_DEPENDENT_SOURCES`. It still enters the guard
+   because of the draft price edit (SC-4-02 addendum, point 7).
+3. **O-5 and O-11 are not affected.** Story Points and Outcome-based have no draft edit path, so
+   they stay outside the guard. FP-5 and FP-6 are unchanged.
+
+### 2026-09-28 — Fixed Price after the gate-2 review (SC-4-02, Issue #66)
+
+> Human decisions of 2026-09-28 on Issue #66 ("Human decisions after the Reviewer STOP"). They
+> supplement the SC-4-02 addendum. Its text stays unchanged. Where they differ from it, these
+> points govern.
+
+1. **R-02 — the downgrade of the Fixed Price migration does not delete rules.** If Fixed Price
+   rules exist, the downgrade fails loudly on the narrowed `CHECK model_type_known`, as the
+   SC-4-03 and SC-4-04 migrations do. This supersedes any reading of the SC-4-02 addendum
+   (including the 2026-09-28 sync paragraph) under which the downgrade deletes Fixed Price rules
+   or their details rows.
+2. **R-03 — editing a segment-scoped Fixed Price rule (`scope_ref IS NOT NULL`) is out of
+   scope.** The price edit (SC-4-02 addendum, point 7) is refused before any write when the
+   scenario's Fixed Price rule is not uniquely the whole-scenario rule. Editing segment-scoped
+   rules belongs to the task that exposes `scope_ref` in the API (SC-4-03 addendum, point 13d).
+3. **R-05 — the Fixed Price read shape of the commercial rule carries `outcome_terms: null`**,
+   like the other models. This keeps the frontend contract rule that its fields are required,
+   not optional (SC-4-07 addendum, point 11).
+4. **R-04 — correction to "Deferred by this entry" in the SC-4-02 addendum.** Until #113, a project
+   with a Fixed Price scenario makes the **whole Compare screen** `unreadable`, not only that
+   scenario's card. The card and `/results` behave as the entry states.
+5. **R-07 (option A) — known gap, owed by the task that exposes `scope_ref` in the API.**
+   Suppose another transaction commits a segment rule while a Fixed Price price edit waits on
+   the scenario row lock. The edit's `NOT EXISTS (another rule)` predicate does not see that
+   rule: under READ COMMITTED the sub-select keeps the statement snapshot, and EvalPlanQual
+   re-checks only the locked rows. The edit lands. The read after commit then raises
+   `MultipleCommercialRulesNotSupported`, so the client gets `500` for a write that landed. The
+   data stays consistent. Today this is reachable only through writes in the data layer, since no
+   request schema carries `scope_ref`. The fix belongs to that future task. It can re-check
+   "exactly one rule" in the same transaction before `commit()`. Or it can build the view after
+   commit without the single-row assumption of `_rule_of`.

@@ -55,7 +55,9 @@ immutable `ScenarioStatus` inside their own call, right after that call's own `s
 fixed in SC-4-03):
 
 - **(a)** the revenue depends on the status (`revenue.assumptions_used.rate_source` ∈
-  `STATUS_DEPENDENT_SOURCES`) **and** `s_P ≠ s_K`; or
+  `STATUS_DEPENDENT_SOURCES`) — or its rule rows have a draft edit path
+  (`DRAFT_EDITABLE_RULE_SOURCES`: Fixed Price, ADR-0015, addendum 2026-09-28 (SC-4-02)) — **and**
+  `s_P ≠ s_K`; or
 - **(b)** `s_K ≠ s_D`, whatever the revenue's model: `s_D` is what the shared `Scenario` carries
   after the last refresh on this path — serialised as `scenario_status`, branched on by what-if —
   and the personnel cost always depends on the status.
@@ -101,7 +103,8 @@ rarer risk than R-01's status flip, out of this fix's declared scope.
 
 **Never imports `app.domain.revenue*`, `app.domain.personnel_cost` or `app.domain.additional_cost`
 beyond the *answer* types the three already export for exactly this composition** (and, since
-SC-4-03, `STATUS_DEPENDENT_SOURCES`, by which the guard classifies the revenue) — no rate window, no
+SC-4-03, `STATUS_DEPENDENT_SOURCES`, and since SC-4-02 `DRAFT_EDITABLE_RULE_SOURCES`, by which the
+guard classifies the revenue) — no rate window, no
 catalogue row and no SQL predicate of its own. The formula itself lives in
 `app.domain.scenario_results`, not here (this module has no `Decimal` arithmetic of its own).
 """
@@ -116,7 +119,11 @@ from app.data.additional_cost import additional_costs_for_caller
 from app.data.commercial_terms import commercial_terms_for_caller
 from app.data.personnel_cost import ScenarioCostView, scenario_cost_for_caller
 from app.domain.additional_cost import AdditionalCostAnswer
-from app.domain.revenue import STATUS_DEPENDENT_SOURCES, RevenueAnswer
+from app.domain.revenue import (
+    DRAFT_EDITABLE_RULE_SOURCES,
+    STATUS_DEPENDENT_SOURCES,
+    RevenueAnswer,
+)
 from app.models.scenario import Scenario, ScenarioStatus
 
 
@@ -183,7 +190,10 @@ def refuse_a_status_race(
       `rate_source` wybrane ze statusu, więc zostaje w porównaniu (kontrola A15-9). **Warunek
       ważności zwolnienia** (reviewer R-06): wiersze `story_points_terms`/`outcome_terms` nie mają
       ścieżki edycji w wersji roboczej — zadanie, które ją doda, musi przywrócić ten przychód do (a)
-      albo dostarczyć inny dowód (ADR-0015, aneks SC-7-03, pkt 2);
+      albo dostarczyć inny dowód (ADR-0015, aneks SC-7-03, pkt 2). Fixed Price is that task
+      (SC-4-02, `PATCH …/commercial-terms`): its `fixed_price_terms` revenue is in
+      `DRAFT_EDITABLE_RULE_SOURCES` and is therefore compared under (a) like a status-dependent one
+      (ADR-0015, addendum 2026-09-28 (SC-4-02); `tests/test_fixed_price_race.py`);
     - **(b)** `s_K ≠ s_D`, for every model: `s_D` is the status the shared `Scenario` carries after
       the last refresh (`scenario_status`, what-if's `draft` check and `_worked_months`), and the
       personnel cost always depends on the status (reviewer R-01 of SC-7-03, point 8).
@@ -191,9 +201,10 @@ def refuse_a_status_race(
     Jedna funkcja dla `/results`/`/compare` i dla what-if (`app.data.scenario_what_if`), wołana po
     trzecim odczycie — dwie kopie porównania już raz się rozjechały (Issue #118).
     """
-    status_dependent_revenue_moved = (
-        revenue_source in STATUS_DEPENDENT_SOURCES and revenue_status != cost_status
+    revenue_is_status_compared = (
+        revenue_source in STATUS_DEPENDENT_SOURCES or revenue_source in DRAFT_EDITABLE_RULE_SOURCES
     )
+    status_dependent_revenue_moved = revenue_is_status_compared and revenue_status != cost_status
     cost_and_reported_status_disagree = cost_status != additional_cost_status
     if status_dependent_revenue_moved or cost_and_reported_status_disagree:
         raise ScenarioResultsRaceDetected(

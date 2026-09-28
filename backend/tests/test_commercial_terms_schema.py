@@ -4,14 +4,14 @@ Every write here goes through the ORM or raw SQL, never through a request schema
 is that the **database** refuses a details row of the wrong model, so a path through Pydantic would
 prove only that Pydantic refused first.
 
-**How a mismatch is staged, and why it has to be staged.** Today the discriminator CHECK on
-`commercial_terms` admits `time_and_material` alone (ADR-0003, point 2), so a rule of another model
-cannot exist yet — and a T&M details row pointing at a T&M rule is, correctly, accepted. The case
-the composite foreign key exists for is the day a second model lands: its migration widens the
-CHECK, and from then on a Fixed-Price rule can exist and a *T&M* details row must still be unable to
-point at it. The test reproduces exactly that step inside its own transaction — it drops the CHECK,
-as the next model's migration will widen it — and rolls it back with the test. What refuses the
-mismatched row is then asserted **by constraint name**, so the refusal cannot be the CHECK on
+**How a mismatch is staged.** The discriminator CHECK on `commercial_terms` admits
+`time_and_material`, `story_points` (SC-4-04), `outcome_based` (SC-4-03) and `fixed_price` (SC-4-02)
+(ADR-0003, point 2), so a rule of another model can exist, and a *T&M* details row must still be
+unable to point at it — a T&M details row pointing at a T&M rule is, correctly, accepted. The test
+was written when the CHECK admitted `time_and_material` alone, so it still drops the CHECK inside
+its own transaction before inserting the Fixed-Price rule (rolled back with the test); with
+`fixed_price` now admitted, that step is no longer needed for the insert to succeed. What refuses
+the mismatched row is then asserted **by constraint name**, so the refusal cannot be the CHECK on
 `tm_terms` (which refuses a different row) or anything else that happened to fail.
 
 Real PostgreSQL, real migration (ADR-0001).
@@ -57,11 +57,15 @@ MIGRATION_PATH = (
 # The newest migration recreating `ck_commercial_terms_model_type_known` with the full `IN` list
 # (ADR-0003, addendum 2026-09-25 SC-4-03, point 10c). The next commercial model repoints this path
 # at its own migration; that model's schema test pins the history through its downgrade.
+# Repointed by SC-4-02 from `b9e3c7a1f264` (SC-4-03) to `b8f2d6a41c93` (Fixed Price) at the sync of
+# 2026-09-28 — the block-4 rule of the human decision of 2026-09-25 on Issue #66; `b9e3c7a1f264`
+# stays compared with what it itself created (`tests/test_outcome_terms_schema.py`,
+# `MODEL_TYPES_OF_THIS_MIGRATION`).
 LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH = (
     Path(__file__).resolve().parents[1]
     / "migrations"
     / "versions"
-    / "b9e3c7a1f264_create_outcome_terms_and_widen_the_model_type_check.py"
+    / "b8f2d6a41c93_create_fixed_price_terms.py"
 )
 
 
@@ -138,7 +142,7 @@ def test_k_04_the_details_row_cannot_claim_another_model_and_a_rule_cannot_name_
 
     - a `tm_terms` row saying `fixed_price` is refused by `ck_tm_terms_model_type_is_tm` — without
       it, a details row could agree with a Fixed-Price rule by *claiming* to be one;
-    - a rule naming a model with no details table is refused by
+    - a rule naming a model with no details table (`not_a_model`) is refused by
     `ck_commercial_terms_model_type_known`
       (ADR-0003, point 2: a discriminator value without a details table is a rule nothing can
       price).
@@ -160,16 +164,18 @@ def test_k_04_the_details_row_cannot_claim_another_model_and_a_rule_cannot_name_
         "ck_tm_terms_model_type_is_tm",
     )
 
-    # 'fixed_price' — a model not yet in `MODEL_TYPES` (SC-4-04 adds 'story_points' as a real one;
-    # 'fixed_price' stays the file's placeholder for "a model this codebase has no table for" — the
-    # test above (a `tm_terms` row of another model's rule) uses the same value).
+    # 'not_a_model' — a value that will never be a real model. The placeholder for "a model with no
+    # details table" used to be 'fixed_price', but SC-4-02 made it real (it is in the CHECK), and
+    # SC-4-03 did the same with 'outcome_based' — so the placeholder cannot be the name of any F-06
+    # model. The first half of the test (a `tm_terms` row claiming 'fixed_price') deliberately stays
+    # with a real, different model: that is exactly the case the CHECK on `tm_terms` guards against.
     other = make_scenario(db_session, scenario.project, name="Variant")
     with pytest.raises(IntegrityError) as unknown_model:
         with db_session.begin_nested():
             db_session.execute(
                 sa.text(
                     "INSERT INTO commercial_terms (id, scenario_id, model_type)"
-                    " VALUES (gen_random_uuid(), :scenario_id, 'fixed_price')"
+                    " VALUES (gen_random_uuid(), :scenario_id, 'not_a_model')"
                 ),
                 {"scenario_id": other.id},
             )
@@ -230,7 +236,8 @@ point 2: "every later model widens this CHECK in the migration that creates its 
 purpose from the day a second model lands, which says nothing about either being wrong. The live
 drift guard going forward is the copy in the newest migration recreating the CHECK
 (`LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` — `b9e3c7a1f264` since SC-4-03 was linearised on top of
-SC-4-04), asserted against the model below."""
+SC-4-04, `b8f2d6a41c93` since SC-4-02 was re-parented on top of `main` on 2026-09-28), asserted
+against the model below."""
 
 
 def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:

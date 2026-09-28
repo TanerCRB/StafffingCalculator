@@ -337,9 +337,23 @@ def test_the_request_carries_nothing_but_the_model(client: TestClient, db_sessio
     for body in (
         {**TM, "hourly_rate": "250.00"},
         {**TM, "hours_per_billable_day": "8"},
-        {"model_type": "fixed_price"},
         {},
     ):
         response = client.post(path, json=body, headers=as_caller(IN_SCOPE_USER))
         assert response.status_code == 422, (body, response.text)
+
+    # The placeholder model MUST NOT be the name of any F-06 model (neither a current nor a future
+    # one — `outcome_based` became real with SC-4-03). Until SC-4-02 this was `fixed_price` — once
+    # FP became a real model, the 422 came from the missing `agreed_price`/currency, and the proof
+    # "unknown model → 422" silently disappeared. That is why the assertion requires the refusal by
+    # the discriminator (`union_tag_invalid`) on the `model_type` field, not just the 422 status — a
+    # regression to the "missing field" reason fails this test.
+    unknown_model = {"model_type": "not_a_model"}
+    response = client.post(path, json=unknown_model, headers=as_caller(IN_SCOPE_USER))
+    assert response.status_code == 422, response.text
+    errors = response.json()["detail"]
+    assert [error["type"] for error in errors] == ["union_tag_invalid"], response.text
+    assert errors[0]["ctx"]["discriminator"] == "'model_type'", response.text
+    assert errors[0]["input"]["model_type"] == "not_a_model", response.text
+
     assert _count_rules(db_session) == 0

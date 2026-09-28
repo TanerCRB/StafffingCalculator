@@ -325,3 +325,72 @@ porównuje wartości dwóch odrębnych słowników (ADR-0003, aneks SC-7-03, pkt
 | A15-7 | Zatwierdzenie wprowadzone realną współbieżnością między odczytem kosztu a odczytem kosztu dodatkowego daje `409` na `…/results` i what-if dla scenariusza T&M i dla scenariusza z przychodem niezależnym od statusu — nigdy `200` z hipotezą na migawce ani z `scenario_status` niezgodnym ze statusem, przy którym policzono koszt. |
 | A15-8 | Przychód niezależny od statusu (Story Points, Outcome-based): zatwierdzenie wprowadzone realną współbieżnością między odczytem przychodu a kosztu daje na `…/results` `200` z kosztem z migawki, `scenario_status: "Approved"` i spójnym zyskiem, a na what-if `404` z treścią "poza zasięgiem". |
 | A15-9 | Scenariusz bez reguły komercyjnej (`no_commercial_terms`, `rate_source` przychodu wybrane ze statusu): zatwierdzenie wprowadzone realną współbieżnością między odczytem przychodu a kosztu daje `409` — mutacja klasyfikująca odpowiedź bez modelu jako niezależną od statusu (np. klasyfikacja po `model_type` zamiast `rate_source`) jest zabijana. |
+
+### 2026-09-28 — Fixed Price revenue returns to component (a): status-independent source, but a draft edit path (SC-4-02, Issue #66)
+
+> Human decision 2026-09-28 on Issue #66, option A. This entry applies the validity condition of
+> the exemption from (a) (SC-7-03 addendum, point 2, R-06) and the classification duty of point 7 of
+> that addendum. The text of earlier entries stays unchanged.
+
+**Rationale.** SC-4-02 adds the revenue `rate_source = fixed_price_terms`
+(`app.domain.revenue.RATE_SOURCE_FIXED_PRICE_TERMS`). The price is the scenario's own data and is
+not chosen from the status (ADR-0003, SC-4-02 addendum, points 5 and 6). SC-4-02 also adds a draft
+price edit (`PATCH`, D-6 = A, ADR-0007 marker, `approved` refused in the same statement). That
+edit breaks the premise of the exemption: "the same before and after approval" held for
+`story_points_terms`/`outcome_terms` only because their rows cannot be edited in a draft. Without
+(a), the sequence "revenue read (draft) → price edit → approval → cost read" answers `200` with
+`scenario_status: "Approved"` and a price the approved scenario never had.
+
+**Decision.**
+
+1. **Component (a) now covers two classes of revenue:**
+   - **T&M, and every answer whose `rate_source` is chosen from the status** (`live_catalog`,
+     `approved_snapshot`; `no_commercial_terms`, `unsupported_model_type`, incomplete T&M): the
+     source depends on the status, so (a) applies unchanged.
+   - **Fixed Price** (`fixed_price_terms`): the source does not depend on the status, but the
+     rule rows have a draft edit path. The validity condition of the exemption is not met, so (a)
+     applies.
+
+   Story Points and Outcome-based stay exempt from (a). Their validity condition still holds.
+2. **Classification of `fixed_price_terms` (point 7):** it is **outside**
+   `STATUS_DEPENDENT_SOURCES` (the value is not chosen from the status) and it is **inside
+   component (a)** (the value can change in a draft).
+3. **Mechanism: a separate, named set of revenue `rate_source` values, not a wider
+   `STATUS_DEPENDENT_SOURCES`.** Component (a) applies when `rate_source` ∈
+   `STATUS_DEPENDENT_SOURCES` ∪ *(separate set)* **and** `s_P ≠ s_K`. The developer names the set.
+   Why it is separate:
+   - `STATUS_DEPENDENT_SOURCES` keeps one meaning: "values chosen from the status".
+   - The two reasons for being in (a) can be revisited independently.
+   - The classification stays by `rate_source`, not by `model_type` (point 2 (i)/(ii) of the
+     SC-7-03 addendum).
+   - The Fixed Price revenue does not read the status (rule 10 of the Guardian; ADR-0003, SC-7-03
+     addendum, point 3). Control FP-6 still holds: the `rate_source` of the answer is
+     `fixed_price_terms` in both states.
+
+   The rule still lives in one place (`refuse_a_status_race`, point 4). The named failure direction
+   of point 2 still applies: a new value outside both sets is treated as exempt.
+4. **Effect on the table of point 5:** Fixed Price behaves like T&M. An approval between any two
+   reads gives `409` on what-if. On `…/results`, an approval between the revenue read and the cost
+   read gives `409`, not `200`. A15-8 does not apply to Fixed Price.
+5. **Evidence:** the Fixed Price race tests for `…/results` and for what-if in `backend/tests/…`
+   (written in SC-4-02). Each uses real concurrency on two connections, between the revenue read
+   and the cost read. They must kill the mutation "Fixed Price outside (a)". The exact test ids go
+   into the capabilities registry at gate 3.
+6. **Unchanged:**
+   - The behaviour of T&M, Story Points and Outcome-based (A15-1…A15-9).
+   - Component (b).
+   - The meaning and contents of `STATUS_DEPENDENT_SOURCES`.
+   - The steady state of K-07/FP-5: a Fixed Price draft or approved scenario gets `200` on
+     `…/results` and `…/compare`. What-if on an `approved` scenario gets `404` (point 5).
+7. **When this must be revisited:**
+   - **Story Points or Outcome-based gains a draft edit or delete path.** That task adds its value
+     to the separate set, or it provides another consistency proof.
+   - **Fixed Price loses its edit path.** Removing it from the set then needs a dated addendum.
+   - **Fixed Price gains another draft-editable input to its revenue** (for example the price
+     adjustments of D-3 = C). It stays covered only while `rate_source` is still
+     `fixed_price_terms`.
+
+| Control | Acceptance criterion |
+|---|---|
+| A15-10 | Fixed Price scenario: an approval committed by real concurrency on two connections between the revenue read and the cost read gives `409` with the unchanged generic body on `…/results` and on what-if (on what-if `409`, not `404`). A mutation that exempts `fixed_price_terms` from (a) is killed. |
+| A15-11 | `STATUS_DEPENDENT_SOURCES` equals `{live_catalog, approved_snapshot}`. Fixed Price `assumptions_used.rate_source` is `fixed_price_terms` for a draft and for an approved scenario. `…/results` and `…/compare` of a Fixed Price scenario (draft and approved) with no concurrent approval answer `200`. |

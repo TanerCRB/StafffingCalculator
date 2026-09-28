@@ -2437,4 +2437,144 @@ history / this file's own change log, not as tracked product work.
   czeka SC-8-02+ — `ALTER TYPE ... ADD VALUE` wymaga osobnej migracji przed pierwszym writerem
   nowej wartości). Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-4-02** — Calculate the Fixed Price revenue of a scenario (F-06.2, AC-07, revenue
+  part). Written as the second model in the revenue dispatcher after T&M (SC-4-01, PR #64); after
+  the sync with `main` of 2026-09-28 it joins T&M, Story Points (SC-4-04) and Outcome-based
+  (SC-4-03).
+  *Done when:* `backend/tests` prove criteria K-01, K-02, K-05..K-07 (analyst round 2, gate 1
+  accepted 2026-09-25; K-03/K-04 dropped with D-3 = C):
+  1. (K-01) AC-07, revenue part: a price of 150000 PLN → a revenue of 150000 PLN before and after a
+     staffing change that raises the personnel cost from 100000 to 120000 PLN (the test measures
+     the cost change as a precondition); the same change on a twin T&M scenario changes the
+     revenue; a catalogue gap does not block the FP revenue; the FP formula module imports neither
+     the T&M formula, nor `app.data.rate_windows`, nor the cost path, at any depth.
+  2. (K-02) The price belongs to exactly one scenario: two FP scenarios of one project read their
+     own prices; a project copy and a scenario duplicate (SC-6-01) carry the rule and the details
+     with new ids, with an equal price and currency; editing the copy does not change the source.
+  3. (K-05) Creation with a price and the price edit are refused under `approved` in the write
+     statement (a two-connection race test per path), `404` out of scope before `409`, FP without a
+     price → `422`, a stale `updated_at` → `409` distinguishable from the `409 approved`;
+     `test_commercial_terms_access.py::test_the_request_carries_nothing_but_the_model`
+     re-armed (not weakened): the placeholder body `{"model_type": "fixed_price"}` replaced with
+     `{"model_type": "not_a_model"}` with an assertion of the discriminator refusal
+     (`union_tag_invalid`) — with a real FP the old body got a `422` for the missing
+     `agreed_price`, silently losing the proof "unknown model → `422`".
+  4. (K-06) The shape is enforced by the database: the composite rule/details type FK, the price
+     `CHECK` `>= 0`, the names of the existing constraints survive the migration; missing details →
+     `incomplete_commercial_terms` (`"n/a"`, never `0`); price currency ≠ `scenarios.currency` →
+     `currency_mismatch`.
+  5. (K-07) `GET …/results` and `…/scenarios/compare` for an FP scenario (`draft` and `approved`)
+     and what-if for an FP scenario in `draft` → `200`, revenue equal to the `commercial-terms`
+     answer (what-if for `approved` stays `404` per SC-6-04, ADR-0015 point 5 — wording corrected
+     2026-09-25); no cost field (field-set equality); the T&M response byte for byte unchanged.
+     The FP revenue's `assumptions_used` reports `model_type = fixed_price`,
+     `rate_source = fixed_price_terms`, `hours_source = not_applicable`,
+     `vendor_axis = not_applicable` and `price_adjustments = not_included`, identically for `draft`
+     and `approved` (control FP-6 of ADR-0003; `test_fixed_price_revenue.py`:
+     `_assert_fixed_price_revenue_fields` and the K-07 tests calling it, and
+     `test_k_07_an_approved_fixed_price_scenario_answers_results_and_compare_with_the_same_price`) —
+     this test kills an FP `rate_source` derived from the scenario status
+     (`live_catalog`/`approved_snapshot`). **Race (decision of 2026-09-28):** an approval landing
+     between the FP revenue read and the cost read → `409` on `…/results` and on what-if (never
+     `200` "Approved" with the draft's price, never the what-if `404`); without the interleaving an
+     FP draft answers `200` on both — `test_fixed_price_race.py`:
+     `test_k_07_an_approval_raced_between_the_fixed_price_revenue_and_cost_reads_is_a_409`
+     (`results`/`what_if` × both personnel-cost permission sets),
+     `test_k_07_contrast_no_approval_in_flight_a_fixed_price_draft_answers_200` and
+     `test_k_07_fixed_price_terms_is_classified_as_status_compared_and_nothing_else_moves`.
+
+  **Gate 1 decisions (2026-09-25, analyst + architect, accepted by the human — all as
+  recommended):** D-1 = A (only the price of the whole project, milestones deferred); D-3 = C
+  (price adjustments outside the task, Issue #112; the answer says explicitly that adjustments are
+  not included; D-2 moot); D-4 = C at gate 1, revised below; D-5: price `CHECK` `>= 0` (AC-05
+  reachable for FP); D-6 = A (price edit in a draft with the ADR-0007 marker and the `approved`
+  guard). **D-4 revision (2026-09-25, human decision after the merge of SC-4-04, Issue #66;
+  supersedes the earlier revision from the block-4 coordination, Issue #67):** FP reports
+  `rate_source = fixed_price_terms`, `hours_source = not_applicable`,
+  `vendor_axis = not_applicable` — following `story_points_terms` from SC-4-04; the value
+  `not_used` is not introduced. An FP response class of its own, chosen by the `model_type`
+  discriminator (`fixed_price_terms` does not enter the shared T&M/SP `Literal`). SC-4-02 no longer
+  waits for SC-4-03 (#67): FP migration `b8f2d6a41c93` after `d2f6a91c4b58`, `CHECK
+  model_type_known` = (`time_and_material`, `story_points`, `fixed_price`); SC-4-03 rebases later.
+  **Dependency:** the `/results`/what-if race guard today compares `rate_source` and gives `409`
+  for every model with a `rate_source` outside the catalogue (a defect already on `main` for SP); the
+  fix in a separate Issue #118 (comparing the scenario status, ADR-0015 addendum) — SC-4-02 depends
+  on the merge of #118. K-07 unchanged. Re-arming (not weakening) three existing tests — the
+  placeholder model replaced with a value that is never a model (`not_a_model`); the exact set of
+  models widened with `fixed_price` — accepted:
+  `test_commercial_terms_schema.py::test_k_04_the_details_row_cannot_claim_another_model_and_a_rule_cannot_name_an_unknown_one`,
+  `test_story_points_revenue.py::test_k_03_the_registries_are_keyed_by_exactly_the_two_real_models`,
+  `test_story_points_revenue.py::test_k_03_unsupported_model_type_and_copy_refusal_still_correct_with_two_real_models`;
+  the fourth — `test_the_request_carries_nothing_but_the_model` — in K-05.
+  The drift guard
+  `test_commercial_terms_schema.py::test_the_model_and_the_migration_agree_on_every_sql_expression`
+  re-armed (not weakened): the SC-4-01 migration is compared with what it itself created, the
+  agreement of the model with the database is checked by the test of the newest migration — one
+  rule for block 4, re-armed by the task that lands first. Re-arming (not weakening) the field sets
+  in `test_commercial_terms_access.py` with the FP fields — accepted (precedent SC-5-06).
+  Architect: ADR-0003 and ADR-0004 addenda (2026-09-25, SC-4-02) accepted; no `adr-deviation`.
+
+  **Sync with `main` (2026-09-28, human decision on Issue #66, option A):** #118 (SC-7-03) and
+  SC-4-03 are merged. Migration `b8f2d6a41c93` re-parented onto the single head `c4d7e2a9b1f6`;
+  `CHECK model_type_known` = (`time_and_material`, `story_points`, `outcome_based`,
+  `fixed_price`), `downgrade` restores exactly the list `b9e3c7a1f264` (SC-4-03) created. Under the
+  block-4 drift-guard rule, `LATEST_MODEL_TYPE_CHECK_MIGRATION_PATH` in
+  `test_commercial_terms_schema.py` now points at `b8f2d6a41c93`; `b9e3c7a1f264` stays compared with
+  its own list. The registry drift guard keeps its `main` name
+  `test_k_03_the_registries_are_keyed_by_exactly_the_two_real_models` (SC-4-04's mutation-log row
+  in `capabilities.md` refers to it; the earlier rename to `..._three_real_models` was dropped), its
+  exact set widened to the four models.
+
+  **Race-guard classification (2026-09-28, human decision on Issue #66, option A, after the STOP
+  on ADR-0015's R-06 validity condition):** the FP rule rows have a draft edit path (D-6 = A), so
+  the exemption of a status-independent revenue from component (a) of the race guard does not
+  apply to FP. `fixed_price_terms` is classified in a separate set,
+  `app.domain.revenue.DRAFT_EDITABLE_RULE_SOURCES` (not a widening of `STATUS_DEPENDENT_SOURCES`),
+  and `app.data.scenario_results.refuse_a_status_race` — the one guard of `/results`, `/compare`
+  and what-if — compares the status for a revenue in either set. The FP answer keeps
+  `rate_source = fixed_price_terms`; T&M, Story Points and Outcome-based behaviour is unchanged.
+  ADR-0015, addendum 2026-09-28 (SC-4-02) — drafted by the Architect.
+
+  **Post-review decisions (2026-09-28, human, Issue #66):**
+  - R-01 — `_view_of` reads the FP price once and prices the revenue from the same value it states
+    as `commercial_terms.agreed_price`; a price edit committed during the read can no longer split
+    the two. Test: `test_fixed_price_review_fixes.py::test_r_01_a_price_edit_committed_during_the_read_cannot_split_revenue_and_agreed_price`.
+  - R-02 — the downgrade of `b8f2d6a41c93` no longer deletes FP rules: with an FP rule present it
+    fails loudly on the narrowed CHECK and loses nothing (the SC-4-03 pattern). Test:
+    `test_fixed_price_schema.py::test_the_fixed_price_migration_downgrade_refuses_while_a_fixed_price_rule_exists`;
+    the no-rule case stays `test_the_fixed_price_migration_downgrades_and_upgrades_again`.
+  - R-03 — the price edit writes only when the whole-scenario FP rule is the scenario's only rule:
+    a whole-scenario rule next to a segment-scoped one → `409` (`CommercialTermsEditAmbiguous`,
+    predicate inside the guarded `UPDATE`), nothing written; an FP rule that is only segment-scoped
+    → `404`, unchanged. Tests:
+    `test_fixed_price_review_fixes.py::test_r_03_the_price_edit_of_a_scenario_with_a_second_segment_rule_is_refused_unwritten`
+    and QA's `test_fixed_price_edit_boundaries.py` (3 tests).
+  - R-05 — the FP rule read shape carries `outcome_terms: null`, like every other model's rule
+    (SC-4-07 point 11); the FP field-set equality in `test_fixed_price_revenue.py`
+    (`FP_TERMS_FIELDS`) is re-armed with the key (still an equality); the T&M response is byte for
+    byte unchanged.
+  - R-06 — the module docstring of `test_fixed_price_guards.py` describes the re-armed
+    `test_the_request_carries_nothing_but_the_model` (`not_a_model` body, `union_tag_invalid`).
+
+  **Out of scope (explicit):** price adjustments (bonuses, penalties, scope changes); milestones;
+  allocation of the revenue to periods (SC-4-05); profit/margin/profit decline of AC-07 (block 7);
+  the FP rule screen and widening the `isRevenueAssumptionsShape` validation — until then FP
+  scenario cards are the named `unreadable` state (ADR-0010 point 2), Issue #113; mixed models per
+  phase/workstream (Issue #65); editing a segment-scoped FP rule (the price edit reaches only the
+  whole-scenario rule, R-03); the Compare screen is `unreadable` for a project with an FP scenario
+  until #113 (R-04); a price edit leaves no author trace — accepted exception (Security 2; the FP
+  write events stay on the deferred `audit_log` list, ADR-0004 FP point 5); R-07 (recorded, not
+  fixed — human decision 2026-09-28): a segment rule committed by another transaction while a price
+  edit waits on the scenario lock is not seen by the edit's `NOT EXISTS` predicate (it keeps the
+  statement snapshot; EvalPlanQual re-checks only the locked rows), so the edit lands and the
+  answer's read then raises `MultipleCommercialRulesNotSupported` (a `500`) — reachable today only
+  through data-layer writes; the task that exposes `scope_ref` in the API fixes it by re-checking
+  "exactly one rule" in the same transaction before `commit()`, or by building the post-commit view
+  without `_rule_of`'s single-row assumption.
+
+  Basis: `Wymagania/Requirements_EN.md` §4 F-06.2, §7 AC-05/AC-07; Issue #66;
+  `ADR-0003-model-modeli-komercyjnych.md` (addendum 2026-09-25 SC-4-02);
+  `ADR-0004-wersjonowanie-kalkulacji.md` (addendum 2026-09-25 SC-4-02); `ADR-0007` (the marker on
+  `commercial_terms`); `docs/PLAN.md` SC-4-01, SC-6-01, SC-7-01.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
