@@ -850,6 +850,145 @@ SC-3-01 pkt 4); model danych — ADR-0003, aneks 2026-09-25 SC-4-03.
    zamraża nic nowego (`rate_source` = `not_applicable` dla outcome, `story_points_terms` dla Story
    Points — ADR-0003, aneks 2026-09-25 SC-4-03 pkt 12).
 
+### 2026-09-27 — SC-8-01 (Issue #14, F-12): pierwsza tabela `audit_log` — kształt, `affected_data` jako referencja, miejsce w mandatowej kolejności transakcji zatwierdzenia (mapa wpływu Architekta, zaakceptowane na bramce 1, 2026-09-27)
+
+Sekcja "Konsekwencje" nazywa potrzebę tabeli `audit_log` od chwili napisania tego ADR. Aneks
+2026-09-18 ("historia zmian… odłożona dla SC-1-02..04") otwiera warunek zamknięcia "blok 8 planu";
+aneksy SC-3-02 pkt 9, SC-4-01 (via ADR-0005, aneks tej daty pkt 9 wyżej — "zamknięcie: osobny ADR
+uwierzytelniania… + blok 8 planu (dla `audit_log`)") i SC-6-01 pkt 5 powtarzają ten sam, wciąż
+niedomknięty warunek dla kolejnych akcji zapisu. SC-8-01 jest pierwszym zadaniem tego bloku i
+pierwszym, które faktycznie tworzy tabelę — dla dokładnie jednej akcji: zatwierdzenia scenariusza
+(`POST .../approve`, `app.data.scenario_approval.approve_scenario`). Domyka dwa pytania, które
+product-owner zostawił architektowi na bramce 1, i jedną lukę, której żaden dotychczasowy aneks nie
+nazwał: gdzie w mandatowej kolejności transakcji zatwierdzenia (aneks 2026-09-22, pkt 4) leży zapis
+audytu.
+
+1. **Kształt: tabela dedykowana zdarzeniom cyklu życia scenariusza, nie ogólna tabela systemowa z
+   polimorficznym odniesieniem do dowolnego zasobu (rozstrzygnięcie bramki 1, opcja B z dwóch
+   przedstawionych przez product-ownera).**
+   a. Uzasadnienie jest zastosowaniem precedensu, którym ten sam ADR posługuje się już dla tabel
+      migawkowych (aneks 2026-09-22 SC-3-02, pkt 3a): "jedna tabela migawkowa na jedną tabelę
+      źródłową… nie jedna generyczna tabela z kolumną `jsonb`… generyczny blob jest skrótem, po
+      który sięgnie następny implementator." Tu przyczyna jest inna — nie precyzja `Decimal`
+      (`audit_log` nie niesie kwot ani godzin) — lecz integralność referencyjna: wiersz z generycznym
+      `resource_type` + `resource_id` (bez klucza obcego, bo cel zmienia się per wiersz) traci
+      gwarancję "zdarzenie wskazuje istniejący zasób", którą PostgreSQL egzekwowałby za darmo
+      (ADR-0001: integralność egzekwowana w bazie, nie tylko w kodzie aplikacji).
+   b. **Rozstrzygnięcie:** `audit_log` niesie dziś wyłącznie kolumny, których wymaga zdarzenie
+      zatwierdzenia scenariusza (referencje do scenariusza i projektu, znacznik czasu, tożsamość
+      wołającego w granicach dzisiejszego placeholdera, `action_type`) i rośnie **przez migrację
+      dodającą kolumny lub wartości nowego kształtu w zadaniu, które wprowadza kolejny typ
+      zdarzenia**, nie przez współdzielony od początku, generyczny kontener zaprojektowany pod akcje,
+      których kształt nie jest dziś znany. To dosłowne zastosowanie wzorca "przypisanie w chwili
+      powstania, rozszerzenie własnym datowanym wpisem później", którym ten ADR posługuje się
+      konsekwentnie od aneksu 2026-09-19 (SC-3-01, pkt 4) po dziś.
+   c. **Kolumna `action_type` jest dopuszczona, o zamkniętym zbiorze wartości dziś jednoelementowym
+      (`scenario_approved`)** — pozwala przyszłemu czytelnikowi historii (SC-8-02) sięgać po jedną
+      tabelę zamiast po `UNION` wielu, bez zmiany schematu przy każdym kolejnym zadaniu opisującym
+      zdarzenie NA TYM SAMYM zasobie (np. przyszła duplikacja scenariusza, jeśli okaże się nieść te
+      same kolumny referencyjne). **Warunek, który następne zadanie musi dowieść, nie założyć:**
+      pierwszy typ zdarzenia dotyczący INNEGO zasobu niż scenariusz (np. edycja wiersza katalogu)
+      wymaga własnego rozstrzygnięcia — nowa tabela, czy nowa nullable kolumna referencyjna tej samej
+      tabeli — i własnego, datowanego wpisu tutaj. Ten aneks tego z góry nie rozstrzyga.
+   d. **Odrzucone:** ogólna tabela od razu, z zestawem nullable kolumn referencyjnych pod wszystkie
+      przewidywane akcje bloku 8 — bo dziś istnieje dokładnie jeden typ zdarzenia, a każda kolumna
+      referencyjna poza tą, którą zatwierdzenie faktycznie wypełnia, byłaby polem zgadywanym pod
+      zadania, których kształt nie jest znany (ten sam argument, którym ten ADR odrzuca spekulatywne
+      pola w tabelach migawkowych).
+
+2. **`affected_data`: referencja (identyfikatory scenariusza i projektu), nigdy kopia opisowa
+   (rozstrzygnięcie bramki 1, opcja A z dwóch przedstawionych przez product-ownera).**
+   a. `scenario_id` i `project_id` są **prawdziwymi kluczami obcymi** do `scenarios(id)`/
+      `projects(id)` — inaczej niż wzorzec tabel migawkowych (aneks 2026-09-22 SC-3-02, pkt 3b:
+      "identyfikator wiersza źródłowego przechowywany jako wartość… nigdy jako klucz obcy").
+      Rozbieżność nazwana wprost, żeby nie wyglądała na przeoczenie: wzorzec migawkowy chroni przed
+      tym, żeby edycja albo skasowanie źródła poruszyło zamrożoną kopię lub zablokowało jej zapis —
+      ale nic w tym systemie nie usuwa wiersza `scenario`/`project` (archiwizacja jest stanem
+      widoczności, nie usunięciem — aneks 2026-09-18 "archiwizacja Projektu", pkt 2). Klucz obcy tu
+      nie grozi ani przemieszczeniem, ani zablokowaniem niczego — daje wyłącznie gwarancję, że
+      zdarzenie audytu nigdy nie wskaże nieistniejącego zasobu, więc korzyść integralności jest
+      czysta, bez kosztu, przed którym ostrzega wzorzec migawkowy. **Warunek ponownego rozpatrzenia:**
+      jeśli kiedykolwiek powstanie twarde usuwanie scenariusza lub projektu, ten punkt wymaga
+      ponownego rozstrzygnięcia zachowania klucza obcego (`ON DELETE RESTRICT` jako domyślne
+      oczekiwanie — historia nie powinna dać się skasować przez skasowanie tego, czego dotyczy).
+   b. **Żadne pole opisowe scenariusza lub projektu (nazwa, właściciel…) nie jest kopiowane do
+      wiersza audytu.** Migawka `approved_snapshot_*` jest już źródłem prawdy o TYM, CO zostało
+      zatwierdzone; drugi zapis tej samej treści w `audit_log` byłby drugą kopią rozstrzygającą to
+      samo pytanie — pierwszym miejscem, w którym dwie kopie mogłyby się rozjechać (ostrzeżenie
+      aneksu 2026-09-19 SC-3-01, pkt 2, zastosowane tu przez analogię). `audit_log` mówi wyłącznie
+      kto/kiedy/jaka-akcja/na-którym-zasobie (zdanie źródłowe sekcji "Konsekwencje"); "co" zostało
+      zatwierdzone jest już w migawce.
+   c. **Kierunek na przyszłość, nazwany a nie zbudowany tutaj:** gdyby historia miała kiedyś pokazywać
+      nazwę scenariusza/projektu z chwili zdarzenia, rozwiązaniem jest złączenie czytelnika historii
+      z bieżącym wierszem projektu/scenariusza (ta sama zasada co pola opisowe Projektu, aneks
+      2026-09-18, grupa 1 — pokazują wartość bieżącą, nie historyczną), nie dodanie kolumny opisowej
+      do `audit_log`. SC-8-01/SC-8-02 nie budują tego mechanizmu; ten punkt istnieje, żeby SC-8-02 nie
+      zaprojektował go w locie.
+
+3. **Miejsce zapisu `audit_log` w mandatowej kolejności transakcji zatwierdzenia — luka w aneksie
+   2026-09-22, pkt 4, domykana teraz.** Ten punkt ("najpierw wiersze migawki, na końcu `UPDATE …
+   status = 'approved'`") nie wspominał audytu, bo `audit_log` wtedy nie istniał.
+   a. **Zapis do `audit_log` należy do TEJ SAMEJ transakcji co migawka i przestawienie statusu —
+      nigdy osobny zapis po commicie.** Ryzyko jest symetryczne i obie połówki są równie szkodliwe:
+      zapis audytu bez powodzenia zatwierdzenia zostawia rekord zdarzenia, które nigdy się nie
+      wydarzyło (zatrucie historii); powodzenie zatwierdzenia bez zapisu audytu odtwarza dokładnie
+      problem, który to zadanie miało rozwiązać (nieodwracalna decyzja bez śladu). Tylko jeden commit
+      na końcu spełnia oba naraz — to samo "wszystko albo nic", którego reguła K-18 tego ADR już
+      wymaga dla migawki.
+   b. **Kolejność: po potwierdzonym przestawieniu statusu, przed `session.commit()` — nie jako
+      siódma CTE `_snapshot_statement` przed przestawieniem statusu, na wzór sześciu istniejących.**
+      Wiersz audytu opisuje zdarzenie "scenariusz X został zatwierdzony", więc jego zapis logicznie
+      następuje PO tym, jak baza w tej samej transakcji faktycznie potwierdziła tę zmianę stanu — nie
+      przed nią, na spekulację że przestawienie się powiedzie. Umieszczenie go przed przestawieniem
+      statusu (jak sześć tabel migawkowych) zostaje odrzucone z innego powodu niż kolejność:
+      migawka broni się przed WYŚCIGIEM z innymi zapisami do dzieci scenariusza pod `approved`
+      (aneks 2026-09-19 SC-3-01, pkt 2) — `audit_log` nie jest dzieckiem scenariusza w tym sensie i
+      nie potrzebuje strażnika `status <> 'approved'`, bo nic poza tą samą transakcją zatwierdzenia
+      nigdy do niego nie pisze.
+   c. **Nie wchodzi do `SNAPSHOT_TABLES` ani do `SCENARIO_CHILD_COPIERS` — brak wpisu jest tu
+      wymagany, nie dozwolony** (wzorem migawki, aneks 2026-09-22 SC-3-02, pkt 2, i wzorem segmentu
+      dostawy, aneks 2026-09-25 SC-1-11, pkt 5). Zdarzenie audytu opisuje jednorazowe działanie
+      człowieka nad TYM konkretnym scenariuszem — kopia scenariusza (duplikacja, F-09) nie
+      "odziedziczyła" tego zatwierdzenia, dokładnie ten sam argument co "Migawka nie jest kopiowana"
+      (aneks 2026-09-18, pkt 3: "kopia nie przeszła tej operacji"). **Kanarek obowiązkowy, analogiczny
+      do "kopia zatwierdzonego scenariusza ma zero wierszy migawkowych":** duplikat scenariusza
+      (zatwierdzonego lub nie) ma zero wierszy `audit_log` wskazujących na siebie jako `scenario_id`
+      kopii — kopiowanie nie replikuje historię, tworzy nową, pustą.
+   d. **Brak nowego strażnika zapisu.** `audit_log` nie ma dziś żadnej ścieżki zapisu poza tą jedną
+      (wewnątrz `approve_scenario`), więc `app.data.scenario_guard` nie zyskuje nowego kształtu.
+
+4. **ADR-0007 (współbieżna edycja): nie dotyczy — nazwane wprost, nie pominięte milcząco.**
+   `audit_log` nie ma ścieżki `UPDATE` ani `DELETE` (append-only z definicji zadania: "dokładnie
+   jeden nowy wiersz"), więc nie ma zgubionej aktualizacji do ochrony i żaden znacznik współbieżności
+   (`updated_at` + `409` na niezgodność) nie jest potrzebny — różni się tym od każdej innej tabeli-
+   dziecka scenariusza wprowadzonej dotąd (SC-3-01, SC-3-03, SC-4-01, SC-5-05), które wszystkie
+   dostały własny znacznik. **Warunek ponownego rozpatrzenia:** gdyby kiedykolwiek powstała ścieżka
+   korygująca błędny wpis audytu — nieprzewidziana i niepożądana przez F-12, bo historia zmian ma
+   być trwała — to pytanie wraca i wymaga własnego aneksu, tu i w ADR-0007.
+
+5. **ADR-0005 (model dostępu): bez zmian, bez nowego uprawnienia dla zapisu.** Zapis do `audit_log`
+   jest efektem ubocznym akcji już bramkowanej `PROJECT_EDIT` (zatwierdzenie), nie osobną akcją
+   użytkownika wymagającą własnej zgody — nikt nie woła zapisu audytu wprost, więc nie ma czynności,
+   której nowe uprawnienie miałoby chronić. Odczyt historii (SC-8-02, poza zakresem tego zadania)
+   wymaga WŁASNEGO rozstrzygnięcia uprawnień — nazwanego już w Issue #14 jako "kontrola dostępu do
+   zasobu historii (F-13) — razem z zadaniem odczytu lub z ADR uwierzytelniania". Ten aneks tego nie
+   rozstrzyga i nie powinien: pisanie i czytanie historii mogą mieć uzasadnienie w różnych kręgach
+   uprawnionych (ten sam argument ziarnistości akcji, aneks 2026-09-18, pkt 1), a SC-8-01 nie
+   wystawia żadnej ścieżki odczytu.
+
+6. **Zasięg (ADR-0001): bez nowej decyzji dla zapisu.** Wiersz `audit_log` opisuje zdarzenie na
+   scenariuszu już rozwiązanym przez `scenario_in_scope`/`project_for_caller` PRZED zapisem (patrz
+   `approve_scenario`) — dokładnie tak jak migawka dziedziczy zasięg scenariusza (ADR-0005, aneks
+   2026-09-22 SC-3-02, pkt 8: "Migawka dziedziczy zasięg scenariusza… mimo że ich treść pochodzi z
+   tabeli organizacyjnej bez zasięgu"). Nic nowego do rozstrzygnięcia dla zapisu; filtr zasięgu dla
+   ODCZYTU historii jest pytaniem SC-8-02, nie tego zadania.
+
+7. **Czego ten aneks nie obejmuje.** Kształt dokładnych kolumn i typów (poza decyzjami 1–2 powyżej),
+   treść pola `action_type` dla akcji innych niż zatwierdzenie, mechanizm odczytu historii i jego
+   uprawnienia (SC-8-02), oraz atrybucja autorstwa wykraczająca poza dzisiejszą tożsamość placeholder
+   (ADR uwierzytelniania) — wszystkie jawnie poza zakresem SC-8-01 (Issue #14, sekcja "Out of
+   scope").
+
 ### 2026-09-27 — rejestr osób poza migawką mimo dziedziczenia; przypisanie osoby jako kolumna grupy 2 (SC-2-06)
 
 > Przyjęty przez człowieka na bramce 1 SC-2-06 (Issue #31), 2026-09-27. Ocena wpływu: `ADR-0019-dane-osobowe-rejestr-osob.md` pkt 7.

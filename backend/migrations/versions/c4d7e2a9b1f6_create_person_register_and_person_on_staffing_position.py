@@ -47,7 +47,7 @@ runs one transaction per migration, so the split buys nothing) — the same name
 a new one.
 
 Revision ID: c4d7e2a9b1f6
-Revises: f1a2c4b6d8e0
+Revises: a1b2c3d4e5f6
 Create Date: 2026-09-27
 """
 
@@ -57,7 +57,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c4d7e2a9b1f6"
-down_revision: str | None = "f1a2c4b6d8e0"
+down_revision: str | None = "a1b2c3d4e5f6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

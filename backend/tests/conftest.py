@@ -49,6 +49,7 @@ from app.models import (  # noqa: E402
     ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
+    AuditLog,
     CatalogCostCategory,
     CatalogDefaultRate,
     CatalogEngagementType,
@@ -249,6 +250,11 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             # DELETE` action, and the rule points at `scenarios` the same way. SC-4-04:
             # `story_points_terms` is the same shape as `tm_terms`, so it goes first too.
             connection.execute(sa.delete(ApprovedSnapshotCatalogDefaultRate))
+            # SC-8-01: the history row, before `scenarios`/`projects` for the same reason as every
+            # other table above — both of its foreign keys are `ON DELETE RESTRICT`, deliberately
+            # (`app.models.audit_log`), so the database refuses to empty either parent while a
+            # history row still names it.
+            connection.execute(sa.delete(AuditLog))
             connection.execute(sa.delete(TmTerms))
             connection.execute(sa.delete(StoryPointsTerms))
             # SC-4-03: szczegóły Outcome-based przed regułą, z tego samego powodu co `tm_terms`.
@@ -744,6 +750,17 @@ def count_snapshot_rows(connection: sa.Connection | Session, scenario_id: uuid.U
         ).scalar_one()
         for model in SNAPSHOT_MODELS
     )
+
+
+def count_audit_log_rows(connection: sa.Connection | Session, scenario_id: uuid.UUID) -> int:
+    """Every `audit_log` row naming one scenario — the count K-01 and its duplication canary read.
+
+    Takes a `Connection` or a `Session` for the same reason `count_snapshot_rows` does: some
+    criteria read committed state from a separate connection, others read it from the same
+    transactional session as the write under test."""
+    return connection.execute(
+        sa.select(sa.func.count()).select_from(AuditLog).where(AuditLog.scenario_id == scenario_id)
+    ).scalar_one()
 
 
 def wait_until_a_lock_request_is_pending(engine: Engine, *, timeout: float = 5.0) -> bool:

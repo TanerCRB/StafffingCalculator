@@ -10,6 +10,7 @@ from app.models.approved_snapshot import (
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
 )
+from app.models.audit_log import AuditActionType, AuditLog
 from app.models.catalog import (
     AbsenceBudget,
     AbsenceType,
@@ -53,6 +54,8 @@ __all__ = [
     "ApprovedSnapshotOrganizationDefaults",
     "ApprovedSnapshotWorkingCalendar",
     "ApprovedSnapshotWorkingCalendarDay",
+    "AuditActionType",
+    "AuditLog",
     "CatalogCostCategory",
     "CatalogDefaultRate",
     "CatalogEngagementType",
