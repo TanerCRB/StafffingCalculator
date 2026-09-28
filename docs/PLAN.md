@@ -2349,7 +2349,7 @@ history / this file's own change log, not as tracked product work.
   bramki kosztu osobowego dowiedziona tylko na fixture (`PLACEHOLDER_PERMISSIONS`). Zob.
   `docs/architecture/capabilities.md`.
 
-- [ ] **SC-8-01** — Zapisz historię zmian przy zatwierdzeniu scenariusza (audit log zatwierdzenia,
+- [x] **SC-8-01** — Zapisz historię zmian przy zatwierdzeniu scenariusza (audit log zatwierdzenia,
   F-12 punkt pierwszy).
   *Done when:* wywołanie `POST /projects/{project_id}/scenarios/{scenario_id}/approve` zapisuje
   dokładnie jeden wiersz w `audit_log` (autor w granicach dzisiejszej tożsamości placeholder, czas,
@@ -2369,5 +2369,26 @@ history / this file's own change log, not as tracked product work.
   **Podstawa:** Issue #14, `Wymagania/Requirements_EN.md` §4 F-12 (punkt pierwszy), §7 AC-10;
   `ADR-0004-wersjonowanie-kalkulacji.md` (sekcja "Konsekwencje", aneksy 2026-09-18, SC-3-02 pkt 9,
   2026-09-27); `ADR-0005-model-dostepu.md` (warunek "ADR uwierzytelniania").
+  **Done 2026-09-28:** PR #151 (scalone `091d5cd`). Dowód: `backend/tests/test_scenario_approval_audit_log.py`
+  (`test_k_01_approving_a_scenario_leaves_exactly_one_audit_log_row`,
+  `test_k_02_each_approvals_row_names_its_own_scenario_not_the_other`,
+  `test_k_03_performed_by_carries_the_identity_the_request_context_carried`,
+  `test_a_duplicated_scenario_carries_zero_audit_log_rows_of_its_own`); migracja
+  `backend/migrations/versions/a1b2c3d4e5f6_create_audit_log.py` — 1036 testów backendu zielono, CI
+  zielone. QA: PASS, cztery mutacje uruchomione i potwierdzone niezależnie (usunięcie zapisu → 4/4
+  czerwone; podmiana `scenario_id` → tylko K-02 czerwony; podmiana `performed_by` → tylko K-03
+  czerwony; fałszywy wpis w `SCENARIO_CHILD_COPIERS` → tylko kanarek czerwony). Invariant Guardian:
+  PASS (pełna zgodność z aneksem ADR-0004 2026-09-27, niezależnie zweryfikowana kod-po-kodzie).
+  Security-auditor: PASS WITH RESERVATIONS — zaakceptowane, nienaprawione: `performed_by` niesie
+  tożsamość z nagłówka żądania bez uwierzytelniania (ryzyko generalne już przyjęte w ADR-0005);
+  błędna atrybucja zapisana dziś pozostanie trwała nawet po przyszłym ADR uwierzytelniania, bo
+  tabela jest append-only bez ścieżki korekty — do uwzględnienia przy projektowaniu SC-8-02; brak w
+  repo rejestru danych osobowych/polityki retencji (luka preegzystująca, nie wprowadzona tym
+  zadaniem). Reviewer: PASS WITH RESERVATIONS — zaakceptowane, nienaprawione: R-01 (low, dwa pliki
+  testowe spoza `committing_client` czyszczą `scenarios`/`projects` własnym wzorcem — dziś
+  nieszkodliwe, mogłyby zawalić teardown w przyszłości przez `ON DELETE RESTRICT`, jeśli któryś
+  zacznie wywoływać `approve`); R-02 (low, pierwsze w repo rozszerzenie zamkniętego enuma migracją
+  czeka SC-8-02+ — `ALTER TYPE ... ADD VALUE` wymaga osobnej migracji przed pierwszym writerem
+  nowej wartości). Zob. `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
