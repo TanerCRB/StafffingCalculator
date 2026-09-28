@@ -966,7 +966,7 @@ history / this file's own change log, not as tracked product work.
   zweryfikowany jako nieszkodliwy — `--frozen-lockfile` przechodzi). Zob.
   `docs/architecture/capabilities.md`.
 
-- [ ] **SC-2-06** — Wprowadź rejestr osób nazwanych i opcjonalne przypisanie osoby do pozycji obsady
+- [x] **SC-2-06** — Wprowadź rejestr osób nazwanych i opcjonalne przypisanie osoby do pozycji obsady
   (F-03 pkt 3, backend; bez stawki indywidualnej, bez ekranu). Osoba nazwana to osobny rekord, nie
   konto użytkownika (decyzja P-2 = a, 2026-09-27) — zadanie nie czeka na ADR uwierzytelniania.
   Blocked by: ocena wpływu na dane osobowe + aneks ADR-0005 (Architekt, przed bramką 1). Kryteria
@@ -989,6 +989,28 @@ history / this file's own change log, not as tracked product work.
   scalona przed ekranem osób); powiązanie z kontem użytkownika (SC-1-12); nieobecności na osobie
   (blok 3); nadalokacja między pozycjami/projektami (§6); osoby poddostawcy (F-03 aneks); integracja
   HR (§6).
+  **Done 2026-09-28:** PR #153 (scalone `5aead82`). Dowód: `backend/tests/test_people_register.py`
+  (K-01 `test_k_01_the_person_row_has_exactly_the_approved_column_set`, K-02
+  `test_k_02_the_person_register_denies_a_caller_holding_every_other_permission`, K-08
+  `test_k_08_correcting_a_persons_name_is_visible_on_an_approved_scenario_without_touching_its_snapshot`,
+  K-09 `test_k_09_a_failed_person_save_does_not_log_the_person_name` z kontrastem
+  `test_k_09_the_contrast_the_driver_error_itself_quotes_the_name`, PD-K8, PD-K9),
+  `backend/tests/test_staffing_person_assignment.py` (K-03..K-07, A5-31-7, PD-K7, A7-31-1..3),
+  `backend/tests/test_people_qa_contrast.py`; migracja
+  `backend/migrations/versions/c4d7e2a9b1f6_create_person_register_and_person_on_staffing_position.py`;
+  decyzje: ADR-0019 + aneksy 2026-09-27/2026-09-28 do ADR-0004/0005/0007/0019 (bramka 1 i decyzje
+  D-1..D-5 po weryfikacji, Issue #31). 1089 testów backendu zielono po scaleniu z `main`, CI zielone.
+  QA: dwie rundy, 48 mutacji (`SC-2-06-M01..M39`) — przeżyły tylko M18 (nieobserwowalna przez HTTP;
+  K-09 dowiedzione na warstwie danych) i M26dr (równoważna po D-1); M26d z rundy 1 przeżyła zestaw
+  developera i została domknięta testem QA. Invariant Guardian: PASS (obie rundy). Security-auditor:
+  PASS (runda 2; B-01 z rundy 1 zamknięte decyzją D-4). Reviewer: zastrzeżenia rundy 1 zamknięte
+  (D-1..D-3), runda 2 R-01/R-03 naprawione, **zaakceptowane, nienaprawione:** R-02 (Low — świeża
+  pozycja ma `updated_at` = `person_assignment_updated_at`, więc klient mylący wartości tokenów nie
+  zobaczy błędu na świeżych fixture'ach; kryterium przyszłej Story ekranu osób: test przypisania po
+  edycji siatki). **Nie dowodzi:** gałąź pozytywna `PEOPLE_*` osiągalna tylko przez
+  `dependency_overrides` (placeholder ich nie nadaje); dane rzeczywiste zakazane do spełnienia
+  warunków (a)–(g) ADR-0019 pkt 8; `[[:space:]]` poza ASCII zależne od ctype bazy; `headcount > 1`
+  przy osobie dowiedzione tylko w bazie. Zob. `docs/architecture/capabilities.md`.
 
 - [x] **SC-1-10** — Rozstrzygaj założenia scenariusza z łańcucha organizacja → projekt →
   scenariusz ze wskazaniem źródła wartości (F-02), na dwóch reprezentatywnych polach: marża
