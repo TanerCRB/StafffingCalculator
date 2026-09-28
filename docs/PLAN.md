@@ -2437,7 +2437,7 @@ history / this file's own change log, not as tracked product work.
   czeka SC-8-02+ — `ALTER TYPE ... ADD VALUE` wymaga osobnej migracji przed pierwszym writerem
   nowej wartości). Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-4-02** — Calculate the Fixed Price revenue of a scenario (F-06.2, AC-07, revenue
+- [x] **SC-4-02** — Calculate the Fixed Price revenue of a scenario (F-06.2, AC-07, revenue
   part). Written as the second model in the revenue dispatcher after T&M (SC-4-01, PR #64); after
   the sync with `main` of 2026-09-28 it joins T&M, Story Points (SC-4-04) and Outcome-based
   (SC-4-03).
@@ -2576,5 +2576,23 @@ history / this file's own change log, not as tracked product work.
   `ADR-0003-model-modeli-komercyjnych.md` (addendum 2026-09-25 SC-4-02);
   `ADR-0004-wersjonowanie-kalkulacji.md` (addendum 2026-09-25 SC-4-02); `ADR-0007` (the marker on
   `commercial_terms`); `docs/PLAN.md` SC-4-01, SC-6-01, SC-7-01.
+  **Done 2026-09-28:** PR #159 (merged `181504e`, commit `dc633ec`). Evidence:
+  `backend/tests/test_fixed_price_revenue.py` (K-01 `test_k_01_*` incl. AC-07 with the T&M twin and
+  the import-graph test, K-02 `test_k_02_*`, K-07 `test_k_07_*`), `test_fixed_price_copy.py` (K-02),
+  `test_fixed_price_guards.py` (K-05), `test_fixed_price_schema.py` (K-06, downgrade refuses while an
+  FP rule exists), `test_fixed_price_race.py` (K-07 race, ADR-0015 addendum 2026-09-28),
+  `test_fixed_price_review_fixes.py` (R-01, R-03), `test_fixed_price_edit_boundaries.py` (QA: marker
+  interleaving, segment-rule boundaries, dispatcher entry); migration
+  `backend/migrations/versions/b8f2d6a41c93_create_fixed_price_terms.py`; decisions: gate 1 and later
+  decisions on Issue #66, ADR-0003/ADR-0004/ADR-0015 addenda 2026-09-25/2026-09-28. 1143 backend tests
+  green, CI green. QA: two rounds, 40 mutations (`SC-4-02-M1..M40`) — survivors M14, M15 (round 1) and
+  M7, M8, M33 (round 2) closed with QA tests; open survivors M23 (defence in depth) and M25
+  (equivalent under the request lifecycle). Invariant Guardian: PASS (both rounds). Security auditor:
+  PASS. Reviewer: round 1 STOP (R-01..R-06) fixed or recorded per human decisions; round 2 PASS WITH
+  RESERVATIONS — **accepted, not fixed:** R-07 (Low, recorded in the ADR-0003 post-review addendum
+  point 5 and "Out of scope" above). **Does not prove:** the FP race on `/compare` specifically (same
+  guard as `/results`); the price-edit step of the R-06 interleaving end to end; R-03 under a
+  concurrent segment-rule write (R-07); the frontend (#113); a multi-step downgrade across
+  `b9e3c7a1f264`. See `docs/architecture/capabilities.md`.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
