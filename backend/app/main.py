@@ -6,6 +6,7 @@ from app.api.catalog import router as catalog_router
 from app.api.commercial_terms import router as commercial_terms_router
 from app.api.deps import assert_identity_mechanism_allowed
 from app.api.health import router as health_router
+from app.api.people import router as people_router
 from app.api.personnel_cost import router as personnel_cost_router
 from app.api.projects import router as projects_router
 from app.api.scenario_results import compare_router as scenario_results_compare_router
@@ -37,6 +38,11 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(projects_router)
 app.include_router(catalog_router)
+# The person register (SC-2-06, ADR-0019): a router of its own, not a dimension of the catalogue —
+# it declares `PEOPLE_READ`/`PEOPLE_WRITE`, refuses the whole resource rather than a field, and a
+# shared router would make it look like one more dictionary under `CATALOG_*` (ADR-0005, aneks
+# 2026-09-27, point 3).
+app.include_router(people_router)
 # Nested under `/projects/{project_id}/scenarios/{scenario_id}` but a router of its own: the
 # staffing endpoints declare `STAFFING_READ`/`STAFFING_WRITE`, never the project permissions, and a
 # shared router would make the two sets look interchangeable (ADR-0005, addendum 2026-09-19).

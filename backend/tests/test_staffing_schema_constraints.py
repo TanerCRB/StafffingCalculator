@@ -513,6 +513,11 @@ def test_no_foreign_key_of_either_staffing_table_cascades_a_delete(db_session: S
     `confdeltype` is PostgreSQL's own record of the rule — `'a'` is `NO ACTION`, `'c'` is `CASCADE`,
     `'n'` is `SET NULL`. Asserted for the position's five foreign keys and the allocation row's one
     at once, so a cascade added to any of them, not only to the scenario one, fails here.
+
+    Re-armed in SC-2-06, not loosened (Issue #31, human decision 2026-09-28, K-10): the position's
+    sixth foreign key, `fk_staffing_position_person_id` (ADR-0019, point 7 — `NO ACTION`, so a
+    person assigned to a position cannot be physically deleted), joins the count; the no-cascade
+    assertion below is unchanged and covers it too.
     """
     delete_rules = dict(
         db_session.execute(
@@ -525,7 +530,8 @@ def test_no_foreign_key_of_either_staffing_table_cascades_a_delete(db_session: S
         ).all()
     )
 
-    assert len(delete_rules) == 6, f"expected six foreign keys, found: {sorted(delete_rules)}"
+    # Re-armed in SC-2-06, not loosened: 6 -> 7 for `fk_staffing_position_person_id`.
+    assert len(delete_rules) == 7, f"expected seven foreign keys, found: {sorted(delete_rules)}"
     cascading = sorted(name for name, rule in delete_rules.items() if rule != "a")
     assert cascading == [], (
         f"a staffing foreign key no longer refuses to orphan a row: {cascading}. A cascade towards "

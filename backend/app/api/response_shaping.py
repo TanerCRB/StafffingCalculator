@@ -73,6 +73,7 @@ from app.api.schemas.commercial_terms import (
     ScenarioCommercialTerms,
     UnresolvedMonthRead,
 )
+from app.api.schemas.people import PersonList, PersonRead
 from app.api.schemas.personnel_cost import (
     CostAssumptionsRead,
     CostRateWindowRead,
@@ -96,6 +97,7 @@ from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
 from app.api.schemas.scenario_results import ScenarioResults
 from app.api.schemas.scenario_what_if import ScenarioWhatIfSalaryRaiseResults
 from app.api.schemas.staffing import (
+    PERSON_GATED_FIELDS,
     AbsenceBudgetSource,
     DerivedCapacitySource,
     StaffingAbsence,
@@ -152,6 +154,7 @@ from app.models.commercial_terms import (
     probability_column,
     units_column,
 )
+from app.models.person import Person
 from app.models.project import Project, ProjectStatus
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import StaffingPositionAbsence
@@ -282,7 +285,7 @@ def shape_duplicated_scenario(
 def shape_scenario_assumptions(view: ScenarioAssumptionsView) -> ScenarioAssumptions:
     """One scenario's resolved assumptions as the API returns them (SC-1-10).
 
-    **No `caller` argument, and that absence is the statement** — the one `shape_staffing_position`
+    **No `caller` argument, and that absence is the statement** — the one `shape_dimension_entry`
     makes: a target margin and an overload threshold are commercial parameters, not what a person
     costs (Issue #4, "Dane osobowe: nie dotyczy"), so nothing here is gated on a permission. The day
     a resolved *rate* or cost travels through this payload it grows the SC-1-08 conjunction.
@@ -453,11 +456,12 @@ def _without_catalog_personnel_costs(item: CatalogRate, caller: CallerIdentity) 
 def shape_dimension_entry(entry: DimensionRow) -> DimensionEntry:
     """One dictionary entry as the API returns it — from the list, the create and the edit paths.
 
-    **No `caller` argument, and that absence is the statement**, exactly as on
-    `shape_staffing_position`: a dictionary entry is an id, a name and a concurrency marker, and not
-    one of the three is gated on a permission (ADR-0005, addendum 2026-09-19, point 1 — a catalogue
-    row belongs to no project and no user). A caller parameter here would suggest a gate that is not
-    there, which is the dangerous direction to be wrong in.
+    **No `caller` argument, and that absence is the statement** (until SC-2-06 also true of
+    `shape_staffing_position`, which now gates the person field): a dictionary entry is an id, a
+    name and a concurrency marker, and not one of the three is gated on a permission (ADR-0005,
+    addendum 2026-09-19, point 1 — a catalogue row belongs to no project and no user). A caller
+    parameter here would suggest a gate that is not there, which is the dangerous direction to be
+    wrong in.
 
     One function rather than three inline constructions (SC-2-04): the marker is a field a client
     cannot edit without, so the path that forgot to carry it would be the path from which editing is
@@ -723,19 +727,39 @@ def _shape_absence_budget_share(capacity: MonthCapacity) -> dict[str, Any]:
     }
 
 
-def shape_staffing_position(view: StaffingPositionView) -> StaffingPositionRead:
-    """One staffing position with its month rows and absences, as the API returns it (SC-3-01/02).
+def _may_see_the_person_on_a_position(caller: CallerIdentity) -> bool:
+    """`STAFFING_READ` ∧ `PEOPLE_READ` (ADR-0019, point 4) — read from the caller this request
+    produced (`app.api.deps.get_caller_identity`, rebuilt per request, never cached).
 
-    **No `caller` argument, and that absence is the statement.** Every other function in this module
-    takes one because it gates a field on a permission; a staffing position has no gated field to
-    remove — it carries a dimension tuple, a headcount, a period, hours and now a derived capacity,
-    and not one figure a currency could be attached to (ADR-0005, addendum 2026-09-19, point 5; the
-    absence type's flags are configuration, not a cost — addendum 2026-09-22, point 7). A caller
-    parameter here would suggest a gate that is not there, which is the dangerous direction to be
-    wrong in (the argument `app.data.catalog` makes for having no guard function).
+    A conjunction on purpose, although every endpoint returning a position already required
+    `STAFFING_READ` or `STAFFING_WRITE`: a write endpoint answers with the position, and a caller
+    holding `STAFFING_WRITE` ∧ `PEOPLE_READ` but not `STAFFING_READ` must not read an assignment
+    through a write response any more than through the list (the "known widening" of ADR-0005,
+    addendum 2026-09-19, point 6, not extended to personal data). Global, not per project — the
+    register has no project (Q-3 = a)."""
+    return caller.has(Permission.STAFFING_READ) and caller.has(Permission.PEOPLE_READ)
+
+
+def shape_staffing_position(
+    view: StaffingPositionView, caller: CallerIdentity
+) -> StaffingPositionRead:
+    """One staffing position with its month rows and absences, as the API returns it (SC-3-01/02) —
+    and, only for a caller who may see it, the id of the person assigned to it (SC-2-06).
+
+    **A `caller` argument since SC-2-06, for one field and one field only.** Until then this
+    function took none, and that absence was the statement: a position had no gated field — a
+    dimension tuple, a headcount, a period, hours and a derived capacity, and not one figure a
+    currency could be attached to (ADR-0005, addendum 2026-09-19, point 5; the absence type's flags
+    are configuration, not a cost — addendum 2026-09-22, point 7). That is still true of every field
+    but `person_id`, which is gated on `STAFFING_READ` ∧ `PEOPLE_READ`
+    (`_may_see_the_person_on_a_position`) — here, in the one place that builds
+    `StaffingPositionRead`, so every endpoint returning a position (the list, the create, the
+    allocation and cost-basis edits, the two absence writes, the assignment) applies the same gate
+    by construction. A caller who may not see it gets no `person_id` key at all, not a `null`. Only
+    the id is ever shaped: the name lives in the register (gate 1, decision 4 = a1).
 
     What that means for the day a resolved rate does appear on a position (F-07, plan block 5): this
-    function grows a `caller` argument *and* the SC-1-08 conjunction — the caller's
+    function (which now already has its `caller`) grows the SC-1-08 conjunction — the caller's
     `PERSONNEL_COSTS_READ` **and** `project_access.can_view_personnel_costs` for the position's
     project — because that is a rate inside a response describing a scenario, where the addendum's
     single-factor exception explicitly does not apply. Reading a project's cost rate "through the
@@ -774,7 +798,35 @@ def shape_staffing_position(view: StaffingPositionView) -> StaffingPositionRead:
             for allocation in position.allocations
         ],
         absences=[shape_staffing_absence(absence) for absence in position.absences],
+        # Passed to the constructor only behind the gate: an unset `person_id` is never serialized
+        # (`StaffingPositionRead._person_key_only_when_shaped_in`), so this `if` is the whole
+        # difference between an assigned position and an anonymous one for a refused caller.
+        # The set comes from `PERSON_GATED_FIELDS`, the same constant the serializer reads, so the
+        # keys set here and the keys dropped there cannot drift apart (reviewer R-03, round 2).
+        **(
+            {field: getattr(position, field) for field in PERSON_GATED_FIELDS}
+            if _may_see_the_person_on_a_position(caller)
+            else {}
+        ),
     )
+
+
+# --- the person register (SC-2-06; ADR-0019) ------------------------------------------------------
+# No `caller` argument: the whole resource is refused (`403`) by the endpoint's permission
+# dependency before anything reaches here (ADR-0019, point 4 — the existence of a person is personal
+# data, so a blanked field would be the wrong shape of refusal). Reached only with `PEOPLE_READ`
+# (list) or `PEOPLE_WRITE` (the writer's own row back).
+
+
+def shape_person(person: Person) -> PersonRead:
+    """One person as the register returns it: id, name, marker — never `created_at`, never the
+    positions the person is assigned to (ADR-0019, "Decyzja" pt 3)."""
+    return PersonRead(id=person.id, full_name=person.full_name, updated_at=person.updated_at)
+
+
+def shape_person_list(people: Sequence[Person], *, total: int) -> PersonList:
+    """One page of the register; `total` passed through, never `len(people)` (ADR-0017, point 5)."""
+    return PersonList(people=[shape_person(person) for person in people], total=total)
 
 
 def shape_staffing_absence(absence: StaffingPositionAbsence) -> StaffingAbsence:
@@ -803,7 +855,7 @@ def shape_staffing_absence_list(
 
 
 def shape_staffing_position_list(
-    views: Sequence[StaffingPositionView], *, total: int
+    views: Sequence[StaffingPositionView], caller: CallerIdentity, *, total: int
 ) -> StaffingPositionList:
     """Shape an already scope-filtered sequence of positions — every row through the function above.
 
@@ -817,14 +869,14 @@ def shape_staffing_position_list(
     field this parameter exists so a client never has to guess at.
     """
     return StaffingPositionList(
-        positions=[shape_staffing_position(view) for view in views], total=total
+        positions=[shape_staffing_position(view, caller) for view in views], total=total
     )
 
 
 def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCommercialTerms:
     """One scenario's commercial rule and revenue as the API returns them (SC-4-01).
 
-    **No `caller` argument, and that absence is the statement** — the one `shape_staffing_position`
+    **No `caller` argument, and that absence is the statement** — the one `shape_dimension_entry`
     makes. Nothing in this payload is a personnel cost: a revenue and a selling rate are what the
     client pays, not what a person costs (ADR-0005, addendum 2026-09-23 SC-4-01, point 3; the
     precedent is `default_selling_rate` staying outside `CATALOG_PERSONNEL_COST_FIELDS`). What makes
@@ -1193,7 +1245,7 @@ def shape_scenario_personnel_cost(
 def shape_additional_cost(row: AdditionalCostRow) -> AdditionalCostRead:
     """One cost row as the API returns it — from the list, the create and the edit paths alike.
 
-    **No `caller` argument, and that absence is the statement** (the one `shape_staffing_position`
+    **No `caller` argument, and that absence is the statement** (the one `shape_dimension_entry`
     makes): nothing on this row is gated, under Q-7 = B of ADR-0014. The named risk that decision
     accepted — a cost on a `headcount = 1` position is indirectly about one person — is recorded in
     ADR-0005, aneks SC-5-05, point 2, not hidden here.

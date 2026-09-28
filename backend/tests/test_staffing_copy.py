@@ -81,6 +81,10 @@ COPIED_POSITION_FIELDS: tuple[str, ...] = (
     "cost_basis",
     "fixed_amount",
     "fixed_amount_currency",
+    # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: the named person travels
+    # with the position the existing copier copies by reflection — the copy points at the *same*
+    # person (ADR-0004, aneks 2026-09-27 SC-2-06, point 4), no new `SCENARIO_CHILD_COPIERS` entry.
+    "person_id",
 )
 """Position attributes the copy must carry over, written out by hand on purpose.
 

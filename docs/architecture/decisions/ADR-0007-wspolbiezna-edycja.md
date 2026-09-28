@@ -183,3 +183,81 @@ jednej wspólnej pozycji, na której mógłby siedzieć token.
    DELETE (reguła Strażnika 7).
 3. **`updated_at` pozostaje znacznikiem czasu, nie kolumną podmiotową** — bez zmian wobec pkt 6
    aneksu 2026-09-21.
+
+### 2026-09-28 — drugi znacznik na wierszu pozycji: przypisanie osoby poza `updated_at` pozycji (SC-2-06, bramka 2)
+
+**Status:** Accepted (decyzja człowieka 2026-09-28, przed bramką 2 SC-2-06, Issue #31)
+
+> Zapis decyzji człowieka D-4 = B (2026-09-28, Issue #31), podjętej po weryfikacji przed bramką 2
+> SC-2-06 na podstawie ustalenia security-auditora B-01. **Odstępstwo** od aneksu 2026-09-19
+> („znacznik współbieżności żyje na pozycji") i od pkt 1 aneksu 2026-09-22 („dwa tokeny na jednej
+> ścieżce edycji to pytanie, na które ten ADR nie odpowiada") — nazwane tu wprost, nie wprowadzone
+> implementacją. Zmienia też ADR-0004 aneks 2026-09-27 pkt 5 (osobny aneks ADR-0004 2026-09-28).
+
+**Problem.** Bramka 1 (decyzja 8) przyjęła, że przypisanie przesuwa `staffing_position.updated_at`
+jak każdy zapis agregatu. Security-auditor B-01: `updated_at` jest widoczny dla każdego wołającego ze
+`STAFFING_READ`, także bez `PEOPLE_READ`. Wołający z warunkiem kosztowym (albo po prostu z
+`STAFFING_WRITE`) bez `PEOPLE_READ` obserwuje zmianę znacznika albo `409` swojego zapisu, choć żadne
+pole, które widzi, się nie zmieniło — w połączeniu z porównaniem całej odpowiedzi (K-03) to wyrocznia
+„tej pozycji przypisano albo zdjęto osobę". ADR-0019 pkt 4 wymaga, by pozycja z osobą była
+nieodróżnialna od anonimowej „brak flagi »przypisano« — na każdej ścieżce".
+
+1. **Rozstrzygnięcie: przypisanie osoby ma własny znacznik współbieżności, na wierszu pozycji.**
+   Kolumna `staffing_position.person_assignment_updated_at` (`timestamptz NOT NULL`, wartość
+   domyślna po stronie bazy `now()`, **bez** `onupdate`). Nazwa robocza; wybrana zamiast
+   `person_assigned_at`, bo znacznik zmienia się także przy zdjęciu przypisania, a wiersz anonimowy z
+   „assigned_at" czytałby się jak fałsz. Kolumna na pozycji, nie osobna tabela przypisań: przypisanie
+   jest kolumną pozycji (ADR-0004 aneks 2026-09-27 pkt 2), a znacznik chroni dokładnie tę kolumnę.
+2. **Rozdział kolumn między znacznikami — warunek, na którym stoi całe odstępstwo.** Na wierszu
+   pozycji obowiązują od teraz dwa znaczniki o **rozłącznych** zbiorach chronionych kolumn:
+   - `person_assignment_updated_at` chroni `person_id` i tylko je; zmienia go **wyłącznie** ścieżka
+     `PATCH …/person` (przypisanie i zdjęcie), zawsze razem z `person_id`, w tej samej instrukcji;
+   - `updated_at` chroni każdą inną kolumnę pozycji i agregat (miesiące, nieobecności); ścieżka
+     przypisania **nie zmienia go** — także wtedy, gdy model ORM ma na nim `onupdate` (instrukcja
+     przypisania musi to wykluczyć jawnie; `onupdate` kolumny stosuje się do każdego `UPDATE` tabeli,
+     który tej kolumny nie wymienia).
+   Każda ścieżka zapisu niesie i porównuje **dokładnie jeden** znacznik — więc pytanie z pkt 1
+   aneksu 2026-09-22 („dwa tokeny na jednej ścieżce edycji") nie powstaje: są dwa znaczniki na
+   jednym wierszu, nigdy dwa na jednej ścieżce. Zgubiona aktualizacja między ścieżką przypisania a
+   pozostałymi jest niemożliwa, bo piszą rozłączne kolumny (pkt 6 aneksu ADR-0005 2026-09-27: żadna
+   inna ścieżka nie wymienia `person_id`; od teraz także znacznika przypisania). **Warunek
+   ponownego otwarcia:** pierwsza ścieżka zapisu, która zmienia jednocześnie `person_id` i jakąkolwiek
+   inną kolumnę pozycji, albo której dopuszczalność zależy od `person_id` (np. edycja `headcount` —
+   patrz ADR-0019 aneks 2026-09-28 pkt D-5(c)) — potrzebuje nowego aneksu tutaj.
+3. **Kształt strażnika na ścieżce przypisania.** Ten sam co pkt 1 aneksu 2026-09-19 i pkt 3 aneksu
+   2026-09-21, z podmienioną kolumną porównania: `UPDATE staffing_position SET person_id = :p,
+   person_assignment_updated_at = now() WHERE id = :id AND scenario_id = :s AND
+   person_assignment_updated_at = :expected AND <strażnik approved z blokadą> [AND EXISTS osoba]` —
+   porównanie w bazie, w tej samej instrukcji co zapis; `updated_at` pozycji nie występuje ani w
+   `WHERE`, ani w `SET`. Kolejność diagnozy odmowy bez zmian (zasięg → pozycja → osoba → `approved`
+   → znacznik), z ostatnią gałęzią nazywającą znacznik przypisania, nie znacznik pozycji. Test wyścigu
+   dwóch połączeń (konkurent commituje w okno między odczytem a zapisem) — obowiązkowy dla tej
+   ścieżki, jak dla każdej edytowalnej (pkt 3 aneksu 2026-09-21).
+4. **Widoczność znacznika — ta sama bramka co `person_id`** (ADR-0005 aneks 2026-09-28 pkt 3). Znacznik
+   przypisania zmienia się wyłącznie przy przypisaniu/zdjęciu, więc sam jest daną „przypisano"; poza
+   bramką `STAFFING_READ` ∧ `PEOPLE_READ` odtworzyłby dokładnie wyrocznię, którą ten aneks usuwa.
+   `409` tego znacznika osiągalny wyłącznie dla wołającego z kompletem uprawnień ścieżki przypisania
+   (ADR-0005 aneks 2026-09-28 pkt 1), a jego komunikat jest odróżnialny od komunikatu nieaktualnego
+   `updated_at` (pkt 4 aneksu 2026-09-21: inny znacznik do odświeżenia) i nie niesie wartości.
+5. **Kopiowanie: znacznik nie jest kopiowany; `person_id` jest.** Kopia pozycji dostaje własny
+   znacznik przypisania (wartość domyślna bazy w chwili kopii), z tego samego powodu, dla którego nie
+   dziedziczy `updated_at`: znacznik wydany dla innego wiersza nie jest znacznikiem tego wiersza.
+   Kopier refleksyjny przeniósłby kolumnę domyślnie — musi ona zostać nazwana po stronie „niekopiowane"
+   z uzasadnieniem (test dryfu kolumn pozycji rozstrzyga to jawnie). `person_id` kopiowany bez zmian
+   (ADR-0004 aneks 2026-09-27 pkt 4).
+6. **Migawka: znacznik nie wchodzi** — zbiór `approved_snapshot_*` bez zmian (ADR-0019 pkt 7,
+   ADR-0004 aneks 2026-09-27 pkt 1); tabele migawkowe nie mają znaczników (aneks 2026-09-22 pkt 5).
+7. **Znacznik pozostaje znacznikiem czasu, nie kolumną podmiotową i nie historią.** Nie zapisuje, kto
+   przypisał; nie zastępuje `audit_log` (SC-8-01, ADR-0019 pkt 11). Razem z `person_id` jest jednak
+   metadaną przetwarzania danej osobowej („od kiedy osoba X jest przy pozycji") — stąd pkt 4.
+8. **Fałszywe kolizje — bilans.** Znikają kolizje przypisanie-kontra-siatka/nieobecności/podstawa
+   kosztu (wcześniej przyjęte świadomie, aneks 2026-09-22 pkt 2) — skutek uboczny, nie cel.
+   Pozostaje kolizja przypisanie-kontra-przypisanie (jednostką edycji przypisania jest przypisanie
+   pozycji).
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| A7-31-1 | Przypisanie i zdjęcie przypisania nie zmieniają `staffing_position.updated_at` (odczyt z bazy przed i po jest równy); zmieniają znacznik przypisania. |
+| A7-31-2 | Przypisanie z nieaktualnym znacznikiem przypisania → `409` bez zapisu; konkurent commitujący przypisanie w okno między odczytem a zapisem → drugi zapis odmówiony (test dwóch połączeń); z aktualnym → sukces (kontrast). |
+| A7-31-3 | Zapis alokacji, podstawy kosztu, dodania i usunięcia nieobecności nie zmienia znacznika przypisania ani `person_id`; zapis siatki z `updated_at` odczytanym przed cudzym przypisaniem kończy się sukcesem, a po nim w bazie są oba zapisy. |
+| A7-31-4 | Kopia pozycji ma ten sam `person_id` co źródło i własny znacznik przypisania (równy chwili utworzenia kopii, nie wartości źródła); test dryfu kolumn pozycji nazywa znacznik po stronie „niekopiowane". |

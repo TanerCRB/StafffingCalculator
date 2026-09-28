@@ -988,3 +988,80 @@ audytu.
    uprawnienia (SC-8-02), oraz atrybucja autorstwa wykraczająca poza dzisiejszą tożsamość placeholder
    (ADR uwierzytelniania) — wszystkie jawnie poza zakresem SC-8-01 (Issue #14, sekcja "Out of
    scope").
+
+### 2026-09-27 — rejestr osób poza migawką mimo dziedziczenia; przypisanie osoby jako kolumna grupy 2 (SC-2-06)
+
+> Przyjęty przez człowieka na bramce 1 SC-2-06 (Issue #31), 2026-09-27. Ocena wpływu: `ADR-0019-dane-osobowe-rejestr-osob.md` pkt 7.
+
+Aneks 2026-09-19 (SC-3-01) pkt 1 ustala kryterium: "Wartość dziedziczona spoza scenariusza →
+migawka", a pkt 4 każe przypisać grupę każdej nowej tabeli w chwili powstania. Rejestr osób
+(SC-2-06) jest tabelą **spoza scenariusza**, której wartość (imię) jest widoczna przy pozycji
+scenariusza — literalnie kryterium kierowałoby ją do migawki. Ten wpis zapisuje odstępstwo wprost,
+zamiast zostawić je milczeniu, które pkt 4 nazywa ryzykiem.
+
+1. **Rejestr osób — dana organizacyjna, bez migawki; odstępstwo od pkt 1 aneksu SC-3-01, nazwane.**
+   Imię nie wchodzi do żadnego wyliczenia (koszt, przychód, pojemność, wynik — kryterium K-04
+   SC-2-06), a migawka nie ma ścieżki UPDATE (aneks SC-3-02 pkt 3) — imię w migawce byłoby daną
+   osobową niemożliwą do sprostowania (RODO art. 16) ani usunięcia (art. 17). Zatwierdzony
+   scenariusz pokazuje imię **bieżące** (albo znacznik anonimizacji). Precedensy tej samej klasy:
+   pola opisowe Projektu (aneks 2026-09-18, grupa 1 — "jawne, świadome ograniczenie odtwarzalności
+   nagłówka raportu") i etykieta kategorii kosztu (aneks SC-5-05 pkt 2). **Zbiór `SNAPSHOT_TABLES`
+   i tabel `approved_snapshot_*` bez zmian.** Brak wpisu rejestru osób w `SCENARIO_CHILD_COPIERS`
+   jest poprawnością, nie pominięciem (precedens: katalog, aneks 2026-09-19 SC-2-01).
+   **Warunek ponownego rozpatrzenia:** pierwsza wartość na wierszu osoby wchodząca do wyliczenia
+   (stawka indywidualna, Q-1/Q-2) — ta wartość jest dziedziczona i wchodzi do migawki na zasadach
+   pkt 1 aneksu SC-3-01, a jej Story musi rozstrzygnąć razem z Story usuwania, co anonimizacja robi
+   z zamrożoną stawką (ADR-0019 pkt 5.3).
+2. **Przypisanie (`staffing_position.person_id`, nullable) — kolumna tabeli już w grupie 2,
+   grupa potwierdzona na poziomie kolumny** (wzorem aneksu 2026-09-25 SC-5-03 pkt 1): wartość
+   ustawia planista w scenariuszu; nic spoza scenariusza jej nie zmienia. Chroni ją strażnik zapisu
+   `approved` w tej samej instrukcji co zapis, z testem odmowy i testem wyścigu dwóch połączeń **per
+   ścieżka zapisu przypisania** (warunek aneksu SC-3-01). Kolumna, nie osobna tabela — decyzja
+   człowieka na bramce 1 SC-2-06 (model A, 2026-09-27).
+3. **Sprostowanie osoby nie jest zapisem do zatwierdzonej kalkulacji.** Wiersz osoby nie jest
+   dzieckiem scenariusza; strażnik `approved` go nie obejmuje i nie wolno go na niego rozciągać.
+4. **Kopiowanie (aneks 2026-09-18 pkt 4; reguła 17 Strażnika).** Kopia pozycji niesie **ten sam**
+   `person_id` — odniesienie do danej organizacyjnej, jak `role_id` czy `location_id`, nie
+   "współdzielona referencja do danych źródłowego scenariusza" w rozumieniu AC-02: osoba nie jest
+   daną scenariusza. Kopia osoby byłaby błędem (dwa rekordy tej samej osoby, sprostowanie trafia w
+   jeden). Przez istniejący kopiujący agregatu pozycji (refleksja po mapperze) — bez nowego wpisu w
+   `SCENARIO_CHILD_COPIERS`; test dryfu kolumn pozycji przezbrajany o `person_id` po stronie
+   "kopiowane" (mapa wpływu SC-2-06, L-1). Kanarek: kopia wskazuje tę samą osobę, liczba osób bez
+   zmian, zdjęcie przypisania na kopii nie rusza źródła.
+5. **Token współbieżności ADR-0007 — bez nowej decyzji.** Kolumna na wierszu pozycji uczestniczy w
+   `staffing_position.updated_at` automatycznie (precedens aneksu SC-5-03 pkt 4). Wiersz osoby ma
+   własny `updated_at` na ścieżce sprostowania — zastosowanie "Konsekwencji" ADR-0007 ("ten sam
+   wzorzec … reużyć"), nie nowy mechanizm.
+6. **Aneks 2026-09-22 SC-3-02 pkt 1** (nieobecność "przeniesiona na poziom osoby … zmienia grupę z 2
+   na 1") — **nieuruchomiony**: SC-2-06 nie przenosi nieobecności na osobę.
+7. **Historia zmian (aneks 2026-09-18 "historia zmian… odłożona"; SC-8-01).** Przypisanie,
+   zdjęcie przypisania, utworzenie i sprostowanie osoby dołączają do listy zdarzeń pod odłożonym
+   `audit_log`. Ograniczenie wiążące SC-8-01: historia zapisuje identyfikator osoby, nie imię
+   (ADR-0019 pkt 11).
+
+| Kontrola | Kryterium akceptacji |
+|---|---|
+| A4-31-1 | Sprostowanie imienia osoby przypisanej w scenariuszu `approved` się udaje, a liczba wierszy każdej tabeli `approved_snapshot_*` i zbiór tych tabel są identyczne przed i po. |
+| A4-31-2 | Przypisanie i zdjęcie przypisania w scenariuszu `approved` odmówione w tej samej instrukcji co zapis; zatwierdzenie tuż przed instrukcją i wyścig dwóch połączeń dają odmowę bez zapisu; na `draft` — sukces (kontrast). |
+| A4-31-3 | Duplikat scenariusza i kopia projektu wskazują tę samą osobę; liczba wierszy rejestru osób bez zmian; liczba pozycji rośnie (kontrast). |
+
+### 2026-09-28 — przypisanie osoby poza znacznikiem `updated_at` pozycji; zmiana pkt 5 aneksu 2026-09-27 (SC-2-06, bramka 2)
+
+**Status:** Accepted (decyzja człowieka 2026-09-28, przed bramką 2 SC-2-06, Issue #31)
+
+> Skutek decyzji człowieka D-4 = B (2026-09-28, Issue #31; security-auditor B-01). Mechanika:
+> ADR-0007 aneks 2026-09-28. Aneks 2026-09-27 pozostaje Accepted; ten wpis zmienia jego pkt 5 jawnie.
+
+1. **Pkt 5 aneksu 2026-09-27 („kolumna na wierszu pozycji uczestniczy w `staffing_position.updated_at`
+   automatycznie") przestaje obowiązywać dla `person_id`.** `person_id` ma własny znacznik
+   (`person_assignment_updated_at`, nazwa robocza), a `updated_at` pozycji nie zmienia się przy
+   przypisaniu ani zdjęciu. Precedens aneksu SC-5-03 pkt 4 obowiązuje nadal dla każdej innej kolumny
+   pozycji. Uzasadnienie: `updated_at` jest widoczny bez `PEOPLE_READ`, więc jego przesunięcie było
+   wyrocznią przypisania (ADR-0019 pkt 4).
+2. **Grupa danych bez zmian.** Znacznik przypisania jest kolumną grupy 2 na tabeli już w grupie 2 —
+   ustawiany wyłącznie ścieżką przypisania, pod tym samym strażnikiem `approved` w tej samej instrukcji
+   (A4-31-2 obowiązuje bez zmian brzmienia).
+3. **Kopiowanie (pkt 4 aneksu 2026-09-27):** kopia niesie ten sam `person_id` i **nie** niesie
+   znacznika przypisania źródła — dostaje własny (ADR-0007 aneks 2026-09-28 pkt 5). Brak nowego
+   wpisu w `SCENARIO_CHILD_COPIERS`.
+4. **Migawka:** zbiór tabel `approved_snapshot_*` i ich kolumn bez zmian.

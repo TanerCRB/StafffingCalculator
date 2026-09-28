@@ -60,6 +60,7 @@ from app.models import (  # noqa: E402
     CommercialTerms,
     OrganizationDefaults,
     OutcomeTerms,
+    Person,
     Project,
     ProjectAccess,
     ProjectStatus,
@@ -235,6 +236,10 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(StaffingPositionAbsence))
             connection.execute(sa.delete(StaffingPositionAllocation))
             connection.execute(sa.delete(StaffingPosition))
+            # SC-2-06: the person register after the positions that point at it —
+            # `fk_staffing_position_person_id` has no `ON DELETE` action, deliberately (ADR-0019,
+            # point 7: a person assigned to a position cannot be physically deleted).
+            connection.execute(sa.delete(Person))
             connection.execute(sa.delete(ApprovedSnapshotWorkingCalendarDay))
             connection.execute(sa.delete(ApprovedSnapshotWorkingCalendar))
             connection.execute(sa.delete(ApprovedSnapshotAbsenceType))
@@ -964,6 +969,43 @@ def make_staffing_position(
     session.add(position)
     session.flush()
     return position
+
+
+FICTITIOUS_PERSON_NAME = "Testowa Osoba-Fikcyjna"
+"""The default name of every person fixture — **fictitious by construction** (ADR-0019, point 8:
+fictitious data only, in every database and fixture, until the deletion Story and the other
+conditions are met). Distinctive enough that `not in response.text` cannot pass by coincidence."""
+
+
+def make_person(session: Session, *, full_name: str = FICTITIOUS_PERSON_NAME) -> Person:
+    """Insert one person into the register directly — no endpoint, no request schema (SC-2-06).
+
+    The only way to reach a person in the running system's shape: the placeholder identity holds no
+    `PEOPLE_WRITE` (ADR-0005, aneks 2026-09-27, point 4), so no request can create one without
+    `dependency_overrides`. Flushes rather than commits, like every fixture here."""
+    person = Person(id=uuid.uuid4(), full_name=full_name)
+    session.add(person)
+    session.flush()
+    return person
+
+
+def assign_person_directly(
+    session: Session, position: StaffingPosition, person: Person | None
+) -> None:
+    """Set `staffing_position.person_id` with a direct write — bypassing the API and its guards.
+
+    For tests whose subject is *reading* an assignment (visibility, copying, calculations), so that
+    the fixture does not depend on the write path it is not about. The write path itself is tested
+    through the endpoint. Still subject to the database's own rules (`headcount = 1`, the foreign
+    key), which is the point of having them there."""
+    position.person_id = None if person is None else person.id
+    session.flush()
+
+
+def count_people(session: Session | sa.Connection) -> int:
+    """Rows of the person register — to prove a refused write wrote nothing, and a copy copied no
+    person."""
+    return session.execute(sa.select(sa.func.count()).select_from(Person)).scalar_one()
 
 
 def make_allocation(

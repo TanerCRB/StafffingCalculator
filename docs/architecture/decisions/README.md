@@ -35,3 +35,4 @@ the same file — never a silent edit of the original text.
 | [ADR-0015](ADR-0015-przeliczenie-bez-zapisu.md) | Przeliczenie bez zapisu ("what-if"): wzorzec, słownictwo, granica reużycia | Draft — pending approval |
 | [ADR-0016](ADR-0016-segment-dostawy-scenariusza.md) | Segment dostawy scenariusza: encja fazy/workstreamu (F-02, F-06) | Draft — pending approval |
 | [ADR-0017](ADR-0017-paginacja-list-api.md) | Wzorzec paginacji list w API (ogólny) | Accepted |
+| [ADR-0019](ADR-0019-dane-osobowe-rejestr-osob.md) | Dane osobowe: rejestr osób nazwanych i przypisanie osoby do pozycji obsady (F-03) | Accepted |

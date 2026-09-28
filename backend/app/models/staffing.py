@@ -43,7 +43,13 @@ for an approval to freeze (point 2 of that aneks; contrast with `catalog_default
 for the default basis (`worked_time`) and are the position's own stated amount for the other. They
 are **never** part of `GET .../staffing-positions`'s response schema (ADR-0005, aneks 2026-09-25
 SC-5-03, Q4) — visible only through the cost endpoint the SC-1-08 conjunction already gates
-(`app.api.personnel_cost`), the same treatment `default_cost_rate` gets on the catalogue."""
+(`app.api.personnel_cost`), the same treatment `default_cost_rate` gets on the catalogue.
+
+**Since SC-2-06: `person_id` (F-03; ADR-0019; ADR-0004 and ADR-0005, aneksy 2026-09-27).** A
+position is still anonymous by default; it may optionally point at one row of the person register
+(`app.models.person`). A reference, not a name — see `StaffingPosition`. The absence row keeps its
+own boundary unchanged: an absence still hangs on the position, never on a person (ADR-0005, aneks
+2026-09-27, point 10)."""
 
 import uuid
 from datetime import date, datetime
@@ -192,12 +198,41 @@ Declared here as well, so the model keeps describing the database that exists; a
 compares the two copies of the name and the columns, the same pattern `RATE_PAGE_INDEX` uses."""
 
 
-class StaffingPosition(Base):
-    """One anonymous staffing position of one scenario: a dimension tuple, a headcount, a period.
+PERSON_REQUIRES_SINGLE_HEADCOUNT_EXPRESSION = "person_id IS NULL OR headcount = 1"
+"""SC-2-06, decision Q-7 = a (gate 1, 2026-09-27): a named person may be assigned only to a position
+that plans for exactly one person. In the database, not in the request schema, so it also refuses
+the write no HTTP path exists for yet — raising `headcount` above 1 on a position that already has a
+person (there is no headcount edit endpoint; a fixture, a seed script or a future import is exactly
+the writer that would do it). Spelled here and once more in migration `c4d7e2a9b1f6`; a schema-drift
+test compares the two copies."""
 
-    Anonymous on purpose (F-03/F-04): there is no person here and no column for one. A named
-    assignment is Issue #31, blocked on the authentication ADR, and adding a name to this table
-    would make it a personal-data table without the decision that governs one.
+PERSON_REQUIRES_SINGLE_HEADCOUNT_CONSTRAINT = (
+    "ck_staffing_position_person_requires_single_headcount"
+)
+"""The constraint's name in the database, spelled once for the tests that assert a refusal came
+from *this* mechanism."""
+
+
+class StaffingPosition(Base):
+    """One staffing position of one scenario: a dimension tuple, a headcount, a period — and,
+    optionally, the named person who is to fill it (SC-2-06).
+
+    **Anonymous by default** (F-03/F-04): `person_id` is nullable, every position created before
+    SC-2-06 has none, and creating a position never sets one. **Optionally named** (F-03: "Assigning
+    a named person shall be optional"), under ADR-0019 (the personal-data decision) and ADR-0005's
+    aneks 2026-09-27 — no longer "blocked on the authentication ADR" (decision P-2 = a: a named
+    person is a separate record, not a user account). What the assignment is, and is not:
+
+    - a reference to `person.id`, never a copy of the name — the name lives in the register only,
+      so a correction (RODO art. 16) is one row, visible on every scenario, approved ones included;
+    - own data of the scenario, group 2 (ADR-0004, aneks 2026-09-27, point 2): protected after
+      approval by the write guard in the same statement as the write, never by a snapshot;
+    - allowed only at `headcount = 1` (`PERSON_REQUIRES_SINGLE_HEADCOUNT_EXPRESSION`);
+    - written through **one** path (`app.data.staffing.assign_person`), never as a side effect of
+      another write — every other write of this row leaves it as it is (ADR-0005, aneks 2026-09-27,
+      point 6);
+    - visible in a response only to a caller holding `STAFFING_READ` ∧ `PEOPLE_READ`, and for
+      everyone else not even as a key (`app.api.response_shaping.shape_staffing_position`).
     """
 
     __tablename__ = "staffing_position"
@@ -325,9 +360,43 @@ class StaffingPosition(Base):
     from `scenarios.currency`: the two are compared by the formula, and disagreement is the named
     `currency_mismatch` state, never a silent conversion (ADR-0006)."""
 
+    person_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("person.id", name="fk_staffing_position_person_id"),
+        nullable=True,
+    )
+    """The named person assigned to this position, or `NULL` for an anonymous one (SC-2-06).
+
+    No `ondelete` — `NO ACTION`, like every foreign key in this module, and here it carries a second
+    meaning (ADR-0019, point 7): a person assigned to a position cannot be physically deleted, which
+    is the direction the future deletion Story is decided to take anyway (anonymisation in place,
+    `id` and assignments untouched). Copied as-is by `copy_staffing_positions` — the copy points at
+    the **same** person, never at a copy of one (ADR-0004, aneks 2026-09-27, point 4)."""
+
+    person_assignment_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    """The assignment's **own** concurrency marker (ADR-0007 aneks 2026-09-28, D-4 = B) — protecting
+    `person_id` and nothing else, and moved by the assignment path and nothing else.
+
+    **No `onupdate`, on purpose.** The position's `updated_at` is visible to every caller with
+    `STAFFING_READ`, `PEOPLE_READ` or not; if an assignment moved it, the move itself would be the
+    "a person was assigned here" flag ADR-0019 (point 4) forbids. So the two markers guard disjoint
+    columns: this one `person_id`, `updated_at` every other column and the aggregate — and every
+    write path compares exactly one of them. The assignment statement also spells `updated_at =
+    updated_at` explicitly, because an ORM-level `onupdate` fires on any `UPDATE` of the table that
+    does not name the column (`app.data.staffing.assign_person`).
+
+    Gated in responses exactly like `person_id` (ADR-0005 aneks 2026-09-28, point 3). **Not**
+    copied: a copy gets its own (ADR-0007 aneks 2026-09-28, point 5)."""
+
     scenario: Mapped["Scenario"] = relationship()
 
     __table_args__ = (
+        # SC-2-06 (Q-7 = a): a person only on a position that plans for exactly one person.
+        CheckConstraint(
+            PERSON_REQUIRES_SINGLE_HEADCOUNT_EXPRESSION, name="person_requires_single_headcount"
+        ),
         # In the database, not only in the request schema: a headcount of 0 or -1 written by a
         # fixture, a seed script or a future import is the same defect as one written by a client.
         CheckConstraint("headcount > 0", name="headcount_positive"),
