@@ -64,6 +64,8 @@ from app.api.schemas.catalog import (
 from app.api.schemas.commercial_terms import (
     CategoryRevenueRead,
     CommercialTermsRead,
+    FixedPriceCommercialTermsRead,
+    FixedPriceRevenueAssumptionsRead,
     OutcomeCategoriesRead,
     OutcomeCategoryRead,
     OutcomeTermsRead,
@@ -139,7 +141,12 @@ from app.domain.personnel_cost import (
     PersonnelCostResult,
 )
 from app.domain.revenue import CALCULATED as REVENUE_CALCULATED
-from app.domain.revenue import EXPECTED_NOT_APPLICABLE, RevenueResult, RevenueUnavailable
+from app.domain.revenue import (
+    EXPECTED_NOT_APPLICABLE,
+    FixedPriceAssumptionsUsed,
+    RevenueResult,
+    RevenueUnavailable,
+)
 from app.domain.scenario_readiness import assess
 from app.domain.scenario_results import scenario_profitability
 from app.models.catalog import (
@@ -149,6 +156,7 @@ from app.models.catalog import (
     WorkingCalendar,
 )
 from app.models.commercial_terms import (
+    MODEL_TYPE_FIXED_PRICE,
     OUTCOME_CATEGORIES,
     OutcomeTerms,
     probability_column,
@@ -891,21 +899,43 @@ def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCom
     in `app.domain.revenue_time_and_material`, and is not re-rounded on the way out.
     """
     revenue = _revenue_read_of(view.revenue)
-    terms = view.terms
     return ScenarioCommercialTerms(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
-        commercial_terms=(
-            None
-            if terms is None
-            else CommercialTermsRead(
-                id=terms.id,
-                model_type=terms.model_type,
-                updated_at=terms.updated_at,
-                outcome_terms=_outcome_terms_read_of(view.outcome_terms),
-            )
-        ),
+        commercial_terms=_commercial_terms_read_of(view),
         revenue=revenue,
+    )
+
+
+def _commercial_terms_read_of(
+    view: ScenarioCommercialView,
+) -> CommercialTermsRead | FixedPriceCommercialTermsRead | None:
+    """The rule, in the shape of its model — chosen by `model_type`, never by which fields are set.
+
+    A Fixed Price rule carries its agreed price as stored (SC-4-02); every other rule keeps the
+    shape it has without Fixed Price (`CommercialTermsRead`, with SC-4-03's `outcome_terms`),
+    field for field, so a T&M response is byte for byte what it was (K-07). The price is a figure
+    the client pays, not a personnel cost, so no gate applies (the reasoning of the docstring
+    above).
+    """
+    terms = view.terms
+    if terms is None:
+        return None
+    if terms.model_type == MODEL_TYPE_FIXED_PRICE:
+        price = view.agreed_price
+        return FixedPriceCommercialTermsRead(
+            id=terms.id,
+            model_type=MODEL_TYPE_FIXED_PRICE,
+            updated_at=terms.updated_at,
+            outcome_terms=None,
+            agreed_price=None if price is None else price.amount,
+            currency=None if price is None else price.currency,
+        )
+    return CommercialTermsRead(
+        id=terms.id,
+        model_type=terms.model_type,
+        updated_at=terms.updated_at,
+        outcome_terms=_outcome_terms_read_of(view.outcome_terms),
     )
 
 
@@ -945,12 +975,12 @@ def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
     in `app.domain.revenue_time_and_material`, and is not re-rounded on the way out.
     """
     assumptions = answer.assumptions_used
-    assumptions_read = RevenueAssumptionsRead(
-        model_type=assumptions.model_type,
-        hours_source=assumptions.hours_source,
-        vendor_axis=assumptions.vendor_axis,
-        rate_source=assumptions.rate_source,
-        rate_windows=[
+    shared = {
+        "model_type": assumptions.model_type,
+        "hours_source": assumptions.hours_source,
+        "vendor_axis": assumptions.vendor_axis,
+        "rate_source": assumptions.rate_source,
+        "rate_windows": [
             RateWindowRead(
                 source_rate_id=window.source_rate_id,
                 effective_from=window.effective_from,
@@ -960,12 +990,23 @@ def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
             )
             for window in assumptions.rate_windows
         ],
-        unresolved_months=[
+        "unresolved_months": [
             UnresolvedMonthRead(position_id=month.position_id, period_month=month.period_month)
             for month in assumptions.unresolved_months
         ],
-        currencies=list(assumptions.currencies),
-    )
+        "currencies": list(assumptions.currencies),
+    }
+    # The shape follows the answer's type (SC-4-02): the Fixed Price formula answers with
+    # `FixedPriceAssumptionsUsed`, every other answer keeps the SC-4-01 shape unchanged.
+    assumptions_read: RevenueAssumptionsRead | FixedPriceRevenueAssumptionsRead
+    if isinstance(assumptions, FixedPriceAssumptionsUsed):
+        assumptions_read = FixedPriceRevenueAssumptionsRead(
+            **shared,
+            price_basis=assumptions.price_basis,
+            price_adjustments=assumptions.price_adjustments,
+        )
+    else:
+        assumptions_read = RevenueAssumptionsRead(**shared)
     if isinstance(answer, RevenueResult):
         # Przychód oczekiwany i per kategoria (SC-4-03) przechodzą tak, jak je podała domena —
         # zaokrąglone tam raz, tutaj niczego nie liczy się ani nie zaokrągla ponownie.

@@ -8,9 +8,9 @@ on `RevenueResult` to forget to check.
 
 This module is the model-independent vocabulary only. The formula of each model lives in its own
 module (`app.domain.revenue_time_and_material`, `app.domain.revenue_story_points` since SC-4-04,
-`app.domain.revenue_outcome_based` since SC-4-03), which imports from here and from nothing of
-another model's, and never from any cost calculation (F-06: independent calculation per model;
-backend checklist; rule 10 of the Invariant Guardian).
+`app.domain.revenue_outcome_based` since SC-4-03, `app.domain.revenue_fixed_price` since SC-4-02),
+which imports from here and from nothing of another model's, and never from any cost calculation
+(F-06: independent calculation per model; backend checklist; rule 10 of the Invariant Guardian).
 """
 
 import uuid
@@ -93,6 +93,31 @@ własną scenariusza, niezależną od statusu — strażnik wyścigu `/results`
 (`app.data.scenario_results.refuse_a_status_race`) nie traktuje jej ani jako dowodu wyścigu, ani
 jako dowodu jego braku (decyzja człowieka 2026-09-25, merge SC-4-03 z SC-4-04)."""
 
+RATE_SOURCE_FIXED_PRICE_TERMS: Final = "fixed_price_terms"
+"""Where a Fixed Price revenue's price came from (SC-4-02; decision of 2026-09-25 on Issue #66,
+following the pattern of `RATE_SOURCE_STORY_POINTS_TERMS`): the rule's own, write-guarded row of
+`fixed_price_terms` — never the catalogue and never a snapshot of it, for a draft and for an
+approved scenario alike (ADR-0003, addendum 2026-09-25 SC-4-02, point 5)."""
+
+DRAFT_EDITABLE_RULE_SOURCES: Final = frozenset({RATE_SOURCE_FIXED_PRICE_TERMS})
+"""Revenue `rate_source` values that are **not** chosen from the scenario's status, yet must still
+be status-compared by the race guard — component (a) of
+`app.data.scenario_results.refuse_a_status_race` — because the rule rows they name have an edit
+path in a draft (ADR-0015, addendum SC-7-03, point 2: the validity condition of the exemption from
+(a), reviewer R-06; ADR-0015, addendum 2026-09-28 (SC-4-02)).
+
+The exemption of a status-independent revenue from (a) holds only while its rule rows cannot change
+in a draft: "the same before and after an approval" follows from the absence of an edit path, not
+from the write guard, which protects the rows only after the approval. Fixed Price has one (`PATCH
+…/commercial-terms`, D-6 = A of SC-4-02), so the interleaving "revenue read → price edit → approval
+→ cost read" would otherwise answer `200` with `scenario_status: "Approved"` and a price the
+approved scenario never had. Its `rate_source` stays `fixed_price_terms` in the answer (F-06.5 —
+the price is the rule's own row, never the catalogue); only the guard's classification changes.
+
+A separate set, not a widening of `STATUS_DEPENDENT_SOURCES`, which keeps meaning exactly "values
+chosen from the status". A model that adds a draft edit path to its rule rows adds its `rate_source`
+here in the same task (ADR-0015, addendum SC-7-03, point 7)."""
+
 HOURS_SOURCE_BILLABLE: Final = "billable_hours"
 """The only source of hours a T&M revenue has (ADR-0003, point 6) — named in `assumptions_used` so a
 reader of the result is told, not left to assume, that neither the plan nor the availability was
@@ -102,15 +127,25 @@ HOURS_SOURCE_NOT_APPLICABLE: Final = "not_applicable"
 """Also the hours source of an Outcome-based revenue (SC-4-03, pkt 8). A Story Points revenue has
 no hours at all (SC-4-04, criterion K-02): `accepted_points` is not an
 hour figure and nothing here converts one into the other. Naming `billable_hours` for this model
-would claim an hours source it never reads."""
+would claim an hours source it never reads. Nor does a Fixed Price revenue read any hours (SC-4-02):
+the agreed price does not depend on `billable_hours`, the plan or the availability (F-06.2)."""
+
+PRICE_BASIS_AGREED_PRICE: Final = "agreed_price"
+"""What a Fixed Price revenue *is*: the price agreed for the whole project (ADR-0003, addendum
+2026-09-25 SC-4-02, point 8) — named, so it is never read as "price + approved adjustments"."""
+
+PRICE_ADJUSTMENTS_NOT_INCLUDED: Final = "not_included"
+"""D-3 = C of SC-4-02's gate 1: price adjustments (bonuses, penalties, scope changes — F-06.2)
+are out of scope (Issue #112), and the answer says so explicitly instead of letting a reader
+assume that an absent adjustment was a zero one."""
 
 VENDOR_AXIS_INTERNAL: Final = "internal"
 """The vendor axis of every rate read (ADR-0003, point 4): `vendor_id IS NULL`, the organisation's
 own price — never "any vendor"."""
 
 VENDOR_AXIS_NOT_APPLICABLE: Final = "not_applicable"
-"""Also the vendor axis of an Outcome-based revenue (SC-4-03, pkt 8). A Story Points rule prices no
-rate row, so it has no vendor axis to name (SC-4-04): there is no
+"""Also the vendor axis of an Outcome-based revenue (SC-4-03, pkt 8). A Story Points or Fixed Price
+rule prices no rate row, so it has no vendor axis to name (SC-4-04, SC-4-02): there is no
 catalogue lookup here for `vendor_id IS NULL` to be true or false of."""
 
 
@@ -197,6 +232,33 @@ class CategoryRevenue:
     """`None` — jednostek nie podano (dozwolone tylko bez stawki za jednostkę); nigdy `0`."""
     probability: Decimal | None
     revenue: Decimal
+
+
+@dataclass(frozen=True)
+class FixedPriceAssumptionsUsed(AssumptionsUsed):
+    """What a Fixed Price revenue — or its absence — depends on (SC-4-02; F-06.5).
+
+    Everything `AssumptionsUsed` says, with Fixed Price's own truths (ADR-0003, addendum 2026-09-25
+    SC-4-02, points 6 and 8):
+
+    - `rate_source` is `fixed_price_terms` — the price is the rule's own row, never the catalogue
+      or its snapshot, whatever the scenario's status (point 5; the SC-4-04 pattern of
+      `story_points_terms`, decision of 2026-09-25 on Issue #66). No window was used, so
+      `rate_windows` is always empty;
+    - `hours_source` and `vendor_axis` are `not_applicable` — the price reads no hours and no rate
+      row;
+    - `price_basis` and `price_adjustments` say what the figure is and what it leaves out (D-3 = C).
+
+    A subclass, so every reader that only needs the shared fields reads it exactly as it reads a
+    T&M answer, and the shaping layer tells the two apart by type, never by which fields happen to
+    be filled.
+    """
+
+    rate_source: str = RATE_SOURCE_FIXED_PRICE_TERMS
+    hours_source: str = HOURS_SOURCE_NOT_APPLICABLE
+    vendor_axis: str = VENDOR_AXIS_NOT_APPLICABLE
+    price_basis: str = PRICE_BASIS_AGREED_PRICE
+    price_adjustments: str = PRICE_ADJUSTMENTS_NOT_INCLUDED
 
 
 @dataclass(frozen=True)

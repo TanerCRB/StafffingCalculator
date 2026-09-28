@@ -1,9 +1,9 @@
 """The only path by which a scenario's commercial rule is read, written, copied and priced.
 
-SC-4-01 (F-06.1, Issue #8), extended by SC-4-04 (F-06.4, Issue #68) and SC-4-03 (F-06.3, Issue
-#67) — Story Points and Outcome-based registered in `REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL`
-below, proving every mechanism in this module generalises rather than being a property of the one
-model it shipped with.
+SC-4-01 (F-06.1, Issue #8), extended by SC-4-04 (F-06.4, Issue #68), SC-4-03 (F-06.3, Issue
+#67) and SC-4-02 (F-06.2, Issue #66) — Story Points, Outcome-based and Fixed Price registered in
+`REVENUE_BY_MODEL`/`DETAIL_TABLE_BY_MODEL` below, proving every mechanism in this module
+generalises rather than being a property of the one model it shipped with.
 
 Four mechanisms, none of them new — each is an existing mechanism of this repository applied to the
 first table of plan block 4 (ADR-0003; ADR-0004, ADR-0005 and ADR-0008, addenda 2026-09-23 SC-4-01):
@@ -36,12 +36,21 @@ entry here — never by inspecting which rows happen to exist.
 Guardian). Both readers select the selling rate, the currency and the window — from the catalogue
 and from the snapshot alike, although the snapshot does hold the cost (ADR-0004, addendum SC-4-01,
 point 2b).
+
+**Fixed Price (SC-4-02, F-06.2, Issue #66) is an entry of both registries** (ADR-0003, addendum
+2026-09-25 SC-4-02). Its branch of the dispatcher reads one row — the agreed price and its
+currency from `fixed_price_terms` — and hands it to `app.domain.revenue_fixed_price`; it never calls
+`_billable_months`, so a catalogue gap, an allocation or a cost cannot reach its revenue. Two write
+paths, both with the refusal of `approved` inside the statement that writes (ADR-0004, addendum
+2026-09-25 SC-4-02, point 1): the creation — the same guarded `INSERT` as T&M, with the price in the
+details row (`create_commercial_terms`) — and the price edit, the aggregate's first `UPDATE`, with
+ADR-0007's marker compared in the same statement (`update_fixed_price`).
 """
 
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
@@ -69,6 +78,7 @@ from app.domain.revenue import (
     RevenueAnswer,
     RevenueUnavailable,
 )
+from app.domain.revenue_fixed_price import AgreedPrice, fixed_price_revenue
 from app.domain.revenue_outcome_based import (
     OutcomeCategoryInput,
     OutcomeTermsInput,
@@ -80,11 +90,13 @@ from app.domain.revenue_time_and_material import BillableMonth, time_and_materia
 from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
 from app.models.commercial_terms import (
+    MODEL_TYPE_FIXED_PRICE,
     MODEL_TYPE_OUTCOME_BASED,
     MODEL_TYPE_STORY_POINTS,
     MODEL_TYPE_TIME_AND_MATERIAL,
     OUTCOME_CATEGORIES,
     CommercialTerms,
+    FixedPriceTerms,
     OutcomeTerms,
     StoryPointsTerms,
     TmTerms,
@@ -392,10 +404,59 @@ def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueA
     )
 
 
+def _fixed_price(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+    """Fixed Price: the agreed price of the rule's own details row — and nothing else is read.
+
+    **No `_billable_months`, no catalogue, no snapshot, no allocation** (ADR-0003, addendum
+    2026-09-25 SC-4-02, points 3 and 5; criterion K-01): the price is own data of the scenario, read
+    from its own row for a draft and for an approved scenario alike — which is why
+    `assumptions_used.rate_source` is `fixed_price_terms` whatever the status (the SC-4-04 pattern).
+    A rule without its details row is `incomplete_commercial_terms` (`fixed_price_revenue(None)`),
+    never a revenue of `0`.
+    """
+    return _fixed_price_answer(_fixed_price_details_of(session, rule), scenario)
+
+
+def _fixed_price_answer(price: AgreedPrice | None, scenario: Scenario) -> RevenueAnswer:
+    """The Fixed Price answer — result or named state, with its `assumptions_used` — for a price
+    already read (`_fixed_price_details_of`) and the scenario's currency.
+
+    The one place the data layer turns an `AgreedPrice` into a revenue answer, shared by the
+    `REVENUE_BY_MODEL` entry (`_fixed_price`) and by `_view_of`, which reads the price once and
+    passes the same value here and to `ScenarioCommercialView.agreed_price` (R-01 of the SC-4-02
+    review, 2026-09-28; QA round 2: two calls of the formula could drift apart untested). Reads
+    nothing."""
+    return fixed_price_revenue(price, scenario_currency=scenario.currency)
+
+
+def _fixed_price_details_of(session: Session, rule: _Rule) -> AgreedPrice | None:
+    """The agreed price of the rule's `fixed_price_terms` row — `None` for a rule of another model
+    or a Fixed Price rule without its details row.
+
+    The one read of the price. `_view_of` calls it **once** and hands the same `AgreedPrice` value
+    to the pricing (`fixed_price_revenue`) and to the rule's parameters in the answer
+    (`ScenarioCommercialView.agreed_price`), so a price edit committed between two statements of
+    the read cannot put one price in `revenue.amount` and another in `agreed_price` (R-01 of the
+    SC-4-02 review, 2026-09-28 — two reads under `READ COMMITTED` could). `_fixed_price` (the
+    dispatcher's branch, used by every other reader) calls it once too. Keyed by **this rule's id**,
+    which is what keeps two scenarios' prices apart (criterion K-02)."""
+    if rule.terms.model_type != MODEL_TYPE_FIXED_PRICE or not rule.has_details:
+        return None
+    row = session.execute(
+        sa.select(_FIXED_PRICE_TABLE.c.agreed_price, _FIXED_PRICE_TABLE.c.currency).where(
+            _FIXED_PRICE_TABLE.c.commercial_terms_id == rule.terms.id
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return AgreedPrice(amount=row.agreed_price, currency=row.currency)
+
+
 REVENUE_BY_MODEL: dict[str, RevenueCalculator] = {
     MODEL_TYPE_TIME_AND_MATERIAL: _time_and_material,
     MODEL_TYPE_STORY_POINTS: _story_points,
     MODEL_TYPE_OUTCOME_BASED: _outcome_based,
+    MODEL_TYPE_FIXED_PRICE: _fixed_price,
 }
 """`model_type` → the function that prices it. Chosen by the discriminator alone, never by the shape
 of the data (ADR-0003, point 9). Keys must equal `app.models.commercial_terms.MODEL_TYPES`, and a
@@ -406,8 +467,12 @@ DETAIL_TABLE_BY_MODEL: dict[str, sa.Table] = {
     MODEL_TYPE_TIME_AND_MATERIAL: TmTerms.__table__,
     MODEL_TYPE_STORY_POINTS: StoryPointsTerms.__table__,
     MODEL_TYPE_OUTCOME_BASED: OutcomeTerms.__table__,
+    MODEL_TYPE_FIXED_PRICE: FixedPriceTerms.__table__,
 }
 """`model_type` → its details table, for the write path that creates both rows in one statement."""
+
+_FIXED_PRICE_TABLE = FixedPriceTerms.__table__
+_OTHER_TERMS = CommercialTerms.__table__.alias("other_commercial_terms")
 
 
 class MultipleCommercialRulesNotSupported(RuntimeError):
@@ -440,8 +505,14 @@ def _rule_of(session: Session, scenario_id: uuid.UUID) -> _Rule | None:
     (SC-4-05) — this function still answers "the" rule of a scenario, a question `scope_ref` makes
     ill-posed once more than one row exists; `rules_of_scenario` is the caller that expects N rows.
     """
+    # `populate_existing`: since SC-4-02 the rule has an `UPDATE` path (`update_fixed_price`) that
+    # rotates `updated_at` in SQL, so a `CommercialTerms` already in the identity map — loaded
+    # earlier in the same session — would otherwise answer with the marker it had before the edit,
+    # and the client's next edit would be refused as stale.
     rows = session.execute(
-        sa.select(CommercialTerms).where(CommercialTerms.scenario_id == scenario_id)
+        sa.select(CommercialTerms)
+        .where(CommercialTerms.scenario_id == scenario_id)
+        .execution_options(populate_existing=True)
     ).scalars().all()
     if not rows:
         return None
@@ -506,8 +577,9 @@ _MODEL_TYPES_WITH_SHARED_SCENARIO_REVENUE: frozenset[str] = frozenset(
 """Models whose revenue formula reads data shared by the whole scenario rather than data carried on
 the rule's own row — so two or more rules of this model in one scenario are provably the same
 answer, and `revenue_by_model_type` may price the model once, from any one of them (K-01). Every
-other model (today: Story Points and Outcome-based — `_outcome_based` reads **only** the rule's own
-`outcome_terms` row, SC-4-03) is priced from `commercial_terms`'s own details row, where two
+other model (today: Story Points, Outcome-based — `_outcome_based` reads **only** the rule's own
+`outcome_terms` row, SC-4-03 — and Fixed Price — `_fixed_price` reads **only** the rule's own
+`fixed_price_terms` row, SC-4-02) is priced from `commercial_terms`'s own details row, where two
 rules can legitimately disagree — those raise `MultipleRulesOfOneModelNotSupported` instead of
 picking one silently. A model joins this set only when its formula is checked to have the same
 shared-data property T&M has — not by default."""
@@ -566,11 +638,11 @@ def revenue_of(session: Session, scenario: Scenario, rule: _Rule | None) -> Reve
 
     **A model this version of the code does not know is a named state, not a `KeyError`** (R-02,
     gate 2). The discriminator CHECK admits only models this version knows (`time_and_material`,
-    `story_points` since SC-4-04, `outcome_based` since SC-4-03), so the branch is unreachable in a
-    single-version deployment; it is reachable in the mixed-version window of expand → deploy →
-    contract (ADR-0001), when a later model's migration has widened the CHECK and an instance still
-    runs older code — since SC-4-03 proven on a real `outcome_based` row read by a code version
-    without that branch (`tests/test_outcome_revenue_copy.py`).
+    `story_points` since SC-4-04, `outcome_based` since SC-4-03, `fixed_price` since SC-4-02), so
+    the branch is unreachable in a single-version deployment; it is reachable in the mixed-version
+    window of expand → deploy → contract (ADR-0001), when a later model's migration has widened the
+    CHECK and an instance still runs older code — since SC-4-03 proven on a real `outcome_based` row
+    read by a code version without that branch (`tests/test_outcome_revenue_copy.py`).
     """
     source = APPROVED_SNAPSHOT if scenario.status == ScenarioStatus.APPROVED else LIVE_CATALOG
     if rule is None:
@@ -618,6 +690,10 @@ class ScenarioCommercialView:
     outcome_terms: OutcomeTerms | None = None
     """Wiersz szczegółów reguły Outcome-based, do pokazania jej parametrów (R-04) — `None` dla
     każdego innego modelu i dla reguły bez wiersza szczegółów. Parametry przychodu, nie koszt."""
+    agreed_price: AgreedPrice | None = None
+    """The Fixed Price details row of the rule, as stored (SC-4-02) — `None` for a rule of another
+    model and for a Fixed Price rule without its details row (`incomplete_commercial_terms`). Stated
+    at full stored precision: this is the input a client edits, not the rounded revenue."""
 
 
 def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
@@ -626,12 +702,22 @@ def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
     session.refresh(scenario)
     status_at_read = scenario.status
     rule = _rule_of(session, scenario.id)
+    agreed_price: AgreedPrice | None = None
+    if rule is not None and rule.terms.model_type == MODEL_TYPE_FIXED_PRICE:
+        # One read of the price for the whole view (R-01, 2026-09-28): the revenue is priced from
+        # the very value the answer states as `agreed_price`, never from a second read of the row.
+        # The same helper the `REVENUE_BY_MODEL` entry (`_fixed_price`) calls.
+        agreed_price = _fixed_price_details_of(session, rule)
+        revenue = _fixed_price_answer(agreed_price, scenario)
+    else:
+        revenue = revenue_of(session, scenario, rule)
     return ScenarioCommercialView(
         scenario=scenario,
         terms=None if rule is None else rule.terms,
-        revenue=revenue_of(session, scenario, rule),
+        revenue=revenue,
         status_at_read=status_at_read,
         outcome_terms=None if rule is None else _outcome_details_of(session, rule),
+        agreed_price=agreed_price,
     )
 
 
@@ -706,6 +792,12 @@ def create_commercial_terms(
     samej** instrukcji jako literały obok `RETURNING` reguły, więc strażnik `approved` obejmuje je
     tak samo (ADR-0004, aneks 2026-09-25 SC-4-03, pkt 2), a odmowa nie zapisuje żadnego wiersza.
 
+    For Fixed Price (SC-4-02) the domain columns are `agreed_price` and `currency`. Since SC-4-02
+    `domain_values` must be exactly the table's domain columns (`_domain_columns_of`), for every
+    model: a Fixed Price rule without its price is unwritable here as well as at the API (`422`) and
+    in the database (`NOT NULL`), and it is never created as an incomplete rule to be filled in
+    later (ADR-0003, addendum 2026-09-25 SC-4-02, point 2).
+
     ```
     WITH new_commercial_terms AS (
         INSERT INTO commercial_terms (id, scenario_id, model_type, scope_ref)
@@ -730,9 +822,9 @@ def create_commercial_terms(
     left to the task that decides the API shape of "which segment" (an explicit gap, named in the
     SC-4-05 developer report).
 
-    (`story_points_terms` widens the second `INSERT`'s column list with `domain_values` — see below;
-    the shape above is unchanged for a model with none, which is why passing no `domain_values` for
-    T&M is not a second, different statement.)
+    (`story_points_terms`, `outcome_terms` and `fixed_price_terms` widen the second `INSERT`'s
+    column list with `domain_values` — see below; the shape above is unchanged for a model with
+    none, which is why passing no `domain_values` for T&M is not a second, different statement.)
 
     - **The `approved` refusal and the lock are inside the statement that writes** (ADR-0004,
       addendum SC-4-01, point 1a; `app.data.scenario_guard`). No parent row → no rule → no details
@@ -746,7 +838,8 @@ def create_commercial_terms(
       the database inside the `INSERT` — a `409` through `app.data.write_errors`, never a `SELECT`
       before it.
     - **`domain_values` (SC-4-04, ADR-0003 addendum 2026-09-25, D-6/A)** — a model's own fields
-      (Story Points: `price_per_point`, `accepted_points`, `currency`), carried as literals of the
+      (Story Points: `price_per_point`, `accepted_points`, `currency`; Fixed Price, SC-4-02:
+      `agreed_price`, `currency`), carried as literals of the
       detail table's own column type into the *same* guarded `INSERT … SELECT`, never a second,
       unguarded statement. Empty for a model with no domain column (T&M today), so this path is the
       one T&M already shipped, not a new one next to it.
@@ -754,11 +847,19 @@ def create_commercial_terms(
     `None` means "no such scenario for this caller" and is decided before the guard, so a `409` can
     never confirm that a scenario outside the caller's scope exists (K-05).
     """
+    detail_table = DETAIL_TABLE_BY_MODEL[model_type]
+    domain_values = dict(domain_values or {})
+    expected = _domain_columns_of(detail_table)
+    if set(domain_values) != expected:
+        raise ValueError(
+            f"The {model_type!r} details row takes exactly these fields: "
+            f"{', '.join(sorted(expected)) or '(none)'}; "
+            f"got: {', '.join(sorted(domain_values)) or '(none)'}."
+        )
+
     if scenario_in_scope(session, caller, project_id, scenario_id) is None:
         return None
 
-    detail_table = DETAIL_TABLE_BY_MODEL[model_type]
-    domain_values = domain_values or {}
     open_scenario = unapproved_scenario(scenario_id).subquery("open_scenario")
     new_terms = (
         sa.insert(_TERMS_TABLE)
@@ -778,6 +879,9 @@ def create_commercial_terms(
         .returning(_TERMS_TABLE.c.id, _TERMS_TABLE.c.model_type)
         .cte("new_commercial_terms")
     )
+    # The domain values ride in the same `INSERT … SELECT` as bound literals typed by their own
+    # columns: a price is written by the statement that is guarded, never by a second one that
+    # could run against a scenario approved in between.
     detail_columns = ["commercial_terms_id", "model_type", *domain_values]
     detail_select_columns = [new_terms.c.id, new_terms.c.model_type, *(
         sa.literal(value, type_=detail_table.c[column].type).label(column)
@@ -828,6 +932,209 @@ def _diagnose_refusal(session: Session, scenario_id: uuid.UUID) -> CommercialTer
     )
 
 
+_DETAILS_BOOKKEEPING_COLUMNS: frozenset[str] = frozenset(
+    {"commercial_terms_id", "model_type", "created_at"}
+)
+"""The columns every details table has and no client supplies: the rule's id and model (both taken
+from the rule inside the statement) and the row's own timestamp."""
+
+
+def _domain_columns_of(detail_table: sa.Table) -> set[str]:
+    """The columns of a details table a writer supplies — none for `tm_terms`, the price, the points
+    and the currency for `story_points_terms`, the price pair for `fixed_price_terms`."""
+    return {column.name for column in detail_table.columns} - _DETAILS_BOOKKEEPING_COLUMNS
+
+
+# --- editing the Fixed Price price (ADR-0003, addendum 2026-09-25 SC-4-02, point 7; D-6 = A) ------
+
+
+class CommercialTermsNotFound(RuntimeError):
+    """The scenario is in scope but has no Fixed Price price to edit — a `404`, decided before any
+    `409` (the R-01 order: the target first, then `approved`, then the marker)."""
+
+
+class CommercialTermsEditAmbiguous(CommercialTermsWriteRejected):
+    """The scenario carries more than one commercial rule (SC-4-05 `scope_ref`: a whole-scenario
+    rule next to a segment-scoped one), so the price edit is refused before anything is written — a
+    `409`, permanent for the scenario as it is (R-03 of the SC-4-02 review, 2026-09-28).
+
+    Without this refusal the guarded `UPDATE` would commit the new price and the read that builds
+    the answer (`_view_of` → `_rule_of`) would then raise `MultipleCommercialRulesNotSupported`: a
+    `500` after a write that landed. Editing a segment-scoped Fixed Price rule is out of scope of
+    SC-4-02."""
+
+
+class CommercialTermsEditConflict(CommercialTermsWriteRejected):
+    """ADR-0007: the rule changed since the caller read it — a `409` told apart from the `approved`
+    one by its message. Transient: re-read and apply again (the `approved` refusal is permanent)."""
+
+
+EDITABLE_FIXED_PRICE_FIELDS: frozenset[str] = frozenset({"agreed_price", "currency"})
+"""What the price edit may change: the price pair and nothing else — never `model_type` (ADR-0003,
+point 2: immutable after the write)."""
+
+
+def update_fixed_price(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    changes: Mapping[str, object],
+) -> ScenarioCommercialView | None:
+    """Change the agreed price of a draft scenario's Fixed Price rule — or refuse. D-6 = A.
+
+    `None` means "no such scenario for this caller" and is decided first, so no `409` can confirm
+    that a scenario outside the caller's scope exists (K-05). Everything else is **one statement**:
+
+    ```
+    WITH guarded_commercial_terms AS (
+        UPDATE commercial_terms SET updated_at = now()
+         WHERE scenario_id = :scenario_id
+           AND scope_ref IS NULL                           -- the whole-scenario rule (SC-4-05)
+           AND model_type = 'fixed_price'
+           AND updated_at = :expected                      -- ADR-0007, the aggregate's marker
+           AND scenario_id IN (SELECT id FROM scenarios
+                                WHERE id = :scenario_id AND status <> 'approved'
+                                  FOR UPDATE)              -- ADR-0004, and the lock (K-05 race)
+           AND EXISTS (SELECT 1 FROM fixed_price_terms
+                        WHERE commercial_terms_id = commercial_terms.id)
+           AND NOT EXISTS (SELECT 1 FROM commercial_terms other  -- the only rule (R-03)
+                            WHERE other.scenario_id = :scenario_id
+                              AND other.id <> commercial_terms.id)
+        RETURNING id
+    )
+    UPDATE fixed_price_terms SET agreed_price = :price, currency = :currency
+      FROM guarded_commercial_terms
+     WHERE fixed_price_terms.commercial_terms_id = guarded_commercial_terms.id
+    RETURNING fixed_price_terms.commercial_terms_id
+    ```
+
+    - **The marker is compared and rotated by the database, in the statement that writes the
+      price** — the shape ADR-0007 proved for the position aggregate (`guarded_position`, addendum
+      2026-09-22 SC-3-02, point 1), applied to the rule, whose marker covers its details row
+      (ADR-0003, "Konsekwencje"). No second marker on `fixed_price_terms`.
+    - **The `approved` refusal and the scenario row lock are inside the same statement**
+      (`app.data.scenario_guard.unapproved_scenario`, ADR-0004, addendum 2026-09-25 SC-4-02,
+      point 1): a Python status check before it is the mutation the race test kills.
+    - **The `EXISTS` keeps "nothing matched" equal to "nothing written"**: without it, a rule
+      with no details row would have its marker rotated by the CTE while the outer `UPDATE`
+      changed nothing.
+    - **`model_type = 'fixed_price'` is in the `WHERE`**, not checked in Python: the edit of a T&M
+      rule matches nothing and is diagnosed as "no price to edit" (`404`).
+    - **`scope_ref IS NULL` is in the `WHERE`** (SC-4-05 adaptation, sync of 2026-09-28): this path
+      edits the scenario's *whole-scenario* rule — the one rule every single-rule read path here
+      (`_rule_of`) answers with — so `uq_commercial_terms_scenario_id` (at most one rule with
+      `scope_ref IS NULL` per scenario) bounds the CTE to at most one row. A segment-scoped rule
+      (writable only at the data layer — no request schema carries `scope_ref`) is not reached by
+      it and is diagnosed as "no price to edit" (`404`).
+    - **`NOT EXISTS` another rule of the scenario is in the `WHERE`** (R-03 of the SC-4-02 review,
+      2026-09-28): the edit writes only when the whole-scenario rule is the scenario's *only* rule,
+      so it can never commit a price the answer's single-rule read (`_rule_of`) then refuses to
+      show — `CommercialTermsEditAmbiguous`, a `409`, and nothing written. The predicate is
+      evaluated against the statement's snapshot: a segment rule committed by another transaction
+      after it started is not seen (such rules are writable only at the data layer today).
+
+    A price below zero is refused by `ck_fixed_price_terms_agreed_price_non_negative` inside the
+    `UPDATE` — a `409` naming the constraint (`app.data.write_errors`) for a caller that got
+    past the schema's own bound.
+    """
+    forbidden = sorted(set(changes) - EDITABLE_FIXED_PRICE_FIELDS)
+    if forbidden or not changes:
+        raise ValueError(
+            "A Fixed Price edit changes at least one of "
+            f"{', '.join(sorted(EDITABLE_FIXED_PRICE_FIELDS))} and nothing else; "
+            f"got: {', '.join(sorted(changes)) or '(none)'}."
+        )
+
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+        return None
+
+    guarded = (
+        sa.update(_TERMS_TABLE)
+        .where(
+            _TERMS_TABLE.c.scenario_id == scenario_id,
+            _TERMS_TABLE.c.scope_ref.is_(None),
+            _TERMS_TABLE.c.model_type == MODEL_TYPE_FIXED_PRICE,
+            _TERMS_TABLE.c.updated_at == expected_updated_at,
+            _TERMS_TABLE.c.scenario_id.in_(unapproved_scenario(scenario_id)),
+            sa.exists().where(_FIXED_PRICE_TABLE.c.commercial_terms_id == _TERMS_TABLE.c.id),
+            ~sa.exists().where(
+                _OTHER_TERMS.c.scenario_id == scenario_id, _OTHER_TERMS.c.id != _TERMS_TABLE.c.id
+            ),
+        )
+        # Explicit rather than left to the column's `onupdate`: the rotation of the marker is part
+        # of what this statement claims, and `now()` is the database's clock.
+        .values(updated_at=sa.func.now())
+        .returning(_TERMS_TABLE.c.id)
+        .cte("guarded_commercial_terms")
+    )
+    statement = (
+        sa.update(_FIXED_PRICE_TABLE)
+        .add_cte(guarded)
+        .where(_FIXED_PRICE_TABLE.c.commercial_terms_id == guarded.c.id)
+        .values(**dict(changes))
+        .returning(_FIXED_PRICE_TABLE.c.commercial_terms_id)
+    )
+
+    try:
+        applied = session.execute(statement).one_or_none()
+        if applied is None:
+            # The `EXISTS` above makes "no row returned" mean "the CTE matched nothing" — nothing
+            # was written, so nothing is rolled back (the reasoning of `create_commercial_terms`).
+            raise _diagnose_edit_refusal(session, scenario_id)
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        # `from None`: PostgreSQL's `DETAIL: Failing row contains (…)` must not ride along (NF-11).
+        raise _failure(error) from None
+    scenario = scenario_in_scope(session, caller, project_id, scenario_id)
+    if scenario is None:  # pragma: no cover — the scenario was in scope a statement ago
+        return None
+    return _view_of(session, scenario)
+
+
+def _diagnose_edit_refusal(session: Session, scenario_id: uuid.UUID) -> Exception:
+    """Name the reason the guarded price edit matched nothing — after the refusal, never as the
+    guard.
+
+    The R-01 order of `app.data.additional_cost._diagnose_row_refusal`: the target first (a Fixed
+    Price rule **with** its price row, in this scenario — `404` even under `approved`, since "copy
+    the scenario and edit the price there" would not help), then the permanent reasons (another
+    rule next to it — R-03, a copy would carry both; then `approved`), then the transient one (the
+    marker). Every lookup is narrowed to a scenario `scenario_in_scope`
+    has already returned.
+    """
+    has_price = session.execute(
+        sa.select(
+            sa.exists().where(
+                _TERMS_TABLE.c.scenario_id == scenario_id,
+                _TERMS_TABLE.c.scope_ref.is_(None),
+                _TERMS_TABLE.c.model_type == MODEL_TYPE_FIXED_PRICE,
+                _FIXED_PRICE_TABLE.c.commercial_terms_id == _TERMS_TABLE.c.id,
+            )
+        )
+    ).scalar_one()
+    if not has_price:
+        return CommercialTermsNotFound("This scenario has no Fixed Price commercial terms to edit.")
+    rules = session.execute(
+        sa.select(sa.func.count()).where(_TERMS_TABLE.c.scenario_id == scenario_id)
+    ).scalar_one()
+    if rules > 1:
+        return CommercialTermsEditAmbiguous(
+            "This scenario has more than one set of commercial terms, so its Fixed Price price "
+            "cannot be edited here."
+        )
+    refusal = _diagnose_refusal(session, scenario_id)
+    if isinstance(refusal, CommercialTermsFrozen):
+        return refusal
+    return CommercialTermsEditConflict(
+        "The commercial terms changed since they were read (concurrency marker). Re-read them and "
+        "apply the change again."
+    )
+
+
 # --- the copying cascade (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b) -----------------------
 
 COMMERCIAL_TERMS_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
@@ -849,6 +1156,27 @@ follows (the key is the rule's id, `created_at` is the copy's own); the copier a
 table `DETAIL_TABLE_BY_MODEL` names for the rule's model. `commercial_terms_id` is the one value
 that cannot be reflected: it is the *copied* rule's id, which is why the details row has no
 registry entry of its own."""
+
+FIXED_PRICE_TERMS_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
+    {"commercial_terms_id", "created_at"}
+)
+"""The same convention for `fixed_price_terms` (SC-4-02; ADR-0004, addendum 2026-09-25, point 2) —
+a details table whose copy carries domain values: `agreed_price` and `currency` are copied
+by reflection, `model_type` too, and only the key and the copy's own timestamp are not. A separate
+constant rather than a reuse of the T&M one, so the drift guard of each table is its own and a
+column added to one table cannot be decided for it by the other's set."""
+
+DETAIL_COLUMNS_NOT_COPIED_BY_MODEL: dict[str, frozenset[str]] = {
+    MODEL_TYPE_TIME_AND_MATERIAL: TM_TERMS_COLUMNS_NOT_COPIED,
+    # Story Points keeps exactly the set its copy used when SC-4-04 shipped (the T&M convention,
+    # "the convention every details table follows"): this registry changes nothing of its copy.
+    MODEL_TYPE_STORY_POINTS: TM_TERMS_COLUMNS_NOT_COPIED,
+    # Outcome-based likewise keeps the set its copy used when SC-4-03 shipped.
+    MODEL_TYPE_OUTCOME_BASED: TM_TERMS_COLUMNS_NOT_COPIED,
+    MODEL_TYPE_FIXED_PRICE: FIXED_PRICE_TERMS_COLUMNS_NOT_COPIED,
+}
+"""`model_type` → the columns its details row does not pass to a copy. Keyed like
+`DETAIL_TABLE_BY_MODEL`, and a test asserts the two registries have the same keys."""
 
 
 class CommercialTermsNotCopyable(RuntimeError):
@@ -900,7 +1228,9 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
     table (since SC-4-03 proven on a real `outcome_based` row). Every details table is copied by
     reflection here — `outcome_terms` with all its domain columns (ADR-0004, aneks 2026-09-25
     SC-4-03, pkt 3) — so no model needs a branch of its own, and `scope_ref` is remapped above the
-    model dispatch, identically for every model.
+    model dispatch, identically for every model. `fixed_price_terms` (SC-4-02) is copied the same
+    way, with its price pair; the columns each details table does not pass on are named per model by
+    `DETAIL_COLUMNS_NOT_COPIED_BY_MODEL`.
     """
     rules = list(
         session.execute(
@@ -936,7 +1266,6 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
                 )
             ).all()
         )
-
     for terms in rules:
         new_terms_id = uuid.uuid4()
         new_scope_ref: uuid.UUID | None = None
@@ -963,6 +1292,7 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
         # refusal would let the rule through and this lookup would find no details, silently
         # re-creating the incomplete copy R-03 exists to prevent.
         detail_table = DETAIL_TABLE_BY_MODEL[terms.model_type]
+        not_copied = DETAIL_COLUMNS_NOT_COPIED_BY_MODEL[terms.model_type]
         details = (
             session.execute(
                 sa.select(detail_table).where(detail_table.c.commercial_terms_id == terms.id)
@@ -977,7 +1307,7 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
                         **{
                             column: value
                             for column, value in details.items()
-                            if column not in TM_TERMS_COLUMNS_NOT_COPIED
+                            if column not in not_copied
                         },
                         "commercial_terms_id": new_terms_id,
                     }
