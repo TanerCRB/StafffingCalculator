@@ -192,17 +192,20 @@ manifest.
 
 ## 7. How to write
 
-**In English — every artifact:** commit messages, pull request descriptions, the content of
-Issues and comments, comments in code and scripts, documentation, as well as identifiers, error
-and log messages, and the API surface.
+**In English — every artifact:** commit messages, pull request descriptions, every new Issue and
+every comment added to an Issue or pull request, comments and docstrings in code and scripts,
+documentation, as well as identifiers, error and log messages, and the API surface.
 
 This is a **deliberate, explicit choice**, made by the human on 2026-09-28. It replaces the earlier
 rule (artifacts in Polish, only the tool-read surface in English) and matches the upstream kit's
-(NineFold) default. Conversation with the human stays in the human's language. Existing Polish
-text — in `docs/`, ADRs, code comments, Issue-form labels (`.github/ISSUE_TEMPLATE/*.yml`) — is not
-translated retroactively: it becomes English when it is next edited for another reason, and a
-bulk translation is a task of its own. Issue-form field **ids** do not change, because
-`tools/sync-github.mjs` and existing Issues depend on them.
+(NineFold) default. Conversation with the human stays in the human's language.
+
+**Existing Polish text.** Comments and docstrings already in the code are translated to English
+(a dedicated task, decided by the human on 2026-09-28) — string literals, test data and anything
+a test asserts on stay byte-for-byte unchanged. Existing Polish in `docs/`, ADRs and the history of
+already-open Issues is not translated retroactively: it becomes English when it is next edited for
+another reason. Issue-form field **ids** do not change, because `tools/sync-github.mjs` and
+existing Issues depend on them.
 
 **Short and to the point.** One sentence instead of a paragraph. Fact and reason — without an
 elaborate justification and without repeating the same thought in different words across

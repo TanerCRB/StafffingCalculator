@@ -44,10 +44,11 @@ Issue to `state:evidence`, it doesn't close it. The `waiting-on-human` label mar
   the main checkout.
 - An existing test that starts failing because of a change is never weakened or removed — stop
   and report the conflict.
-- **Write every artifact in English** (since 2026-09-28): commit messages, PR/Issue descriptions
-  and comments, code comments, docs — as well as identifiers, error/log messages, the API surface.
-  Existing Polish text is not translated retroactively; it becomes English when it is next
-  edited. See `TEAM-CONTRACT.md` §7.
+- **Write every artifact in English** (since 2026-09-28): commit messages, PR descriptions, every
+  new Issue and every comment on an Issue/PR, code comments and docstrings, docs — as well as
+  identifiers, error/log messages, the API surface. Existing Polish code comments are translated
+  (string literals untouched); existing Polish in `docs/`/ADRs becomes English on its next edit.
+  See `TEAM-CONTRACT.md` §7.
 
 ## Commands
 
