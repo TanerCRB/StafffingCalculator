@@ -44,8 +44,10 @@ Issue to `state:evidence`, it doesn't close it. The `waiting-on-human` label mar
   the main checkout.
 - An existing test that starts failing because of a change is never weakened or removed — stop
   and report the conflict.
-- **Write in Polish**: commit messages, PR/Issue descriptions, comments, docs. **Write in
-  English**: identifiers, error/log messages, the API surface. See `TEAM-CONTRACT.md` §7.
+- **Write every artifact in English** (since 2026-09-28): commit messages, PR/Issue descriptions
+  and comments, code comments, docs — as well as identifiers, error/log messages, the API surface.
+  Existing Polish text is not translated retroactively; it becomes English when it is next
+  edited. See `TEAM-CONTRACT.md` §7.
 
 ## Commands
 

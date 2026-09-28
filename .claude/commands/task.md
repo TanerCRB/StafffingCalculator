@@ -62,10 +62,11 @@ What would change it: <what I don't know>
 
 A recommendation **is not a decision** — you still stop and wait.
 
-**Keep the conversation terse (this project runs caveman mode); keep artifacts in full Polish.**
-Issue bodies, comments, commit messages, and pull request descriptions are written in Polish, per
-`TEAM-CONTRACT.md`, section 7 — identifiers, error/log messages, and the API surface stay in
-English. Drop compression anywhere it creates ambiguity (irreversible actions, security).
+**Keep the conversation terse (this project runs caveman mode); keep artifacts in full English.**
+Issue bodies, comments, commit messages, pull request descriptions, code comments, and docs are
+written in English, per `TEAM-CONTRACT.md`, section 7 — as are identifiers, error/log messages,
+and the API surface. Drop compression anywhere it creates ambiguity (irreversible actions,
+security).
 
 ---
 
