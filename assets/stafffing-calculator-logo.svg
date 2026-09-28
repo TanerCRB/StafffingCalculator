@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="210" viewBox="0 0 980 210" role="img" aria-labelledby="title description">
+  <title id="title">StafffingCalculator</title>
+  <desc id="description">Planning chart symbol beside the product name and its staffing, cost, and profitability focus.</desc>
+
+  <rect x="1" y="1" width="978" height="208" rx="24" fill="#FFFFFF" stroke="#D7DBE0" stroke-width="2"/>
+
+  <!-- The chart mark follows the project's existing prototype favicon. -->
+  <rect x="32" y="37" width="136" height="136" rx="31" fill="#0047B3"/>
+  <path d="M57 143h86" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-width="6"/>
+  <path d="M63 137v-28a6 6 0 0 1 6-6h9a6 6 0 0 1 6 6v28zm30 0V85a6 6 0 0 1 6-6h9a6 6 0 0 1 6 6v52zm30 0V64a6 6 0 0 1 6-6h9a6 6 0 0 1 6 6v73z" fill="#FF5500"/>
+
+  <text x="202" y="110" fill="#0047B3" font-family="Manrope, Segoe UI, Arial, sans-serif" font-size="61" font-weight="700" letter-spacing="-1.8">StafffingCalculator</text>
+  <text x="205" y="153" fill="#3B4252" font-family="Manrope, Segoe UI, Arial, sans-serif" font-size="23" font-weight="500" letter-spacing="0.2">IT staffing · cost · profitability</text>
+</svg>

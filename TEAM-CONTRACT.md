@@ -192,16 +192,17 @@ manifest.
 
 ## 7. How to write
 
-**In Polish:** comments in code and scripts, commit messages, pull request descriptions, the
-content of Issues and comments, documentation. **In English:** identifiers, error and log
-messages, the API surface — this is independent of the team's language, because it is a surface
-read by tools.
+**In English — every artifact:** commit messages, pull request descriptions, the content of
+Issues and comments, comments in code and scripts, documentation, as well as identifiers, error
+and log messages, and the API surface.
 
-This is a **deliberate, explicit choice**, recorded here so a future upgrade from the upstream kit
-(NineFold) doesn't silently flip it: upstream's own default reverses this — conversation in the
-human's language, artifacts in English unless a team states otherwise, exactly as this section
-does. Issue-form field ids (`.github/ISSUE_TEMPLATE/*.yml`) stay in Polish for the same reason —
-labels and content read by the team, not by an external tool contract.
+This is a **deliberate, explicit choice**, made by the human on 2026-09-28. It replaces the earlier
+rule (artifacts in Polish, only the tool-read surface in English) and matches the upstream kit's
+(NineFold) default. Conversation with the human stays in the human's language. Existing Polish
+text — in `docs/`, ADRs, code comments, Issue-form labels (`.github/ISSUE_TEMPLATE/*.yml`) — is not
+translated retroactively: it becomes English when it is next edited for another reason, and a
+bulk translation is a task of its own. Issue-form field **ids** do not change, because
+`tools/sync-github.mjs` and existing Issues depend on them.
 
 **Short and to the point.** One sentence instead of a paragraph. Fact and reason — without an
 elaborate justification and without repeating the same thought in different words across
