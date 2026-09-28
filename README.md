@@ -1,83 +1,158 @@
-# Ninefold — instantiated for StafffingCalculator
+# StafffingCalculator
 
-This repository is both the Ninefold process kit *and* the product it now governs: an IT project
-staffing/profitability planner (`backend/` Python/FastAPI, `frontend/` React/TypeScript;
-requirements in [`Wymagania/Requirements_EN.md`](Wymagania/Requirements_EN.md)). Start here:
-[`TEAM-CONTRACT.md`](TEAM-CONTRACT.md) (who does what), [`docs/PLAN.md`](docs/PLAN.md) (the task
-register — `SC-1-01` is the first task waiting to run through the process), `backend/README.md`,
-`frontend/README.md`.
+Planer obsady i rentowności projektów IT. Aplikacja webowa dla Project Managerów w firmie
+outsourcingowej: pozwala przygotować plan obsady, oszacować koszty i przychód projektu, ocenić
+rentowność i porównać finansowy skutek alternatywnych wariantów realizacji.
 
-The rest of this file, `FrameworkDoc.md`, and `process/` describe the **general, portable Ninefold
-pattern** this project's configuration (`agents/`, `TEAM-CONTRACT.md`, `process/labels.json`,
-`process/issue-templates/`) was adapted from — kept as reference for the reasoning behind each
-adapted file.
+Projekt jest jednocześnie **przykładem użycia frameworka [Ninefold](https://github.com/TanerCRB/NineFold)**
+— procesu SDLC dla wytwarzania oprogramowania prowadzonego przez agentów AI (Spec-Driven
+Development + Human-in-the-Loop). Cały kod w tym repozytorium powstał w tym procesie: każde
+zadanie przeszło od Issue przez kryteria akceptacji, mapę wpływu na architekturę, implementację,
+testy mutacyjne i niezależne przeglądy, z trzema bramkami, których agent nigdy nie przekracza.
 
-## About the kit
+## Co robi aplikacja
 
-*A starter kit for an AI-agent SDLC process.*
+Wymagania: [`Wymagania/Requirements_EN.md`](Wymagania/Requirements_EN.md). Najważniejsze obszary:
 
-**Why "Ninefold":** the process is carried by nine actors — eight specialized agent roles
-(Product Owner, Analyst, Architect, Developer, QA, Invariant Guardian, Reviewer, Security
-Auditor) plus the human — and that number is not incidental. It's the structural core the whole
-kit is built around: a role that produces something never evaluates it, and every handoff between
-roles puts a fresh set of eyes on the result (see `FrameworkDoc.md`, section 3).
+- **Projekty i scenariusze** — wiele niezależnych scenariuszy kalkulacji na projekt, szkice,
+  kopiowanie, archiwizacja, wykrywanie brakujących danych (scenariusz niekompletny nigdy nie jest
+  prezentowany jako gotowy do zatwierdzenia).
+- **Konfigurowalne założenia** — łańcuch nadpisań organizacja → projekt → scenariusz, ze
+  wskazaniem źródła każdej wartości; kalendarze robocze, budżety urlopowe, fazy dostawy.
+- **Katalog ról i stawek** — rola, senioritet, lokalizacja, typ zaangażowania, stawki kosztowe i
+  sprzedażowe z przedziałami obowiązywania, stawki poddostawców, rejestr osób nazwanych.
+- **Plan obsady** — pozycje obsady z miesięczną alokacją (godziny/FTE), role anonimowe lub osoby.
+- **Modele komercyjne** — Time & Material, Fixed Price, Outcome-based, Story Points.
+- **Koszty** — koszt osobowy (stawka bazowa, narzuty, kwota stała), koszt nieobecności płatnych,
+  koszty dodatkowe.
+- **Wyniki** — zysk, marża, markup; porównanie scenariuszy; analiza what-if (np. podwyżka
+  wynagrodzeń) bez zapisu.
+- **Kontrola dostępu** — widoczność projektów per przypisanie, osobna bramka dla pól kosztów
+  osobowych, historia zmian przy zatwierdzeniu scenariusza.
 
-An anonymized, portable excerpt from a real SDLC process based on Spec-Driven Development
-and Human-in-the-Loop, described in [`FrameworkDoc.md`](FrameworkDoc.md). This directory contains
-**working artifacts**, not just a description: agent role definitions, Issue/PR templates, a label
-manifest, sync scripts, a pre-push hook, and a guide to reconstructing the whole thing on a new
-repository.
+Postęp prac: [`docs/PLAN.md`](docs/PLAN.md) (rejestr zadań) oraz
+[`docs/architecture/capabilities.md`](docs/architecture/capabilities.md) — rejestr tego, co jest
+**udowodnione testem**, oddzielony od tego, co jest tylko zdecydowane. Decyzje architektoniczne:
+[`docs/architecture/decisions/`](docs/architecture/decisions/).
 
-All project names, organization, business domain, and specific identifiers (ADR numbers, Issue,
-PR, hosts, accounts) have been removed or replaced with placeholders in angle brackets,
-e.g. `<repo-backend>`, `<owner>`, `<Entity>`. Substitute the specifics of your own project for them.
+> **Stan:** projekt w fazie rozwoju, bez środowiska produkcyjnego. Tożsamość wołającego to nadal
+> placeholder w nagłówku żądania, nie uwierzytelnianie (ADR-0005) — aplikacja odmawia startu poza
+> `development`/`test` bez jawnego opt-in.
 
-## How to read this directory
+## Stos technologiczny
 
-1. **[`FrameworkDoc.md`](FrameworkDoc.md)** — the philosophy and mechanics of the process: nine
-   roles, three human gates, mutation testing as the core of proof, state management, parallel
-   work by multiple agents, cost in tokens. Start here to understand **why** the rest of the
-   directory looks the way it looks.
-2. **[`TEAM-CONTRACT-TEMPLATE.md`](TEAM-CONTRACT-TEMPLATE.md)** — the team contract: who does what,
-   which tools they don't have, where the boundary lies that can't be expressed in the permission
-   declaration itself, how to launch a role. This is the document the role definitions defer to in
-   case of discrepancy.
-3. **[`agents/`](agents/)** — eight role templates to adapt (Product Owner, Analyst, Architect,
-   Developer, QA, Invariant Guardian, Reviewer, Security Auditor). The evaluating roles
-   (`invariant-guardian.md`, `reviewer.md`, `security-auditor.md`) have checklists marked as
-   EXAMPLE — write your own, concrete rules. `developer.md` combines the backend/frontend variants
-   in a single file with two example checklists side by side; if you have two technology stacks,
-   split it into two files (see the note at the top of the file).
-4. **[`process/`](process/)** — the state machine, label manifest, Issue and PR templates, the
-   pre-push hook, the `main` protection variant without a paid plan, repository settings, release
-   versioning, the cross-repository gap channel.
-   **[`task-command.md`](process/task-command.md)** and
-   **[`task-status-command.md`](process/task-status-command.md)** — the full content of the
-   command that drives one task through the whole lifecycle (the equivalent of
-   `/zadanie_be`/`/zadanie_fe`) and its read-only sibling (`/zadanie_stan`) — they belong in the
-   product repository, not here (see `FrameworkDoc.md`, section 4).
-5. **[`tools/`](tools/)** — `sync-agents.mjs` (copies role definitions from the process repository
-   to the `.claude/agents/` of the product repository) and `sync-github.mjs` (distributes Issue/PR
-   templates and prints `gh` commands for labels).
-6. **[`calibration/`](calibration/)** — how to check that an evaluating role actually evaluates,
-   before you start trusting it.
-7. **[`process/bootstrap-guide.md`](process/bootstrap-guide.md)** — a step-by-step sequence of
-   actions to go from an empty repository to a working pipeline with gates. Start here if you want
-   to **act**, not just understand.
+| Warstwa | Technologie |
+|---|---|
+| Backend (`backend/`) | Python 3.12+, FastAPI, Pydantic, SQLAlchemy 2.x, Alembic, PostgreSQL |
+| Frontend (`frontend/`) | React 18, TypeScript, Vite, pnpm, Vitest |
+| Testy | pytest + testcontainers (prawdziwy PostgreSQL w Dockerze), Vitest + Testing Library |
 
-## Minimal set to get started
+Kwoty pieniężne to zawsze `Decimal`, zaokrąglane wyłącznie przez `backend/app/core/money.py` /
+`frontend/src/lib/money.ts` (ADR-0002). Na granicy API liczby dziesiętne są przesyłane jako
+stringi, nigdy jako JSON float.
 
-If you don't have time to read everything: `FrameworkDoc.md` §1–5, one role from `agents/` as a
-sample (e.g. `invariant-guardian.md` — it has the most mechanical output format),
-`process/sdlc-flow.md`, and `process/bootstrap-guide.md` steps 0–4.
+## Uruchomienie
 
-## What this kit deliberately does not contain
+Wymagane: Python 3.12+, Node.js z pnpm, PostgreSQL, Docker (dla testów backendu).
 
-- **Specific domain checklists.** The Guardian's rules, the Analyst's criteria, the invariants in
-  the PR template — all of this has to be written from scratch for your domain and your stack.
-  FrameworkDoc.md §12 states this explicitly: *roles and gates are universal, checklists are not*.
-- **CI configuration for a specific runner provider.** `process/ci-and-branch-protection.md` and
-  `process/repository-settings.md` describe patterns (path filter versus required check, runner
-  watchdog, `runs-on` as an expression) — not ready-made workflow files.
-- **A persistent orchestrator.** FrameworkDoc.md §3 describes the entry condition under which it's
-  even worth building one. This kit assumes you haven't reached it yet.
+```bash
+# Backend
+cd backend
+python -m venv .venv
+.venv/Scripts/activate            # Windows; source .venv/bin/activate na Linux/macOS
+pip install -e ".[dev]"
+cp .env.example .env              # ustaw APP_DATABASE_URL
+alembic upgrade head
+uvicorn app.main:app --reload
+
+# Frontend
+cd frontend
+pnpm install
+cp .env.example .env
+pnpm dev
+```
+
+Testy i lint:
+
+```bash
+( cd backend && pytest && ruff check . )
+( cd frontend && pnpm test && pnpm lint && pnpm build )
+```
+
+Szczegóły: [`backend/README.md`](backend/README.md), [`frontend/README.md`](frontend/README.md).
+
+## Proces: Ninefold
+
+[Ninefold](https://github.com/TanerCRB/NineFold) to przenośny zestaw startowy procesu SDLC dla
+agentów AI. Nazwa pochodzi od dziewięciu aktorów: ośmiu wyspecjalizowanych ról agentowych plus
+człowiek. Zasada nośna: **rola, która coś wytwarza, nigdy tego nie ocenia**, a każde przekazanie
+pracy między rolami to nowa para oczu.
+
+To repozytorium jest instancją Ninefold dla monorepo. Z frameworka przeniesiono i zaadaptowano:
+
+- **Role** ([`agents/`](agents/)) — dziewięć definicji (backend i frontend jako osobni developerzy):
+  - wytwarzające: `product-owner`, `analyst`, `developer-backend`, `developer-frontend`, `qa`,
+  - oceniające: `invariant-guardian`, `architect`, `reviewer`, `security-auditor`.
+
+  Synchronizowane do `.claude/agents/` przez `node tools/sync-agents.mjs`.
+- **Kontrakt zespołu** ([`TEAM-CONTRACT.md`](TEAM-CONTRACT.md)) — kto co robi, bramki, twarde
+  stopy; ma pierwszeństwo przed plikami ról.
+- **Maszyna stanów i etykiety** ([`process/sdlc-flow.md`](process/sdlc-flow.md),
+  [`process/labels.json`](process/labels.json)), szablony Issue/PR, hook pre-push.
+- **Komendy** — `/task #N` prowadzi jedno zadanie od Issue do PR, `/task-status #N` to raport
+  tylko do odczytu (`.claude/commands/`).
+- **Kalibracja** ([`calibration/`](calibration/)) — jak sprawdzić, że rola oceniająca faktycznie
+  ocenia, zanim zacznie się jej ufać.
+
+### Trzy bramki człowieka
+
+1. **Zakres i architektura** — przed napisaniem kodu.
+2. **Merge do `main`** — PR z kodem (`Refs #N`) przenosi Issue do `state:evidence`, nie zamyka go.
+3. **Merge PR dokumentacyjnego** (`Closes #N`) — podnosi status w `docs/PLAN.md` i rejestrze
+   capabilities.
+
+Etykieta `waiting-on-human` oznacza wszystkie trzy — `is:open label:waiting-on-human` pokazuje
+wszystko, co czeka na człowieka.
+
+### Dowód zamiast deklaracji
+
+Kryterium akceptacji ma obserwowalny nośnik, przeciwieństwo i nazwaną mutację, która musi je
+zabić. QA usuwa mechanizm i zapisuje, czy test rzeczywiście upadł. Wpis w
+[`capabilities.md`](docs/architecture/capabilities.md) wskazuje konkretny test i rodzaj dowodu
+(`mutation-checked test`, `test, no mutation`, `no evidence`).
+
+Uzasadnienie całego podejścia (dlaczego tak, a nie inaczej): [`FrameworkDoc.md`](FrameworkDoc.md)
+i [`process/`](process/), a w wersji aktualnej — repozytorium
+[TanerCRB/NineFold](https://github.com/TanerCRB/NineFold).
+
+## Konwencje
+
+- Język polski: commity, opisy PR/Issue, komentarze, dokumentacja.
+- Język angielski: identyfikatory, komunikaty błędów i logów, powierzchnia API.
+- Zadanie piszące kod pracuje we własnym `git worktree`, nie w głównym checkoucie.
+- Istniejący test, który zaczyna padać po zmianie, nigdy nie jest osłabiany ani usuwany.
+
+Pełne zasady: [`TEAM-CONTRACT.md`](TEAM-CONTRACT.md), [`CLAUDE.md`](CLAUDE.md).
+
+## Licencja
+
+Copyright © 2026 Mariusz Miziołek.
+
+StafffingCalculator jest udostępniony na licencji
+**[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)** —
+pełny tekst w pliku [`LICENSE`](LICENSE).
+
+- **Użycie niekomercyjne jest bezpłatne** — nauka, badania, projekty osobiste i hobbystyczne,
+  organizacje non-profit, instytucje edukacyjne i publiczne, zgodnie z warunkami licencji.
+- **Użycie komercyjne wymaga uprzedniej, pisemnej zgody autora** (osobnej licencji komercyjnej).
+  Dotyczy to m.in. użycia w firmie, w usługach świadczonych klientom oraz w produktach
+  sprzedawanych lub udostępnianych odpłatnie. W sprawie licencji komercyjnej skontaktuj się z
+  autorem przez [GitHub](https://github.com/TanerCRB).
+
+Przy dalszym udostępnianiu należy zachować tekst licencji oraz linie `Required Notice:` z pliku
+`LICENSE`.
+
+**Pliki pochodzące z Ninefold.** Framework [Ninefold](https://github.com/TanerCRB/NineFold) jest
+udostępniony na licencji Apache 2.0. Pliki na nim oparte (`FrameworkDoc.md`, `agents/`,
+`process/`, `tools/`, `calibration/`) wywodzą się z tego projektu; jeśli chcesz użyć samego
+procesu — także komercyjnie — skorzystaj z oryginalnego repozytorium Ninefold na jego licencji.
