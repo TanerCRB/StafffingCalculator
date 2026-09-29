@@ -75,7 +75,9 @@ from app.domain.personnel_cost import (
     CURRENCY_MISMATCH,
     NO_COST_CURRENCY,
     NO_COST_RATE,
+    NO_WORKING_DAYS,
     MonthCostRate,
+    priced_amount,
     surcharge_fraction,
 )
 
@@ -98,7 +100,14 @@ follow, with the base cost's meaning (`app.domain.personnel_cost`)."""
 
 STATE_ORDER: Final = (*HOURS_STATES, NO_COST_RATE)
 """Which unresolved reason names the whole component when months fail for different reasons: what
-the hours need first (the catalogue's calendar and budget), then the rate."""
+the hours need first (the catalogue's calendar and budget), then the rate.
+
+`no_working_days` (SC-5-08) is deliberately not a member of this tuple, and its place is still
+fixed (reviewer R-05): it is not a month that failed to resolve but a *priced* month whose
+month-unit rate cannot be converted, so `_resolve_paid_absence_months` reports it only after every
+member above and after `currency_mismatch` — the full order is the hours states, `no_cost_rate`,
+`currency_mismatch`, `no_working_days`, like the base cost (ADR-0013, addendum 2026-09-29, Q-C/Q-D,
+control U-11). `tests/test_cost_rate_unit.py::test_r_05_…` pins the order."""
 
 BUDGET_NOT_COST_GENERATING: Final = "statutory_leave_not_cost_generating"
 """A month's budget part is `0` **because the statutory type's `generates_cost` is `false`** — a
@@ -269,20 +278,33 @@ def month_paid_absence_hours(month: PaidAbsenceMonth) -> PaidAbsenceMonthHours |
     )
 
 
-_ResolvedPaidAbsenceMonths = list[tuple[PaidAbsenceMonthHours, MonthCostRate]]
+_ResolvedPaidAbsenceMonths = list[tuple[PaidAbsenceMonthHours, MonthCostRate, CalendarBasis]]
+
+
+@dataclass(frozen=True)
+class _PricedAbsenceMonth:
+    """One resolved month priced by its rate's unit: the whole amount, the part of it that came from
+    the leave budget, and the rate (for the surcharge). Unrounded (SC-5-08)."""
+
+    amount: Decimal
+    budget_amount: Decimal
+    rate: MonthCostRate
 
 
 def _resolve_paid_absence_months(
     months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
-) -> tuple[PaidAbsenceAssumptionsUsed, _ResolvedPaidAbsenceMonths, str | None, str | None]:
-    """The three checks `paid_absence_cost` and `fully_loaded_paid_absence_cost` share (SC-5-02),
+) -> tuple[PaidAbsenceAssumptionsUsed, list[_PricedAbsenceMonth], str | None, str | None]:
+    """The checks `paid_absence_cost` and `fully_loaded_paid_absence_cost` share (SC-5-02),
     extracted once so the two cannot silently disagree about which months resolve.
 
-    Returns `(assumptions, resolved, currency, reason)` — `resolved` is always the months whose
-    hours and rate both resolved, whatever `reason` says (a caller checks `reason is not None`
-    first, exactly as `paid_absence_cost` always has, and never reads `resolved` before that check).
+    Returns `(assumptions, priced, currency, reason)` — `priced` holds every month priced by its
+    rate's unit (`app.domain.personnel_cost.priced_amount`, SC-5-08: the component prices its hours
+    exactly as the base cost does, never hourly by assumption), and is meaningful only when `reason
+    is None` (a caller checks `reason is not None` first, as `paid_absence_cost` always has). A
+    `month`-unit rate in a month with zero working days is `no_working_days`, after the currency
+    check.
     """
-    resolved: list[tuple[PaidAbsenceMonthHours, MonthCostRate]] = []
+    resolved: _ResolvedPaidAbsenceMonths = []
     unresolved: list[UnresolvedPaidAbsenceMonth] = []
     for month in months:
         hours = month_paid_absence_hours(month)
@@ -301,26 +323,42 @@ def _resolve_paid_absence_months(
                 )
             )
         else:
-            resolved.append((hours, month.rate))
+            # Hours resolved, so the calendar exists (`month_paid_absence_hours` returns
+            # `no_calendar` otherwise) - narrowed here for the type checker and as a tripwire.
+            if month.basis is None:
+                raise RuntimeError("a paid-absence month with resolved hours has no calendar")
+            resolved.append((hours, month.rate, month.basis))
 
-    currencies = tuple(sorted({rate.currency for _, rate in resolved}))
+    currencies = tuple(sorted({rate.currency for _, rate, _ in resolved}))
     assumptions = PaidAbsenceAssumptionsUsed(
-        months=tuple(hours for hours, _ in resolved),
+        months=tuple(hours for hours, _, _ in resolved),
         unresolved_months=tuple(unresolved),
         currencies=currencies,
     )
     if unresolved:
         reasons = {month.reason for month in unresolved}
         reason = next(state for state in STATE_ORDER if state in reasons)
-        return assumptions, resolved, None, reason
+        return assumptions, [], None, reason
     if len(currencies) > 1 or (
         scenario_currency is not None and currencies and currencies != (scenario_currency,)
     ):
-        return assumptions, resolved, None, CURRENCY_MISMATCH
+        return assumptions, [], None, CURRENCY_MISMATCH
+    priced: list[_PricedAbsenceMonth] = []
+    for hours, rate, basis in resolved:
+        amount = priced_amount(
+            hours.manual_hours + hours.budget_hours, rate, basis, hours.period_month
+        )
+        budget_amount = priced_amount(hours.budget_hours, rate, basis, hours.period_month)
+        if isinstance(amount, str) or isinstance(budget_amount, str):
+            # The basis exists, so the only state left is a month-unit rate with `D = 0`.
+            return assumptions, [], None, NO_WORKING_DAYS
+        priced.append(
+            _PricedAbsenceMonth(amount=amount, budget_amount=budget_amount, rate=rate)
+        )
     currency = currencies[0] if currencies else scenario_currency
     if currency is None:
-        return assumptions, resolved, None, NO_COST_CURRENCY
-    return assumptions, resolved, currency, None
+        return assumptions, [], None, NO_COST_CURRENCY
+    return assumptions, priced, currency, None
 
 
 def paid_absence_cost(
@@ -343,19 +381,14 @@ def paid_absence_cost(
     4. Otherwise the sums, exact `Decimal` all the way, rounded **once** each through
        `app.core.money.round_money` — never per month, never per position.
     """
-    assumptions, resolved, currency, reason = _resolve_paid_absence_months(
+    assumptions, priced, currency, reason = _resolve_paid_absence_months(
         months, scenario_currency=scenario_currency
     )
     if reason is not None:
         return PaidAbsenceCostUnavailable(reason=reason, assumptions_used=assumptions)
 
-    total = sum(
-        ((hours.manual_hours + hours.budget_hours) * rate.cost_rate for hours, rate in resolved),
-        Decimal("0"),
-    )
-    budget_total = sum(
-        (hours.budget_hours * rate.cost_rate for hours, rate in resolved), Decimal("0")
-    )
+    total = sum((month.amount for month in priced), Decimal("0"))
+    budget_total = sum((month.budget_amount for month in priced), Decimal("0"))
     return PaidAbsenceCostResult(
         cost=round_money(total),
         budget_cost=round_money(budget_total),
@@ -407,7 +440,7 @@ def fully_loaded_paid_absence_cost(
     is one unrounded pass over hours × rate × (1 + surcharge fraction), for the reason
     `fully_loaded_personnel_cost` gives its own single pass.
     """
-    assumptions, resolved, currency, reason = _resolve_paid_absence_months(
+    assumptions, priced, currency, reason = _resolve_paid_absence_months(
         months, scenario_currency=scenario_currency
     )
     if reason is not None:
@@ -415,10 +448,9 @@ def fully_loaded_paid_absence_cost(
 
     base_total = Decimal("0")
     surcharge_total = Decimal("0")
-    for hours, rate in resolved:
-        base_amount = (hours.manual_hours + hours.budget_hours) * rate.cost_rate
-        base_total += base_amount
-        surcharge_total += base_amount * surcharge_fraction(rate)
+    for month in priced:
+        base_total += month.amount
+        surcharge_total += month.amount * surcharge_fraction(month.rate)
 
     return FullyLoadedPaidAbsenceCostResult(
         cost=round_money(base_total + surcharge_total),

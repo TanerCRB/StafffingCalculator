@@ -625,6 +625,7 @@ def create_catalog_rate(
             default_selling_rate=payload.default_selling_rate,
             currency=payload.currency,
             unit=payload.unit,
+            cost_rate_unit=payload.cost_rate_unit,
             effective_from=payload.effective_from,
             effective_to=payload.effective_to,
             surcharge_percent=payload.surcharge_percent,
@@ -688,12 +689,25 @@ def edit_catalog_rate(
     `404` before `409`, decided in `update_rate` and not here: the row's existence is established
     before its marker is compared, so a conflict is never the answer that confirms a rate exists.
     """
+    changes = payload.changes()
+    # R-02 (SC-5-08; ADR-0005 addendum 2026-09-29, point 7, Q-B): a caller who cannot read the
+    # stored
+    # unit (no `PERSONNEL_COSTS_READ`, the same single factor the catalogue gate uses) may write the
+    # amount only against the unit they *state* — it becomes a precondition of the `UPDATE`, so a
+    # wrong guess is a `409` with no write and the caller may change the unit only by being able to
+    # read it.
+    blind_unit = (
+        None
+        if caller.has(Permission.PERSONNEL_COSTS_READ) or "cost_rate_unit" not in changes
+        else payload.cost_rate_unit
+    )
     try:
         rate = update_rate(
             session,
             rate_id,
             expected_updated_at=payload.updated_at,
-            changes=payload.changes(),
+            changes=changes,
+            stored_cost_rate_unit_must_be=blind_unit,
         )
     except CatalogWriteRefused as refusal:
         # One `except`, two distinguishable bodies: `CatalogConcurrentEditConflict` (the marker

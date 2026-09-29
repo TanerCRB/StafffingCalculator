@@ -1,6 +1,7 @@
 """Base personnel cost of a scenario from worked time (F-07, SC-5-01; ADR-0013).
 
-    base cost = Σ (`planned_allocation_hours` × the cost rate resolved for that position and month)
+    base cost = Σ (`planned_allocation_hours` priced at the cost rate resolved for that position and
+                   month, by the rate's unit — `hour`, `day` or `month`; see `priced_amount`)
 
 A pure function of what the data layer read — no `Session`, no clock, no catalogue lookup. Whether a
 month *has* a cost rate, and which one, was decided in SQL by `app.data.personnel_cost`
@@ -12,6 +13,15 @@ point 1). This module imports nothing of `app.domain.revenue` or of any commerci
 of them imports it. The vocabulary below — states, windows, "unresolved month" — is therefore its
 own, although it rhymes with the revenue's: sharing the revenue's types would make the cost path
 depend on a module whose changes are decided for another calculation.
+
+**Since SC-5-08 (F-07), the cost rate carries a unit** (`cost_rate_unit`, ADR-0013 addendum
+2026-09-29): with `H` the planned hours, `S` the position's calendar `standard_hours_per_day` and
+`D` its `working_days_in_month`, `hour` = `H × rate`, `day` = `H / S × rate`, `month` =
+`rate × H / (D × S)` — unrounded, summed, rounded **once** at the end. A `day`/`month` position
+needs its location's calendar (`WorkedMonth.basis`); its absence is the named state `no_calendar`
+for the whole cost, and a `month` position in a month with zero working days is `no_working_days`. A
+scenario of `hour` positions only never reads a calendar. The precedence is `no_cost_rate`, then
+`currency_mismatch`, then the calendar states.
 
 **Two shapes, never a third** (ADR-0013, point 2): `PersonnelCostResult` (an amount, a currency and
 what it depends on) or `PersonnelCostUnavailable` (a named reason and what caused it). There is no
@@ -39,6 +49,7 @@ from decimal import Decimal
 from typing import Final
 
 from app.core.money import round_money
+from app.domain.capacity import NO_CALENDAR, CalendarBasis, working_days_in_month
 
 # --- the named states (ADR-0013, point 2) --------------------------------------------------------
 
@@ -61,6 +72,20 @@ With no month there is no rate to take a currency from and the scenario declares
 scenario *does* declare a currency, the same empty plan is the true sum `0.00` in it (`calculated`).
 An implementer's decision of SC-5-01, named in its report: ADR-0013 point 2 lists `no_cost_rate`
 and `currency_mismatch` and does not reach the empty plan."""
+
+NO_WORKING_DAYS: Final = "no_working_days"
+"""A **month-unit** cost rate in a month whose calendar has zero working days (`D = 0`): the
+`month` formula would divide by zero (ADR-0013, addendum 2026-09-29 SC-5-08, Q-D). A `day`-unit
+position never reaches it — it needs only `standard_hours_per_day`. Like every named state it
+withholds the whole cost and is never `0`. (`no_calendar` is `app.domain.capacity.NO_CALENDAR`, the
+one constant the capacity and the paid-absence component already share.)"""
+
+COST_RATE_UNIT_HOUR: Final = "hour"
+COST_RATE_UNIT_DAY: Final = "day"
+COST_RATE_UNIT_MONTH: Final = "month"
+"""The three units of `default_cost_rate`, spelled once for the calculation. The same strings the
+catalogue's CHECK constraint admits (`app.models.catalog.COST_RATE_UNITS`); repeated here rather
+than imported because a formula module does not reach into the ORM models."""
 
 CALCULATED: Final = "calculated"
 """Not a named state — the label the API gives a `PersonnelCostResult`, so a client reads one
@@ -117,6 +142,9 @@ class CostRateWindow:
     currency: str
     surcharge_percent: Decimal
     includes_surcharge: bool
+    cost_rate_unit: str
+    """`hour`/`day`/`month` (SC-5-08) — the unit `cost_rate` is stated in. Required, no default: a
+    builder that forgot it would price every window hourly without a word."""
 
 
 @dataclass(frozen=True)
@@ -137,6 +165,10 @@ class MonthCostRate:
     windows: tuple[CostRateWindow, ...]
     surcharge_percent: Decimal
     includes_surcharge: bool
+    cost_rate_unit: str
+    """The unit `cost_rate` is stated in (SC-5-08). One value across the month's windows, like the
+    other four: the SQL predicate makes a unit change inside the month `no_cost_rate`. A what-if
+    raise (`dataclasses.replace`) scales `cost_rate` and carries this unchanged (ADR-0015)."""
 
 
 @dataclass(frozen=True)
@@ -154,6 +186,11 @@ class WorkedMonth:
     period_month: date
     planned_allocation_hours: Decimal
     rate: MonthCostRate | None
+    basis: CalendarBasis | None
+    """The calendar of the position's location, from the **same source as the rate** — live for a
+    draft, the approval snapshot for an approved scenario (ADR-0013 addendum 2026-09-29, point 5).
+    `None` when the location has no calendar — and also when the scenario needs no calendar at all
+    (every rate hourly), where none is read."""
 
 
 @dataclass(frozen=True)
@@ -202,17 +239,80 @@ class PersonnelCostUnavailable:
 PersonnelCostAnswer = PersonnelCostResult | PersonnelCostUnavailable
 
 
+def priced_amount(
+    hours: Decimal, rate: MonthCostRate, basis: CalendarBasis | None, period_month: date
+) -> Decimal | str:
+    """`hours` priced at `rate` by its unit — an **unrounded** `Decimal`, or the named state that
+    says why it cannot be (ADR-0013, addendum 2026-09-29 SC-5-08, points 3, 4 and 7).
+
+    The one place the three unit formulas live; the base cost, the fully loaded cost and the
+    paid-absence component all call it, so no path can hard-code `hour`.
+
+    - `hour`: `hours × rate`. The calendar is not read.
+    - `day`: `hours / S × rate`, `S = basis.standard_hours_per_day`. No calendar → `no_calendar`,
+      **whatever the hours** (Q-E: a zero-hour position without a calendar is not `0.00`).
+    - `month`: `rate × hours / (D × S)`, `D = working_days_in_month(basis, period_month)`. No
+      calendar → `no_calendar`; `D = 0` → `no_working_days`, never a division.
+
+    The product is formed before the single division, so the amount carries one division's error at
+    most and never a rounded per-day or per-month figure (no intermediate rounding). Hours above
+    capacity are not capped: a month rate priced on 176 h of a 168 h month costs more than the rate.
+    """
+    unit = rate.cost_rate_unit
+    if unit == COST_RATE_UNIT_HOUR:
+        return hours * rate.cost_rate
+    if basis is None:
+        return NO_CALENDAR
+    if unit == COST_RATE_UNIT_DAY:
+        return hours * rate.cost_rate / basis.standard_hours_per_day
+    if unit == COST_RATE_UNIT_MONTH:
+        working_days = working_days_in_month(basis, period_month)
+        if working_days == 0:
+            return NO_WORKING_DAYS
+        return rate.cost_rate * hours / (Decimal(working_days) * basis.standard_hours_per_day)
+    # A unit the CHECK constraint does not admit: refuse loudly rather than price it as something.
+    raise ValueError("Unknown cost rate unit; the cost cannot be stated.")
+
+
+def _month_amounts(months: Sequence[WorkedMonth]) -> list[Decimal] | str:
+    """Every month's unrounded amount, in the order of `months` — or the state that withholds the
+    whole cost: `no_calendar` before `no_working_days` when both occur (both are about the calendar,
+    and the first is the one a person fixes first). Only called once every month has a rate."""
+    amounts: list[Decimal] = []
+    states: set[str] = set()
+    for month in months:
+        if month.rate is None:  # never true where this is called; narrows the type
+            continue
+        amount = priced_amount(
+            month.planned_allocation_hours, month.rate, month.basis, month.period_month
+        )
+        if isinstance(amount, str):
+            states.add(amount)
+        else:
+            amounts.append(amount)
+    if NO_CALENDAR in states:
+        return NO_CALENDAR
+    if NO_WORKING_DAYS in states:
+        return NO_WORKING_DAYS
+    return amounts
+
+
 def _resolve_months(
     months: Sequence[WorkedMonth], *, rate_source: str, scenario_currency: str | None
-) -> tuple[CostAssumptionsUsed, str | None, str | None]:
-    """The three checks every cost figure over `WorkedMonth` shares, extracted once (SC-5-02) so
+) -> tuple[CostAssumptionsUsed, str | None, str | None, list[Decimal]]:
+    """The checks every cost figure over `WorkedMonth` shares, extracted once (SC-5-02) so
     `base_personnel_cost` and `fully_loaded_personnel_cost` cannot silently disagree about which
     months are costed and in which currency.
 
-    Returns `(assumptions, currency, reason)`, with exactly one of `currency`/`reason` not `None` —
-    unless the plan is empty and the scenario names no currency either, in which case `reason` is
-    `NO_COST_CURRENCY` and `currency` stays `None`. A caller checks `reason is not None` first,
-    exactly as `base_personnel_cost` always has.
+    Returns `(assumptions, currency, reason, amounts)`, with exactly one of `currency`/`reason` not
+    `None` — unless the plan is empty and the scenario names no currency either, in which case
+    `reason` is `NO_COST_CURRENCY` and `currency` stays `None`. A caller checks `reason is not None`
+    first, exactly as `base_personnel_cost` always has. `amounts` holds each month's unrounded
+    amount by its unit (`priced_amount`), aligned with `months`, and is meaningful only when
+    `reason is None`.
+
+    The order of the named states is `no_cost_rate`, `currency_mismatch`, then `no_calendar` /
+    `no_working_days` (ADR-0013, addendum 2026-09-29, Q-C).
     """
     windows = _distinct_windows(months)
     currencies = tuple(sorted({month.rate.currency for month in months if month.rate}))
@@ -228,15 +328,18 @@ def _resolve_months(
         currencies=currencies,
     )
     if unresolved:
-        return assumptions, None, NO_COST_RATE
+        return assumptions, None, NO_COST_RATE, []
     if len(currencies) > 1 or (
         scenario_currency is not None and currencies and currencies != (scenario_currency,)
     ):
-        return assumptions, None, CURRENCY_MISMATCH
+        return assumptions, None, CURRENCY_MISMATCH, []
+    amounts = _month_amounts(months)
+    if isinstance(amounts, str):
+        return assumptions, None, amounts, []
     currency = currencies[0] if currencies else scenario_currency
     if currency is None:
-        return assumptions, None, NO_COST_CURRENCY
-    return assumptions, currency, None
+        return assumptions, None, NO_COST_CURRENCY, []
+    return assumptions, currency, None, amounts
 
 
 def base_personnel_cost(
@@ -258,24 +361,21 @@ def base_personnel_cost(
        `currency_mismatch`**. Nothing is converted.
     3. **No allocation row at all** — the sum is `0.00` in the scenario's currency when it declares
        one, otherwise the named state `no_cost_currency`.
-    4. Otherwise the sum, in `Decimal` with no intermediate rounding, rounded **once** through
+    3b. **A `day`/`month` position without a calendar → `no_calendar`; a `month` position in a
+       month with zero working days → `no_working_days`** (SC-5-08), for the whole cost, after the
+       two checks above and before the empty-plan rule.
+    4. Otherwise the sum of `priced_amount` per month, in `Decimal` with no intermediate rounding,
+       rounded **once** through
        `app.core.money.round_money` (ADR-0002; ADR-0013, point 3) — never per month, never per
        position.
     """
-    assumptions, currency, reason = _resolve_months(
+    assumptions, currency, reason, amounts = _resolve_months(
         months, rate_source=rate_source, scenario_currency=scenario_currency
     )
     if reason is not None:
         return PersonnelCostUnavailable(reason=reason, assumptions_used=assumptions)
 
-    total = sum(
-        (
-            month.planned_allocation_hours * month.rate.cost_rate
-            for month in months
-            if month.rate is not None  # always true here; narrows the type
-        ),
-        Decimal("0"),
-    )
+    total = sum(amounts, Decimal("0"))
     return PersonnelCostResult(
         cost=round_money(total), currency=currency, assumptions_used=assumptions
     )
@@ -357,7 +457,7 @@ def fully_loaded_personnel_cost(
     fully_loaded... .surcharge_amount`, which would compound two already-rounded figures and could
     disagree with the single-pass sum by a cent (ADR-0013, point 3: one rounding, at the end).
     """
-    assumptions, currency, reason = _resolve_months(
+    assumptions, currency, reason, amounts = _resolve_months(
         months, rate_source=rate_source, scenario_currency=scenario_currency
     )
     if reason is not None:
@@ -365,10 +465,11 @@ def fully_loaded_personnel_cost(
 
     base_total = Decimal("0")
     surcharge_total = Decimal("0")
-    for month in months:
+    # `amounts` is aligned with `months` (every month has a rate here); the surcharge percentage
+    # applies to the base amount **after** unit conversion, still one final rounding (SC-5-08).
+    for month, base_amount in zip(months, amounts, strict=True):
         if month.rate is None:  # always false here; narrows the type
             continue
-        base_amount = month.planned_allocation_hours * month.rate.cost_rate
         base_total += base_amount
         surcharge_total += base_amount * surcharge_fraction(month.rate)
 

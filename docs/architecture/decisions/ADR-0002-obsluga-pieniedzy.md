@@ -189,3 +189,52 @@ and rounding rule (the rule of the 2026-09-26 entry, points 1 and 5).
    own precision — this entry is replaced by one that names the new rounding point in
    `app/core/money.py` and the frontend counterpart together (the closing condition of the
    2026-09-19 entry, point 4, applies).
+
+### 2026-09-29 — the unit of the cost rate becomes a choice; the selling-rate unit does not (SC-5-08, Issue #80)
+
+**Status:** Draft — pending approval
+
+> Gate 1 of SC-5-08 (2026-09-29, Q-1 = B, Q-5: backend only, the frontend is Issue #164). This entry
+> narrows point 4 of the addendum 2026-09-21 ("Jednostka nie jest wyborem") and leaves its text
+> unchanged.
+
+1. **What is superseded, and what is not.** Point 4 of the addendum 2026-09-21 says the rate unit
+   is not a choice because the database enforces `unit = 'hour'`. That stays true for `unit`, the
+   unit of the **selling** rate: it remains pinned to `hour`, and a control offering a choice for it
+   would still promise a capability that does not exist. Point 4 is superseded **only for the cost
+   rate**, which since SC-5-08 has its own column `cost_rate_unit` with the values `hour`, `day`,
+   `month` (ADR-0013, addendum 2026-09-29 SC-5-08, point 1). The supersession takes effect together
+   with the frontend follow-up (Issue #164); until that task, the catalogue form and the cost cell
+   are governed by point 4 as written, and the backend's acceptance of `day`/`month` is not a licence
+   for a client to offer them.
+2. **Source of the three values: the backend, one closed set, never a list known only to the
+   client.** The authority is the `CHECK` in the database; the API schema mirrors it; the frontend
+   takes the values from the closed value set of the API contract type and its shape check
+   (`frontend/src/api/contracts/**`, `frontend/src/api/client.ts`, ADR-0003 addendum SC-4-07,
+   points 4–5: the closed sets are checked at the boundary and a new value is added there, not in a
+   component). This is the direction of point 3 of the addendum 2026-09-21 (currency): the frontend
+   introduces no rule the backend does not know, and a value outside the set is refused by the shape
+   check, not rendered. Rejected: a hard-coded list in a component.
+3. **The unit is part of the amount's meaning and is displayed with it.** A cost rate is rendered
+   with its `cost_rate_unit` (per hour / per day / per month), never with `unit`: the cost cell
+   that reads `rate.unit` for the cost rate becomes wrong when the two differ. The NF-07 sentence of
+   point 4 ("forms shall explain input units") is satisfied by naming the unit next to the field,
+   and now also by the choice itself.
+4. **Gated with the rate.** When the cost rate is withheld (ADR-0005, addendum 2026-09-29 SC-5-08),
+   its unit is withheld with it; the screen shows the restricted state and never a default `hour`
+   for a missing `cost_rate_unit` (the boundary of the addendum ADR-0005 2026-09-21 SC-2-04,
+   point 2: the client reconstructs nothing that the server withheld).
+5. **The frontend computes no conversion.** The day and month conversions (ADR-0013, addendum
+   2026-09-29 SC-5-08, point 3) are backend-only; the frontend shows the rate, its unit and the
+   amounts the API returns, and does no arithmetic on them (points 1–3 of this ADR, unchanged).
+6. **Unchanged:** the input direction of the addendum 2026-09-21, points 1–3 and 5 (string
+   amounts, no client rounding, the currency as an explicit ISO-4217 code) applies to the cost rate
+   in every unit; the closing condition of the addendum 2026-09-19 point 4 (a currency whose minor
+   unit is not 2 places) is unaffected — a monthly rate is still an amount with two places when
+   rounded by `round_money`.
+
+| Control | Acceptance criterion |
+|---|---|
+| CU-1 | The catalogue form offers a choice of unit for the cost rate only, with exactly the values of the API contract type; no control offers a choice of the selling-rate `unit`. |
+| CU-2 | The values offered by the form and accepted by the shape check are one set, defined in the contract type; a value outside it is refused at the boundary and not rendered. |
+| CU-3 | A cost rate is displayed with its `cost_rate_unit`, never with `unit`; a withheld rate shows no unit and no default. |

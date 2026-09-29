@@ -1214,3 +1214,86 @@ days came from after the source row changes.
 | PROV-4 | Snapshot day rows written before the migration read `source = manual` with no country, year or name. |
 | PROV-5 | Two calendars that differ only in provenance labels give the same working-day count, capacity, FTE conversion and paid-absence cost. |
 | PROV-6 | The paid-absence cost and the FTE conversion of an approved scenario are identical before and after an import into its source calendar. |
+
+### 2026-09-29 — SC-5-08 (Issue #80, daily and monthly cost rates): the cost-rate unit is frozen with the rate; the calendar basis is already frozen
+
+**Status:** Draft — pending approval
+
+> Gate 1 of SC-5-08 (2026-09-29, Q-1 = B, Q-4, Q-6). A separate entry, not a note under the SC-5-02
+> addendum of 2026-09-25: points of that addendum are cited by number in code and tests. Where a
+> sentence of an earlier entry says the frozen cost rate is an hourly rate, this entry narrows it as
+> stated below; the earlier text stays unchanged.
+
+1. **`cost_rate_unit` is a new column of the existing snapshot table
+   `approved_snapshot_catalog_default_rate`, not a new table.** It is frozen on the same row, in
+   the same `_snapshot_statement`, and in the same transaction as `default_cost_rate` (the pattern of
+   the SC-5-02 addendum, point 2: "a new column on an existing snapshot table"). Group 1 (a value
+   inherited from outside the scenario), by the criterion of the SC-3-01 addendum. No change to
+   `SNAPSHOT_TABLES`, none to `SCENARIO_CHILD_COPIERS`; the canary "a copy of an approved scenario
+   has zero snapshot rows" is unchanged.
+2. **The snapshot copier lists its columns explicitly** (`_copy_catalog_default_rates`: one select
+   list and one `from_select` column list). A column missing from the list must not be filled
+   silently: with a `DEFAULT 'hour'` on the snapshot column it would be, and an approved scenario
+   would be priced hourly for ever from a monthly catalogue rate — a silent AC-10 regression with no
+   catalogue edit involved (the class of the SC-5-02 and SC-5-03 warnings about closed column
+   lists). **Decided at verification (reviewer R-01, human 2026-09-29): the migration adds the
+   snapshot column with `DEFAULT 'hour'` only to backfill existing rows and drops the default in the
+   same revision** (`ALTER COLUMN … DROP DEFAULT`), like the SC-5-02 pair; an insert that omits the
+   column fails on `NOT NULL`. The live catalogue column keeps `NOT NULL DEFAULT 'hour'`. Required
+   proof: a
+   `month`-rate window frozen by the approval carries `month` on the snapshot row, and a later
+   edit of the catalogue unit moves nothing on it. The mutation "unit dropped from the copier" and
+   the mutation "unit dropped from the snapshot reader" are killed separately.
+3. **Backfill: existing snapshot rows and existing catalogue rows get `hour`; this is a fact, not a
+   guess.** Before this task the catalogue refused any unit but `hour` by a `CHECK`
+   (`unit_is_hour`), so every cost rate ever frozen was hourly. The backfill therefore reproduces
+   what those approvals priced; it does not invent a unit. This differs deliberately from the
+   SC-5-02 addendum, point 5 ("no retroactive action": the surcharge did not exist at the time,
+   so "absent" was the honest state) — here the value did exist, implicitly, and the column makes
+   it explicit.
+4. **The snapshot reader reads the unit as part of the cost predicate** (ADR-0013, addendum
+   2026-09-29 SC-5-08, point 2): the scenario's own frozen rows are re-asked the predicate per
+   month, with the unit among the values that must be single across the month's windows. A unit
+   change between two frozen windows of one month is `no_cost_rate` for the approved scenario
+   exactly as for a draft.
+5. **Finding — the calendar basis is frozen at approval, and its reader already exists.** Verified
+   in code (2026-09-29, worktree of SC-5-08):
+   - `app.data.scenario_approval._copy_calendars` freezes, per location of the scenario's positions
+     that has a `calendar_id`, the calendar's name, `standard_hours_per_day` and `week_pattern` into
+     `approved_snapshot_working_calendar`, keyed by `scenario_id` with `source_location_id` and
+     `source_calendar_id` as plain values; `_copy_calendar_days` freezes the **complete** set of
+     exceptional days of each frozen calendar into `approved_snapshot_working_calendar_day`. Both
+     are CTEs of the one `_snapshot_statement` (the SC-3-02 and SC-3-03 addenda, points 3 and 5).
+   - `app.data.working_calendar.frozen_basis_by_location(session, scenario_id)` reads only those
+     rows, keyed by `source_location_id`; a location with no frozen calendar is absent from the
+     mapping. `app.data.paid_absence_cost` already uses it for an approved scenario
+     (`scenario.status == APPROVED` → frozen, otherwise `basis_by_location`).
+   - `working_days_in_month` (`app.domain.capacity`) is computed from that basis, so both inputs
+     of the day and month conversions — `standard_hours_per_day` and the working-day count of a
+     month — are reproducible from the snapshot. **No new snapshot table and no new column is
+     needed for the calendar basis.** The reproducibility obligation of the base cost is that it
+     reads `frozen_basis_by_location` for an approved scenario and never a live calendar; proof
+     is the criterion of point 3d of the SC-3-02 addendum applied to the cost: editing the source
+     calendar, its days or a location's `calendar_id` after the approval moves no figure of the
+     approved cost.
+   - **Two consequences, named and not repaired.** (a) A location that had no calendar at approval
+     froze none, so an approved scenario with a day/month position there is `no_calendar` for ever,
+     whatever calendar the location gets later — the snapshot has no `UPDATE` path, and the state
+     is the honest one (it is what the same scenario answered on the day of approval). (b) The
+     docstring of `_copy_calendars` says the `no_calendar` state "is derived at read time from the
+     live schema"; the reader derives it from the absence of a frozen key
+     (`frozen_basis_by_location`, "never a lookup in the live catalogue"). The reader's behaviour
+     is the binding one; the docstring is stale wording, left for the developer to correct with the
+     code.
+6. **Downgrade (Q-6).** The migration's downgrade refuses while any catalogue or snapshot row
+   carries a non-`hour` cost-rate unit, because dropping the column would silently reprice those
+   rows hourly; the refusal echoes no row values. This is the expand/contract discipline of
+   ADR-0001 applied to a snapshot column that cannot be repaired after the fact.
+
+| Control | Acceptance criterion |
+|---|---|
+| SU-1 | An approval freezes the `cost_rate_unit` of every cost window it reads on the snapshot row; a later edit of the catalogue unit changes no snapshot value; an approved scenario is priced from the frozen unit. |
+| SU-2 | Existing catalogue and snapshot rows carry `hour` after the migration; the live column is `NOT NULL DEFAULT 'hour'`, the snapshot column `NOT NULL` with no default; a `CHECK` admits only `hour`, `day`, `month` on the live table. |
+| SU-3 | The migration's downgrade refuses, echoing no row values, while a non-`hour` row exists in the catalogue or in the snapshot table, and succeeds otherwise. |
+| SU-4 | An approved day/month-rate scenario is priced from `approved_snapshot_working_calendar` and its days: editing the source calendar, its days or the location's `calendar_id` after the approval changes no figure of the cost. |
+| SU-5 | A copy of an approved scenario has zero snapshot rows, the new column included in what is not copied. |

@@ -525,6 +525,18 @@ class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
     same branch completes the freeze this class exists for rather than building a new reader, and
     applies the identical SC-1-08 conjunction `default_cost_rate` already carries."""
 
+    cost_rate_unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    """The unit `default_cost_rate` was frozen in — `hour`, `day` or `month` (SC-5-08; ADR-0004,
+    addendum 2026-09-29, points 1-3): on the same row, in the same `_snapshot_statement`, as the
+    rate itself. **No default on the model or in the database**, like the SC-5-02 pair: the
+    migration
+    gives rows frozen before it the backfilled `hour` (a fact — every earlier cost rate was hourly)
+    and then drops the default, so a copier that forgot the column fails on `NOT NULL` instead of
+    freezing every approval hourly for ever (reviewer R-01). The copier
+    (`_copy_catalog_default_rates`) names it explicitly. Read back by
+    `app.data.personnel_cost.costed_month_windows` as part of the cost
+    predicate, never from the live catalogue."""
+
     valid_period: Mapped[Range[date]] = mapped_column(
         DATERANGE,
         Computed(VALID_PERIOD_EXPRESSION, persisted=True),
