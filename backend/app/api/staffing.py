@@ -6,7 +6,8 @@ Under `/projects/{project_id}/scenarios/{scenario_id}/staffing-positions`:
   (`STAFFING_READ`)
 - `POST   ""` — one position with the months it plans for (`STAFFING_WRITE`; also
   `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` when the request's `cost_basis` is
-  `fixed_amount` — F-07, SC-5-03; Security-Auditor finding, gate 1 SC-5-03)
+  `fixed_amount` or `assigned_fte` — F-07, SC-5-03, SC-5-04; Security-Auditor finding, gate 1
+  SC-5-03)
 - `PATCH  "/{position_id}"` — the position's personnel-cost basis (`STAFFING_WRITE` ∧
   `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`, F-07, SC-5-03; Security-Auditor finding,
   gate 1 SC-5-03)
@@ -51,9 +52,10 @@ exists, which is why the scope is resolved before any of them can be reached (se
 response schema has no such field at all, so there is no gate to apply and none is applied on the
 *read* side of any endpoint on this router. Two write paths are the exception (F-07, SC-5-03): the
 cost-basis `PATCH` unconditionally, and the position `POST` when its `cost_basis` is `fixed_amount`
-— both persist `fixed_amount`, a personnel-cost figure, so both reinstate the SC-1-08 conjunction on
-the write itself, even though neither response carries such a field either (gate 1 SC-5-03,
-Security-Auditor finding — see `_require_personnel_cost_write_access`).
+or `assigned_fte` — both persist a personnel-cost figure (`fixed_amount`, or since SC-5-04 the
+stored `assigned_fte`, which is one multiplication from a cost), so both reinstate the SC-1-08
+conjunction on the write itself, even though neither response carries such a field either
+(gate 1 SC-5-03, Security-Auditor finding — see `_require_personnel_cost_write_access`).
 """
 
 import uuid
@@ -103,7 +105,7 @@ from app.data.staffing import (
     update_position_cost_basis,
 )
 from app.db.session import get_session
-from app.models.staffing import COST_BASIS_FIXED_AMOUNT
+from app.models.staffing import COST_BASIS_ASSIGNED_FTE, COST_BASIS_FIXED_AMOUNT
 
 router = APIRouter(
     prefix="/projects/{project_id}/scenarios/{scenario_id}/staffing-positions",
@@ -138,7 +140,9 @@ def _not_found() -> HTTPException:
 _PERSONNEL_COST_WRITE_DENIED_DETAIL = (
     "Caller lacks the personnel-cost visibility needed to write a position's cost basis."
 )
-"""`fixed_amount` is, at `headcount = 1`, directly the cost of the position (ADR-0005, addendum
+"""(Since SC-5-04 the same holds for the stored `assigned_fte`: it multiplied by the catalogue rate
+is the cost of the position, and it is withheld from every `STAFFING_READ`-only response.)
+`fixed_amount` is, at `headcount = 1`, directly the cost of the position (ADR-0005, addendum
 2026-09-25 SC-5-03, Q4) — the same figure the read side never shows without the SC-1-08
 conjunction. Security-Auditor finding, gate 1 SC-5-03: a caller could set that figure while
 holding only `STAFFING_WRITE`, without ever holding `PERSONNEL_COSTS_READ` or this project's
@@ -395,7 +399,9 @@ def create_staffing_position(
 ) -> StaffingPositionRead:
     """Create one position and the month rows given with it — or refuse.
 
-    **The SC-1-08 conjunction, but only when the request would persist `fixed_amount`**
+    **The SC-1-08 conjunction, but only when the request would persist a personnel-cost figure**
+    (`fixed_amount`, and since SC-5-04 `assigned_fte`: `cost_basis` is `fixed_amount` or
+    `assigned_fte`)
     (Security-Auditor finding, gate 1 SC-5-03, extended from `PATCH` to this endpoint on the
     human's explicit follow-up: `create_position` has the identical gap `edit_staffing_position_
     cost_basis` had). A request whose `cost_basis` is (still) `worked_time` — the default, and every
@@ -423,7 +429,7 @@ def create_staffing_position(
     The `409` bodies name the mechanism and quote no row value (NF-11) — the exception carries the
     SQLSTATE and the constraint name only, through `app.data.write_errors`.
     """
-    if payload.cost_basis == COST_BASIS_FIXED_AMOUNT:
+    if payload.cost_basis in (COST_BASIS_FIXED_AMOUNT, COST_BASIS_ASSIGNED_FTE):
         _require_personnel_cost_write_access(session, caller, project_id, scenario_id)
     try:
         created = create_position(
@@ -444,6 +450,7 @@ def create_staffing_position(
             cost_basis=payload.cost_basis,
             fixed_amount=payload.fixed_amount,
             fixed_amount_currency=payload.fixed_amount_currency,
+            assigned_fte=payload.assigned_fte,
         )
     except StaffingWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None

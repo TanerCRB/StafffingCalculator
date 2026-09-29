@@ -837,6 +837,19 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
             "fixed_amount_amount": "0.00",
             "fixed_amount_currency": "PLN",
             "fixed_amount_assumptions_used": {"lines": [], "currencies": []},
+            # SC-5-04 (ADR-0013 addendum 2026-09-29): the assigned-FTE component of a scenario with
+            # no FTE position — the same literal shape as the fixed-amount one above.
+            "assigned_fte_state": "calculated",
+            "assigned_fte_amount": "0.00",
+            "assigned_fte_currency": "PLN",
+            "assigned_fte_assumptions_used": {
+                "hours_source": "assigned_fte_x_calendar_basis_hours",
+                "vendor_axis": "internal",
+                "lines": [],
+                "rate_windows": [],
+                "unresolved_months": [],
+                "currencies": [],
+            },
         },
         "additional_cost": {
             "state": "calculated",

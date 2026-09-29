@@ -423,3 +423,105 @@ aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie za
 | U-11 | When one scenario has both a position with no calendar and a month-unit position in a month with zero working days, the result is `no_calendar`. |
 | U-10 | A zero-hour day/month position in a location without a calendar gives `no_calendar`, not `0.00`; the same position with a calendar gives `0.00`. |
 | U-7 | Revenue modules do not reference `cost_rate_unit` and cost modules do not import revenue modules (structural import-graph test, mirror of C-5). A position with a monthly cost rate and an hourly selling rate yields the same revenue as with an hourly cost rate. |
+
+### 2026-09-29 — SC-5-04 (Issue #79, `assigned_fte` cost basis): stored FTE input, third component, exact basis
+
+**Status:** Draft — pending approval
+
+> Gate 1 of SC-5-04 (2026-09-29). Human decisions on Issue #79: FTE is a **stored per-position input**;
+> it is **gross of absences**; **overheads are excluded**; FTE-6 is carried by this task; H-1..H-8 of
+> the impact map are answered "continue with the recommendation". This entry fulfils point 8 of the
+> Decision section, ADR-0008 addendum 2026-09-29 (SC-3-07) points 3 and 7, and the last sentence of
+> ADR-0003 point 6. Earlier text stays unchanged.
+
+1. **A third cost basis, `assigned_fte`, priced as a separate third component**, beside the worked-time
+   base cost, the paid-absence component and the fixed-amount component. Never added to any of them; no
+   total (that belongs to the F-10 block). Point 4 of the Decision is unchanged: an FTE position's cost
+   does not read `planned_allocation_hours`. Rejected: folding it into base cost (would change point 4
+   and let the surcharge apply).
+2. **The stored FTE is a fraction and a position total.** `Decimal`, scale 4, `1` = one FTE of the
+   **position** (no `headcount` factor, no comparison with it). Stored exactly, never rounded on write
+   (ADR-0008 point 6). Database `CHECK`s: `assigned_fte > 0` when set; `NOT NULL` when
+   `cost_basis = 'assigned_fte'`; `NULL` for every other basis; not together with `fixed_amount`. There is
+   **no cap and no bound tied to `headcount`** (reviewer R-01, decided by the human 2026-09-29,
+   accepted): a value above `headcount` is accepted without bound and is **not surfaced anywhere** -
+   no state, no marker, no warning, in no response. The input is a fraction, never a percent; the API
+   field description says "fraction, 1 = one FTE, not a percent". **Named limitation:** a
+   percent-vs-fraction typo (`50` for `0.5`) is stored and priced 100 times too high with state
+   `calculated`, and nothing detects it.
+3. **Formula: the exact product, one rounding.** `H = fte × D × S` (working days of the month and the
+   calendar's `standard_hours_per_day` from the position's location calendar). `H` is not rounded; the
+   rounded output of `fte_to_hours` is not an input (point 3 of the Decision; ADR-0002 rule 2). `H` is
+   priced through `priced_amount`; months are summed unrounded; `round_money` is applied once at the
+   end of the component. `hour` = `fte × D × S × rate`; `day` = `fte × D × rate`; `month` = `fte × rate`.
+4. **Months.** An FTE position is priced in the months in which it has an allocation row, only those.
+   Hours in those rows are not an input of this component. A position with `assigned_fte` and no
+   allocation rows is the named state `no_planned_months`, never `0.00`. Grid hours and stored FTE can
+   disagree; nothing reconciles them.
+5. **States and precedence.** `no_cost_rate`, `currency_mismatch`, `no_calendar`, `no_working_days`,
+   `no_planned_months`; `no_cost_currency` under the same condition as the other components. An FTE
+   position needs a resolved calendar basis whatever the rate unit. This deliberately differs from
+   SC-5-08 points 4 and 7. A state withholds only this component. No partial sum, no `0`.
+6. **Dispatch is exclusive.** A position is priced by exactly one formula, chosen by `cost_basis`. A
+   `fixed_amount` or `assigned_fte` position with allocation rows is never priced by the worked-time
+   formula. `month_has_cost_rate` and the approval's rate freeze keep covering every position whose rate
+   is read (worked time and FTE); the dispatch is applied at the formula input, not inside the
+   predicate's statement. This corrects the reading in code; the SC-5-03 addendum text is unchanged.
+7. **Overheads excluded.** No surcharge, no fully loaded figure. The surcharge pair still belongs to the
+   predicate that resolves the month.
+8. **Sources, live or frozen.** Draft reads live rate and calendar (`basis_by_location`); approved reads
+   frozen rate/unit and frozen calendar (`frozen_basis_by_location`), never a live lookup to fill a
+   missing key (`no_calendar`). Carries FTE-6. `assigned_fte` is own data of the scenario (ADR-0004
+   SC-5-03 points 1-4): no snapshot, no new `SCENARIO_CHILD_COPIERS` entry.
+9. **Visibility.** `assigned_fte` never appears in `GET .../staffing-positions` or any `STAFFING_READ`-only
+   response. Position `POST` with `cost_basis = 'assigned_fte'` and every cost-basis `PATCH` require
+   `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`. Amount and `assumptions_used` join
+   `SCENARIO_COST_FIELDS`; `state` stays visible and carries no amount.
+10. **What-if and profitability.** The ADR-0015 what-if reaches the component through the shared
+    per-(position, month) rate structure. `included_cost` does not include this component (as for
+    fixed amount): profit/margin/markup overstated for scenarios with FTE positions until the block that
+    sums components. Named, not repaired. **Named consequences (reviewer R-02, accepted by the human
+    2026-09-29):** (a) after H-1 a `fixed_amount` position with allocation rows leaves `included_cost`
+    (the worked-time formula no longer prices it), so the profit, margin and markup of such scenarios
+    **rise**, including `approved` ones, because results are computed live, not frozen; (b) `assigned_fte`
+    positions never enter profit; (c) no marker of either exists on any response; (d) the F-10 block
+    must sum the components and is the task that removes both effects.
+11. **Paid absence.** Unchanged for FTE positions; the overcount on a gross FTE is named, not repaired.
+12. **Independence.** The FTE formula imports neither the revenue path nor the other two formulas; only
+    the dispatcher in `app.data.personnel_cost` may import several. T&M revenue is unchanged by
+    `assigned_fte`.
+
+| Control | Acceptance criterion |
+|---|---|
+| FA-1 | DB refuses non-positive, missing-on-FTE, present-on-other-basis, or with-`fixed_amount` `assigned_fte`; above `headcount` accepted. |
+| FA-2 | Hour rate, non-8h day, non-default working days: `fte × D × S × rate`, one rounding; day/month formulas as point 3; wrong `D`/`S`, constant 8, `weekday() < 5` mutations killed. |
+| FA-3 | Unrounded basis hours used; a value where 2-place rounding changes the cent carries one rounding; `fte_to_hours` unchanged. |
+| FA-4 | `fixed_amount`/`assigned_fte` positions with allocation rows are not priced by the worked-time formula (both directions); approved FTE rates stay frozen. |
+| FA-5 | `assigned_fte` position without allocation rows gives `no_planned_months`, never `0.00`. |
+| FA-6 | `no_calendar`/`no_working_days` apply to an hourly FTE position; precedence of point 5; only this component withheld. |
+| FA-7 | After approval, editing catalogue rate/unit, calendar, its days or a location's `calendar_id` changes no FTE figure; missing frozen key gives `no_calendar`. |
+| FA-8 | What-if raise changes the FTE component once through the shared structure; persisted scenario unchanged. |
+| FA-9 | `GET .../staffing-positions` field set identical; FTE in no `STAFFING_READ`-only response; amount and `assumptions_used` withheld without the conjunction; creating/switching writes refused without it. |
+| FA-10 | No surcharge on the FTE component; fully loaded figures unchanged by an FTE position. |
+| FA-11 | Structural import test (mirror of C-5/U-7); T&M revenue unchanged by `assigned_fte`. |
+| FA-12 | Copy keeps `cost_basis` and `assigned_fte` on an independent row; copier is not a closed column list. |
+| FA-13 | One migration widens `cost_basis_known`, adds the column and CHECKs; downgrade refuses when `assigned_fte` rows exist; schema-drift test compares model and migration text. |
+13. **Switching the basis clears the figure the new basis must not carry** (reviewer R-04). Leaving
+    `assigned_fte` clears `assigned_fte` (a switch to any other basis); entering `assigned_fte` clears
+    `fixed_amount` and `fixed_amount_currency`. Intended: the CHECKs of point 2 forbid the stray value.
+    **Asymmetry, named:** the SC-5-03 switch `fixed_amount` -> `worked_time` leaves the stray amount on
+    the row, where nothing reads it.
+14. **Positions read and grid read are two statements** under `READ COMMITTED` (reviewer R-03): a
+    concurrent edit between them can give a positions list and a grid of two moments. Draft-only and
+    transient; accepted, not repaired.
+15. **Security-auditor points, accepted.** (a) `assigned_fte_state` and its currency are visible
+    without the conjunction, as `fixed_amount_state` is: they reveal that FTE-basis positions exist and
+    the defect class (`no_cost_rate`, `no_calendar`, ...), never the value. (b) There is no upper
+    bound against `headcount`; only callers holding `PERSONNEL_COSTS_READ` and
+    `can_view_personnel_costs` can write the value. (c) **Verified in code:** `POST /projects/{id}/copy`
+    requires `PROJECT_COPY` and `POST .../scenarios/{id}/duplicate` requires `SCENARIO_COPY`; neither
+    requires the conjunction. The reflective copier carries `cost_basis`, `assigned_fte` and
+    `fixed_amount` to the copy, so a caller without the conjunction can create a copy holding figures
+    they cannot read; both responses (`ProjectDetail`, `ScenarioListItem`) contain no position and no
+    cost figure. Named, accepted consequence, the same one `fixed_amount` has carried since SC-5-03;
+    nothing worse.

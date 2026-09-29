@@ -285,6 +285,12 @@ def test_k_04_the_scenario_cost_fields_are_their_own_set_and_the_projects_stays_
             # No fully loaded/surcharge pair of its own (crossed with SC-5-02).
             "fixed_amount_amount",
             "fixed_amount_assumptions_used",
+            # SC-5-04 (ADR-0013, addendum 2026-09-29 SC-5-04, point 9; ADR-0005, same date):
+            # re-armed again, still an equality — the assigned-FTE basis's amount and its
+            # assumptions (which name every stored FTE), gated identically to the fixed-amount pair
+            # above (FA-9).
+            "assigned_fte_amount",
+            "assigned_fte_assumptions_used",
         }
     )
     assert PERSONNEL_COST_FIELDS == frozenset()

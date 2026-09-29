@@ -140,11 +140,23 @@ point at "this position **of this scenario**" with a composite foreign key (ADR-
 
 COST_BASIS_WORKED_TIME = "worked_time"
 COST_BASIS_FIXED_AMOUNT = "fixed_amount"
-COST_BASIS_VALUES: tuple[str, ...] = (COST_BASIS_WORKED_TIME, COST_BASIS_FIXED_AMOUNT)
-"""The two personnel-cost bases a position may choose (F-07; ADR-0013, addendum 2026-09-25 SC-5-03).
-`worked_time` is the default (K-02: every position that existed before this task keeps costing
-exactly as it did) — `assigned_fte` is a third value F-07 names but SC-5-04 has not built the
-FTE→hours conversion it would need, so it is not in this tuple yet."""
+COST_BASIS_ASSIGNED_FTE = "assigned_fte"
+COST_BASIS_VALUES: tuple[str, ...] = (
+    COST_BASIS_WORKED_TIME,
+    COST_BASIS_FIXED_AMOUNT,
+    COST_BASIS_ASSIGNED_FTE,
+)
+"""The three personnel-cost bases a position may choose (F-07; ADR-0013, addendum 2026-09-25 SC-5-03
+and addendum 2026-09-29 SC-5-04). `worked_time` is the default (K-02: every position that existed
+before SC-5-03 keeps costing exactly as it did); `assigned_fte` joined in SC-5-04, once the
+FTE→hours conversion it needs existed (`app.domain.fte_hours`, SC-3-07)."""
+
+ASSIGNED_FTE_PRECISION = 10
+ASSIGNED_FTE_SCALE = 4
+"""`NUMERIC(10,4)` — a fraction of a full-time position (`1` = one FTE of the **position**), stored
+exactly to four places and never rounded on write (ADR-0008, point 6). Six integer digits is far
+above any plausible position total and keeps `fte x basis hours x rate` inside the 28-digit decimal
+context and under `app.domain.fte_hours.MAX_INPUT` by construction."""
 
 FIXED_AMOUNT_PRECISION = 14
 FIXED_AMOUNT_SCALE = 4
@@ -153,7 +165,7 @@ FIXED_AMOUNT_SCALE = 4
 currency's minor unit, so an input is stored exactly and not silently rounded (ADR-0008,
 point 6)."""
 
-COST_BASIS_KNOWN_EXPRESSION = "cost_basis IN ('worked_time', 'fixed_amount')"
+COST_BASIS_KNOWN_EXPRESSION = "cost_basis IN ('worked_time', 'fixed_amount', 'assigned_fte')"
 FIXED_AMOUNT_REQUIRES_ITS_OWN_BASIS_EXPRESSION = (
     "cost_basis <> 'fixed_amount' OR "
     "(fixed_amount IS NOT NULL AND fixed_amount_currency IS NOT NULL)"
@@ -177,7 +189,30 @@ FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION = (
 )
 """The CHECK expressions as SQL, each spelled once here and once in migration `a8f18e00172b`, and
 asserted identical to that copy by the accompanying schema-drift test (the pattern `HOURS_COLUMNS`'s
-module docstring and `additional_cost`'s `_EXPRESSION` constants both already use)."""
+module docstring and `additional_cost`'s `_EXPRESSION` constants both already use). Since SC-5-04
+`COST_BASIS_KNOWN_EXPRESSION` is the one of them that changed: it is spelled in migration
+`d4a7e19c2b60` as well (which widens the constraint), and the drift test compares the model with the
+*head* of the migration chain, not with the migration that first created it."""
+
+ASSIGNED_FTE_POSITIVE_EXPRESSION = "assigned_fte IS NULL OR assigned_fte > 0"
+ASSIGNED_FTE_REQUIRED_FOR_ITS_BASIS_EXPRESSION = (
+    "cost_basis <> 'assigned_fte' OR assigned_fte IS NOT NULL"
+)
+ASSIGNED_FTE_ONLY_ON_ITS_BASIS_EXPRESSION = (
+    "assigned_fte IS NULL OR cost_basis = 'assigned_fte'"
+)
+ASSIGNED_FTE_NOT_WITH_FIXED_AMOUNT_EXPRESSION = (
+    "assigned_fte IS NULL OR (fixed_amount IS NULL AND fixed_amount_currency IS NULL)"
+)
+"""ADR-0013, addendum 2026-09-29 SC-5-04, point 2 (FA-1), in the database rather than in a request
+schema, for the reason `FIXED_AMOUNT_REQUIRES_ITS_OWN_BASIS_EXPRESSION` gives: a fixture, a seed
+script or a future import never passes through Pydantic. Four claims, four constraints, so a refusal
+names which one broke: positive when set; not `NULL` on its own basis; `NULL` on every other
+basis (a stray FTE on a `worked_time` row would be an input nothing reads and somebody may believe);
+never together with a stated amount (two ways to say the same cost on one row). There is **no**
+upper bound tied to `headcount`: a value above it is accepted without bound and is not surfaced
+anywhere (point 2, named limitation: a percent typo, 50 for 0.5, prices 100 times too high with
+state `calculated`)."""
 
 
 STAFFING_POSITION_PAGE_INDEX = "ix_staffing_position_scenario_start_date_id"
@@ -362,6 +397,17 @@ class StaffingPosition(Base):
     from `scenarios.currency`: the two are compared by the formula, and disagreement is the named
     `currency_mismatch` state, never a silent conversion (ADR-0006)."""
 
+    assigned_fte: Mapped[Decimal | None] = mapped_column(
+        Numeric(ASSIGNED_FTE_PRECISION, ASSIGNED_FTE_SCALE), nullable=True
+    )
+    """The stored FTE of the position when `cost_basis = 'assigned_fte'` — `NULL` otherwise (F-07;
+    ADR-0013, addendum 2026-09-29 SC-5-04, point 2). A **fraction and a position total**: `1` is one
+    FTE of the position, no `headcount` factor and no comparison with it. Read by nothing but its
+    own formula (`app.domain.assigned_fte_cost`); never a column of `GET .../staffing-positions`
+    (ADR-0005 addendum 2026-09-29 SC-5-04, the same treatment `fixed_amount` gets). Own data of the
+    scenario, like every column of this row: protected after approval by the write guard, copied by
+    the existing reflective copier, never snapshotted (ADR-0004, same date)."""
+
     person_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("person.id", name="fk_staffing_position_person_id"),
@@ -427,6 +473,19 @@ class StaffingPosition(Base):
         ),
         CheckConstraint(
             FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION, name="fixed_amount_currency_is_upper"
+        ),
+        # SC-5-04 (F-07; ADR-0013, addendum 2026-09-29 SC-5-04, point 2; FA-1): the stored FTE.
+        CheckConstraint(ASSIGNED_FTE_POSITIVE_EXPRESSION, name="assigned_fte_positive"),
+        CheckConstraint(
+            ASSIGNED_FTE_REQUIRED_FOR_ITS_BASIS_EXPRESSION,
+            name="assigned_fte_required_for_its_basis",
+        ),
+        CheckConstraint(
+            ASSIGNED_FTE_ONLY_ON_ITS_BASIS_EXPRESSION, name="assigned_fte_only_on_its_basis"
+        ),
+        CheckConstraint(
+            ASSIGNED_FTE_NOT_WITH_FIXED_AMOUNT_EXPRESSION,
+            name="assigned_fte_not_with_fixed_amount",
         ),
         # Not an integrity constraint — the one index this table has for *paging* a scenario's
         # grid (SC-3-05, R-02). Declared here as well as created by migration `f1a2c4b6d8e0`, so the
