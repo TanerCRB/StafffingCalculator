@@ -2294,7 +2294,7 @@ history / this file's own change log, not as tracked product work.
   testów frontendowych zielono po tym zadaniu (było 234), 262 po scaleniu z SC-7-02 (PR #99). Zob.
   `docs/architecture/capabilities.md`.
 
-- [ ] **SC-6-08** — Risk representation and the double-representation signal (F-09 pt 4-5, backend),
+- [x] **SC-6-08** — Risk representation and the double-representation signal (F-09 pt 4-5, backend),
   gate 1 approved 2026-09-29 (ADR-0021, Accepted) (Issue #89). A risk is a declared per-scenario
   entity; it may be represented by cost events (ADR-0014 rows carrying an optional risk link) and/or
   by reserves (own table); a risk linked to both is reported `both`.
@@ -2327,6 +2327,21 @@ history / this file's own change log, not as tracked product work.
   the new link; reserve-vs-`additional_cost` currency comparison. Basis: Issue #89,
   `Wymagania/Requirements_EN.md` §4 F-09 pt 4-5, `ADR-0021-risk-representation-and-double-counting-signal.md`,
   ADR-0014, ADR-0004, ADR-0005, ADR-0007.
+  **Done 2026-09-29:** PR #183 (merged `573f966`). Evidence: `backend/tests/test_risk_schema.py`,
+  `test_risk_representation.py`, `test_risk_reserve.py`, `test_risk_guards.py`, `test_risk_copy.py`,
+  `test_risk_access.py`, `test_risk_api.py`, `test_risk_qa.py` (K-01..K-07, R-01) - 1445 backend tests
+  green after merging main (was 1252 before the task), ruff clean. Verification round: QA closed three
+  real gaps the first suite left (link writes to a sibling scenario's risk, `remapped` on an unmapped
+  link, what-if byte identity) and left two equivalent mutants (redundant behind the composite FK / the
+  API-layer scope check). Invariant Guardian: PASS. Security-auditor: PASS. Reviewer: PASS WITH
+  RESERVATIONS - R-01 (Medium, a `PATCH` naming one end of a recurring reserve bypassed the 60-month
+  bound and made the reserve read expand ~12k months per reserve) fixed in the PR (guarded `UPDATE`,
+  409); R-02 (Medium, the migration holds a lock while validating the FK / building the index on
+  `additional_cost`; `lock_timeout` bounds only the wait), R-03 (Low, a retried `POST` of a reserve
+  duplicates, ADR-0014 R-04), R-04/R-05 (Low, the reserve read loads all reserves; status and rows are
+  read in separate statements) accepted as recorded exceptions, owner: the repository owner, expiry:
+  the first frontend task that builds a reserve write form (F-11). See
+  `docs/architecture/capabilities.md`.
 
 - [x] **SC-7-02** — Pokaż zysk, marżę, markup i koszt scenariusza na ekranie (F-10, część,
   frontend). Konsument API dostarczonego przez SC-7-01 (`GET .../scenarios/{id}/results`) — ekran

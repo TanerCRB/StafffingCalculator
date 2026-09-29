@@ -1297,3 +1297,7 @@ days came from after the source row changes.
 | SU-3 | The migration's downgrade refuses, echoing no row values, while a non-`hour` row exists in the catalogue or in the snapshot table, and succeeds otherwise. |
 | SU-4 | An approved day/month-rate scenario is priced from `approved_snapshot_working_calendar` and its days: editing the source calendar, its days or the location's `calendar_id` after the approval changes no figure of the cost. |
 | SU-5 | A copy of an approved scenario has zero snapshot rows, the new column included in what is not copied. |
+
+### 2026-09-29 - scenario risks and risk reserves (SC-6-08, ADR-0021)
+
+`scenario_risk` and `risk_reserve` are group 2: own data of the scenario, a write refused under `approved` in the same statement as the status read, no snapshot. Setting or clearing `additional_cost.risk_id` is a write under the same guard. Copy: `copy_scenario_risks` is an entry of `SCENARIO_CHILD_COPIERS` that runs **before** `copy_staffing_positions` (position-level costs are copied inside it and need the risk mapping); `copy_scenario_reserves` follows the additional-cost copier. Links are remapped by `UNIQUE(scenario_id, name)` of the risk, never through an id channel (the ADR-0016 / SC-4-05 pattern); `risk_id` is in `ADDITIONAL_COST_COLUMNS_NOT_COPIED`. The registry has six entries. Proof: `backend/tests/test_risk_guards.py`, `backend/tests/test_risk_copy.py`.
