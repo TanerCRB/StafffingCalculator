@@ -916,7 +916,7 @@ history / this file's own change log, not as tracked product work.
   `react-day-picker` bez `content-visibility`; naprawione mirror SC-3-04 R-02, RESOLVED). Zob.
   `docs/architecture/capabilities.md`.
 
-- [ ] **SC-3-07** — Convert an FTE allocation into hours from the working calendar of the position
+- [x] **SC-3-07** — Convert an FTE allocation into hours from the working calendar of the position
   (F-04, F-05), Issue #163. Prerequisite for the FTE cost basis (SC-5-04, Issue #79) and
   for the day/month cost rates (Issue #80).
   *Done when:* `backend/tests` prove: 1 FTE -> hours in a calendar month comes from the position's
@@ -938,6 +938,21 @@ history / this file's own change log, not as tracked product work.
   ADR-0008 addendum 2026-09-29).
   **Basis:** ADR-0008 addendum 2026-09-29 (SC-3-07) and 2026-09-22 (SC-3-02), ADR-0003 pt 6-7,
   ADR-0004, ADR-0002 addendum 2026-09-29; `docs/PLAN.md` SC-3-01, SC-3-02, SC-5-01.
+  **Done 2026-09-29:** PR #168 (merged). Proof: `backend/tests/test_fte_hours.py` - hours of 1 FTE from the position's calendar
+  (`test_a_k01_hours_of_one_fte_come_from_the_calendar_not_a_constant`), working days and leap February
+  (`test_a_k02_*`), gross of absences and no absence/headcount/scenario input (`test_a_k03_*`), named states
+  `no_calendar` / `no_working_days` with `"n/a"` (`test_a_k04_*`, `test_a_k04b_*`), the basis named on every figure
+  (`test_a_k05_*`), one rounding rule and the exact `fte_exact` way back (`test_a_k06_*`), input validation, unit and
+  state pairing, month normalisation (`test_r02_*`, `test_r03_*`, `test_r05_*`, `test_r06_*`), existing results
+  unchanged and the module imported by no revenue or hours module (`test_a_k07_*`). 45 tests; full backend suite 1252
+  green, `ruff` clean. Verification: QA PROOF HOLDS (two passes, ~110 mutation runs; 6 realistic mutants survived the
+  first 12 tests and were killed by added ones), Invariant Guardian PASS, Reviewer PASS after R-01..R-07 were fixed;
+  security-auditor not applicable. Domain function only: no endpoint, migration, model or dependency.
+  **Not proven (deferred):** FTE-6 - an approved scenario reading the snapshot calendar - moves to the first consumer
+  (#79 SC-5-04 or #80, which must call `frozen_basis_by_location` and carry that test); FTE-7 - revenue unmoved by
+  `standard_hours_per_day` - has no honest fixture (no revenue function takes a calendar); independence from
+  `scenarios.full_time_hours_per_week` holds by construction (signature), not by a test that could have read it; partial
+  months, FTE as an allocation input and any API surface are not covered. See `docs/architecture/capabilities.md`.
 
 - [ ] **SC-3-08** — Import public holidays from Nager.Date into a working calendar's exceptional days,
   with provenance (F-05, F-02), Issue #165. A new instruction, not a documented requirement
