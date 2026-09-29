@@ -1812,7 +1812,7 @@ history / this file's own change log, not as tracked product work.
   siatki w jednym `GET` szkicu, przejściowy rozjazd przy współbieżnej edycji, nie dotyczy
   zatwierdzonych scenariuszy). Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-5-08** — Daily and monthly cost rates (F-07): a catalogue default rate carries its cost
+- [x] **SC-5-08** — Daily and monthly cost rates (F-07): a catalogue default rate carries its cost
   rate unit (`cost_rate_unit` in `hour`/`day`/`month`), and the personnel cost of a scenario is
   computed from the planned allocation hours by that unit's rule (Issue #80). The selling-rate
   `unit` stays pinned to `hour` (capabilities.md, K-07 of SC-2-01); T&M revenue is untouched.
@@ -1857,6 +1857,22 @@ history / this file's own change log, not as tracked product work.
   (SC-5-02), fixed amount (SC-5-03), FTE (SC-5-04, Issue #79).
   **Basis:** `Wymagania/Requirements_EN.md` §4 F-07; ADR-0013, ADR-0004 and ADR-0002 (addenda
   required), ADR-0008, ADR-0006; `docs/PLAN.md` SC-2-01, SC-5-01, SC-5-02, SC-5-06.
+  **Done 2026-09-29:** PR #167 merged; 1207 backend tests green, `ruff` clean, CI green.
+  K-01, K-02, K-04: `backend/tests/test_cost_rate_unit.py`; K-03: `test_cost_rate_unit.py::test_k_03_*`;
+  K-05: `test_cost_rate_unit.py::test_k_05_*` (structural test and T&M contrast not mutated);
+  K-06: `backend/tests/test_cost_rate_unit_catalog_api.py`; K-07:
+  `backend/tests/test_cost_rate_unit_migration.py` (real PostgreSQL). Guardian PASS; QA: proof holds
+  after four surviving mutants got killing tests, two equivalent mutants named (mutation log in
+  `docs/architecture/capabilities.md`). Reviewer and Security-Auditor: PASS WITH RESERVATIONS, all
+  fixed except three human-recorded exceptions (owner TanerCRB): the blind-writer unit oracle
+  (expiry: authentication ADR, #150), downgrade lock order vs a concurrent approval (expiry: first
+  persistent environment), `cost_rate_unit` absent from `assumptions_used` and the frontend
+  (expiry: closure of #164).
+  **Accepted, not repaired:** overtime on a month rate costs more than one month; a location with no
+  calendar at approval stays `no_calendar` on that approved scenario for ever; the addenda of
+  ADR-0013, ADR-0004, ADR-0002, ADR-0005 and ADR-0015 (2026-09-29) remain "Draft — pending
+  approval"; frontend stale (`RateForm.tsx` "unit is not a choice", cost cell reads `rate.unit`),
+  tracked in Issue #164.
 
 - [x] **SC-6-01** — Duplikuj scenariusz niezależnie od źródła (F-09 pkt 1, AC-02). Nowy entry point
   do istniejącego mechanizmu kopiowania (`copy_scenario`/`SCENARIO_CHILD_COPIERS`, ADR-0004) —
