@@ -36,6 +36,7 @@ from app.models.organization_defaults import OrganizationDefaults
 from app.models.person import Person
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
+from app.models.risk import RiskReserve, ScenarioRisk
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.scenario_delivery_segment import ScenarioDeliverySegment
 from app.models.staffing import (
@@ -72,8 +73,10 @@ __all__ = [
     "Project",
     "ProjectAccess",
     "ProjectStatus",
+    "RiskReserve",
     "Scenario",
     "ScenarioDeliverySegment",
+    "ScenarioRisk",
     "ScenarioStatus",
     "StaffingPosition",
     "StaffingPositionAbsence",

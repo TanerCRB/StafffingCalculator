@@ -629,9 +629,11 @@ def test_k_15_copying_a_project_copies_no_organisational_calendar_row(
     # 4), the scenario-level additional costs, again scenario-owned. Four since SC-1-11 —
     # re-armed, not loosened: the fourth is `copy_scenario_delivery_segments` (ADR-0004, addendum
     # 2026-09-25 SC-1-11, point 4), the delivery segments/workstreams, again scenario-owned.
-    # Still no calendar
+    # Six since SC-6-08 - re-armed, not loosened: the fifth and sixth are `copy_scenario_risks` and
+    # `copy_scenario_reserves` (ADR-0021, point 8; ADR-0004, addendum SC-6-08), the declared risks
+    # and their reserves, again scenario-owned. Still no calendar
     # copier.
-    assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 4
+    assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 6
 
 
 def test_k_15_the_copied_positions_still_point_at_the_one_shared_calendar(

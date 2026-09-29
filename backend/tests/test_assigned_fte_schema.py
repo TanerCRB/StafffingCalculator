@@ -389,7 +389,9 @@ def test_fa_13_the_downgrade_refuses_while_a_position_is_costed_on_the_fte_basis
     for value in ("0.4321", "4321", str(position_id)):
         assert value not in message, f"the refusal echoes {value!r} (NF-11)"
     assert not any(ch.isdigit() for ch in message.replace(_REVISION, "")), message
-    assert _current_revision(engine) == before == _REVISION
+    # Unchanged - compared with the revision read before the attempt, not with `_REVISION`, which
+    # was the head only until SC-6-08 put a later migration on top of it (same claim as before).
+    assert _current_revision(engine) == before
     assert _column_exists(engine)
 
     with engine.begin() as connection:
@@ -404,7 +406,9 @@ def test_fa_13_the_downgrade_refuses_while_a_position_is_costed_on_the_fte_basis
     assert _current_revision(engine) == _PREVIOUS_REVISION
     assert not _column_exists(engine)
     command.upgrade(alembic_config, "head")
-    assert _current_revision(engine) == _REVISION
+    # Back where the test started (the head), not `_REVISION`, which was the head only until
+    # SC-6-08 put a later migration on top of it.
+    assert _current_revision(engine) == before
     assert _column_exists(engine)
 
 
@@ -491,6 +495,7 @@ def test_qa_the_downgrade_lock_makes_a_row_committed_during_the_guard_count_as_i
     with Session(bind=engine, expire_on_commit=False, future=True) as seed:
         fixture = _fixture(seed)
         seed.commit()
+    revision_before = _current_revision(engine)
     pending = Session(bind=engine, expire_on_commit=False, future=True)
     pending.execute(
         sa.insert(StaffingPosition.__table__).values(**_fte_row(fixture, Decimal("0.5000")))
@@ -505,7 +510,9 @@ def test_qa_the_downgrade_lock_makes_a_row_committed_during_the_guard_count_as_i
         committer.join()
         pending.close()
     assert time.monotonic() - started >= 0.9, "the guard did not wait for the pending transaction"
-    assert _current_revision(engine) == _REVISION
+    # Compared with the revision read before the attempt: `_REVISION` was the head only until
+    # SC-6-08 put a later migration on top of it; the claim - "unchanged" - is the same.
+    assert _current_revision(engine) == revision_before
     assert _column_exists(engine)
 
     with engine.begin() as connection:
