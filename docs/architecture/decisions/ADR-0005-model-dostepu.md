@@ -1190,3 +1190,89 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
 | A5-31-7 | Przypisanie odmówione `403` bez zapisu dla wołającego, któremu brakuje dokładnie jednego z `STAFFING_READ`, `STAFFING_WRITE`, `PEOPLE_READ` (trzyma wszystkie pozostałe uprawnienia); ciało odmowy identyczne dla istniejącej i nieistniejącej pozycji i osoby; z kompletem — sukces (kontrast). |
 | A5-31-8 | Bez `PEOPLE_READ` klucz znacznika przypisania nie występuje w żadnej odpowiedzi zwracającej pozycję; z `STAFFING_READ` ∧ `PEOPLE_READ` występuje razem z `person_id` (kontrast). |
 | A5-31-9 | Odpowiedź pozycji odczytana przez wołającego bez `PEOPLE_READ` jest identyczna w całości (łącznie z `updated_at`) przed i po przypisaniu oraz przed i po zdjęciu przypisania wykonanym przez innego wołającego; znacznik `updated_at` odczytany przed przypisaniem jest po nim przyjmowany przez każdą inną ścieżkę zapisu pozycji. |
+
+### 2026-09-29 — SC-5-08 (Issue #80, daily and monthly cost rates): `cost_rate_unit` is a gated catalogue cost field
+
+**Status:** Draft — pending approval
+
+> Gate 1 of SC-5-08 (2026-09-29, Q-1 = B, K-06). It applies the rule stated in point 7 of the
+> addendum 2026-09-23 (SC-5-01) — "every future value of `state` or `cost_basis` from which an amount
+> or a rate can be inferred moves to `SCENARIO_COST_FIELDS` in the task in which it is created" — to
+> a new *column*, and it changes one sentence of the SC-5-02 addendum of 2026-09-25 named below. The
+> earlier text stays unchanged.
+
+1. **`cost_rate_unit` joins `CATALOG_PERSONNEL_COST_FIELDS`; the set has two members.** The column
+   is the unit of `default_cost_rate` and is part of what the rate means: "5 000" per month and
+   per hour are two different facts about what a person costs, and at `headcount = 1` the pair
+   names one person's contract form. The shape of the refusal is the existing one (addendum
+   2026-09-19 SC-2-01, point 5): status `200`, the field blanked, never `403` and never a missing
+   row. The set was described as staying "one-element" (addendum 2026-09-25 SC-5-02, the
+   classification of the surcharge percentage, first paragraph of the decision); **this entry
+   supersedes that sentence**, and only for the unit — the surcharge percentage stays outside the
+   set for the reason given there (a percentage discloses no amount without the base rate).
+   The unit differs from the surcharge percentage in exactly the respect that matters: it is not
+   a multiplier of a gated value but half of the gated value's own definition.
+2. **`unit` (the selling-rate unit) stays ungated and unchanged.** The selling rate is not a
+   personnel cost (the docstring of the set: "removing the selling rate would make a commercial
+   figure that every planner needs invisible"), and its unit is pinned to `hour` (ADR-0002, addendum
+   2026-09-29 SC-5-08). The two columns must not be confused in the shaping layer: the gate removes
+   `cost_rate_unit` and never `unit`.
+3. **The scenario cost response needs no new member of `SCENARIO_COST_FIELDS`.** The unit reaches
+   that response only inside `assumptions_used` (per-month rates with their units), which is already
+   a member. **Condition SC-5-08 must prove, not assume:** no top-level unit field appears in the
+   scenario cost response outside `assumptions_used`; if the implementation adds one, it joins
+   `SCENARIO_COST_FIELDS` in the same task (the forward obligation of point 7 of the SC-5-01
+   addendum). Proof by set equality of the response fields for a caller without the conjunction,
+   before and after the task, plus a contrast for a caller with it.
+4. **The frozen unit needs no gate of its own.** No endpoint returns rows of
+   `approved_snapshot_catalog_default_rate`; its first readers are the cost computations, whose
+   output is already governed by the conjunction (addendum 2026-09-23 SC-5-01, point 2). A future
+   path that returns snapshot rows is bound by point 2b of the ADR-0004 addendum 2026-09-23
+   SC-4-01 and by this point: the unit is withheld with the rate.
+5. **Write path.** `cost_rate_unit` is accepted on create and edit under `CATALOG_WRITE`, like
+   `default_cost_rate`; an omitted value stores `hour`; a value outside `hour`/`day`/`month` is
+   refused with `422` at the boundary (not the `500` of a violated `CHECK`). The refusal must not
+   echo submitted values beyond what the current validation already echoes. On edit the rate and
+   the unit travel as a pair (point 7, Q-B).
+6. **Placeholder permissions unchanged.** `PLACEHOLDER_PERMISSIONS` has no `PERSONNEL_COSTS_READ`
+   (addendum 2026-09-19 point 5); the positive branch of the gate on `cost_rate_unit` is as
+   unreachable in production as that of `default_cost_rate` and is proven only by an identity
+   override in a test. The dormant risk B-01 (addendum 2026-09-23 SC-5-01, point 5; widened by the
+   SC-5-02 addendum, point 4) grows by one more value on the same catalogue tuple — the unit — and
+   is otherwise unchanged; its reopening condition (the authentication ADR) is unchanged.
+7. **Two questions, decided at gate 1 of SC-5-08 (2026-09-29; the entry as a whole stays a draft
+   pending approval).**
+   - **Q-A (option a, accept) — the named states `no_calendar` and `no_working_days` on the base
+     cost stay outside the gate.** `state` is outside the conjunction (addendum 2026-09-23 SC-5-01,
+     point 7), and this stays so. Same precedent as `no_cost_rate`, which discloses catalogue
+     coverage to a caller without the conjunction. **Named, not hidden:** `no_calendar` (ADR-0013,
+     addendum 2026-09-29 SC-5-08, point 4) tells that caller that some position's resolved cost-rate
+     unit is `day` or `month`, and `no_working_days` that it is `month` — the very fact point 1 of
+     this entry withholds from the catalogue. The disclosed fact is a class ("some position is not
+     hourly"), not a rate; but at `headcount = 1` with one position it is that person's contract
+     form, the same class of pseudonymisation degradation as addendum SC-3-02, point 11. It rides
+     on the dormant risk B-01 (point 6 above): while `PLACEHOLDER_PERMISSIONS` has no
+     `PERSONNEL_COSTS_READ`, no production caller holds half of the conjunction, and the condition to
+     reopen is the authentication ADR, unchanged. Rejected: reporting a generic non-computable state
+     to a caller without the conjunction (it would break "the refused caller knows whether the cost
+     is computable and why" of point 7 of the SC-5-01 addendum).
+   - **Q-B (option b) — the rate and its unit are edited together.** A `PATCH` that carries
+     `default_cost_rate` must also carry `cost_rate_unit`, and the reverse; a request carrying
+     exactly one of the two is refused with `422`, with no write. A request carrying neither leaves
+     both unchanged and edits the other fields as before (addendum 2026-09-21 SC-2-04, point 1
+     unchanged for every other field, and for the pair when both are omitted). Reason: a caller with
+     `CATALOG_WRITE` and no `PERSONNEL_COSTS_READ` cannot see the stored unit, so an amount sent
+     alone could be stored against a monthly row instead of an hourly one — a silent re-pricing by
+     a factor of roughly the hours in a month, with no error. The pair is one datum. **Consequence
+     named:** the two gated fields differ formally from the other partial fields, and a blind
+     caller who wants to change the amount must state the unit they intend — a deliberate act, not
+     a guess about a value they cannot read.
+
+| Control | Acceptance criterion |
+|---|---|
+| CG-1 | `CATALOG_PERSONNEL_COST_FIELDS` equals `{default_cost_rate, cost_rate_unit}`; a caller without `PERSONNEL_COSTS_READ` receives `200` with `cost_rate_unit` blanked in every catalogue payload that carries the rate, while `unit` is present and unchanged (contrast). |
+| CG-2 | A caller with `PERSONNEL_COSTS_READ` receives `cost_rate_unit` with the rate (contrast); the check of the field is removed by no mutation without a failing test. |
+| CG-3 | The set of fields of the scenario cost response for a caller without the conjunction is equal before and after the task; any new top-level unit field is a member of `SCENARIO_COST_FIELDS`. |
+| CG-4 | A value of `cost_rate_unit` outside `hour`/`day`/`month` is refused with `422`; an omitted value on create stores `hour`. |
+| CG-5 | A `PATCH` carrying `default_cost_rate` without `cost_rate_unit`, or `cost_rate_unit` without `default_cost_rate`, is refused with `422` and writes nothing; a `PATCH` carrying both, and one carrying neither (editing another field), succeed and leave the stored pair as sent / unchanged respectively. |
+| CG-6 | A caller without the conjunction receives the named states `no_calendar` and `no_working_days` in `state` on the scenario cost response, with `amount` and `assumptions_used` withheld (contrast: a caller with the conjunction sees the same `state`). |

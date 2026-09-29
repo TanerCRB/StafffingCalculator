@@ -1775,8 +1775,11 @@ history / this file's own change log, not as tracked product work.
      swapped, per-day figure rounded before multiplying, hours capped at capacity.
   2. (K-02) A day/month-rate position whose location has no calendar withholds the whole scenario
      cost as `no_calendar` (ADR-0013 pt 2, no partial sum, hourly positions included); a scenario
-     with hourly positions only never needs a calendar. Mutations: missing calendar yields `0`/skip;
-     calendar required for hour rows.
+     with hourly positions only never needs a calendar. A zero-hour day/month position without a
+     calendar is `no_calendar`, not `0.00`; a month-rate position in a month with zero working days
+     is the named state `no_working_days` (day rate never); `currency_mismatch` takes precedence
+     over `no_calendar`. Mutations: missing calendar yields `0`/skip; calendar required for hour
+     rows; zero working days divides or yields `0`.
   3. (K-03) `cost_rate_unit` joins `month_has_cost_rate` in all three places (live query, snapshot
      copier, snapshot reader); a unit change inside a month is `no_cost_rate`; an approved scenario
      costs from its frozen unit, not the live catalogue. Mutations: unit dropped from the copier /
@@ -1789,7 +1792,9 @@ history / this file's own change log, not as tracked product work.
      modules importing revenue modules.
   6. (K-06) The API accepts and returns `cost_rate_unit`, gated like every cost field (ADR-0005):
      absent from the payload without the cost permission, invalid value rejected, omitted value
-     stores `hour`. Mutation: permission check for the field removed from response shaping.
+     stores `hour`; a `PATCH` sending exactly one of `default_cost_rate` / `cost_rate_unit` is a
+     `422` with no write (ADR-0005 addendum, pair rule). Mutations: permission check for the field
+     removed from response shaping; pair rule removed.
   7. (K-07) The migration is expand-safe on real PostgreSQL: existing catalogue and snapshot rows
      get `hour`, CHECK admits only `hour`/`day`/`month`, and the downgrade refuses (no row values
      echoed) while a non-hour row exists, succeeds otherwise. Mutations: downgrade guard removed;
