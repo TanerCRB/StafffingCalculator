@@ -1130,3 +1130,87 @@ deferred list together with those of SC-6-01 point 5 and SC-2-06 point 7. The ap
    Fixed Price price writes (creation and `UPDATE`) together with the other deferred draft edits
    (SC-6-01 point 5, SC-2-06 point 7). Until then, the revenue of a Fixed Price draft can change
    before approval with no trace of who changed it.
+
+### 2026-09-29 — Holiday provenance on the frozen calendar day (SC-3-08, Issue #165, gate 1)
+
+**Status:** Draft — pending approval
+
+> Prepared by the Architect for gate 1 of Issue #165 (human answers Q13, Q17 recorded there). The
+> provenance itself, the import and the egress policy are ADR-0020; this entry records only what the
+> approval snapshot must do about them. Earlier text of this file stays unchanged.
+
+`working_calendar_day` rows gain provenance (which writer, holiday name, country, year — ADR-0020,
+decision 3) once an import can write them. A day is a group-1 (inherited) value: the calendar and its
+days are frozen by the approval (addendum 2026-09-22 SC-3-02, points 2–3), so the provenance of a
+frozen day must be frozen with it, or an approved scenario cannot say where one of its non-working
+days came from after the source row changes.
+
+1. **No new snapshot table; columns on the existing one.** The four provenance facts (`source`,
+   name, country code, year) join `approved_snapshot_working_calendar_day`, the way the leave-type
+   flag joined `approved_snapshot_absence_type` (addendum 2026-09-22 SC-3-03, point 8) and the
+   surcharge joined `approved_snapshot_catalog_default_rate` (addendum 2026-09-25 SC-5-02, point 2).
+   `SNAPSHOT_TABLES` and `ApprovalResult` are unchanged, so no counter canary fails for this reason;
+   the schema tests that assert the column set of the snapshot day table change deliberately.
+   Verified against `app.models.approved_snapshot.ApprovedSnapshotWorkingCalendarDay` (today
+   `scenario_id`, `source_calendar_id`, `day`, `kind`) and
+   `app.data.scenario_approval._copy_calendar_days` (its `from_select` column list is exactly those
+   four plus `id`).
+2. **Copied in the same statement, verbatim.** `_copy_calendar_days` stays one CTE of
+   `_snapshot_statement` (S-01: one statement, one snapshot of the catalogue) and copies the four
+   values from the source row; the deduplicating `SELECT DISTINCT` covers them like every other
+   copied value. The names are identical to the live table's, and none begins with `source_` — in
+   snapshot tables that prefix is reserved for the identifier of the source row
+   (`source_calendar_id`). As on every snapshot table, no CHECK constraint is repeated: the snapshot
+   records what was approved and does not re-judge it (`ApprovedSnapshotWorkingCalendar`
+   docstring); the live table refuses an unknown origin (ADR-0020, E-04).
+3. **No default on the snapshot table — at rest.** `source` is `NOT NULL` on the snapshot with no
+   server default (rule of the module docstring: "a snapshot column with a default is a column that
+   can be written without a value having been read from the source"); the other three are nullable
+   because a hand-entered day has no country or year. Snapshot rows that exist before the migration
+   are backfilled `manual` — true by construction, since before SC-3-08 no other writer of a
+   calendar day existed (the reasoning `a7c2e5f81b94` used for `is_statutory_leave`).
+4. **The mutation this shape exists to kill.** Add the columns to the live table and leave
+   `_copy_calendar_days` at its five-column list. With a default on the snapshot column, an
+   approved scenario freezes an imported holiday as `manual` — silently, for ever, with no `UPDATE`
+   path to repair it. Without a default, the approval fails and writes nothing (one transaction).
+   The criterion PROV-1 is worded so that the first mutation is red.
+5. **Deployment order (ADR-0001: expand → deploy → contract) — needs a human choice.** Proposed:
+   (i) an expand migration adds the columns, backfills `manual` and leaves a temporary default on
+   the snapshot columns; (ii) the code that copies the columns and that can import is deployed;
+   (iii) a contract migration drops the snapshot default; (iv) only then is the first import run.
+   Step (iii) is before step (iv) on purpose: while the default exists, a copier that omits the
+   columns mislabels an imported day silently. Alternative: one migration that drops the default
+   immediately (the shape SC-5-02 used). During the window between that migration and the code
+   deploy, the previous code's five-column copier would meet a `NOT NULL` column with no default and
+   every approval would be refused — loudly, with nothing written, but in conflict with ADR-0001's
+   "always backward compatible". If chosen, it is a named deviation from ADR-0001, dated here.
+6. **External text in an immutable table, bounded.** The holiday `name` is text from an external
+   service written into a table with no `UPDATE` or `DELETE` path. It is bounded to the length of
+   the other names the snapshot freezes (200), free of control characters and validated before it
+   is written (ADR-0020, decision 7), so a bad value that reaches the frozen table is bounded in
+   size and form even though its content is not vetted. It is not personal data (public holiday
+   names), so the erasure/rectification question ADR-0005 (addendum 2026-09-22 SC-3-03, point 6)
+   raised for free text in the snapshot does not apply; if that ever changes for this column it
+   returns as a dated entry.
+7. **A frozen scenario does not move when an import runs — with one named exception.** An import
+   inserts into the live calendar only. An approved scenario reads calendar days from the snapshot
+   wherever a snapshot reader exists (`app.data.working_calendar.frozen_basis_by_location`; the
+   paid-absence cost since addendum 2026-09-23 SC-5-06, point 1; the FTE conversion, ADR-0008
+   addendum 2026-09-29). The exception is the one already named and not repaired in SC-5-06,
+   point 4: the staffing grid's capacity of an approved scenario still reads the live calendar, so
+   from the first import onwards an import can change working days shown for an approved
+   calculation. This entry does not repair it; it records that the import makes an existing accepted
+   drift reachable by a new writer (ADR-0020, proposal (i)).
+8. **Provenance is a label, never an input.** No calculation reads `source`, name, country or year:
+   `CalendarBasis.exceptional_days` stays a mapping from day to kind, and `is_working_day` does not
+   branch on where a day came from. Treating an imported day differently from a hand-entered one
+   would make provenance a second rule for "is this a working day" (Invariant Guardian, rule 13).
+
+| Control | Acceptance criterion |
+|---|---|
+| PROV-1 | After approving a scenario whose calendar holds imported and hand-entered days, each frozen day row carries the same source, name, country code and year as its live row; editing the live row, or importing more days, afterwards changes no frozen row. |
+| PROV-2 | Once the deployment order of point 5 is complete, none of the provenance columns of `approved_snapshot_working_calendar_day` has a server default (asked of the migrated database), and an `INSERT` omitting `source` is refused. |
+| PROV-3 | `SNAPSHOT_TABLES` and `ApprovalResult` are unchanged; the approval is still one statement with six data-modifying CTEs. |
+| PROV-4 | Snapshot day rows written before the migration read `source = manual` with no country, year or name. |
+| PROV-5 | Two calendars that differ only in provenance labels give the same working-day count, capacity, FTE conversion and paid-absence cost. |
+| PROV-6 | The paid-absence cost and the FTE conversion of an approved scenario are identical before and after an import into its source calendar. |

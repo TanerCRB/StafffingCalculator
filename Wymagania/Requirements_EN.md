@@ -93,6 +93,17 @@ The MVP proposal and numerical non-functional targets below are recommendations 
 - Paid leave may generate a cost without generating revenue.
 - Different team locations shall be able to use different working calendars.
 
+> **Addendum 2026-09-29 (SC-3-08, Issue #165) — importing public holidays from an external source.**
+> An operator shall be able to load the public holidays of a country and year from the Nager.Date
+> public holidays API into a working calendar's exceptional days. Imported days are stored with
+> their origin (source, holiday name, country, year), never overwrite a manually entered day, and
+> are the only holiday data calculations read: calculations never call the external service.
+> Decided by the human at gate 1 of SC-3-08 and written down here because F-05 asks only that
+> calculations account for public holidays and section 6 lists no holiday feed. Deliberately left
+> undecided: regional holidays, scheduled or HTTP-triggered imports, refresh or deletion of
+> imported days (see ADR-0020). Use of the hosted API is conditional on private, non-commercial
+> use; commercial use requires the provider's active sponsorship first.
+
 ### F-06. Commercial models and revenue calculation
 
 The system shall support all four required commercial models. A model may apply to an entire project, a delivery phase, or a workstream, allowing mixed commercial arrangements.
