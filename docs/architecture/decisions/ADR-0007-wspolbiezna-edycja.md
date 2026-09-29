@@ -289,3 +289,7 @@ third meaning. Deletion is still out of scope; the third meaning comes from else
 |---|---|
 | A7-164-1 | On the catalogue edit path, a stale marker, a state-of-data refusal and a unit-precondition refusal each answer `409` with a message that names its own cause; no message is a substring of another. |
 | A7-164-2 | A request with a stale marker and a matching unit answers the marker's `409`; a request with the current marker and a differing unit (caller without `PERSONNEL_COSTS_READ`) answers the unit precondition's `409` and writes nothing (contrast). |
+
+### 2026-09-29 - risk and reserve markers (SC-6-08, ADR-0021)
+
+Each risk row and each reserve row carries its own `updated_at` marker; `PATCH` and `DELETE` take it and answer `409`, distinguishable from the approved-scenario `409`, on a mismatch. Editing the risk link of a cost event uses the cost row's existing marker. Proof: `backend/tests/test_risk_guards.py::test_k_05_*`.
