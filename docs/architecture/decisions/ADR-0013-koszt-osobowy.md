@@ -327,7 +327,7 @@ aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie za
 
 ### 2026-09-29 — SC-5-08 (Issue #80, daily and monthly cost rates): the cost-rate unit, the conversion rules, the `no_calendar` state
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-08; code merged in #167)
 
 > Gate 1 of SC-5-08 (2026-09-29) resolved Q-1..Q-6 (Q-1 = B, Q-2 = A, Q-3 = A, Q-4 = named state,
 > Q-5 backend only, Q-6 downgrade refuses). This entry records the decisions that touch this

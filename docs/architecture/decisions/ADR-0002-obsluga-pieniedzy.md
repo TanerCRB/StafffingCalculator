@@ -192,7 +192,7 @@ and rounding rule (the rule of the 2026-09-26 entry, points 1 and 5).
 
 ### 2026-09-29 — the unit of the cost rate becomes a choice; the selling-rate unit does not (SC-5-08, Issue #80)
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-08; code merged in #167; the frontend part takes effect with #164)
 
 > Gate 1 of SC-5-08 (2026-09-29, Q-1 = B, Q-5: backend only, the frontend is Issue #164). This entry
 > narrows point 4 of the addendum 2026-09-21 ("Jednostka nie jest wyborem") and leaves its text

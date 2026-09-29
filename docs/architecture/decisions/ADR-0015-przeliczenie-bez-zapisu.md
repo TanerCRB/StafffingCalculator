@@ -397,7 +397,7 @@ edit breaks the premise of the exemption: "the same before and after approval" h
 
 ### 2026-09-29 — SC-5-08 (Issue #80): the "hourly rate" wording of point 6 and of the SC-5-02 addendum is stale
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-08; code merged in #167)
 
 > A note, not a change of decision. The text of point 6 of the Decyzja and of the addendum
 > 2026-09-25 (SC-5-02) stays unchanged; this entry says how to read two phrases of it after
