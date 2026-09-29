@@ -1193,7 +1193,7 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
 
 ### 2026-09-29 — SC-5-08 (Issue #80, daily and monthly cost rates): `cost_rate_unit` is a gated catalogue cost field
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-08; code merged in #167)
 
 > Gate 1 of SC-5-08 (2026-09-29, Q-1 = B, K-06). It applies the rule stated in point 7 of the
 > addendum 2026-09-23 (SC-5-01) — "every future value of `state` or `cost_basis` from which an amount
@@ -1278,7 +1278,7 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
      stored unit nor any rate, but the *status* tells whether the guess was right, so a blind caller
      recovers the stored unit in at most two probes (`409` versus `200`); the `200` branch also
      overwrites the amount, which the caller is entitled to write. Impact low (the unit alone is a
-     weak cost fact); acceptance pending human recording.
+     weak cost fact); accepted as a recorded exception (owner TanerCRB, PR #167, expiry: the authentication ADR, Issue #150).
 
 | Control | Acceptance criterion |
 |---|---|
@@ -1288,4 +1288,4 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
 | CG-4 | A value of `cost_rate_unit` outside `hour`/`day`/`month` is refused with `422`; an omitted value on create stores `hour`. |
 | CG-5 | A `PATCH` carrying `default_cost_rate` without `cost_rate_unit`, or `cost_rate_unit` without `default_cost_rate`, is refused with `422` and writes nothing; a `PATCH` carrying both, and one carrying neither (editing another field), succeed and leave the stored pair as sent / unchanged respectively. |
 | CG-6 | A caller without the conjunction receives the named states `no_calendar` and `no_working_days` in `state` on the scenario cost response, with `amount` and `assumptions_used` withheld (contrast: a caller with the conjunction sees the same `state`). |
-| CG-7 | A caller without `PERSONNEL_COSTS_READ` sending `default_cost_rate` with a `cost_rate_unit` that differs from the stored one receives `409`, nothing is written and the body names no stored unit or rate (the status still discloses whether the guess was right: the unit is recoverable in at most two probes, impact low, acceptance pending human recording); with the stored unit, `200`; a caller with `PERSONNEL_COSTS_READ` sending the identical request changes the unit (`200`). |
+| CG-7 | A caller without `PERSONNEL_COSTS_READ` sending `default_cost_rate` with a `cost_rate_unit` that differs from the stored one receives `409`, nothing is written and the body names no stored unit or rate (the status still discloses whether the guess was right: the unit is recoverable in at most two probes, impact low, accepted as a recorded exception: owner TanerCRB, PR #167, expiry the authentication ADR, Issue #150); with the stored unit, `200`; a caller with `PERSONNEL_COSTS_READ` sending the identical request changes the unit (`200`). |
