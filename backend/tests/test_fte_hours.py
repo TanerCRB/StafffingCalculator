@@ -321,7 +321,9 @@ def test_a_k07_nothing_existing_moves() -> None:
             windows=(),
             surcharge_percent=Decimal("0"),
             includes_surcharge=False,
+            cost_rate_unit="hour",
         ),
+        basis=basis,
     )
     cost = base_personnel_cost([month], rate_source="live_catalog", scenario_currency="PLN")
     assert cost.cost == Decimal("14400.00")
