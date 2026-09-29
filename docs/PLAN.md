@@ -1627,6 +1627,39 @@ history / this file's own change log, not as tracked product work.
   pkt 7, aneks tej daty (SC-5-03); `ADR-0007-wspolbiezna-edycja.md` aneks 2026-09-19 (SC-3-01);
   `ADR-0014-koszty-dodatkowe.md` pkt 7 (mirror stanów walutowych); `docs/PLAN.md` SC-5-01, SC-5-02.
 
+- [x] **SC-5-04** — `assigned_fte` as a personnel cost basis (F-07), Issue #79, PR #176. A third
+  `cost_basis` value with a stored per-position FTE fraction (`NUMERIC(10,4)`, four database CHECKs),
+  costed as its own component `fte x working days x standard hours/day x rate` (exact product, one
+  final `round_money`, by rate unit; live or frozen calendar and rate). Dispatch by `cost_basis` is
+  exclusive at the formula input (also fixes `fixed_amount` positions with allocation rows being
+  priced by the worked-time path too).
+  *Done when:* `backend/tests` prove criteria K-01..K-07 / controls FA-1..FA-13 (analyst and
+  architect, 2026-09-29): the FTE component is priced from stored FTE and the calendar, never from
+  the grid hours, and never also by the worked-time path; an hour-rate fixture on a 7.5 h Mon-Sat
+  calendar gives 6499.35, not the chained 6499.00; gross of absences; named states `no_calendar`,
+  `no_working_days`, `no_planned_months`, never `0.00`, only this component withheld; an approved
+  scenario prices from the frozen calendar, rate and unit (carries FTE-6 of SC-3-07); the stored FTE
+  is refused by the database when non-positive, missing on its basis, present on another basis or
+  together with `fixed_amount`; gated like `fixed_amount` (never in `GET .../staffing-positions`);
+  copied to an independent row; the FTE formula imports no revenue module. Each criterion has an
+  executed mutation run (capabilities.md, mutation log).
+  **Done 2026-09-29:** `backend/tests/test_assigned_fte_cost.py`,
+  `backend/tests/test_assigned_fte_cost_scenario.py`, `backend/tests/test_assigned_fte_schema.py`,
+  `backend/tests/test_assigned_fte_api.py` (PR #176; 1373 passed, 6 xfailed).
+  **Out of scope (explicit):** overheads on the FTE basis (SC-5-02 follow-up); F-08 FTE charge base;
+  F-10 planned-FTE metric and summing the components; frontend; partial months; SC-3-08 holiday
+  import; `scenarios.full_time_hours_per_week`.
+  **Accepted, not repaired (exceptions, owner TanerCRB, decision 2026-09-29; expiry: the F-10
+  sum-components task reaches gate 1, or 2026-12-31, whichever first):** R-01 no cap on
+  `assigned_fte`, a percent typo (`50` for `0.5`) prices 100x too high with state `calculated`;
+  R-02 `included_cost` excludes the FTE component and, after the dispatch fix, `fixed_amount`
+  positions with allocation rows, so profit/margin/markup rise for them, including approved
+  scenarios (results are live). Also accepted: paid absence still priced for FTE positions (gross
+  FTE overcount); mixed-version deploy window (H-7) untested; grid hours and stored FTE may
+  disagree; the ADR-0013 SC-5-04 addendum and the ADR-0008/ADR-0002 SC-3-07 addenda remain "Draft
+  — pending approval"; bare JSON `NaN`/`Infinity` answers 500 (6 strict xfail tests);
+  `POST /projects/{id}/copy` answers 500 on a refused write.
+
 - [x] **SC-5-05** — Koszty dodatkowe (F-08), zawężone na bramce 1 (2026-09-23, ADR-0014, Accepted):
   kategorie kosztów o **kwocie stałej** (`CHECK amount > 0`, G-1), jednorazowych i cyklicznych,
   przypisanych do scenariusza (poziom "projektu") albo pozycji obsady, z atrybutem `funding_source`
