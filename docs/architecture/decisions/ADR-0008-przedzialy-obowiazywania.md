@@ -469,3 +469,135 @@ Rozstrzygnięcie bramki 1 SC-4-01 (P-1, ADR-0003 w wersji z 2026-09-23) zmienia 
    SC-5-05, ADR-0014 "Czego ten dokument nie rozstrzyga") byłyby pełnym konsumentem tego wzorca —
    rozstrzyganie "która domyślna cena obowiązuje dany dzień" wraca wtedy jako własny, datowany wpis
    tutaj.
+
+### 2026-09-29 — The calendar hour basis as the FTE basis (SC-3-07, Issue #163, gate 1)
+
+**Status:** Draft — pending approval
+
+> Prepared by the Architect for gate 1 of Issue #163 (FTE ↔ hours from the working calendar). Human
+> answers Q1 = A, Q2 = B, Q3 = A, Q4 = A, Q5 = A, Q6 = A are recorded on the Issue. Written in
+> English (`TEAM-CONTRACT.md` §7); the earlier text of this file stays unchanged. This entry is a
+> **consumer** of the calendar rows the SC-3-02 addendum (2026-09-22) created, not a new
+> effective-date mechanism: no window, no `EXCLUDE`, no new table.
+
+1. **Source (Q1 = A): the calendar of the position's location.** The basis of one month is the
+   calendar's working days of that month times its `standard_hours_per_day`, read through the same
+   value object the capacity uses (`app.domain.capacity.CalendarBasis`, `working_days_in_month`) —
+   one spelling of "which days are working days". No `weekday() < 5`, no constant `8`, no second
+   pattern/holiday logic (criteria K-01 and K-02 of SC-3-02 apply unchanged). A location with
+   `calendar_id IS NULL` is the named state `no_calendar` (addendum 2026-09-22, point 7), never a
+   default number of hours.
+2. **Rejected: a scenario-level source.** A calendar, or a length of the working day, chosen on the
+   scenario would be a second mechanism resolving the same question next to the location's calendar
+   (Invariant Guardian, rule 13; addendum 2026-09-22, points 1–2: the unit of versioning is the
+   calendar). It would also need a place in the ADR-0012 chain and a group assignment under ADR-0004.
+   Reopening condition: a scenario that must convert FTE with a basis other than its positions'
+   location calendars — then a dated entry here, not a side effect of a task.
+3. **FTE is derived from hours only (Q2 = B).** No FTE column, request field or stored figure is
+   created. The domain function converts in both directions with one basis: FTE from hours, and hours
+   from an FTE value **passed by the caller**. This supplies the conversion the `staffing_position`
+   docstring deferred ("FTE as a unit is out of scope until a working calendar exists to convert
+   it"); it does not store the unit. Consequence: ADR-0013's `assigned_fte` cost basis (SC-5-04) may
+   use this conversion, but a cost basis that takes FTE as a stored *input* is a different decision
+   from Q2 = B and needs its own entry.
+4. **Gross of absences and of the leave budget (Q3 = A).** The basis is `working_days ×
+   standard_hours_per_day` of one person — the gross term of the capacity formula, before the
+   absence and budget subtractions. Consequences named: 1.00 FTE is a full calendar month whether
+   or not the person is absent; a plan in FTE can exceed `derived_capacity_hours` (net), and that is a
+   visible over-allocation, never a refusal (the same rule `planned_allocation_hours` already has).
+   Mutation: subtracting absences or the budget share inside the conversion.
+5. **Unit of calculation: the calendar month (Q5 = A).** The month is `period_month` (first of the
+   month, `FIRST_DAY_OF_MONTH_EXPRESSION`), with the whole month's working days. There is no
+   proration to a position's `start_date`/`end_date` within a month and no finer grain (delivery
+   segments, ADR-0016). Consequence named: a position that starts on the 20th has, for that month,
+   the basis of the whole month; a planner converting FTE to hours for it gets whole-month hours.
+6. **Approved scenarios read the snapshot.** For an approved scenario the basis is built from
+   `approved_snapshot_working_calendar(_day)` (`app.data.working_calendar.frozen_basis_by_location`,
+   ADR-0004 addendum 2026-09-23 SC-5-06, point 1), never from the live tables; a location with no
+   frozen key is `no_calendar`, never a live lookup to fill it in. A draft reads the live calendar
+   (`basis_by_location`) and its figure moves when the calendar is edited — including by the holiday
+   import of ADR-0020. **Named, not repaired:** the capacity grid of an approved scenario still reads
+   the live calendar (SC-5-06, point 4), so for one approved scenario the grid and this conversion
+   can disagree after a catalogue edit. The conversion follows the invariant (AC-04, AC-10), not the
+   grid.
+7. **Boundary with ADR-0003, points 6–7 (revenue).** T&M revenue is `billable_hours` from the
+   allocation "literally" and is not derived from plan, availability or `derived_capacity_hours`
+   (point 6); `standard_hours_per_day` is the calendar's capacity basis and is not "hours in a
+   billable day" — "merging them would make a calendar change move the price of a contract"
+   (point 7). The conversion output is therefore **not an input of any revenue calculation and is
+   not written into any hours column** (`availability_hours`, `planned_allocation_hours`,
+   `billable_hours` stay three independent inputs — K-05 of SC-3-01). A consumer that wants
+   FTE-derived hours in revenue or cost needs its own dated entry (ADR-0003 point 6, last sentence,
+   says the same for the absence flags).
+8. **The result names its source.** As `MonthCapacity` does (addendum 2026-09-22, point 4), a
+   resolved conversion carries the calendar identifier and name, the standard hours per day and the
+   working-day count it was computed from (F-02: identify the source of each derived value).
+9. **Surfacing: none in this Story.** See proposal (d) below.
+
+#### Gaps closed by proposal (Analyst gaps of #163), pending human confirmation
+
+**(a) What headcount means.** Decided from `app.models.staffing`: the hours on a position are its
+total, "not per head" (`HOURS_PRECISION` note, gate-1 decision 1), and ADR-0003 point 6 says
+headcount "is already in it, so it is not multiplied a second time". So the FTE derived from a
+position's hours is the FTE of the **position** — the sum over its people — and exceeds 1.00 when
+`headcount > 1` (three people full-time: 3.00). It is **not** a per-person figure. Conversely,
+`hours = FTE × basis` has **no headcount factor**: the FTE handed in is already a position total.
+This differs deliberately from the capacity formula, which multiplies a per-person basis by
+`headcount` (K-04): there the input is a person-count, here the input is already a total.
+Per-person FTE is `position FTE ÷ headcount`, a second, separately named figure this Story does not
+produce. Options: per-position (proposed — consistent with the stored hours, no division by
+`headcount`, no double multiplication) or per-person (needs a division and a rule for a person
+assigned at `headcount = 1` vs anonymous positions; and it re-touches the pseudonymisation question
+of ADR-0005 addendum SC-3-02, point 11, as soon as it is shown). Mutation: multiplying by `headcount`
+in the FTE → hours direction.
+
+**(b) A month with zero working days.** A named state `no_working_days`, in **both** directions,
+with the value `"n/a"` (`app.core.money.NOT_APPLICABLE`, one meaning across the application —
+ADR-0002 addendum 2026-09-26, point 3) — decided before any division, so it is neither a
+`ZeroDivisionError` nor a `0`. The closed set of states is `resolved`, `no_calendar` (the constant
+already in `app.domain.capacity`, not a second spelling) and `no_working_days`. `standard_hours_per_day`
+is `> 0` by `CHECK`, so a zero basis arises only from a calendar with no working day that month.
+Options for the FTE → hours direction: the named state (proposed, the reasoning of K-23: a `0.00`
+is a number every later sum adds up, and the reverse conversion could not round-trip it) or a
+mathematically true `0.00` hours. Needs confirming.
+
+**(c) Precision and where rounding lives.** Proposed: the derived ratio is expressed as **a share of
+a full-time month in percent** through the existing `app.core.money.ratio_percent(hours,
+basis_hours)` — two places, half-up, `100.00` = 1.00 FTE, so FTE resolution is 0.0001. No new
+rounding function and no new rounding point: `round()`/`quantize` appear nowhere outside
+`app/core/money.py`. Hours from FTE is one exact `Decimal` multiplication and a **single**
+`round_money` at the end (two places, the scale of `NUMERIC(10,2)`), as the capacity does. The
+rounded percent is a lossy projection and never an input (addendum 2026-09-19, SC-2-02): the
+FTE → hours direction takes the exact `Decimal` FTE, never a percent that was rounded. Consequence
+named: hours → FTE → hours is not the identity — 100.00 h over a 168 h basis is 59.52 %, and 59.52 %
+converted back would be 99.99 h; a caller must not chain the rounded figure. Options: (A) this
+(proposed; needs only the short ADR-0002 addendum of the same date recording that a dimensionless
+FTE share is not a fourth quantity class); (B) a new ratio helper with four places in `money.py`
+(adds a rounding point to the one allowed module and needs a real ADR-0002 addendum for a new
+class); (C) `round_money` on the FTE ratio itself (two places: 0.01 FTE = 1.68 h of 168 — too coarse
+for a third of a person).
+
+**(d) Surfacing.** Proposed: **a domain function only in this Story — no new API field, no endpoint,
+no frontend change.** Consequences: no public-API row of `architecture-sensitive-paths.md` fires,
+and neither do ADR-0005 (permissions), ADR-0009 (write) or ADR-0017 (lists); no contract type and no
+shape check changes. The price: the capability can be proven at the domain and data layers only —
+nothing reaches a user, which the registry entry must say in its "what this does not prove" — and a
+follow-up Story is needed before anyone sees the figure. When that Story surfaces it, four things
+attach at once: the fixed-point-string rule for hours-like quantities (ADR-0002 addendum 2026-09-26);
+the pseudonymisation question when an FTE or `headcount` per position becomes visible (ADR-0005
+addendum SC-3-02, point 11); the personnel-cost gate the moment any monetary figure is derived from it
+(ADR-0005 addenda SC-3-03, points 4 and 8 — until then the FTE carries no cost and is not gated);
+and the API surface rows above. Option: surface it now as a response field — then all of these
+apply in this Story.
+
+| Control | Acceptance criterion |
+|---|---|
+| FTE-1 | The basis of a position comes from its location's calendar: with a Monday–Saturday pattern and one exceptional day the working-day count follows the data, and no calendar in the tests carries a `standard_hours_per_day` of `8.00` or the code a constant `8` or `weekday() < 5`. |
+| FTE-2 | Adding absences or a leave budget to a position does not change its FTE ↔ hours conversion for the same calendar and month. |
+| FTE-3 | For a position with `headcount = 3`, 3 × the basis in hours is `3.00` FTE, and `3.00` FTE is 3 × the basis in hours; changing `headcount` with FTE and hours fixed changes neither result. |
+| FTE-4 | A month with no working day gives the state `no_working_days` and `"n/a"` in both directions — no exception, no `0`; a location without a calendar gives `no_calendar`; the three states are distinct and a consumer can tell them apart by the state, not by the value. |
+| FTE-5 | The FTE share comes from `ratio_percent` and the hours from a single `round_money`; no other rounding call exists in the module; 100.00 h over a 168 h basis is `59.52` and converting the **exact** FTE back gives `100.00` h. |
+| FTE-6 | The conversion of an approved scenario uses the snapshot: editing the calendar, its days, the location's calendar or `standard_hours_per_day` after approval changes nothing, and a location with no frozen row gives `no_calendar` rather than a live lookup. |
+| FTE-7 | No revenue reader and no hours column reads or receives the conversion's output: changing a calendar's `standard_hours_per_day` changes the conversion but not the T&M revenue of a scenario. |
+| FTE-8 | A resolved conversion names its calendar (id and name), `standard_hours_per_day` and working-day count. |
+| FTE-9 | No API route, response field or frontend contract is added by this Story. |

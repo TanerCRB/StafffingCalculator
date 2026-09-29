@@ -154,3 +154,38 @@ one multiplication away from it", NF-01). Niniejszy aneks czyni to jawnym.
 5. **Warunek ponownego otwarcia:** pierwsze zadanie potrzebujące trzeciej wielkości bez waluty i
    bez procentu w tym module (nie godzin) rozstrzyga, czy `hours.ts` staje się ogólniejszym
    "unit.ts", czy dostaje rodzeństwo — nie rozszerza tego punktu przez milczenie.
+
+### 2026-09-29 — a derived FTE share is not a fourth quantity class (SC-3-07, Issue #163, gate 1)
+
+**Status:** Draft — pending approval
+
+> Prepared by the Architect for gate 1 of Issue #163; it belongs together with ADR-0008, addendum
+> 2026-09-29, proposal (c), and stands or falls with the human's answer to that proposal. Written in
+> English (`TEAM-CONTRACT.md` §7); the earlier text of this file stays unchanged.
+
+SC-3-07 derives a dimensionless ratio — hours divided by the calendar's monthly hour basis — that is
+neither money, nor hours, nor (in the sense of the classes above) a percentage of money. The
+question this entry settles is whether it is a new class of decimal quantity needing its own module
+and rounding rule (the rule of the 2026-09-26 entry, points 1 and 5).
+
+1. **Proposal (A in ADR-0008 addendum 2026-09-29, (c)): it is not a new class.** The ratio is
+   expressed as a share of a full-time month **in percent** and produced by the existing
+   `app.core.money.ratio_percent` (two places, half-up, `NOT_APPLICABLE` on a zero denominator).
+   `app/core/money.py` gains no function and no rounding point; `round()`/`quantize` on this figure
+   anywhere else remain forbidden, exactly as for money. Stated openly: the first bullet of "Decyzja"
+   speaks of a percentage share "computed from money"; applying `ratio_percent` to a share of *hours*
+   is the extension this entry proposes, and it is the point the human confirms.
+2. **The zero-denominator sentinel is never the only signal.** ADR-0008's named state
+   (`no_working_days`) is decided before `ratio_percent` is called; `"n/a"` is its value, not its
+   name (the reading of ADR-0002, addendum 2026-09-24, point 1: name the state, do not collapse it).
+3. **Hours from FTE rounds once, through `round_money`,** after an exact `Decimal` multiplication —
+   the way the capacity already does; the rounded percent is a display projection and never an input
+   (addendum 2026-09-19, SC-2-02).
+4. **Frontend: nothing changes in this Story.** No FTE reaches the API (ADR-0008, addendum
+   2026-09-29, proposal (d)). The Story that surfaces it decides whether a percent share is formatted
+   by `money.ts` (it already formats percentages) or needs the sibling module the 2026-09-26 entry,
+   point 5, reserves — in its own dated entry, not by extension of this one.
+5. **Reopening condition.** If the human chooses option B or C of proposal (c) — a ratio with its
+   own precision — this entry is replaced by one that names the new rounding point in
+   `app/core/money.py` and the frontend counterpart together (the closing condition of the
+   2026-09-19 entry, point 4, applies).

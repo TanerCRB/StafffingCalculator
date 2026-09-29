@@ -916,6 +916,56 @@ history / this file's own change log, not as tracked product work.
   `react-day-picker` bez `content-visibility`; naprawione mirror SC-3-04 R-02, RESOLVED). Zob.
   `docs/architecture/capabilities.md`.
 
+- [ ] **SC-3-07** — Convert an FTE allocation into hours from the working calendar of the position
+  (F-04, F-05), Issue #163. Prerequisite for the FTE cost basis (SC-5-04, Issue #79) and
+  for the day/month cost rates (Issue #80).
+  *Done when:* `backend/tests` prove: 1 FTE -> hours in a calendar month comes from the position's
+  calendar (`standard_hours_per_day` x working days, a calendar with a non-8 day; not a constant, not
+  `scenarios.full_time_hours_per_week`); varies with working days at unchanged hours per day;
+  unchanged by absences (gross, Q3 = A); a location without a calendar and a month without
+  working days each yield a named state, never `0`; every figure names its basis; Decimal only with
+  the single rounding rule of ADR-0002 (addendum 2026-09-29); existing hour-based allocation,
+  `derived_capacity_hours` and SC-5-01 cost results are unchanged; an approved scenario reads the
+  snapshot calendar. Each criterion with a registered, executed mutation run.
+  **Gate 1 decisions (2026-09-29):** Q1 = A calendar source; Q2 = B FTE derived from hours only;
+  Q3 = A gross of absences; Q4 = A `scenarios.full_time_hours_per_week` untouched (G-1 stays
+  named); Q5 = A calendar month; Q6 = A this task first, #79 and #80 wait; Q7 = A the holiday import
+  is a separate task (SC-3-08).
+  **Out of scope (explicit):** FTE cost basis (SC-5-04, #79); daily/monthly cost rates (#80); FTE as
+  a charge base for additional costs (F-08) and the planned-FTE report metric (F-10); FTE as an
+  allocation input (named follow-up, F-04 point 1 stays partly open); partial working days;
+  versioned day length; FTE screen; API field or endpoint (proposed: domain function only, see
+  ADR-0008 addendum 2026-09-29).
+  **Basis:** ADR-0008 addendum 2026-09-29 (SC-3-07) and 2026-09-22 (SC-3-02), ADR-0003 pt 6-7,
+  ADR-0004, ADR-0002 addendum 2026-09-29; `docs/PLAN.md` SC-3-01, SC-3-02, SC-5-01.
+
+- [ ] **SC-3-08** — Import public holidays from Nager.Date into a working calendar's exceptional days,
+  with provenance (F-05, F-02), Issue #165. A new instruction, not a documented requirement
+  (F-05 addendum 2026-09-29).
+  *Done when:* `backend/tests` prove: after an operator-run import for (calendar, country, year)
+  working days reflect the imported holidays with the network disabled and no HTTP client on the
+  calculation path; only `Public` and global entries become `NON_WORKING` days, the rest is counted
+  in a partitioned import report; a manual day is never overwritten, deleted or duplicated; every
+  imported day carries source, name, country and year and older rows read `manual` after upgrade;
+  insertion is idempotent and race-safe in the database; any failure or invalid body writes zero
+  rows; the client obeys the egress policy of ADR-0020 and CI never calls the live API; an import
+  changes no value of an approved scenario or any `approved_snapshot_*` row; provenance is copied
+  into the snapshot with no default on the snapshot table. Each criterion with a registered,
+  executed mutation run.
+  **Gate 1 decisions (2026-09-29):** Q7 = A separate task; Q8 = A persisted data, calculations read
+  only the DB; Q9 = C operator-run script or service function; Q10 = B country stored on the day
+  row only; Q11 = A regional holidays skipped and reported; Q12 = A only `Public`; Q13 = A
+  insert-if-absent; Q14 = A strict validation; Q15 = A `httpx` to runtime dependencies; Q16 = A
+  hosted API, on the condition of private, non-commercial use (the provider requires active
+  sponsorship for commercial use); Q17 = A provenance on the day row and in the snapshot; Q18 = A
+  one year per call.
+  **Out of scope (explicit):** scheduled or automatic sync; HTTP trigger and UI; regional holidays
+  and subdivisions; refresh or deletion of imported rows; bulk all-country import and location
+  assignment; `NextPublicHolidays`, `IsTodayPublicHoliday`, `LongWeekend`, `CountryInfo`; in-lieu
+  and half days; self-hosted Nager.Date.
+  **Basis:** ADR-0020 (draft), ADR-0004 addendum 2026-09-29, ADR-0006, ADR-0008, F-05 addendum
+  2026-09-29; Nager.Date Terms of Service (2023-09-15).
+
 - [x] **SC-2-05** — Dostosuj wygląd ekranu Roles & rates (katalog) do makiety UI-15 i rozbuduj rail
   nawigacji `AppShell` do pełnej listy 11 wpisów z tej samej makiety, bez zmiany zachowania ani
   kontraktów API (Issue #59).
