@@ -264,7 +264,7 @@ nieodróżnialna od anonimowej „brak flagi »przypisano« — na każdej ście
 
 ### 2026-09-29 — a third meaning of `409` on the catalogue edit path (Issue #164, SC-5-09)
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-09; code merged in #173)
 
 Point 4 of the addendum 2026-09-21 says `409` on the catalogue path has two meanings — a stale marker
 and a refusal from the state of the data — and that their messages stay distinguishable, neither a

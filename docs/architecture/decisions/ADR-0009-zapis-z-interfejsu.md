@@ -193,7 +193,7 @@ niezależnie od tego, czy żądanie niosło jakiekolwiek pole.
 
 ## Addendum 2026-09-29 (Issue #164, SC-5-09 — gate 1)
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-09; code merged in #173)
 
 The catalogue form gains the cost-rate unit (`cost_rate_unit`, ADR-0005 addendum 2026-09-29, SC-5-08).
 The backend added a third cause of `409` on the catalogue edit path, `condition=cost_rate_unit_precondition`
