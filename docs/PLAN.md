@@ -1874,6 +1874,55 @@ history / this file's own change log, not as tracked product work.
   approval"; frontend stale (`RateForm.tsx` "unit is not a choice", cost cell reads `rate.unit`),
   tracked in Issue #164.
 
+- [ ] **SC-5-09** — Catalogue screen: cost rate unit selector and display (F-07, frontend),
+  follow-up of SC-5-08 (Issue #164). The screen offers the cost rate unit as a choice
+  (`hour`/`day`/`month`, taken from the API contract's closed set) and shows every cost rate with
+  the unit the API returned for that row, never the selling-rate `unit`.
+  *Done when:* `frontend` tests prove criteria K-01..K-07 (analyst, 2026-09-29):
+  1. (K-01) The unit control offers exactly `COST_RATE_UNITS` from `contracts/catalog.ts`; the
+     shape check refuses `"week"`, `""`, a number, or a unit without a rate (or a rate without a
+     unit) on reads and on write responses, rendering nothing. Mutations: shape check widened to
+     `typeof === "string"`; a private list or a fourth option in `RateForm`; shape check removed
+     on write responses; pair check replaced by per-field checks.
+  2. (K-02) The cost cell and the edit form read `cost_rate_unit`, never `unit` (fixture with
+     `unit: "hour"`, `cost_rate_unit: "month"`; a second run with `"day"`); the edit form seeds its
+     unit from the response, not from the rendered cell. Mutations: cell reverted to `rate.unit`;
+     form seeded from the label or hard-coded `hour`.
+  3. (K-03) A row with the pair withheld (both `null` or both absent) renders no unit and no
+     default `hour` beside the cost, while the selling cell still reads `/ hour`. Mutation:
+     `cost_rate_unit ?? "hour"` (or `?? rate.unit`) in the cell.
+  4. (K-04) Create requires an explicit unit choice (no preselection; saving without one is
+     refused with the form's "is required" wording, no request sent), sends `cost_rate_unit` and no
+     `unit` key, and the form has exactly one unit control, named as belonging to the cost rate.
+     Two runs with different choices give different bodies. Mutations: unit dropped from the body;
+     a `unit` key or a selling-unit control added; option label sent instead of the contract value.
+  5. (K-05) Edit sends the amount and the unit together or neither: only the selling rate changed
+     sends neither; only the unit changed sends both, the amount as loaded at full precision
+     (`150.0050`, not `150.01`); a withheld row sends neither and the body never contains
+     `cost_rate_unit`. A blind writer is offered no cost-amount edit (Q-1). Mutations: unit sent
+     alone; amount sent alone; unit sent for a withheld row; amount seeded from the rounded cell.
+  6. (K-06) The stale text is gone for the cost rate ("Every catalogue rate is priced per hour. The
+     unit is not a choice." and the screen description "Manage default hourly rates…", pins updated
+     in `CatalogScreenStructure.test.tsx`); the selling-rate statement stays and is accurate.
+     Mutation: the old `UNIT_NOTE` restored.
+  7. (K-07) A `409` whose body carries `cost_rate_unit_precondition` gets its own named ending
+     (no stored unit, no rate, no typed value), distinct from the stale-marker message and from
+     "unstated"; a `409` carrying `updated_at_marker` keeps its message. Mutation: the cause match
+     removed.
+
+  **Existing tests changed by decision (adaptation, never weakened):** `CatalogWrite.test.tsx` K-14
+  ("does not offer the unit as a choice") loses its cost-unit half, replaced by K-04, while its
+  selling-unit half (no `unit` control, no `unit` key in the body) stays; the two pins in
+  `CatalogScreenStructure.test.tsx` follow the reworded texts; fixtures with a cost rate gain
+  `cost_rate_unit`.
+  **Out of scope (explicit):** backend changes; the selling-rate unit; exposing the unit in the
+  scenario cost response (`assumptions_used`, Issue #172); a blind-writer control to change a cost
+  amount (would make the recorded unit oracle a one-click feature); any conversion or derived
+  hourly figure on screen (ADR-0002 pt 5).
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-07, NF-07; ADR-0002 addendum 2026-09-29, ADR-0005
+  addenda 2026-09-21 (SC-2-04) and 2026-09-29, ADR-0009 and ADR-0007 (addenda required), ADR-0008
+  addendum 2026-09-19 pt 2, ADR-0010; `docs/PLAN.md` SC-5-08.
+
 - [x] **SC-6-01** — Duplikuj scenariusz niezależnie od źródła (F-09 pkt 1, AC-02). Nowy entry point
   do istniejącego mechanizmu kopiowania (`copy_scenario`/`SCENARIO_CHILD_COPIERS`, ADR-0004) —
   `into_project=source.project` zamiast nowego projektu (SC-1-03 zawsze tworzył nowy).
