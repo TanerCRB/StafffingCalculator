@@ -12,7 +12,7 @@ independent calculation per model). The shared vocabulary is `app.domain.revenue
 
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 
@@ -38,15 +38,46 @@ class BillableMonth:
     and the price of the month — or `None` when no single selling rate covers the whole month.
 
     `billable_hours` is the planner's own figure for the **whole position** (headcount included), so
-    it is never multiplied by the headcount again (ADR-0003, point 6). No planned or available hours
-    travel on this type at all: a formula that cannot see them cannot derive billable hours from
-    them (criterion K-02).
+    it is never multiplied by the headcount again (ADR-0003, point 6). The ordinary formula uses
+    only `billable_hours` and `price`; optional `planned_allocation_hours` is carried solely for the
+    sensitivity transformation and never derives or replaces the saved billable figure.
     """
 
     position_id: uuid.UUID
     period_month: date
     billable_hours: Decimal
     price: MonthPrice | None
+    planned_allocation_hours: Decimal | None = None
+
+
+class InvalidBillableUtilizationDecrease(ValueError):
+    """The decrease is negative or would make at least one month's billable hours negative."""
+
+
+def billable_utilization_decrease(
+    months: Sequence[BillableMonth], decrease_percentage_points: Decimal
+) -> tuple[BillableMonth, ...]:
+    """Return temporary T&M inputs after subtracting percentage points of planned hours.
+
+    Rows without positive planned allocation keep their saved billable hours. The result is
+    all-or-nothing: no transformed collection is returned if any row would become negative.
+    """
+    if decrease_percentage_points < 0:
+        raise InvalidBillableUtilizationDecrease
+
+    adjusted: list[BillableMonth] = []
+    for month in months:
+        planned = month.planned_allocation_hours
+        if planned is None or planned <= 0:
+            adjusted.append(month)
+            continue
+        billable_hours = month.billable_hours - (
+            decrease_percentage_points / Decimal("100") * planned
+        )
+        if billable_hours < 0:
+            raise InvalidBillableUtilizationDecrease
+        adjusted.append(replace(month, billable_hours=billable_hours))
+    return tuple(adjusted)
 
 
 def time_and_material_revenue(

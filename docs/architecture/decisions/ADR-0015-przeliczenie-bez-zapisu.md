@@ -418,3 +418,44 @@ edit breaks the premise of the exemption: "the same before and after approval" h
    unit, and neither consumer assumes `hour` (ADR-0013, addendum 2026-09-29 SC-5-08, point 6,
    control U-6). A what-if run over a scenario with a monthly-rate position is the case that shows
    whether a hard-coded `hour` survived in one consumer only.
+
+### 2026-09-29 — SC-6-05 (Issue #100): sensitivity analysis for reduced billable utilization
+
+**Status:** Draft — pending approval
+
+> Gate-1 scope choices approved by the human on 2026-09-29: utilization means
+> billable hours divided by planned allocation hours for each position and month; the
+> hypothetical decrease is expressed in percentage points; revenue changes and personnel
+> cost remains at baseline. A decrease that would produce negative hypothetical billable
+> hours is refused for the whole request.
+
+1. **This is a revenue-input substitution.** For each position-month with positive
+   `planned_allocation_hours`, calculate hypothetical billable hours by subtracting
+   `decrease_percentage_points / 100 × planned_allocation_hours` from the saved
+   `billable_hours`. The decrease is in percentage points, not a relative percentage
+   of the current billable hours. When `planned_allocation_hours` is zero, retain that
+   row's saved `billable_hours` unchanged.
+2. **No negative hypothetical hours or partial result.** If the substitution would make
+   any position-month's hypothetical billable hours negative, refuse the entire request
+   with a generic `422`. Do not clamp rows to zero or return results for only the other
+   rows.
+3. **Scope: T&M revenue only.** Recalculate T&M revenue using the hypothetical billable
+   hours and the existing T&M revenue calculation. Personnel cost, paid absence cost,
+   additional cost, and their assumptions remain at their baseline values. Derive profit,
+   margin, markup, and named non-computable states through the existing profitability
+   calculation.
+4. **Preserve the established what-if boundary.** This variant remains a read-only
+   calculation for a `draft` scenario and inherits the existing scope checks, indistinguishable
+   out-of-scope `404`, and status-race handling. It must not introduce a second revenue
+   formula or make a what-if result an input to the ordinary results calculation.
+5. **The hypothetical does not change cost-rate vocabulary.** `WHAT_IF_HYPOTHETICAL`
+   remains a cost `rate_source` value. The utilization variant does not change a cost rate
+   or classify a hypothetical revenue input as a cost source.
+
+| Control | Acceptance criterion |
+|---|---|
+| A15-12 | The utilization what-if changes only the temporary billable-hours input used for T&M revenue; persisted scenario inputs and ordinary results remain unchanged before and after the request. Rows with zero planned allocation retain their saved billable hours. |
+| A15-13 | A negative requested decrease or any negative hypothetical billable-hours value refuses the entire request with a generic `422`; zero is valid and reproduces baseline hours; no partial result is returned. |
+| A15-14 | A T&M what-if derives revenue using the existing revenue calculation and derives profitability using the existing profitability calculation; personnel cost and other cost inputs remain at baseline. |
+| A15-15 | Scope denial, draft-only behavior, status-race behavior, currency handling, and personnel-cost field gating follow the existing results/what-if rules. |
+| A15-16 | A negative requested decrease is refused for the whole request with generic `422`; zero decrease is valid and reproduces baseline hours and T&M revenue. |

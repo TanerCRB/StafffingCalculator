@@ -94,7 +94,10 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.additional_cost import additional_costs_for_caller
-from app.data.commercial_terms import commercial_terms_for_caller
+from app.data.commercial_terms import (
+    MODEL_TYPE_TIME_AND_MATERIAL,
+    commercial_terms_for_caller,
+)
 from app.data.paid_absence_cost import paid_absence_months
 from app.data.personnel_cost import ScenarioCostView, _worked_months, scenario_cost_for_caller
 from app.data.scenario_results import refuse_a_status_race
@@ -108,6 +111,10 @@ from app.domain.personnel_cost import (
     fully_loaded_personnel_cost,
 )
 from app.domain.revenue import RevenueAnswer
+from app.domain.revenue_time_and_material import (
+    billable_utilization_decrease,
+    time_and_material_revenue,
+)
 from app.models.scenario import Scenario, ScenarioStatus
 
 
@@ -129,6 +136,17 @@ class ScenarioWhatIfView:
     cost_view: ScenarioCostView
     additional_cost: AdditionalCostAnswer
     salary_raise_percent: Decimal
+
+
+@dataclass(frozen=True)
+class ScenarioWhatIfBillableUtilizationView:
+    """One draft T&M result with revenue recomputed from temporary billable-hour inputs."""
+
+    scenario: Scenario
+    revenue: RevenueAnswer
+    cost_view: ScenarioCostView
+    additional_cost: AdditionalCostAnswer
+    decrease_percentage_points: Decimal
 
 
 def _raised_rate(rate: MonthCostRate | None, multiplier: Decimal) -> MonthCostRate | None:
@@ -274,4 +292,66 @@ def scenario_what_if_salary_raise_for_caller(
         cost_view=hypothetical_cost_view,
         additional_cost=additional.total,
         salary_raise_percent=salary_raise_percent,
+    )
+
+
+def scenario_what_if_billable_utilization_for_caller(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    decrease_percentage_points: Decimal,
+) -> ScenarioWhatIfBillableUtilizationView | None:
+    """Compute a T&M revenue what-if for an in-scope draft; never persist the substitution.
+
+    `None` covers out-of-scope, non-T&M, incomplete T&M, and approved scenarios with one caller-
+    indistinguishable response. Validate and apply the hypothetical only after the shared status
+    race guard and draft check.
+    """
+    commercial = commercial_terms_for_caller(
+        session,
+        caller,
+        project_id,
+        scenario_id,
+        include_billable_months=True,
+    )
+    if (
+        commercial is None
+        or commercial.terms is None
+        or commercial.terms.model_type != MODEL_TYPE_TIME_AND_MATERIAL
+        or commercial.billable_months is None
+    ):
+        return None
+    cost_view = scenario_cost_for_caller(session, caller, project_id, scenario_id)
+    if cost_view is None:  # pragma: no cover â€” scope agrees with the call above by construction
+        return None
+    additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
+    if additional is None:  # pragma: no cover â€” scope agrees with the two calls above
+        return None
+
+    refuse_a_status_race(
+        revenue_source=commercial.revenue.assumptions_used.rate_source,
+        revenue_status=commercial.status_at_read,
+        cost_status=cost_view.status_at_read,
+        additional_cost_status=additional.status_at_read,
+    )
+    scenario = cost_view.scenario
+    if scenario.status != ScenarioStatus.DRAFT:
+        return None
+
+    temporary_months = billable_utilization_decrease(
+        commercial.billable_months, decrease_percentage_points
+    )
+    revenue = time_and_material_revenue(
+        temporary_months,
+        rate_source=commercial.revenue.assumptions_used.rate_source,
+        scenario_currency=scenario.currency,
+    )
+    return ScenarioWhatIfBillableUtilizationView(
+        scenario=scenario,
+        revenue=revenue,
+        cost_view=cost_view,
+        additional_cost=additional.total,
+        decrease_percentage_points=decrease_percentage_points,
     )
