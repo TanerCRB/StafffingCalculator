@@ -157,7 +157,7 @@ one multiplication away from it", NF-01). Niniejszy aneks czyni to jawnym.
 
 ### 2026-09-29 — a derived FTE share is not a fourth quantity class (SC-3-07, Issue #163, gate 1)
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-04; code merged in #168)
 
 > Prepared by the Architect for gate 1 of Issue #163; it belongs together with ADR-0008, addendum
 > 2026-09-29, proposal (c), and stands or falls with the human's answer to that proposal. Written in

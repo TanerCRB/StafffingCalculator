@@ -62,20 +62,26 @@ Properties that are acceptance criteria rather than implementation choices:
 - **The month is normalised**: `period_month` may be any date in the month and the result echoes
   the first of that month.
 
-**Not an input of any revenue or cost calculation** (ADR-0008 addendum 2026-09-29, point 7, and
-ADR-0003 points 6-7): nothing here feeds `billable_hours`, `availability_hours`,
-`planned_allocation_hours` or `derived_capacity_hours`, and nothing imports this module yet. An
-import tripwire in `tests/test_fte_hours.py` pins that until a first consumer exists.
+**Not an input of any revenue calculation, of the worked-time cost or of the hours columns**
+(ADR-0008 addendum 2026-09-29, point 7, and ADR-0003 points 6-7): nothing here feeds
+`billable_hours`, `availability_hours`, `planned_allocation_hours` or
+`derived_capacity_hours`. **The first consumer is the `assigned_fte` cost formula,
+`app.domain.assigned_fte_cost` (SC-5-04; ADR-0013 addendum 2026-09-29 SC-5-04)**, through
+`exact_fte_hours` below — the unrounded product, never the rounded output of `fte_to_hours`. An
+import tripwire in `tests/test_fte_hours.py` keeps every module it lists (revenue, capacity, the
+worked-time and fixed-amount formulas, the dispatcher, the what-if) from importing this module
+directly; the FTE cost formula is the one consumer, and a structural test of its own
+(`tests/test_assigned_fte_cost.py`) pins that too.
 
 **Live or frozen is the caller's decision.** The functions take an already-resolved
 `CalendarBasis` (or `None`), so a draft passes `basis_by_location` output and an approved scenario
 passes `frozen_basis_by_location` output (ADR-0008 addendum 2026-09-29, point 6). No consumer exists
 in this Story, so nothing here queries anything, and there is no clock: the month is an argument.
 
-**Deferred, deliberately (FTE-6):** "an approved scenario reads the snapshot, not the live
-calendar" is *not* proven by this Story: with no consumer there is no path on which to prove it.
-The first consumer (#79 SC-5-04 or #80) is the first place a scenario and a basis meet, and proves
-it there.
+**Deferred, deliberately (FTE-6), carried by SC-5-04:** "an approved scenario reads the snapshot,
+not the live calendar" is *not* proven by this Story: with no consumer there is no path on which to
+prove it. The first consumer, the `assigned_fte` cost (Issue #79, SC-5-04), is the first place a
+scenario and a basis meet, and proves it there (`tests/test_assigned_fte_cost_scenario.py`).
 """
 
 import uuid
@@ -251,3 +257,28 @@ def fte_to_hours(
     return _conversion(
         resolved, unit=UNIT_HOURS, value=round_money(fte_fraction * resolved.basis_hours)
     )
+
+
+def exact_fte_hours(
+    basis: CalendarBasis | None, *, period_month: date, fte_fraction: Decimal
+) -> Decimal | str:
+    """The **unrounded** hours of a position for one month: `fte_fraction x working_days x
+    standard_hours_per_day`, or the named state that says why there are none.
+
+    Added for the `assigned_fte` cost (SC-5-04; ADR-0013 addendum 2026-09-29 SC-5-04, point 3). A
+    cost is a product of hours and a rate; feeding it the two-place output of `fte_to_hours` would
+    round a figure before it is multiplied, and the cent of the result would then depend on the
+    order of the operations (ADR-0002, rule 2). So this is the same resolver and the same basis as
+    `fte_to_hours`, with **no rounding at all**: the exact product of a `Decimal` fraction and the
+    exact basis hours. `fte_to_hours` itself is unchanged and keeps its own rounding rule (FTE-5).
+
+    Returns the state string `NO_CALENDAR` or `NO_WORKING_DAYS` (never a number) when the month
+    cannot be converted; the state is decided before any multiplication, exactly as in
+    `fte_to_hours`. `fte_fraction` is validated like there (finite, non-negative, bounded). A
+    position-level total: no headcount factor.
+    """
+    _require_amount("fte_fraction", fte_fraction)
+    resolved = _resolve(basis, period_month)
+    if resolved.basis_hours is None:
+        return resolved.state
+    return fte_fraction * resolved.basis_hours

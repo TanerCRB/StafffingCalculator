@@ -65,8 +65,10 @@ from app.models import (  # noqa: E402
     Project,
     ProjectAccess,
     ProjectStatus,
+    RiskReserve,
     Scenario,
     ScenarioDeliverySegment,
+    ScenarioRisk,
     ScenarioStatus,
     StaffingPosition,
     StaffingPositionAbsence,
@@ -234,6 +236,11 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             # composite `fk_additional_cost_position_same_scenario`), a scenario and a category, all
             # three with no `ON DELETE` action.
             connection.execute(sa.delete(AdditionalCost))
+            # SC-6-08: the reserves, then the declared risks - both cost events and reserves point
+            # at a risk through a composite foreign key with no `ON DELETE` action (ADR-0021,
+            # Q-8 = A), and a risk points at `scenarios` the same way.
+            connection.execute(sa.delete(RiskReserve))
+            connection.execute(sa.delete(ScenarioRisk))
             connection.execute(sa.delete(StaffingPositionAbsence))
             connection.execute(sa.delete(StaffingPositionAllocation))
             connection.execute(sa.delete(StaffingPosition))
@@ -947,6 +954,7 @@ def make_staffing_position(
     cost_basis: str = "worked_time",
     fixed_amount: Decimal | None = None,
     fixed_amount_currency: str | None = None,
+    assigned_fte: Decimal | None = None,
 ) -> StaffingPosition:
     """Insert one staffing position directly — no endpoint, no request schema.
 
@@ -971,6 +979,7 @@ def make_staffing_position(
         cost_basis=cost_basis,
         fixed_amount=fixed_amount,
         fixed_amount_currency=fixed_amount_currency,
+        assigned_fte=assigned_fte,
     )
     session.add(position)
     session.flush()
@@ -1456,3 +1465,82 @@ def count_additional_costs(session: Session | sa.Connection) -> int:
     return session.execute(
         sa.select(sa.func.count()).select_from(AdditionalCost)
     ).scalar_one()
+
+
+# --- risks and reserves (F-09 pt 4-5, SC-6-08) --------------------------------------------------
+
+
+def risks_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    """The address of one scenario's declared risks - the project id carries the scope."""
+    return f"/projects/{project_id}/scenarios/{scenario_id}/risks"
+
+
+def risk_path(project_id: uuid.UUID, scenario_id: uuid.UUID, risk_id: uuid.UUID) -> str:
+    return f"{risks_path(project_id, scenario_id)}/{risk_id}"
+
+
+def reserves_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    return f"/projects/{project_id}/scenarios/{scenario_id}/risk-reserves"
+
+
+def reserve_path(project_id: uuid.UUID, scenario_id: uuid.UUID, reserve_id: uuid.UUID) -> str:
+    return f"{reserves_path(project_id, scenario_id)}/{reserve_id}"
+
+
+def make_risk(session: Session, scenario: Scenario, *, name: str = "Vendor delay") -> ScenarioRisk:
+    """Insert one declared risk directly - no endpoint, no request schema: the constraints under
+    test are claims about the database."""
+    risk = ScenarioRisk(id=uuid.uuid4(), scenario_id=scenario.id, name=name)
+    session.add(risk)
+    session.flush()
+    return risk
+
+
+def make_reserve(
+    session: Session,
+    scenario: Scenario,
+    *,
+    amount: Decimal,
+    start_month: date,
+    end_month: date | None = None,
+    reserve_type: str | None = None,
+    risk: ScenarioRisk | None = None,
+    currency: str = "EUR",
+) -> RiskReserve:
+    """Insert one reserve directly. `reserve_type` follows the period's shape unless the test is
+    about the two disagreeing (the `make_additional_cost` convention)."""
+    reserve = RiskReserve(
+        id=uuid.uuid4(),
+        scenario_id=scenario.id,
+        risk_id=None if risk is None else risk.id,
+        amount=amount,
+        currency=currency,
+        reserve_type=reserve_type or ("one_off" if end_month is None else "recurring"),
+        start_month=start_month,
+        end_month=end_month,
+    )
+    session.add(reserve)
+    session.flush()
+    return reserve
+
+
+def link_cost_to_risk(session: Session, cost: AdditionalCost, risk: ScenarioRisk | None) -> None:
+    """Point an existing cost event at a risk (or unlink it) by a direct write - the linking
+    mechanism the K-01/K-02 contrasts use without going through the endpoint under test."""
+    session.execute(
+        sa.update(AdditionalCost)
+        .where(AdditionalCost.id == cost.id)
+        .values(risk_id=None if risk is None else risk.id)
+    )
+    session.flush()
+    session.expire(cost)
+
+
+def count_reserves(session: Session | sa.Connection) -> int:
+    """Reserve rows visible to that connection - proves a refused write wrote nothing."""
+    return session.execute(sa.select(sa.func.count()).select_from(RiskReserve)).scalar_one()
+
+
+def count_risks(session: Session | sa.Connection) -> int:
+    """Risk rows visible to that connection - proves a refused write wrote nothing."""
+    return session.execute(sa.select(sa.func.count()).select_from(ScenarioRisk)).scalar_one()

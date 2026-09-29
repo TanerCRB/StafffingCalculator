@@ -151,3 +151,7 @@ konsumentem ADR-0008 i grupą 1).
 F-02, F-08, F-10 (tylko jako granica), F-12, F-13, NF-01, NF-10, NF-11, AC-02, AC-03, AC-04;
 ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008; reguły Strażnika
 1, 2, 7, 10, 13, 16, 17, 19.
+
+### 2026-09-29 - optional risk link and the pointer to ADR-0021 (SC-6-08)
+
+The section "Czego ten dokument nie rozstrzyga" deferred risk reserves (F-09); they are decided in ADR-0021. `additional_cost` gains a nullable `risk_id` with the composite foreign key `fk_additional_cost_risk_same_scenario` `(risk_id, scenario_id)` -> `scenario_risk(id, scenario_id)` (no `ON DELETE` action). The link never enters the sum: the cost line and the point 7 total are unchanged, and detecting a double representation alters no figure. The read gains `risk_id` (the id of the linked risk, or null). The ADR-0014 R-04 risk (a retried `POST` duplicates a row) applies to reserves unchanged.

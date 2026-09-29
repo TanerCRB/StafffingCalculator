@@ -48,9 +48,10 @@ CostAmount = Annotated[
 """An amount on the way in: strictly positive (G-1 = A, `ck_additional_cost_amount_positive`) and
 exactly as precise as `NUMERIC(14,4)`. `12.34567` is a `422`, not `12.3457` stored in its place."""
 
-NULLABLE_EDIT_FIELDS: frozenset[str] = frozenset({"position_id", "end_month"})
+NULLABLE_EDIT_FIELDS: frozenset[str] = frozenset({"position_id", "risk_id", "end_month"})
 """The two fields whose explicit `null` means something on an edit: `position_id: null` detaches the
-cost from its position (a scenario-level cost), `end_month: null` is the shape of a one-off cost."""
+cost from its position (a scenario-level cost), `risk_id: null` unlinks it from its declared risk
+(SC-6-08), `end_month: null` is the shape of a one-off cost."""
 
 
 MAX_RECURRING_MONTHS = MAX_ALLOCATION_MONTHS
@@ -105,6 +106,10 @@ class AdditionalCostCreateRequest(BaseModel):
     """Absent or `null` — a cost of the scenario as a whole (the "project" cost of F-08, Q-2 = A).
     Otherwise a position **of this scenario**; any other id is the same `404` as a missing one."""
 
+    risk_id: uuid.UUID | None = None
+    """Absent or `null` - a cost event with no declared risk (SC-6-08; ADR-0021, point 1). Otherwise
+    a risk **of this scenario**; any other id is the same `404` as a missing one."""
+
     amount: CostAmount
     """For a recurring cost, the amount of **each** month (Q-3 = A), never a total to divide."""
 
@@ -151,6 +156,7 @@ class AdditionalCostEditRequest(BaseModel):
 
     category_id: uuid.UUID | None = None
     position_id: uuid.UUID | None = None
+    risk_id: uuid.UUID | None = None
     amount: CostAmount | None = None
     currency: Iso4217Code | None = None
     cost_type: CostType | None = None
@@ -208,6 +214,9 @@ class AdditionalCostRead(BaseModel):
     """The category's **current** name — a label read live, not frozen at approval (ADR-0014,
     point 2, Q-4 = A)."""
     position_id: uuid.UUID | None
+    risk_id: uuid.UUID | None
+    """The declared risk this cost event represents, or `null` (SC-6-08; gate 1 G-2): the id only -
+    never an amount, never the risk's other representations."""
     amount: DecimalString
     currency: str
     cost_type: CostType

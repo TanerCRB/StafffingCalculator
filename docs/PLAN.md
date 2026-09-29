@@ -1627,6 +1627,39 @@ history / this file's own change log, not as tracked product work.
   pkt 7, aneks tej daty (SC-5-03); `ADR-0007-wspolbiezna-edycja.md` aneks 2026-09-19 (SC-3-01);
   `ADR-0014-koszty-dodatkowe.md` pkt 7 (mirror stanów walutowych); `docs/PLAN.md` SC-5-01, SC-5-02.
 
+- [x] **SC-5-04** — `assigned_fte` as a personnel cost basis (F-07), Issue #79, PR #176. A third
+  `cost_basis` value with a stored per-position FTE fraction (`NUMERIC(10,4)`, four database CHECKs),
+  costed as its own component `fte x working days x standard hours/day x rate` (exact product, one
+  final `round_money`, by rate unit; live or frozen calendar and rate). Dispatch by `cost_basis` is
+  exclusive at the formula input (also fixes `fixed_amount` positions with allocation rows being
+  priced by the worked-time path too).
+  *Done when:* `backend/tests` prove criteria K-01..K-07 / controls FA-1..FA-13 (analyst and
+  architect, 2026-09-29): the FTE component is priced from stored FTE and the calendar, never from
+  the grid hours, and never also by the worked-time path; an hour-rate fixture on a 7.5 h Mon-Sat
+  calendar gives 6499.35, not the chained 6499.00; gross of absences; named states `no_calendar`,
+  `no_working_days`, `no_planned_months`, never `0.00`, only this component withheld; an approved
+  scenario prices from the frozen calendar, rate and unit (carries FTE-6 of SC-3-07); the stored FTE
+  is refused by the database when non-positive, missing on its basis, present on another basis or
+  together with `fixed_amount`; gated like `fixed_amount` (never in `GET .../staffing-positions`);
+  copied to an independent row; the FTE formula imports no revenue module. Each criterion has an
+  executed mutation run (capabilities.md, mutation log).
+  **Done 2026-09-29:** `backend/tests/test_assigned_fte_cost.py`,
+  `backend/tests/test_assigned_fte_cost_scenario.py`, `backend/tests/test_assigned_fte_schema.py`,
+  `backend/tests/test_assigned_fte_api.py` (PR #176; 1373 passed, 6 xfailed).
+  **Out of scope (explicit):** overheads on the FTE basis (SC-5-02 follow-up); F-08 FTE charge base;
+  F-10 planned-FTE metric and summing the components; frontend; partial months; SC-3-08 holiday
+  import; `scenarios.full_time_hours_per_week`.
+  **Accepted, not repaired (exceptions, owner TanerCRB, decision 2026-09-29; expiry: the F-10
+  sum-components task reaches gate 1, or 2026-12-31, whichever first):** R-01 no cap on
+  `assigned_fte`, a percent typo (`50` for `0.5`) prices 100x too high with state `calculated`;
+  R-02 `included_cost` excludes the FTE component and, after the dispatch fix, `fixed_amount`
+  positions with allocation rows, so profit/margin/markup rise for them, including approved
+  scenarios (results are live). Also accepted: paid absence still priced for FTE positions (gross
+  FTE overcount); mixed-version deploy window (H-7) untested; grid hours and stored FTE may
+  disagree; the ADR-0013 SC-5-04 addendum and the ADR-0008/ADR-0002 SC-3-07 addenda remain "Draft
+  — pending approval"; bare JSON `NaN`/`Infinity` answers 500 (6 strict xfail tests);
+  `POST /projects/{id}/copy` answers 500 on a refused write.
+
 - [x] **SC-5-05** — Koszty dodatkowe (F-08), zawężone na bramce 1 (2026-09-23, ADR-0014, Accepted):
   kategorie kosztów o **kwocie stałej** (`CHECK amount > 0`, G-1), jednorazowych i cyklicznych,
   przypisanych do scenariusza (poziom "projektu") albo pozycji obsady, z atrybutem `funding_source`
@@ -2264,6 +2297,55 @@ history / this file's own change log, not as tracked product work.
   **Done 2026-09-24:** PR #98 (scalone `a107118`). Dowód:
   `frontend/src/features/projects/DuplicateScenario.test.tsx` (K-01..K-06, R-01 — 11 testów) — 245
   testów frontendowych zielono po tym zadaniu (było 234), 262 po scaleniu z SC-7-02 (PR #99). Zob.
+  `docs/architecture/capabilities.md`.
+
+- [x] **SC-6-08** — Risk representation and the double-representation signal (F-09 pt 4-5, backend),
+  gate 1 approved 2026-09-29 (ADR-0021, Accepted) (Issue #89). A risk is a declared per-scenario
+  entity; it may be represented by cost events (ADR-0014 rows carrying an optional risk link) and/or
+  by reserves (own table); a risk linked to both is reported `both`.
+  *Done when:* `backend/tests` prove criteria K-01..K-07 (analyst, 2026-09-29; cross-referenced to
+  ADR-0021 controls R-01..R-09), each with its named contrast and mutation: a risk is reported
+  `cost_event` / `reserve` / `both` / `none` from the declared link only, and `both` is the
+  double-representation signal; the signal never changes any total; the reserve is a month-granular
+  fixed amount with one rounding and no partial sum across currencies; the risk link is refused
+  across scenarios and a referenced risk cannot be deleted, both by the database; writes under an
+  `approved` scenario are refused in the same statement; a copied scenario remaps every link to its
+  own risk; scope is a `404` even for a caller holding every permission.
+
+  **Gate 1 decisions (2026-09-29, architect + analyst, accepted by the human):** Q-1 = A (separate
+  `risk_reserve` table); Q-2 = A (declared risk entity); Q-3 = A now (reserve total reported beside
+  `additional_cost`, not inside `included_cost`; folding it in is a follow-up decision); Q-4 = A
+  (fixed amount, month-granular); Q-5 = A (risk endpoint + one additive field on the additional-cost
+  read: the id of the linked risk, or null; kinds and counts only, no amounts, G-1/G-2); Q-6 = A
+  (`STAFFING_*`, scenario-level only); Q-7 = A (risk copier before `copy_staffing_positions`, remap by
+  unique name); Q-8 = A (deleting a referenced risk is refused).
+
+  **Out of scope (explicit):** scenario duplication (#11); multi-scenario compare (#87); sensitivity
+  analysis (SC-6-04); the additional-cost mechanism itself (SC-5-05); frontend/UI (F-11);
+  probability x impact reserves; folding reserves into `included_cost`/profit/margin; phase-level
+  risk; overlap of reserves with surcharges or the management category (F-08 pt 7); idempotent
+  creation (ADR-0014 R-04); export.
+
+  **Unproven foundation, accepted knowingly:** first consumer of the risk entity, the reserve table
+  and the risk link on `additional_cost`; group 2 write guard and approval race on two new tables;
+  a link column carried through the reflection copier `copy_staffing_positions`; the composite FK for
+  the new link; reserve-vs-`additional_cost` currency comparison. Basis: Issue #89,
+  `Wymagania/Requirements_EN.md` §4 F-09 pt 4-5, `ADR-0021-risk-representation-and-double-counting-signal.md`,
+  ADR-0014, ADR-0004, ADR-0005, ADR-0007.
+  **Done 2026-09-29:** PR #183 (merged `573f966`). Evidence: `backend/tests/test_risk_schema.py`,
+  `test_risk_representation.py`, `test_risk_reserve.py`, `test_risk_guards.py`, `test_risk_copy.py`,
+  `test_risk_access.py`, `test_risk_api.py`, `test_risk_qa.py` (K-01..K-07, R-01) - 1445 backend tests
+  green after merging main (was 1252 before the task), ruff clean. Verification round: QA closed three
+  real gaps the first suite left (link writes to a sibling scenario's risk, `remapped` on an unmapped
+  link, what-if byte identity) and left two equivalent mutants (redundant behind the composite FK / the
+  API-layer scope check). Invariant Guardian: PASS. Security-auditor: PASS. Reviewer: PASS WITH
+  RESERVATIONS - R-01 (Medium, a `PATCH` naming one end of a recurring reserve bypassed the 60-month
+  bound and made the reserve read expand ~12k months per reserve) fixed in the PR (guarded `UPDATE`,
+  409); R-02 (Medium, the migration holds a lock while validating the FK / building the index on
+  `additional_cost`; `lock_timeout` bounds only the wait), R-03 (Low, a retried `POST` of a reserve
+  duplicates, ADR-0014 R-04), R-04/R-05 (Low, the reserve read loads all reserves; status and rows are
+  read in separate statements) accepted as recorded exceptions, owner: the repository owner, expiry:
+  the first frontend task that builds a reserve write form (F-11). See
   `docs/architecture/capabilities.md`.
 
 - [x] **SC-7-02** — Pokaż zysk, marżę, markup i koszt scenariusza na ekranie (F-10, część,

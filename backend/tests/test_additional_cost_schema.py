@@ -309,6 +309,9 @@ def test_no_foreign_key_of_the_cost_row_cascades_or_nulls_a_delete(db_session: S
         "fk_additional_cost_scenario_id",
         cost_model.POSITION_SAME_SCENARIO_FOREIGN_KEY,
         cost_model.CATEGORY_FOREIGN_KEY,
+        # SC-6-08 (ADR-0021, point 7): the declared-risk link. Re-armed, not loosened - the
+        # `all(rule == "a")` assertion below still covers it, so the new key is NO ACTION too.
+        cost_model.RISK_SAME_SCENARIO_FOREIGN_KEY,
     }
     assert all(rule == "a" for rule in rules.values()), rules
 
@@ -388,6 +391,8 @@ def test_the_cost_row_carries_no_free_text_and_no_person_column(engine: Engine) 
     assert columns == {
         "id", "scenario_id", "position_id", "category_id", "amount", "currency", "cost_type",
         "start_month", "end_month", "funding_source", "created_at", "updated_at",
+        # SC-6-08 (ADR-0021, point 7): the optional link to a declared risk - a uuid, no text.
+        "risk_id",
     }
     assert {attribute.key for attribute in sa.inspect(AdditionalCost).column_attrs} == columns
     assert "scenario_id" in {c.key for c in sa.inspect(StaffingPosition).column_attrs}

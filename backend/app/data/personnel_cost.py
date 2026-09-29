@@ -1,5 +1,17 @@
 """The only path by which a scenario's base personnel cost is read (F-07, SC-5-01; ADR-0013).
 
+**Since SC-5-04, the dispatcher has three bases** (ADR-0013, addendum 2026-09-29 SC-5-04, points 3-6
+and 12): `dispatch_cost_inputs` below splits the resolved (position, month) grid **at the formula
+input** — worked-time months to `base_personnel_cost`, `assigned_fte` months and lines to
+`app.domain.assigned_fte_cost.assigned_fte_cost`, and no allocation row of a `fixed_amount` or
+`assigned_fte` position to the worked-time formula. The split is **not** in `month_has_cost_rate`
+or `costed_month_windows`: those keep resolving the rate of every position whose rate is read
+(worked time and FTE), so the approval's rate freeze
+(`app.data.scenario_approval._copy_catalog_default_rates`) still covers FTE positions — a rate
+dropped from the freeze would leave an approved FTE cost with `no_cost_rate` for ever. The
+paid-absence component keeps receiving the rate of every allocation row (point 11, unchanged).
+This module is the only one allowed to import all three formulas.
+
 **Since SC-5-03, also the one dispatcher between the two cost bases** (ADR-0013, addendum 2026-09-25
 SC-5-03, point 5 of the "Decision" section it adds: "Dispatch by `cost_basis` lives in one, shared
 calling function (new or existing, in `app.data.personnel_cost`/`app.domain.personnel_
@@ -51,6 +63,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -64,6 +77,12 @@ from app.data.rate_windows import (
 )
 from app.data.staffing import scenario_view_in_scope
 from app.data.working_calendar import basis_by_location, frozen_basis_by_location
+from app.domain.assigned_fte_cost import (
+    AssignedFteCostAnswer,
+    AssignedFteLine,
+    AssignedFteMonth,
+    assigned_fte_cost,
+)
 from app.domain.capacity import CalendarBasis
 from app.domain.fixed_amount_cost import (
     FixedAmountCostAnswer,
@@ -92,7 +111,9 @@ from app.models.approved_snapshot import ApprovedSnapshotCatalogDefaultRate
 from app.models.catalog import CatalogDefaultRate
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
+    COST_BASIS_ASSIGNED_FTE,
     COST_BASIS_FIXED_AMOUNT,
+    COST_BASIS_WORKED_TIME,
     StaffingPosition,
     StaffingPositionAllocation,
 )
@@ -251,8 +272,55 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
 # --- reading the worked months of a scenario, costed ----------------------------------------------
 
 
-def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[WorkedMonth]]:
-    """Every allocation row of the scenario with its cost rate — live catalogue or snapshot.
+@dataclass(frozen=True)
+class NonWorkedTimePosition:
+    """A position whose `cost_basis` is not `worked_time` — the input of the dispatch.
+
+    `assigned_fte` is set exactly for `cost_basis = 'assigned_fte'` (the database guarantees it,
+    `assigned_fte_required_for_its_basis`); it is `None` for a `fixed_amount` position, whose amount
+    is read by `_fixed_amount_lines`."""
+
+    position_id: uuid.UUID
+    cost_basis: str
+    assigned_fte: Decimal | None
+
+
+def _non_worked_time_positions(session: Session, scenario: Scenario) -> list[NonWorkedTimePosition]:
+    """Every position of the scenario priced by a formula other than the worked-time one, by id.
+
+    Read **before** the rate grid in `_worked_months`, because it decides which months need a
+    calendar; `dispatch_cost_inputs` then applies the same list to the grid it returned. The two
+    statements run under `READ COMMITTED`, so a position switched between them is priced by the
+    basis of one read and the rate of the other for that one request — transient, draft-only (the
+    write guard freezes an approved scenario), and the same class as the named limitation of
+    `app.data.paid_absence_cost` (R-02): the next read is consistent.
+    """
+    statement = (
+        sa.select(StaffingPosition.id, StaffingPosition.cost_basis, StaffingPosition.assigned_fte)
+        .where(
+            StaffingPosition.scenario_id == scenario.id,
+            StaffingPosition.cost_basis != COST_BASIS_WORKED_TIME,
+        )
+        .order_by(StaffingPosition.id)
+    )
+    return [
+        NonWorkedTimePosition(
+            position_id=row.id, cost_basis=row.cost_basis, assigned_fte=row.assigned_fte
+        )
+        for row in session.execute(statement)
+    ]
+
+
+def _worked_months(
+    session: Session, scenario: Scenario
+) -> tuple[str, list[WorkedMonth], list[NonWorkedTimePosition]]:
+    """Every allocation row of the scenario with its cost rate — live catalogue or snapshot — and
+    the positions the dispatch must take out of the worked-time formula.
+
+    **The months are the whole grid, whatever the position's basis**: this is the shared
+    per-(position, month) rate structure that the paid-absence component and the what-if raise
+    (ADR-0015) consume. It is *not* the input of any one formula — `dispatch_cost_inputs` is
+    (ADR-0013, addendum 2026-09-29 SC-5-04, point 6).
 
     Python only groups the rows of one month together and reads the database's answer
     (`month_has_cost_rate`); it compares no date and no rate. Every row of a costed month carries
@@ -268,9 +336,19 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
     2026-09-29, points 4 and 5): a scenario of `hour` positions never touches a calendar table, and
     the source follows the rate's — `basis_by_location` for a draft, `frozen_basis_by_location` for
     an approved scenario, never a live lookup to fill a key the snapshot lacks (absence of a key is
-    the `no_calendar` state).
+    the `no_calendar` state). **An `assigned_fte` position needs a calendar whatever the unit of its
+    rate** (SC-5-04, point 5): its hours come from the calendar, so any month of such a position
+    triggers the read, `hour` included. A `fixed_amount` position never does — no formula reads its
+    months.
     """
     approved = scenario.status == ScenarioStatus.APPROVED
+    positions = _non_worked_time_positions(session, scenario)
+    fte_position_ids = {
+        position.position_id
+        for position in positions
+        if position.cost_basis == COST_BASIS_ASSIGNED_FTE
+    }
+    not_worked_time_ids = {position.position_id for position in positions}
     source = APPROVED_SNAPSHOT if approved else LIVE_CATALOG
     rows = costed_month_windows(from_snapshot=approved, scenario_id=scenario.id).subquery(
         "costed_month_windows"
@@ -282,7 +360,12 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
     for row in session.execute(statement).all():
         grouped.setdefault(row.allocation_id, []).append(row)
     needs_calendar = any(
-        month_rows[0].month_has_cost_rate and month_rows[0].cost_rate_unit != COST_RATE_UNIT_HOUR
+        month_rows[0].position_id in fte_position_ids
+        or (
+            month_rows[0].position_id not in not_worked_time_ids
+            and month_rows[0].month_has_cost_rate
+            and month_rows[0].cost_rate_unit != COST_RATE_UNIT_HOUR
+        )
         for month_rows in grouped.values()
     )
     bases: Mapping[uuid.UUID, CalendarBasis] = {}
@@ -327,7 +410,63 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
                 basis=bases.get(first.position_location_id),
             )
         )
-    return source, months
+    return source, months, positions
+
+
+@dataclass(frozen=True)
+class CostInputs:
+    """What each formula is handed — the result of the dispatch, and nothing else is."""
+
+    worked_months: list[WorkedMonth]
+    """The months of `worked_time` positions only: the input of `base_personnel_cost` and
+    `fully_loaded_personnel_cost`."""
+    assigned_fte_lines: list[AssignedFteLine]
+    """Every `assigned_fte` position, with or without allocation rows (a position with none is
+    `no_planned_months`)."""
+    assigned_fte_months: list[AssignedFteMonth]
+    """The allocation rows of `assigned_fte` positions, with their resolved rate and calendar."""
+
+
+def dispatch_cost_inputs(
+    months: list[WorkedMonth], positions: list[NonWorkedTimePosition]
+) -> CostInputs:
+    """Exclusive dispatch by `cost_basis` at the formula input (ADR-0013 addendum 2026-09-29
+    SC-5-04, point 6): a position is priced by **exactly one** formula.
+
+    - a `worked_time` position's months go to the worked-time formula;
+    - an `assigned_fte` position's months go to the FTE formula, and its FTE to a line;
+    - a `fixed_amount` position's months go to no formula at all — its cost is its amount
+      (`_fixed_amount_lines`). Before SC-5-04 they went to the worked-time formula too, which priced
+      such a position twice whenever it carried an allocation row (the "verified existing defect" of
+      the gate-1 package, fixed here by human decision H-1).
+
+    `months` is the shared resolved grid; this function only chooses what each formula receives —
+    it applies no predicate and reads no rate. It is applied identically by the live read
+    (`scenario_cost_for_caller`) and by the what-if, which passes the already-raised grid.
+    """
+    fte_by_position = {
+        position.position_id: position.assigned_fte
+        for position in positions
+        if position.cost_basis == COST_BASIS_ASSIGNED_FTE and position.assigned_fte is not None
+    }
+    not_worked_time_ids = {position.position_id for position in positions}
+    return CostInputs(
+        worked_months=[month for month in months if month.position_id not in not_worked_time_ids],
+        assigned_fte_lines=[
+            AssignedFteLine(position_id=position_id, assigned_fte=fte)
+            for position_id, fte in fte_by_position.items()
+        ],
+        assigned_fte_months=[
+            AssignedFteMonth(
+                position_id=month.position_id,
+                period_month=month.period_month,
+                rate=month.rate,
+                basis=month.basis,
+            )
+            for month in months
+            if month.position_id in fte_by_position
+        ],
+    )
 
 
 # --- the fixed-amount basis (SC-5-03; ADR-0013, addendum 2026-09-25) ------------------------------
@@ -396,6 +535,15 @@ class ScenarioCostView:
     formula, the surcharge formula, or anything the surcharge is computed from); a fixed amount is
     the stated cost as entered, not a base the fully-loaded figure marks up.
     """
+    assigned_fte: AssignedFteCostAnswer
+    """The assigned-FTE basis's own component (SC-5-04; ADR-0013, addendum 2026-09-29 SC-5-04) — a
+    **fourth** independent figure beside `cost`, `paid_absence` and `fixed_amount`, never summed
+    with any of them (the total belongs to the F-10 block: `included_cost` does not contain it, so
+    profit, margin and markup are overstated for a scenario with FTE positions until that block
+    sums the components — named, not repaired). Carried on the same view, gated by the same
+    conjunction. **Never carries a surcharge** (point 7). Under a what-if raise it is recomputed on
+    the raised rates, through the same shared per-(position, month) structure the base cost
+    uses."""
     status_at_read: ScenarioStatus
     """The scenario's status **as this read saw it** — the status that chose live catalogue versus
     snapshot for `cost` — copied into an immutable value right after this read's own
@@ -430,9 +578,11 @@ def scenario_cost_for_caller(
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
     status_at_read = scenario.status
-    source, months = _worked_months(session, scenario)
-    # The paid-absence component is costed at **these** rates — the base cost's resolution of each
-    # (position, month), live or frozen by the same status — and asks no predicate of its own
+    source, months, positions = _worked_months(session, scenario)
+    inputs = dispatch_cost_inputs(months, positions)
+    # The paid-absence component is costed at **these** rates — the resolution of every
+    # (position, month) of the shared grid, live or frozen by the same status — and asks no
+    # predicate of its own
     # (ADR-0013, addendum 2026-09-23 SC-5-06, point 3). Its hours are read from a different source,
     # and its amount is never added to the base amount (point 4).
     rates = {(month.position_id, month.period_month): month.rate for month in months}
@@ -442,11 +592,17 @@ def scenario_cost_for_caller(
         scenario=scenario,
         can_view_personnel_costs=project_view.can_view_personnel_costs,
         cost=base_personnel_cost(
-            months, rate_source=source, scenario_currency=scenario.currency
+            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency
         ),
         paid_absence=paid_absence_cost(absence_months, scenario_currency=scenario.currency),
         fully_loaded_cost=fully_loaded_personnel_cost(
-            months, rate_source=source, scenario_currency=scenario.currency
+            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency
+        ),
+        assigned_fte=assigned_fte_cost(
+            inputs.assigned_fte_lines,
+            inputs.assigned_fte_months,
+            rate_source=source,
+            scenario_currency=scenario.currency,
         ),
         fixed_amount=fixed_amount_cost(
             _fixed_amount_lines(session, scenario), scenario_currency=scenario.currency

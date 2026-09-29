@@ -642,9 +642,25 @@ COST_FIELDS = {
     "fixed_amount_amount",
     "fixed_amount_currency",
     "fixed_amount_assumptions_used",
+    # SC-5-04 (ADR-0013, addendum 2026-09-29 SC-5-04, point 9: the assigned-FTE basis lives beside
+    # the others in this same payload) — re-armed again, still an equality. No fully loaded/
+    # surcharge pair (point 7).
+    "assigned_fte_state",
+    "assigned_fte_amount",
+    "assigned_fte_currency",
+    "assigned_fte_assumptions_used",
 }
 FIXED_AMOUNT_ASSUMPTIONS_FIELDS = {"lines", "currencies"}
 FIXED_AMOUNT_LINE_FIELDS = {"position_id", "amount", "currency"}
+ASSIGNED_FTE_ASSUMPTIONS_FIELDS = {
+    "hours_source",
+    "vendor_axis",
+    "lines",
+    "rate_windows",
+    "unresolved_months",
+    "currencies",
+}
+ASSIGNED_FTE_LINE_FIELDS = {"position_id", "assigned_fte"}
 ASSUMPTIONS_FIELDS = {
     "hours_source",
     "vendor_axis",
@@ -683,6 +699,11 @@ def _assert_field_sets(body: dict[str, Any]) -> None:
     assert set(cost["fixed_amount_assumptions_used"]) == FIXED_AMOUNT_ASSUMPTIONS_FIELDS
     for line in cost["fixed_amount_assumptions_used"]["lines"]:
         assert set(line) == FIXED_AMOUNT_LINE_FIELDS
+    assert set(cost["assigned_fte_assumptions_used"]) == ASSIGNED_FTE_ASSUMPTIONS_FIELDS
+    for line in cost["assigned_fte_assumptions_used"]["lines"]:
+        assert set(line) == ASSIGNED_FTE_LINE_FIELDS
+    for window in cost["assigned_fte_assumptions_used"]["rate_windows"]:
+        assert set(window) == WINDOW_FIELDS
 
 
 def test_k_03_the_answer_is_explicitly_the_base_cost_and_carries_nothing_else(

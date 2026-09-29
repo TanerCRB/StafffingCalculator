@@ -472,7 +472,7 @@ Rozstrzygnięcie bramki 1 SC-4-01 (P-1, ADR-0003 w wersji z 2026-09-23) zmienia 
 
 ### 2026-09-29 — The calendar hour basis as the FTE basis (SC-3-07, Issue #163, gate 1)
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-04; code merged in #168; the gaps (a)-(d) closed by proposal at gate 1 of #163 are confirmed with it)
 
 > Prepared by the Architect for gate 1 of Issue #163 (FTE ↔ hours from the working calendar). Human
 > answers Q1 = A, Q2 = B, Q3 = A, Q4 = A, Q5 = A, Q6 = A are recorded on the Issue. Written in

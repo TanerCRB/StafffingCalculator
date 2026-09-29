@@ -135,7 +135,8 @@ def create_scenario_additional_cost(
 
     - **201** — the row as stored, with its marker.
     - **404** — the scenario is not the caller's (or does not exist, or belongs to another project),
-      or `position_id` names no position of this scenario. Decided before any `409`.
+      or `position_id` (or, since SC-6-08, `risk_id`) names no position (risk) of this scenario.
+      Decided before any `409`.
     - **409, "approved"** — refused inside the `INSERT … SELECT … FOR UPDATE` (ADR-0004).
     - **409, refused by the database** — a CHECK on the row's shape or a missing category.
     - **422** — the request schema: more than four decimal places, a non-positive amount, a period
@@ -150,6 +151,7 @@ def create_scenario_additional_cost(
             scenario_id,
             category_id=payload.category_id,
             position_id=payload.position_id,
+            risk_id=payload.risk_id,
             amount=payload.amount,
             currency=payload.currency,
             cost_type=payload.cost_type,

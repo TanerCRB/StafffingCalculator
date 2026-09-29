@@ -103,6 +103,7 @@ from app.core.identity import CallerIdentity
 from app.data.absence_budget import BudgetKey, budgets_for_months, statutory_leave_type
 from app.data.column_copy import values_to_copy
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.risk_copy import copied_risk_ids, remapped
 from app.data.scenario_guard import unapproved_scenario
 from app.data.working_calendar import basis_by_location
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
@@ -118,6 +119,7 @@ from app.models.additional_cost import AdditionalCost
 from app.models.person import Person
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
+    COST_BASIS_ASSIGNED_FTE,
     COST_BASIS_FIXED_AMOUNT,
     COST_BASIS_WORKED_TIME,
     HOURS_COLUMNS,
@@ -140,10 +142,11 @@ not user input at all, and there is no `updated_at` on this table to write (ADR-
 2026-09-19: the token is the position's)."""
 
 EDITABLE_POSITION_FIELDS: frozenset[str] = frozenset(
-    {"cost_basis", "fixed_amount", "fixed_amount_currency"}
+    {"cost_basis", "fixed_amount", "fixed_amount_currency", "assigned_fte"}
 )
-"""Everything `update_position_cost_basis` will ever write (SC-5-03; ADR-0013, addendum 2026-09-25
-SC-5-03): the personnel-cost basis of the position itself. An allow-list, for the same reason
+"""Everything `update_position_cost_basis` will ever write (SC-5-03, SC-5-04; ADR-0013, addenda
+2026-09-25 SC-5-03 and 2026-09-29 SC-5-04): the personnel-cost basis of the position itself and the
+figure each basis stores. An allow-list, for the same reason
 `EDITABLE_ALLOCATION_FIELDS` is one — the four dimension ids, `headcount` and the two dates have no
 edit path at all yet, and this set must not silently grow to include them."""
 
@@ -222,6 +225,39 @@ class CostBasisMismatch(StaffingWriteRejected):
 
 
 _AMOUNT_FIELDS: frozenset[str] = frozenset({"fixed_amount", "fixed_amount_currency"})
+
+
+def _requires_an_existing_assigned_fte_basis(changes: Mapping[str, Any]) -> bool:
+    """Whether `changes` needs the row's *current* `cost_basis` to already be `assigned_fte`.
+
+    True exactly when `assigned_fte` is named and `cost_basis` is not — the FTE correction of a
+    position that is already on the FTE basis (SC-5-04). On any other basis the CHECK
+    `assigned_fte_only_on_its_basis` would refuse the stray value anyway; this gives the caller the
+    same named refusal (`CostBasisMismatch`) the fixed amount gets, decided in the same `WHERE`."""
+    return "cost_basis" not in changes and "assigned_fte" in changes
+
+
+def _values_for_a_basis_switch(changes: Mapping[str, Any]) -> dict[str, Any]:
+    """The columns the `UPDATE` writes: `changes` plus the clearing a basis switch implies.
+
+    The three bases store different figures, and the database keeps each on its own basis only
+    (`assigned_fte_only_on_its_basis`, `assigned_fte_not_with_fixed_amount`). A switch is therefore
+    one atomic statement that also empties what the new basis must not carry:
+
+    - to any basis but `assigned_fte`: the stored FTE is cleared (`assigned_fte = NULL`);
+    - to `assigned_fte`: a stated `fixed_amount`/`fixed_amount_currency` is cleared.
+
+    `setdefault`, never an override: a value the caller named explicitly is written as named and, if
+    it contradicts the basis, refused by the CHECK rather than silently replaced. A switch to
+    `worked_time` still leaves a stray fixed amount as before (SC-5-03, unchanged)."""
+    values = dict(changes)
+    new_basis = values.get("cost_basis")
+    if new_basis is not None and new_basis != COST_BASIS_ASSIGNED_FTE:
+        values.setdefault("assigned_fte", None)
+    if new_basis == COST_BASIS_ASSIGNED_FTE:
+        values.setdefault("fixed_amount", None)
+        values.setdefault("fixed_amount_currency", None)
+    return values
 
 
 def _requires_an_existing_fixed_amount_basis(changes: Mapping[str, Any]) -> bool:
@@ -686,8 +722,14 @@ def create_position(
     cost_basis: str = COST_BASIS_WORKED_TIME,
     fixed_amount: Decimal | None = None,
     fixed_amount_currency: str | None = None,
+    assigned_fte: Decimal | None = None,
 ) -> StaffingPositionView | None:
     """Insert one position, with the month rows given for it — or refuse, or answer `None`.
+
+    `assigned_fte` (SC-5-04; ADR-0013 addendum 2026-09-29 SC-5-04, point 2) travels through the same
+    single `INSERT ... SELECT` as the other cost-basis columns; its four CHECKs are what refuse a
+    missing, non-positive, stray or `fixed_amount`-accompanied value, never a check in this
+    function.
 
     `cost_basis`/`fixed_amount`/`fixed_amount_currency` (SC-5-03; ADR-0013, addendum 2026-09-25
     SC-5-03) default to the backward-compatible worked-time basis with no stated amount — the same
@@ -759,6 +801,7 @@ def create_position(
         sa.literal(
             fixed_amount_currency, type_=_POSITION_TABLE.c.fixed_amount_currency.type
         ).label("fixed_amount_currency"),
+        sa.literal(assigned_fte, type_=_POSITION_TABLE.c.assigned_fte.type).label("assigned_fte"),
     ).select_from(open_scenario)
     statement = (
         sa.insert(_POSITION_TABLE)
@@ -776,6 +819,7 @@ def create_position(
                 "cost_basis",
                 "fixed_amount",
                 "fixed_amount_currency",
+                "assigned_fte",
             ],
             source,
         )
@@ -1144,11 +1188,13 @@ def update_position_cost_basis(
     ]
     if _requires_an_existing_fixed_amount_basis(changes):
         conditions.append(_POSITION_TABLE.c.cost_basis == COST_BASIS_FIXED_AMOUNT)
+    if _requires_an_existing_assigned_fte_basis(changes):
+        conditions.append(_POSITION_TABLE.c.cost_basis == COST_BASIS_ASSIGNED_FTE)
 
     statement = (
         sa.update(_POSITION_TABLE)
         .where(*conditions)
-        .values(updated_at=sa.func.now(), **dict(changes))
+        .values(updated_at=sa.func.now(), **_values_for_a_basis_switch(changes))
         .returning(_POSITION_TABLE.c.id)
     )
 
@@ -1235,6 +1281,15 @@ def _diagnose_position_refusal(
             "fixed_amount/fixed_amount_currency can only be edited without also naming "
             "cost_basis when the position's current basis is already 'fixed_amount'. Name "
             "cost_basis='fixed_amount' in the same request to switch it."
+        )
+    if (
+        _requires_an_existing_assigned_fte_basis(changes)
+        and position.cost_basis != COST_BASIS_ASSIGNED_FTE
+    ):
+        return CostBasisMismatch(
+            "assigned_fte can only be edited without also naming cost_basis when the position's "
+            "current basis is already 'assigned_fte'. Name cost_basis='assigned_fte' in the same "
+            "request to switch it."
         )
     # Defensive only — unreachable in practice: if the token still matches, the scenario is not
     # approved and the basis condition (if any) already holds, the guarded `UPDATE` would have
@@ -1819,7 +1874,7 @@ by reflection or named here (criterion K-14), so a column added later forces the
 being silently dropped from every copy."""
 
 ADDITIONAL_COST_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
-    {"id", "scenario_id", "position_id", "created_at", "updated_at"}
+    {"id", "scenario_id", "position_id", "risk_id", "created_at", "updated_at"}
 )
 """Additional-cost attributes a copy does **not** inherit (SC-5-05), for both halves of the copy —
 the position-attached costs in `copy_staffing_positions` and the scenario-level ones in
@@ -1830,6 +1885,9 @@ already depends on this module for its scope; the reverse import would be a cycl
 - `scenario_id` — the copy's own scenario.
 - `position_id` — the *copied* position's id (from `new_position_ids`), or `NULL` for a
   scenario-level cost; never the source's value.
+- `risk_id` — the copy's **own** risk, found by the source risk's name
+  (`app.data.risk_copy.copied_risk_ids`), or `NULL` for an unlinked cost (SC-6-08; ADR-0021,
+  point 8); never the source's value, which would point at another scenario's risk.
 - `created_at` / `updated_at` — the copy is created now, and its ADR-0007 marker is its own.
 
 Everything else — category, amount, currency, type, period, funding — is copied by reflection, and a
@@ -1954,12 +2012,17 @@ def copy_staffing_positions(session: Session, source: Scenario, copy: Scenario) 
         .scalars()
         .all()
     )
+    # SC-6-08: a link to a declared risk is remapped to the copy's own risk (ADR-0021, point 8).
+    # The risk entry of `SCENARIO_CHILD_COPIERS` runs **before** this function, so the copy's
+    # risks exist already; the mapping is by the source risk's name.
+    risk_mapping = copied_risk_ids(session, source.id, copy.id)
     for cost in position_costs:
         session.add(
             AdditionalCost(
                 id=uuid.uuid4(),
                 scenario_id=copy.id,
                 position_id=new_position_ids[cost.position_id],
+                risk_id=remapped(risk_mapping, cost.risk_id),
                 **values_to_copy(cost, excluded=ADDITIONAL_COST_COLUMNS_NOT_COPIED),
             )
         )
