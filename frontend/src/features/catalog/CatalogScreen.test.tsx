@@ -99,6 +99,7 @@ const RATE_SENIOR: CatalogRate = {
   // The organisation's own rate. Always in the body, never absent (SC-2-03 contract).
   vendor_id: null,
   default_cost_rate: "60.005",
+  cost_rate_unit: "hour",
   default_selling_rate: "100.005",
   currency: "EUR",
   unit: "hour",
@@ -131,6 +132,7 @@ const RATE_OPEN_ENDED: CatalogRate = {
   engagement_type_id: ENGAGEMENT_TYPES[1].id,
   vendor_id: null,
   default_cost_rate: null,
+  cost_rate_unit: null,
   default_selling_rate: "9007199254740993.004",
   currency: "PLN",
   unit: "day",
@@ -156,6 +158,7 @@ const RATE_UNKNOWN_ROLE: CatalogRate = {
 const RATE_COST_KEY_ABSENT: CatalogRate = (() => {
   const rate: CatalogRate = { ...RATE_SENIOR, id: "e0000000-0000-0000-0000-000000000005" };
   delete rate.default_cost_rate;
+  delete rate.cost_rate_unit;
   return rate;
 })();
 
@@ -443,6 +446,7 @@ describe("CatalogScreen", () => {
       ...carried,
       id: "e0000000-0000-0000-0000-000000000007",
       default_cost_rate: null,
+      cost_rate_unit: null,
     };
     stubCatalog({ rates: [carried, withheld] });
 
@@ -554,7 +558,7 @@ describe("CatalogScreen", () => {
     // above is not the equality of a screen that ignores the field.
     cleanup();
     vi.unstubAllGlobals();
-    stubCatalog({ rates: [{ ...RATE_SENIOR, default_cost_rate: null }] });
+    stubCatalog({ rates: [{ ...RATE_SENIOR, default_cost_rate: null, cost_rate_unit: null }] });
     render(<CatalogScreen />);
     const refusedRows = await rateRows();
     expect(textOf(refusedRows[0], COST_CELL)).toBe(RESTRICTED_COST_RATE);

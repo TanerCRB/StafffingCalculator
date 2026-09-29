@@ -28,6 +28,14 @@
 export const CONCURRENCY_MARKER_CONDITION = "updated_at_marker";
 
 /**
+ * The identifier a `409` carries when a caller without `PERSONNEL_COSTS_READ` sent a `cost_rate_unit`
+ * that differs from the stored one (SC-5-08). Mirrors `COST_RATE_UNIT_CONDITION` in
+ * backend/app/data/catalog.py. Like the marker, it has no SQLSTATE; unlike it, retrying after a
+ * re-read does not help, and the body names neither the stored unit nor any rate.
+ */
+export const COST_RATE_UNIT_CONDITION = "cost_rate_unit_precondition";
+
+/**
  * The four SQLSTATEs the backend classifies as "refused by the state of the data"
  * (`REFUSAL_BY_SQLSTATE`). A closed list there, a closed list here.
  */
@@ -49,6 +57,7 @@ export const REFUSAL_SQLSTATE = {
  */
 export type RefusalCause =
   | "stale-marker"
+  | "unit-precondition"
   | "overlap"
   | "duplicate-value"
   | "missing-reference"
@@ -70,6 +79,9 @@ export function refusalCauseOf(detail: string | undefined): RefusalCause {
   }
   if (detail.includes(CONCURRENCY_MARKER_CONDITION)) {
     return "stale-marker";
+  }
+  if (detail.includes(COST_RATE_UNIT_CONDITION)) {
+    return "unit-precondition";
   }
   if (detail.includes(REFUSAL_SQLSTATE.exclusionViolation)) {
     return "overlap";

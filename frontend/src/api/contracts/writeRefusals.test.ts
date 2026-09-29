@@ -6,9 +6,13 @@ import { describe, expect, it } from "vitest";
 // instead of quietly asserting about an empty string. The same mechanism `src/styles/tokens.test.ts`
 // uses to hold the stylesheet against the markup.
 import WRITE_ERRORS_PY from "../../../../backend/app/data/write_errors.py?raw";
+import CATALOG_DATA_PY from "../../../../backend/app/data/catalog.py?raw";
+import CATALOG_MODEL_PY from "../../../../backend/app/models/catalog.py?raw";
 
+import { COST_RATE_UNITS } from "./catalog";
 import {
   CONCURRENCY_MARKER_CONDITION,
+  COST_RATE_UNIT_CONDITION,
   REFUSAL_SQLSTATE,
   refusalCauseOf,
 } from "./writeRefusals";
@@ -90,5 +94,57 @@ describe("the refusal identifiers this module reads are the ones the backend wri
     expect(refusalCauseOf(asTheBackendSendsIt)).toBe("stale-marker");
     // And the other direction: a refusal the backend cannot produce is not quietly classified.
     expect(refusalCauseOf("Refused by the database.")).toBe("unstated");
+  });
+});
+
+describe("the cost rate unit contract, held against the backend's own source (SC-5-09, K-01, K-07)", () => {
+  it("names the same closed set of cost rate units as the backend, and no others", () => {
+    const backend = [
+      ...(/^COST_RATE_UNITS: tuple\[str, \.\.\.\] = \(([^)]*)\)/m.exec(CATALOG_MODEL_PY)?.[1] ?? "")
+        .matchAll(/COST_RATE_UNIT_([A-Z]+)/g),
+    ].map((match) => match[1].toLowerCase());
+    expect(backend.length).toBeGreaterThan(0);
+    expect([...backend].sort()).toEqual([...COST_RATE_UNITS].sort());
+    // The three literals, spelled out: the backend's constants resolve to these strings.
+    for (const unit of COST_RATE_UNITS) {
+      expect(CATALOG_MODEL_PY).toContain(`COST_RATE_UNIT_${unit.toUpperCase()} = "${unit}"`);
+    }
+  });
+
+  it("reads the unit-precondition condition by the identifier the backend puts in the refusal", () => {
+    const backendCondition = /^COST_RATE_UNIT_CONDITION = "([^"]+)"$/m.exec(CATALOG_DATA_PY)?.[1];
+    expect(backendCondition).toBe(COST_RATE_UNIT_CONDITION);
+    const reason = /^COST_RATE_UNIT_REASON = \(\s*"([^"]+)"/m.exec(CATALOG_DATA_PY)?.[1] ?? "";
+    const asTheBackendSendsIt =
+      "Refused by the database. Writing the catalogue rate failed: CatalogWriteRefused, " +
+      `condition=${backendCondition}. ${reason}`;
+
+    expect(refusalCauseOf(asTheBackendSendsIt)).toBe("unit-precondition");
+    // Its own cause: neither the stale marker nor the unstated one.
+    expect(refusalCauseOf(asTheBackendSendsIt)).not.toBe("stale-marker");
+    // And the marker keeps its own.
+    expect(refusalCauseOf(`condition=${CONCURRENCY_MARKER_CONDITION}`)).toBe("stale-marker");
+  });
+
+  it("keeps every other cause on its own answer when the text happens to mention the unit (SC-5-09, K-07 mutation guard)", () => {
+    const unitOnly = `condition=${COST_RATE_UNIT_CONDITION}. Nothing was written.`;
+    // Contrast: the identifier alone is the unit-precondition cause.
+    expect(refusalCauseOf(unitOnly)).toBe("unit-precondition");
+
+    // A stale marker whose prose mentions the field, or the word "precondition", stays a stale
+    // marker: the cause is read off the identifier, not off a fragment of it or of the prose.
+    expect(
+      refusalCauseOf(`condition=${CONCURRENCY_MARKER_CONDITION}. cost_rate_unit changed; precondition failed.`),
+    ).toBe("stale-marker");
+    // Both identifiers in one text: the marker is checked first, as before this task.
+    expect(
+      refusalCauseOf(`condition=${CONCURRENCY_MARKER_CONDITION} condition=${COST_RATE_UNIT_CONDITION}`),
+    ).toBe("stale-marker");
+    // An overlap refusal that names the field is still an overlap.
+    expect(
+      refusalCauseOf(`sqlstate=${REFUSAL_SQLSTATE.exclusionViolation}. cost_rate_unit precondition window`),
+    ).toBe("overlap");
+    // Neither identifier: a bare mention of the field is not a cause.
+    expect(refusalCauseOf("Refused by the database. cost_rate_unit precondition.")).toBe("unstated");
   });
 });

@@ -3,10 +3,12 @@ import { type FormEvent, useId, useState } from "react";
 import { createCatalogRate, editCatalogRate } from "../../api/client";
 import {
   CATALOG_DIMENSIONS,
+  COST_RATE_UNITS,
   RATE_UNIT_HOUR,
   type CatalogRate,
   type CatalogRateEditRequest,
   type CatalogDimension,
+  type CostRateUnit,
   type DimensionEntry,
 } from "../../api/contracts/catalog";
 import { DateInput, Field, FormShell, StatedValue, TextInput } from "./CatalogFormShell";
@@ -71,7 +73,33 @@ const CURRENCY_HINT =
   "An ISO-4217 code in capitals, for example EUR or PLN. The server decides which codes it " +
   "accepts; this form keeps no list of its own.";
 
-const UNIT_NOTE = `Every catalogue rate is priced per ${RATE_UNIT_HOUR}. The unit is not a choice.`;
+/** The selling rate's unit, stated and not offered: it is not a choice, and the request has no key
+ * for it. The cost rate's unit is the select below (`COST_RATE_UNIT_NOTE`). */
+const UNIT_NOTE = `Every selling rate is priced per ${RATE_UNIT_HOUR}. The unit is not a choice.`;
+
+const COST_RATE_UNIT_LABEL = "Cost rate unit";
+
+/** Shown on an edit only while the selected unit differs from the stored one (SC-5-09, R-02). It
+ * names no value: the amount is not converted, so it silently changes meaning unless said. */
+const COST_RATE_UNIT_CHANGE_WARNING =
+  "The default cost rate above stays as loaded and, once saved, means the rate per the new unit. " +
+  "Change the amount too if it should not.";
+
+/** One sentence, beside the amount, naming what the unit is the unit *of* — the cost amount, and not
+ * the selling rate above or below it. */
+const COST_RATE_UNIT_NOTE = "The default cost rate above is an amount per this unit.";
+
+/**
+ * The options' words: the contract's own literals, one per `COST_RATE_UNITS` member. A Record over
+ * the union, so a unit added to the contract fails the build here instead of appearing as a select
+ * option with no label — and no translation of a unit into "Hourly" or "per day", which would be a
+ * second vocabulary for a value the API already names.
+ */
+const COST_RATE_UNIT_LABELS: Readonly<Record<CostRateUnit, string>> = {
+  hour: "hour",
+  day: "day",
+  month: "month",
+};
 
 const EFFECTIVE_FROM_HINT = "The first day this rate applies.";
 
@@ -109,8 +137,16 @@ export function RateForm({
 
   // --- What can change -------------------------------------------------------------------------
   // Every one of these is seeded from the response body (`rate`), never from a rendered cell.
-  const costWasSent = rate === undefined || typeof rate.default_cost_rate === "string";
+  // A cost is "sent" only as the pair the response carries (the shape check refuses half of it), so
+  // a withheld row has neither an amount to edit nor a unit to seed — and never a default `hour`.
+  const costWasSent =
+    rate === undefined ||
+    (typeof rate.default_cost_rate === "string" && typeof rate.cost_rate_unit === "string");
   const [costRate, setCostRate] = useState(rate?.default_cost_rate ?? "");
+  // Seeded from the response's `cost_rate_unit`, never from the rendered cell and never hard-coded.
+  // A new rate starts with no unit chosen: the backend's default of `hour` is not inherited here,
+  // because a silent default is how a monthly salary gets saved as an hourly rate (SC-5-09).
+  const [costUnit, setCostUnit] = useState<CostRateUnit | "">(rate?.cost_rate_unit ?? "");
   const [sellingRate, setSellingRate] = useState(rate?.default_selling_rate ?? "");
   const [currency, setCurrency] = useState(rate?.currency ?? "");
   const [effectiveFrom, setEffectiveFrom] = useState(rate?.effective_from ?? "");
@@ -129,6 +165,9 @@ export function RateForm({
     }
     if (costWasSent && costRate.trim() === "") {
       return "Default cost rate";
+    }
+    if (costWasSent && costUnit === "") {
+      return COST_RATE_UNIT_LABEL;
     }
     if (sellingRate.trim() === "") {
       return "Default selling rate";
@@ -153,8 +192,16 @@ export function RateForm({
    */
   function changesFor(existing: CatalogRate): CatalogRateEditRequest {
     const changes: CatalogRateEditRequest = { updated_at: existing.updated_at };
-    if (costWasSent && costRate.trim() !== existing.default_cost_rate) {
+    // Amount and unit travel together or not at all (the backend answers `422` to exactly one of
+    // them). The amount is the value as loaded unless it was edited, at full precision — never the
+    // rounded cell. A withheld row sends neither, and never a unit.
+    if (
+      costWasSent &&
+      costUnit !== "" &&
+      (costRate.trim() !== existing.default_cost_rate || costUnit !== existing.cost_rate_unit)
+    ) {
       changes.default_cost_rate = costRate.trim();
+      changes.cost_rate_unit = costUnit;
     }
     if (sellingRate.trim() !== existing.default_selling_rate) {
       changes.default_selling_rate = sellingRate.trim();
@@ -186,6 +233,10 @@ export function RateForm({
 
     let request: () => Promise<unknown>;
     if (rate === undefined) {
+      if (costUnit === "") {
+        return; // unreachable: `firstMissingValue` refused it above; narrows the type.
+      }
+      const chosenUnit = costUnit;
       request = () =>
         createCatalogRate({
           role_id: tuple.roles,
@@ -195,6 +246,7 @@ export function RateForm({
           // The named choice becomes the API's named state. No sentinel id, ever.
           vendor_id: vendorChoice === INTERNAL_VENDOR_CHOICE ? null : vendorChoice,
           default_cost_rate: costRate.trim(),
+          cost_rate_unit: chosenUnit,
           default_selling_rate: sellingRate.trim(),
           currency: currency.trim(),
           effective_from: effectiveFrom,
@@ -299,6 +351,32 @@ export function RateForm({
           tone="withheld"
           note="This value was not sent to this browser. Saving this form leaves it unchanged."
         />
+      )}
+
+      {costWasSent && (
+        <Field id={id("cost-unit")} label={COST_RATE_UNIT_LABEL} hint={COST_RATE_UNIT_NOTE}>
+          <select
+            id={id("cost-unit")}
+            className="input catalog__field-control"
+            aria-describedby={`${id("cost-unit")}-hint`}
+            value={costUnit}
+            onChange={(event) => setCostUnit(event.target.value as CostRateUnit | "")}
+          >
+            {/* No blank option once a unit is stored: the edit form has no "no unit" state. */}
+            {rate === undefined && <option value="">Choose a unit</option>}
+            {COST_RATE_UNITS.map((unit) => (
+              <option key={unit} value={unit}>
+                {COST_RATE_UNIT_LABELS[unit]}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {costWasSent && rate !== undefined && (
+        // Always mounted, so the change is announced when its text appears (polite live region).
+        <p role="status" aria-live="polite" className="catalog__field-hint">
+          {costUnit !== rate.cost_rate_unit ? COST_RATE_UNIT_CHANGE_WARNING : ""}
+        </p>
       )}
 
       <Field id={id("selling")} label="Default selling rate" hint={AMOUNT_HINT}>

@@ -80,6 +80,18 @@ export const SAVE_REFUSED_STALE_MARKER =
   "Not saved — this row changed since it was last read, possibly by an earlier save of your own. " +
   "Reload the catalogue to see its current values and make the change again.";
 
+/**
+ * A caller who may not read personnel costs sent a cost rate unit that differs from the stored one
+ * (`condition=cost_rate_unit_precondition`, SC-5-08). Its own ending, and deliberately not the
+ * stale-marker one: re-reading and repeating the same request will not change the answer. It names
+ * no stored unit, no rate and no typed value — the backend reports none (NF-11), and the stored
+ * unit is exactly what this caller is not permitted to learn from a refusal.
+ */
+export const SAVE_REFUSED_UNIT_PRECONDITION =
+  "Not saved — the cost rate unit in this change does not match the stored one, and your access does " +
+  "not allow changing it. Nothing was written. Reload the page to see the current catalogue before " +
+  "trying again.";
+
 /** A `409` whose body named no mechanism at all. The honest ending, and a first-class one. */
 export const SAVE_REFUSED_UNSTATED =
   "Not saved — the catalogue refused this change, and the answer did not say which rule refused it.";
@@ -153,6 +165,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   engagement_type_id: "engagement type",
   vendor_id: "vendor",
   default_cost_rate: "default cost rate",
+  cost_rate_unit: "cost rate unit",
   default_selling_rate: "default selling rate",
   currency: "currency",
   unit: "unit",
@@ -207,6 +220,7 @@ export function describeWriteFailure(error: unknown): string {
  * falling into a default branch that would name the wrong rule. */
 const CONFLICT_MESSAGES: Readonly<Record<ReturnType<typeof refusalCauseOf>, string>> = {
   "stale-marker": SAVE_REFUSED_STALE_MARKER,
+  "unit-precondition": SAVE_REFUSED_UNIT_PRECONDITION,
   overlap: SAVE_REFUSED_OVERLAP,
   "duplicate-value": SAVE_REFUSED_DUPLICATE,
   "missing-reference": SAVE_REFUSED_MISSING_REFERENCE,

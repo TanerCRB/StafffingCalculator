@@ -129,6 +129,7 @@ const RATE: CatalogRate = {
   engagement_type_id: "d1",
   vendor_id: null,
   default_cost_rate: null,
+  cost_rate_unit: null,
   default_selling_rate: "260.00",
   currency: "PLN",
   unit: "hour",
@@ -143,7 +144,7 @@ async function renderReady() {
     vi.fn(async (url: string) => {
       const path = new URL(url).pathname;
       if (path === "/catalog/rates") {
-        return { ok: true, status: 200, json: async () => ({ rates: [RATE, { ...RATE, id: "e2", default_cost_rate: "180.00" }], total: 2 }) };
+        return { ok: true, status: 200, json: async () => ({ rates: [RATE, { ...RATE, id: "e2", default_cost_rate: "180.00", cost_rate_unit: "hour" }], total: 2 }) };
       }
       const entries = DICTIONARIES[path.replace("/catalog/dimensions/", "")];
       return { ok: true, status: 200, json: async () => ({ entries }) };
