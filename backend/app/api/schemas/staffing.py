@@ -37,6 +37,9 @@ from pydantic import (
 from app.api.schemas.common import DecimalString, Iso4217Code
 from app.core.money import NOT_APPLICABLE
 from app.models.staffing import (
+    ASSIGNED_FTE_PRECISION,
+    ASSIGNED_FTE_SCALE,
+    COST_BASIS_ASSIGNED_FTE,
     COST_BASIS_FIXED_AMOUNT,
     COST_BASIS_WORKED_TIME,
     FIXED_AMOUNT_PRECISION,
@@ -78,12 +81,34 @@ schema because zero people is a meaningless row whoever writes it; an upper limi
 rule about API input, and a fixture or an import legitimately testing the column's range must not
 have to argue with it."""
 
-CostBasis = Literal["worked_time", "fixed_amount"]
-"""The personnel-cost basis of a position (F-07, SC-5-03; ADR-0013, addendum 2026-09-25 SC-5-03) —
-spelled here as a closed literal rather than imported as `COST_BASIS_VALUES`, the same convention
-`CostType`/`FundingSource` (`app.api.schemas.additional_cost`) already use for a CHECK-backed
-string column: the schema names the same two values the database's `cost_basis_known` CHECK does,
-independently, so the two can be compared for drift rather than one silently defining the other."""
+CostBasis = Literal["worked_time", "fixed_amount", "assigned_fte"]
+"""The personnel-cost basis of a position (F-07, SC-5-03, SC-5-04; ADR-0013, addenda 2026-09-25
+SC-5-03 and 2026-09-29 SC-5-04) — spelled here as a closed literal rather than imported as
+`COST_BASIS_VALUES`, the same convention `CostType`/`FundingSource`
+(`app.api.schemas.additional_cost`) already use for a CHECK-backed string column: the schema names
+the same three values the database's `cost_basis_known` CHECK does, independently, so the two can be
+compared for drift rather than one silently defining the other."""
+
+AssignedFte = Annotated[
+    DecimalString,
+    Field(
+        gt=0,
+        max_digits=ASSIGNED_FTE_PRECISION,
+        decimal_places=ASSIGNED_FTE_SCALE,
+        description=(
+            "Fraction, 1 = one FTE of the position, not a percent (0.5 is half, 50 is fifty "
+            "FTE). No upper bound: a percent typed by mistake is priced 100 times too high."
+        ),
+    ),
+]
+"""The stored FTE of a position on the way in: a **fraction** (`1` = one FTE of the position,
+`0.5` = half, never a percent), strictly positive (mirrors
+`ck_staffing_position_assigned_fte_positive`) and exactly as precise as `NUMERIC(10,4)` is — a
+fifth decimal place is a `422` naming the field, never a silent rounding at write time (ADR-0008,
+point 6). **No upper bound tied to `headcount`**: a value above it is accepted without bound and is
+not surfaced anywhere: a percent typo (`50` for `0.5`) prices 100 times too high with state
+`calculated` (ADR-0013 addendum 2026-09-29 SC-5-04, point 2, named limitation). Sent as a decimal
+string, like every other figure at this boundary."""
 
 FixedAmount = Annotated[
     DecimalString, Field(gt=0, max_digits=FIXED_AMOUNT_PRECISION, decimal_places=FIXED_AMOUNT_SCALE)
@@ -227,6 +252,22 @@ class StaffingPositionCreateRequest(BaseModel):
             )
         return self
 
+    assigned_fte: AssignedFte | None = None
+    """The FTE `cost_basis = 'assigned_fte'` requires (ADR-0013, addendum 2026-09-29 SC-5-04). A
+    `422` naming the field for a missing or stray value; the guarantee stays the database's
+    CHECKs."""
+
+    @model_validator(mode="after")
+    def _assigned_fte_matches_its_basis(self) -> Self:
+        if self.cost_basis == COST_BASIS_ASSIGNED_FTE:
+            if self.assigned_fte is None:
+                raise ValueError(
+                    "cost_basis 'assigned_fte' needs assigned_fte: missing assigned_fte"
+                )
+        elif self.assigned_fte is not None:
+            raise ValueError("assigned_fte may only be set together with cost_basis 'assigned_fte'")
+        return self
+
     @model_validator(mode="after")
     def _period_is_ordered(self) -> Self:
         """Same boundary check as on a project and on a rate window; the database's
@@ -310,6 +351,7 @@ POSITION_COST_BASIS_FIELDS: tuple[str, ...] = (
     "cost_basis",
     "fixed_amount",
     "fixed_amount_currency",
+    "assigned_fte",
 )
 
 
@@ -336,6 +378,11 @@ class StaffingPositionCostBasisEditRequest(BaseModel):
     switching `cost_basis` back to `worked_time` in the same request — every other field on this
     schema forbids `null` for the reason `StaffingAllocationEditRequest` gives (an explicit `null`
     reaching the `UPDATE` as `NULL` against a column the caller did not mean to blank)."""
+    assigned_fte: AssignedFte | None = None
+    """The stored FTE (SC-5-04). Non-null exactly when the request switches `cost_basis` to
+    `assigned_fte`, or corrects the FTE of a position that is already on it (the second half is
+    decided one layer down, in the statement that has the row: `CostBasisMismatch`). An explicit
+    `null` is refused: leaving the basis clears the FTE by itself, in the same statement."""
 
     @model_validator(mode="after")
     def _at_least_one_field_and_consistent_with_its_basis(self) -> Self:
@@ -345,7 +392,36 @@ class StaffingPositionCostBasisEditRequest(BaseModel):
         new_basis = self.cost_basis
         amount_given = "fixed_amount" in changed
         currency_given = "fixed_amount_currency" in changed
-        if new_basis == COST_BASIS_FIXED_AMOUNT:
+        fte_given = "assigned_fte" in changed
+        if fte_given and self.assigned_fte is None:
+            raise ValueError(
+                "assigned_fte cannot be set to null: switch cost_basis instead, which clears "
+                "the stored FTE in the same statement"
+            )
+        if new_basis == COST_BASIS_ASSIGNED_FTE:
+            if not fte_given:
+                raise ValueError(
+                    "switching cost_basis to 'assigned_fte' needs assigned_fte in the same "
+                    "request, non-null: missing assigned_fte"
+                )
+            if (amount_given and self.fixed_amount is not None) or (
+                currency_given and self.fixed_amount_currency is not None
+            ):
+                raise ValueError(
+                    "switching cost_basis to 'assigned_fte' cannot also set a non-null "
+                    "fixed_amount/fixed_amount_currency in the same request; omit them or set "
+                    "them to null"
+                )
+        elif new_basis is not None and fte_given:
+            raise ValueError("assigned_fte may only be set together with cost_basis 'assigned_fte'")
+        elif new_basis is None and fte_given and (amount_given or currency_given):
+            raise ValueError(
+                "assigned_fte and fixed_amount/fixed_amount_currency cannot be changed together "
+                "when cost_basis is not also changing"
+            )
+        if new_basis == COST_BASIS_ASSIGNED_FTE:
+            pass  # fully checked above
+        elif new_basis == COST_BASIS_FIXED_AMOUNT:
             missing = [
                 name
                 for name, given, value in (

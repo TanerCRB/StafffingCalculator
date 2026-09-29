@@ -49,7 +49,7 @@ MIGRATION_PATH = (
     / "versions"
     / "d4b8a2e6c910_create_scenario_risk_and_risk_reserve.py"
 )
-PREVIOUS_REVISION = "c6e1a94d7b35"
+PREVIOUS_REVISION = "d4a7e19c2b60"
 MAR = date(2026, 3, 1)
 JUN = date(2026, 6, 1)
 

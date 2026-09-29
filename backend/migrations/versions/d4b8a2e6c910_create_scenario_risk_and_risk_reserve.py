@@ -31,7 +31,7 @@ import never passes through a Pydantic model):
 `position_id`, and any `ON DELETE` action.
 
 Revision ID: d4b8a2e6c910
-Revises: c6e1a94d7b35
+Revises: d4a7e19c2b60
 Create Date: 2026-09-29
 """
 
@@ -41,7 +41,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d4b8a2e6c910"
-down_revision: str | None = "c6e1a94d7b35"
+down_revision: str | None = "d4a7e19c2b60"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -96,9 +96,15 @@ from app.core.identity import CallerIdentity
 from app.data.additional_cost import additional_costs_for_caller
 from app.data.commercial_terms import commercial_terms_for_caller
 from app.data.paid_absence_cost import paid_absence_months
-from app.data.personnel_cost import ScenarioCostView, _worked_months, scenario_cost_for_caller
+from app.data.personnel_cost import (
+    ScenarioCostView,
+    _worked_months,
+    dispatch_cost_inputs,
+    scenario_cost_for_caller,
+)
 from app.data.scenario_results import refuse_a_status_race
 from app.domain.additional_cost import AdditionalCostAnswer
+from app.domain.assigned_fte_cost import assigned_fte_cost
 from app.domain.paid_absence_cost import fully_loaded_paid_absence_cost, paid_absence_cost
 from app.domain.personnel_cost import (
     WHAT_IF_HYPOTHETICAL,
@@ -229,12 +235,25 @@ def scenario_what_if_salary_raise_for_caller(
         return None
 
     multiplier = Decimal("1") + salary_raise_percent / Decimal("100")
-    _source, months = _worked_months(session, scenario)
+    _source, months, positions = _worked_months(session, scenario)
     raised_months = _raised_months(list(months), multiplier)
     raised_rates = _raised_rates_by_month(raised_months)
     raised_absence_months = paid_absence_months(session, scenario, raised_rates)
+    # The same dispatch the real read applies (ADR-0013 addendum 2026-09-29 SC-5-04, points 6 and
+    # 10), on the **already-raised** shared grid: each formula receives the months of exactly the
+    # positions it prices, so the raise reaches the FTE component once, through the same rate
+    # structure, and never reaches a `fixed_amount` position's months (which no formula reads).
+    raised_inputs = dispatch_cost_inputs(raised_months, positions)
     hypothetical_cost = base_personnel_cost(
-        raised_months, rate_source=WHAT_IF_HYPOTHETICAL, scenario_currency=scenario.currency
+        raised_inputs.worked_months,
+        rate_source=WHAT_IF_HYPOTHETICAL,
+        scenario_currency=scenario.currency,
+    )
+    hypothetical_assigned_fte = assigned_fte_cost(
+        raised_inputs.assigned_fte_lines,
+        raised_inputs.assigned_fte_months,
+        rate_source=WHAT_IF_HYPOTHETICAL,
+        scenario_currency=scenario.currency,
     )
     hypothetical_paid_absence = paid_absence_cost(
         raised_absence_months, scenario_currency=scenario.currency
@@ -244,7 +263,9 @@ def scenario_what_if_salary_raise_for_caller(
     # the identical, already-raised `MonthCostRate` objects above — no separate substitution, no
     # second read of the catalogue (`_raised_rate`'s docstring carries the full argument).
     hypothetical_fully_loaded_cost = fully_loaded_personnel_cost(
-        raised_months, rate_source=WHAT_IF_HYPOTHETICAL, scenario_currency=scenario.currency
+        raised_inputs.worked_months,
+        rate_source=WHAT_IF_HYPOTHETICAL,
+        scenario_currency=scenario.currency,
     )
     hypothetical_fully_loaded_paid_absence = fully_loaded_paid_absence_cost(
         raised_absence_months, scenario_currency=scenario.currency
@@ -267,6 +288,9 @@ def scenario_what_if_salary_raise_for_caller(
         # `app.data.personnel_cost`). Named here rather than silently inherited: a future what-if
         # that *should* touch fixed amounts is a decision this module does not make on its own.
         fixed_amount=cost_view.fixed_amount,
+        # The assigned-FTE component (SC-5-04) **is** raised — unlike the fixed amount it reads a
+        # catalogue rate, and the raise scales that rate through the shared structure (FA-8).
+        assigned_fte=hypothetical_assigned_fte,
     )
     return ScenarioWhatIfView(
         scenario=scenario,

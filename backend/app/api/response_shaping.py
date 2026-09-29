@@ -77,6 +77,8 @@ from app.api.schemas.commercial_terms import (
 )
 from app.api.schemas.people import PersonList, PersonRead
 from app.api.schemas.personnel_cost import (
+    AssignedFteAssumptionsRead,
+    AssignedFteLineRead,
     CostAssumptionsRead,
     CostRateWindowRead,
     FixedAmountAssumptionsRead,
@@ -133,6 +135,8 @@ from app.domain.absence_budget import NO_STATUTORY_LEAVE_TYPE, BudgetShare, Stat
 from app.domain.absence_budget import RESOLVED as BUDGET_RESOLVED
 from app.domain.additional_cost import CALCULATED as ADDITIONAL_COST_CALCULATED
 from app.domain.additional_cost import AdditionalCostResult, AdditionalCostUnavailable
+from app.domain.assigned_fte_cost import CALCULATED as ASSIGNED_FTE_CALCULATED
+from app.domain.assigned_fte_cost import AssignedFteCostAnswer, AssignedFteCostResult
 from app.domain.assumptions import resolve_all
 from app.domain.capacity import NO_CALENDAR, MonthCapacity
 from app.domain.fixed_amount_cost import CALCULATED as FIXED_AMOUNT_CALCULATED
@@ -235,6 +239,14 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
         # carries no figure by itself.
         "fixed_amount_amount",
         "fixed_amount_assumptions_used",
+        # SC-5-04 (ADR-0013, addendum 2026-09-29 SC-5-04, point 9; ADR-0005, addendum of the same
+        # date): the assigned-FTE basis's amount and its assumptions (which name every stored FTE
+        # and every cost rate used) — identically to `fixed_amount_amount`/
+        # `fixed_amount_assumptions_used`, through this same set (FA-9), never a second gate.
+        # `assigned_fte_state` and `assigned_fte_currency` stay out for the reason
+        # `fixed_amount_state`/`fixed_amount_currency` do.
+        "assigned_fte_amount",
+        "assigned_fte_assumptions_used",
     }
 )
 """Fields of a scenario's personnel cost that carry a personnel cost (SC-5-01, SC-5-06, SC-5-02).
@@ -1194,6 +1206,58 @@ def _fixed_amount_fields(answer: FixedAmountCostAnswer) -> dict[str, Any]:
     }
 
 
+def _assigned_fte_fields(answer: AssignedFteCostAnswer) -> dict[str, Any]:
+    """The assigned-FTE component (SC-5-04) as the four `assigned_fte_*` fields of the payload.
+
+    Spread into `PersonnelCostRead`, exactly as `_fixed_amount_fields` is, so the component's gated
+    fields are members of `SCENARIO_COST_FIELDS` by name and go through the one
+    `_without_scenario_personnel_costs` — no second gate. Nothing is decided here: the state, the
+    amount and the lines arrive from `app.domain.assigned_fte_cost`, rounded there once, not
+    re-rounded here.
+    """
+    assumptions = answer.assumptions_used
+    assumptions_read = AssignedFteAssumptionsRead(
+        hours_source=assumptions.hours_source,
+        vendor_axis=assumptions.vendor_axis,
+        lines=[
+            AssignedFteLineRead(position_id=line.position_id, assigned_fte=line.assigned_fte)
+            for line in assumptions.lines
+        ],
+        rate_windows=[
+            CostRateWindowRead(
+                source_rate_id=window.source_rate_id,
+                effective_from=window.effective_from,
+                effective_to=window.effective_to,
+                default_cost_rate=window.cost_rate,
+                currency=window.currency,
+                surcharge_percent=window.surcharge_percent,
+                includes_surcharge=window.includes_surcharge,
+            )
+            for window in assumptions.rate_windows
+        ],
+        unresolved_months=[
+            UnresolvedCostMonthRead(
+                position_id=month.position_id, period_month=month.period_month
+            )
+            for month in assumptions.unresolved_months
+        ],
+        currencies=list(assumptions.currencies),
+    )
+    if isinstance(answer, AssignedFteCostResult):
+        return {
+            "assigned_fte_state": ASSIGNED_FTE_CALCULATED,
+            "assigned_fte_amount": answer.cost,
+            "assigned_fte_currency": answer.currency,
+            "assigned_fte_assumptions_used": assumptions_read,
+        }
+    return {
+        "assigned_fte_state": answer.reason,
+        "assigned_fte_amount": NOT_APPLICABLE,
+        "assigned_fte_currency": None,
+        "assigned_fte_assumptions_used": assumptions_read,
+    }
+
+
 def _fully_loaded_fields(answer: FullyLoadedPersonnelCostAnswer) -> dict[str, Any]:
     """The base cost's fully loaded pair (SC-5-02, K-01/K-02) as the two `PersonnelCostRead`
     fields — `fully_loaded_amount`/`surcharge_amount`, spread the same way `_paid_absence_fields`
@@ -1262,6 +1326,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
     )
     paid_absence = _paid_absence_fields(view.paid_absence)
     fixed_amount = _fixed_amount_fields(view.fixed_amount)
+    assigned_fte = _assigned_fte_fields(view.assigned_fte)
     fully_loaded = _fully_loaded_fields(view.fully_loaded_cost)
     paid_absence_fully_loaded = _paid_absence_fully_loaded_fields(view.fully_loaded_paid_absence)
     if isinstance(answer, PersonnelCostResult):
@@ -1275,6 +1340,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             **fully_loaded,
             **paid_absence_fully_loaded,
             **fixed_amount,
+            **assigned_fte,
         )
     return PersonnelCostRead(
         state=answer.reason,
@@ -1286,6 +1352,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         **fully_loaded,
         **paid_absence_fully_loaded,
         **fixed_amount,
+        **assigned_fte,
     )
 
 

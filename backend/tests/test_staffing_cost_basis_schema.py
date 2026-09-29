@@ -178,10 +178,12 @@ def test_worked_time_basis_with_a_stray_amount_or_currency_is_not_refused_by_thi
 
 
 def test_an_unknown_cost_basis_is_refused(db_session: Session) -> None:
-    """`cost_basis` is closed to two values, exactly like `additional_cost.cost_type`."""
+    """`cost_basis` is closed to its known values, exactly like `additional_cost.cost_type`.
+    (SC-5-04 made `assigned_fte` a known value, so this test's unknown example is now `hourly`; the
+    same value is refused by the widened constraint, not by one of the new FTE checks.)"""
     fixture = _fixture(db_session)
 
-    assert _refusal(db_session, _row(fixture, cost_basis="assigned_fte")) == (
+    assert _refusal(db_session, _row(fixture, cost_basis="hourly")) == (
         "23514", "ck_staffing_position_cost_basis_known"
     )
 
@@ -244,7 +246,21 @@ def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
     describing the schema it produced even after the model moves on (`f3a1d0c58b27`'s rule)."""
     migration = _migration()
 
-    assert migration._COST_BASIS_KNOWN_EXPRESSION == staffing_model.COST_BASIS_KNOWN_EXPRESSION
+    # SC-5-04 widened `cost_basis_known`: the migration that created it keeps the two-value text it
+    # produced, and the widening migration (`d4a7e19c2b60`) carries the text the model now has.
+    assert migration._COST_BASIS_KNOWN_EXPRESSION == "cost_basis IN ('worked_time', 'fixed_amount')"
+    widening = importlib.util.spec_from_file_location(
+        "sc_5_04_migration",
+        Path(BACKEND_ROOT)
+        / "migrations"
+        / "versions"
+        / "d4a7e19c2b60_add_assigned_fte_to_staffing_position.py",
+    )
+    assert widening is not None and widening.loader is not None
+    widened = importlib.util.module_from_spec(widening)
+    widening.loader.exec_module(widened)
+    assert widened._COST_BASIS_KNOWN_EXPRESSION == staffing_model.COST_BASIS_KNOWN_EXPRESSION
+    assert widened._COST_BASIS_KNOWN_EXPRESSION_BEFORE == migration._COST_BASIS_KNOWN_EXPRESSION
     assert (
         migration._FIXED_AMOUNT_REQUIRES_ITS_OWN_BASIS_EXPRESSION
         == staffing_model.FIXED_AMOUNT_REQUIRES_ITS_OWN_BASIS_EXPRESSION
@@ -261,7 +277,7 @@ def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
         migration._FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION
         == staffing_model.FIXED_AMOUNT_CURRENCY_IS_UPPER_EXPRESSION
     )
-    assert set(staffing_model.COST_BASIS_VALUES) == {"worked_time", "fixed_amount"}
+    assert set(staffing_model.COST_BASIS_VALUES) == {"worked_time", "fixed_amount", "assigned_fte"}
 
 
 # --- the migration is reversible ------------------------------------------------------------------
