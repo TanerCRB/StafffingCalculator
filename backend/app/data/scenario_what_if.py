@@ -20,6 +20,11 @@ copy of its rule — to the statuses the three real reads froze right after thei
 (`status_at_read`), never to the shared `Scenario`'s `.status` (SC-7-03, Issue #118; ADR-0015,
 addendum SC-7-03, points 2 and 4) — only *after* which does it touch a rate.
 
+The billable-utilization variant follows the SC-6-05 addendum to ADR-0015 instead: its caller-scoped
+commercial read takes a draft-scenario `FOR SHARE` lock before reading revenue, then holds it while
+cost and additional cost are read. Guarded child writes and approval use `FOR UPDATE` on that row,
+so this variant serializes with them and does not use the status-race `409` guard.
+
 **Zero persistence, structurally** (ADR-0015, point 2). `WorkedMonth`, `MonthCostRate`,
 `CostRateWindow` are plain `@dataclass(frozen=True)` (`app.domain.personnel_cost`), never
 SQLAlchemy-mapped or session-tracked — `dataclasses.replace` on one cannot attach to a session's
@@ -140,7 +145,7 @@ class ScenarioWhatIfView:
 
 @dataclass(frozen=True)
 class ScenarioWhatIfBillableUtilizationView:
-    """One draft T&M result with revenue recomputed from temporary billable-hour inputs."""
+    """One draft T&M result with temporary revenue inputs, read under the draft scenario lock."""
 
     scenario: Scenario
     revenue: RevenueAnswer
@@ -306,8 +311,10 @@ def scenario_what_if_billable_utilization_for_caller(
     """Compute a T&M revenue what-if for an in-scope draft; never persist the substitution.
 
     `None` covers out-of-scope, non-T&M, incomplete T&M, and approved scenarios with one caller-
-    indistinguishable response. Validate and apply the hypothetical only after the shared status
-    race guard and draft check.
+    indistinguishable response. The commercial read resolves scope, then locks the draft scenario
+    `FOR SHARE` before reading any calculation component. Guarded child writes and approval use
+    `FOR UPDATE` on the same row, so their state and this composed result serialize without mixing
+    `READ COMMITTED` snapshots.
     """
     commercial = commercial_terms_for_caller(
         session,
@@ -315,6 +322,7 @@ def scenario_what_if_billable_utilization_for_caller(
         project_id,
         scenario_id,
         include_billable_months=True,
+        lock_draft_scenario_for_composition=True,
     )
     if (
         commercial is None
@@ -330,12 +338,6 @@ def scenario_what_if_billable_utilization_for_caller(
     if additional is None:  # pragma: no cover â€” scope agrees with the two calls above
         return None
 
-    refuse_a_status_race(
-        revenue_source=commercial.revenue.assumptions_used.rate_source,
-        revenue_status=commercial.status_at_read,
-        cost_status=cost_view.status_at_read,
-        additional_cost_status=additional.status_at_read,
-    )
     scenario = cost_view.scenario
     if scenario.status != ScenarioStatus.DRAFT:
         return None

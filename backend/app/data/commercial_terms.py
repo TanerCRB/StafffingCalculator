@@ -63,7 +63,7 @@ from app.data.rate_windows import (
     frozen_windows_overlapping,
     internal_catalog_windows_overlapping,
 )
-from app.data.scenario_guard import unapproved_scenario
+from app.data.scenario_guard import draft_scenario_read_lock, unapproved_scenario
 from app.data.staffing import scenario_in_scope
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.domain.revenue import (
@@ -771,14 +771,21 @@ def commercial_terms_for_caller(
     scenario_id: uuid.UUID,
     *,
     include_billable_months: bool = False,
+    lock_draft_scenario_for_composition: bool = False,
 ) -> ScenarioCommercialView | None:
     """The rule and revenue of one scenario — or `None`, with no way to tell why (criterion K-05).
 
     `None` is "no such scenario *for this caller*"; a scenario with no rule is a view whose revenue
-    is the named `no_commercial_terms` state, never `None` and never `0`.
+    is the named `no_commercial_terms` state, never `None` and never `0`. When
+    `lock_draft_scenario_for_composition` is requested, scope is resolved first and then a draft
+    scenario `FOR SHARE` lock is retained by this session through the caller's composed read.
     """
     scenario = scenario_in_scope(session, caller, project_id, scenario_id)
     if scenario is None:
+        return None
+    if lock_draft_scenario_for_composition and (
+        session.execute(draft_scenario_read_lock(scenario.id)).scalar_one_or_none() is None
+    ):
         return None
     return _view_of(session, scenario, include_billable_months=include_billable_months)
 

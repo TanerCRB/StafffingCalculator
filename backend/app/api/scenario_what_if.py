@@ -132,10 +132,6 @@ def read_scenario_what_if_salary_raise(
     ),
     responses={
         404: {"description": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL},
-        409: {
-            "description": "Refused: the scenario's approval status changed while this endpoint "
-            "was composing revenue and personnel cost. Retry."
-        },
         422: {"description": "Invalid utilization decrease."},
     },
 )
@@ -155,8 +151,6 @@ def read_scenario_what_if_billable_utilization(
             scenario_id,
             decrease_percentage_points=billable_utilization_decrease_percentage_points,
         )
-    except ScenarioResultsRaceDetected as race:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(race)) from None
     except InvalidBillableUtilizationDecrease:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

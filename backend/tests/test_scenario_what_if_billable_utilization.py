@@ -1,28 +1,41 @@
 """SC-6-05: draft T&M utilization sensitivity without persisted scenario changes."""
 
+import threading
 import uuid
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 import app.data.scenario_what_if as scenario_what_if_module
 from app.core.identity import CallerIdentity
-from app.data.commercial_terms import priced_month_windows
+from app.data.commercial_terms import (
+    commercial_terms_for_caller as real_commercial_terms_for_caller,
+)
+from app.data.commercial_terms import (
+    priced_month_windows,
+)
 from app.data.personnel_cost import scenario_cost_for_caller as real_scenario_cost_for_caller
-from app.models import ScenarioStatus
+from app.data.scenario_guard import unapproved_scenario
+from app.data.staffing import update_allocation
+from app.domain.revenue_time_and_material import BillableMonth
+from app.models import ScenarioStatus, StaffingPosition
 from tests.conftest import (
     IN_SCOPE_USER,
     OUT_OF_SCOPE_USER,
+    as_caller,
     caller_holding,
     make_allocation,
     make_project,
     make_scenario,
     make_story_points_terms,
+    wait_until_a_lock_request_is_pending,
 )
 from tests.test_scenario_results import (
     EVERYTHING,
@@ -32,6 +45,7 @@ from tests.test_scenario_results import (
 )
 
 APR = date(2026, 4, 1)
+MAR = date(2026, 3, 1)
 NOT_FOUND = {"detail": "Scenario not found."}
 
 
@@ -56,6 +70,56 @@ def test_ordinary_tm_revenue_read_does_not_select_planned_allocation_hours() -> 
 
     assert "planned_allocation_hours" not in ordinary_columns
     assert "planned_allocation_hours" in sensitivity_columns
+
+
+def test_non_tm_model_guard_rejects_even_when_billable_months_are_present(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = make_project(db_session, name="UtilizationModelGuard", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Story Points")
+    make_story_points_terms(db_session, scenario)
+    caller = CallerIdentity(user_id=IN_SCOPE_USER)
+    commercial = real_commercial_terms_for_caller(
+        db_session, caller, project.id, scenario.id, include_billable_months=True
+    )
+    assert commercial is not None and commercial.terms is not None
+    assert commercial.terms.model_type == "story_points"
+
+    # Keep the subsequent `billable_months is None` guard from masking removal of the model check.
+    forced_billable_months = replace(
+        commercial,
+        billable_months=(
+            BillableMonth(
+                position_id=uuid.uuid4(),
+                period_month=APR,
+                billable_hours=Decimal("20"),
+                price=None,
+                planned_allocation_hours=Decimal("100"),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        scenario_what_if_module,
+        "commercial_terms_for_caller",
+        lambda *args, **kwargs: forced_billable_months,
+    )
+
+    def unexpected_cost_read(*args: object, **kwargs: object) -> None:
+        pytest.fail("non-T&M scenarios must be refused before reading costs")
+
+    monkeypatch.setattr(
+        scenario_what_if_module, "scenario_cost_for_caller", unexpected_cost_read
+    )
+
+    result = scenario_what_if_module.scenario_what_if_billable_utilization_for_caller(
+        db_session,
+        caller,
+        project.id,
+        scenario.id,
+        decrease_percentage_points=Decimal("10"),
+    )
+
+    assert result is None
 
 
 def test_k_01_reduces_per_position_month_and_leaves_zero_plan_hours_unchanged(
@@ -238,28 +302,153 @@ def test_k_06_out_of_scope_and_approved_scenarios_are_the_same_404(
     assert len({response.content for response in responses}) == 1
 
 
-def test_k_07_a_status_race_is_refused_by_the_shared_guard(
-    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+def test_k_07_a_guarded_staffing_edit_waits_for_what_if(
+    committing_client: TestClient,
+    engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _ensure_statutory_bypass(db_session)
-    project, scenario, _ = _full_scenario(db_session, name="UtilizationRace")
+    """A read holding `FOR SHARE` keeps a guarded staffing edit out until all components finish."""
+    with Session(bind=engine, expire_on_commit=False, future=True) as setup:
+        _ensure_statutory_bypass(setup)
+        project, scenario, position = _full_scenario(
+            setup,
+            name="UtilizationReaderWins",
+            planned_hours=Decimal("100.00"),
+            billable_hours=Decimal("80.00"),
+        )
+        project_id, scenario_id, position_id = project.id, scenario.id, position.id
+        setup.commit()
 
-    def disagreeing_cost_view(
+    cost_read_reached = threading.Event()
+    finish_calculation = threading.Event()
+    result: dict[str, Any] = {}
+
+    def paused_cost_read(
         session: Session,
         caller: CallerIdentity,
         project_id: uuid.UUID,
         scenario_id: uuid.UUID,
     ) -> object:
-        view = real_scenario_cost_for_caller(session, caller, project_id, scenario_id)
-        assert view is not None
-        return replace(view, status_at_read=ScenarioStatus.APPROVED)
+        cost_read_reached.set()
+        if not finish_calculation.wait(timeout=15):
+            raise TimeoutError("test did not release the paused what-if calculation")
+        return real_scenario_cost_for_caller(session, caller, project_id, scenario_id)
 
     monkeypatch.setattr(
-        scenario_what_if_module, "scenario_cost_for_caller", disagreeing_cost_view
+        scenario_what_if_module, "scenario_cost_for_caller", paused_cost_read
     )
-    with caller_holding(*EVERYTHING):
-        response = client.get(utilization_path(project.id, scenario.id, "10"))
 
-    assert response.status_code == 409, response.text
-    assert "live_catalog" not in response.text
-    assert "approved_snapshot" not in response.text
+    def read_what_if() -> None:
+        try:
+            result["response"] = committing_client.get(
+                utilization_path(project_id, scenario_id, "10"),
+                headers=as_caller(IN_SCOPE_USER),
+            )
+        except BaseException as error:  # noqa: BLE001 - captured for the parent test
+            result["error"] = error
+
+    request = threading.Thread(target=read_what_if, daemon=True)
+    request.start()
+    assert cost_read_reached.wait(timeout=10), "the what-if did not reach the paused cost read"
+
+    def edit_allocation() -> None:
+        try:
+            with Session(bind=engine, expire_on_commit=False, future=True) as writer:
+                position_row = writer.get(StaffingPosition, position_id)
+                assert position_row is not None
+                result["edit"] = update_allocation(
+                    writer,
+                    CallerIdentity(IN_SCOPE_USER),
+                    project_id,
+                    scenario_id,
+                    position_id,
+                    MAR,
+                    expected_updated_at=position_row.updated_at,
+                    changes={
+                        "planned_allocation_hours": Decimal("200.00"),
+                        "billable_hours": Decimal("160.00"),
+                    },
+                )
+        except BaseException as error:  # noqa: BLE001 - captured for the parent test
+            result["edit_error"] = error
+
+    writer = threading.Thread(target=edit_allocation, daemon=True)
+    writer.start()
+    try:
+        blocked = wait_until_a_lock_request_is_pending(engine)
+    finally:
+        finish_calculation.set()
+    request.join(timeout=15)
+    writer.join(timeout=15)
+
+    assert not request.is_alive(), "the what-if never completed"
+    assert not writer.is_alive(), "the guarded staffing edit never completed"
+    assert "error" not in result, result.get("error")
+    assert "edit_error" not in result, result.get("edit_error")
+    assert blocked, "the guarded staffing edit did not wait for the what-if's scenario lock"
+    assert result["response"].status_code == 200, result["response"].text
+    assert result["response"].json()["revenue"]["amount"] == "14000.00"
+    assert result["edit"] is not None
+
+    after_edit = committing_client.get(
+        utilization_path(project_id, scenario_id, "10"), headers=as_caller(IN_SCOPE_USER)
+    )
+    assert after_edit.status_code == 200, after_edit.text
+    assert after_edit.json()["revenue"]["amount"] == "28000.00"
+
+
+def test_k_07_a_waiting_what_if_reads_the_committed_staffing_edit(
+    committing_client: TestClient,
+    engine: Engine,
+) -> None:
+    """If a guarded edit gets `FOR UPDATE` first, the what-if reads its committed values."""
+    with Session(bind=engine, expire_on_commit=False, future=True) as setup:
+        _ensure_statutory_bypass(setup)
+        project, scenario, position = _full_scenario(
+            setup,
+            name="UtilizationWriterWins",
+            planned_hours=Decimal("100.00"),
+            billable_hours=Decimal("80.00"),
+        )
+        project_id, scenario_id, position_id = project.id, scenario.id, position.id
+        setup.commit()
+
+    result: dict[str, Any] = {}
+
+    def read_what_if() -> None:
+        try:
+            result["response"] = committing_client.get(
+                utilization_path(project_id, scenario_id, "10"),
+                headers=as_caller(IN_SCOPE_USER),
+            )
+        except BaseException as error:  # noqa: BLE001 - captured for the parent test
+            result["error"] = error
+
+    with Session(bind=engine, expire_on_commit=False, future=True) as writer:
+        assert writer.execute(unapproved_scenario(scenario_id)).one_or_none()
+        request = threading.Thread(target=read_what_if, daemon=True)
+        request.start()
+        blocked = wait_until_a_lock_request_is_pending(engine)
+        position_row = writer.get(StaffingPosition, position_id)
+        assert position_row is not None
+        edited = update_allocation(
+            writer,
+            CallerIdentity(IN_SCOPE_USER),
+            project_id,
+            scenario_id,
+            position_id,
+            MAR,
+            expected_updated_at=position_row.updated_at,
+            changes={
+                "planned_allocation_hours": Decimal("200.00"),
+                "billable_hours": Decimal("160.00"),
+            },
+        )
+        assert edited is not None
+
+    request.join(timeout=15)
+    assert not request.is_alive(), "the what-if never completed after the staffing edit committed"
+    assert "error" not in result, result.get("error")
+    assert blocked, "the what-if did not wait for the writer's scenario lock"
+    assert result["response"].status_code == 200, result["response"].text
+    assert result["response"].json()["revenue"]["amount"] == "28000.00"
