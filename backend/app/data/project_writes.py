@@ -27,6 +27,8 @@ from app.data.column_copy import values_to_copy
 from app.data.commercial_terms import CommercialTermsNotCopyable, copy_commercial_terms
 from app.data.organization_defaults import organization_level_for
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.risk_copy import copy_scenario_risks
+from app.data.risk_reserve import copy_scenario_reserves
 from app.data.scenario_delivery_segment import copy_scenario_delivery_segments
 from app.data.scenario_guard import copying_source_scenario, project_group_two_lock
 from app.data.staffing import copy_staffing_positions
@@ -360,12 +362,21 @@ ScenarioChildCopier = Callable[[Session, Scenario, Scenario], None]
 """Copies the rows of one child table from a source scenario to its copy, in that order."""
 
 SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (
+    # SC-6-08 (ADR-0021, pt 8, Q-7 = A; ADR-0004, addendum SC-6-08): the declared risks, **ordered
+    # before `copy_staffing_positions`** - the position-level cost events copied inside it carry a
+    # link to a risk, remapped to the copy's own risk by the unique risk name, which only works
+    # once the copy's risks exist. Moving this entry after the staffing entry is the failure the
+    # canary in `tests/test_risk_copy.py` (K-06) is written to catch.
+    copy_scenario_risks,
     copy_staffing_positions,
     # SC-5-05 (ADR-0014, pt 10, Q-6 = A; ADR-0004, addendum SC-5-05, pt 4): the additional costs
     # with **no position**. The costs attached to a position are not here — they are the fourth
     # pass of `copy_staffing_positions`, which holds the old-to-new position ids. Two halves, two
     # places, and a canary for each (`tests/test_additional_cost_copy.py`, criterion K-07).
     copy_scenario_additional_costs,
+    # SC-6-08 (ADR-0021, pt 8): the reserves, each link remapped to the copy's own risk by name.
+    # Must come after `copy_scenario_risks`.
+    copy_scenario_reserves,
     # SC-1-11 (ADR-0016; ADR-0004, addendum 2026-09-25 SC-1-11, point 4): delivery segments/
     # workstreams. The simplest entry this registry has — the aggregate is one table, one row per
     # segment, no old-to-new id mapping to hold (a segment has no child of its own, ADR-0016 point

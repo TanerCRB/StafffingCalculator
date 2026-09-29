@@ -49,22 +49,26 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.column_copy import values_to_copy
+from app.data.risk_copy import copied_risk_ids, remapped
 from app.data.scenario_guard import unapproved_scenario
 from app.data.staffing import ADDITIONAL_COST_COLUMNS_NOT_COPIED, scenario_in_scope
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.domain.additional_cost import AdditionalCostAnswer, CostLine, additional_cost_total
 from app.models.additional_cost import AdditionalCost
 from app.models.catalog import CatalogCostCategory
+from app.models.risk import ScenarioRisk
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import StaffingPosition
 
 _COST_TABLE = AdditionalCost.__table__
 _POSITION_TABLE = StaffingPosition.__table__
+_RISK_TABLE = ScenarioRisk.__table__
 
 EDITABLE_ADDITIONAL_COST_FIELDS: frozenset[str] = frozenset(
     {
         "category_id",
         "position_id",
+        "risk_id",
         "amount",
         "currency",
         "cost_type",
@@ -108,7 +112,7 @@ class ConcurrentAdditionalCostEditConflict(AdditionalCostWriteRejected):
 
 
 class AdditionalCostNotFound(RuntimeError):
-    """No such cost in this scenario, or no such position in this scenario.
+    """No such cost in this scenario, or no such position or risk in this scenario.
 
     Answered as the same `404` as "no such scenario" (ADR-0005, addendum SC-5-05, point 4). Raised
     rather than returned as `None` so that "outside your scope" and "no such row here" stay two
@@ -269,6 +273,16 @@ def _position_in_scenario(
     ).scalar_one()
 
 
+def _risk_in_scenario(session: Session, scenario_id: uuid.UUID, risk_id: uuid.UUID) -> bool:
+    """Is there such a declared risk *inside this scenario*? (SC-6-08; the mirror of
+    `_position_in_scenario`, for the link a cost event may carry.)"""
+    return session.execute(
+        sa.select(
+            sa.exists().where(ScenarioRisk.id == risk_id, ScenarioRisk.scenario_id == scenario_id)
+        )
+    ).scalar_one()
+
+
 def _cost_in_scenario(session: Session, scenario_id: uuid.UUID, cost_id: uuid.UUID) -> bool:
     return session.execute(
         sa.select(
@@ -297,6 +311,7 @@ def create_additional_cost(
     *,
     category_id: uuid.UUID,
     position_id: uuid.UUID | None,
+    risk_id: uuid.UUID | None = None,
     amount: Decimal,
     currency: str,
     cost_type: str,
@@ -325,6 +340,10 @@ def create_additional_cost(
       nothing, and the answer is the same `404` as for a position that does not exist (K-08). The
       composite foreign key stays the guarantee underneath (K-03) for every path that is not this
       one.
+    - **The declared risk is taken from the scenario as well** (SC-6-08; ADR-0021, points 1 and 7):
+      a risk id of another scenario joins nothing and is the same `404`; the composite foreign key
+      `fk_additional_cost_risk_same_scenario` stays the guarantee for every other path. The link
+      is written by this same guarded statement, so it is refused under `approved` like the rest.
     - `amount` is written as given — `NUMERIC(14,4)`, never rounded here (ADR-0014, point 6).
     """
     if scenario_in_scope(session, caller, project_id, scenario_id) is None:
@@ -339,10 +358,10 @@ def create_additional_cost(
         # parameter in the `SELECT` of an `INSERT … SELECT` reaches PostgreSQL as `unknown`.
         return sa.literal(value, type_=column.type)
 
-    if position_id is None:
-        position_column: sa.ColumnElement[Any] = typed(None, columns.position_id)
-        source_from: sa.FromClause = open_scenario
-    else:
+    position_column: sa.ColumnElement[Any] = typed(None, columns.position_id)
+    risk_column: sa.ColumnElement[Any] = typed(None, columns.risk_id)
+    source_from: sa.FromClause = open_scenario
+    if position_id is not None:
         same_scenario_position = (
             sa.select(_POSITION_TABLE.c.id)
             .where(
@@ -352,12 +371,21 @@ def create_additional_cost(
             .subquery("same_scenario_position")
         )
         position_column = same_scenario_position.c.id
-        source_from = open_scenario.join(same_scenario_position, sa.true())
+        source_from = source_from.join(same_scenario_position, sa.true())
+    if risk_id is not None:
+        same_scenario_risk = (
+            sa.select(_RISK_TABLE.c.id)
+            .where(_RISK_TABLE.c.id == risk_id, _RISK_TABLE.c.scenario_id == scenario_id)
+            .subquery("same_scenario_risk")
+        )
+        risk_column = same_scenario_risk.c.id
+        source_from = source_from.join(same_scenario_risk, sa.true())
 
     source = sa.select(
         typed(cost_id, columns.id).label("id"),
         open_scenario.c.id.label("scenario_id"),
         position_column.label("position_id"),
+        risk_column.label("risk_id"),
         typed(category_id, columns.category_id).label("category_id"),
         typed(amount, columns.amount).label("amount"),
         typed(currency, columns.currency).label("currency"),
@@ -373,6 +401,7 @@ def create_additional_cost(
                 "id",
                 "scenario_id",
                 "position_id",
+                "risk_id",
                 "category_id",
                 "amount",
                 "currency",
@@ -392,7 +421,7 @@ def create_additional_cost(
             # Nothing was written, so nothing is rolled back — the reasoning of
             # `app.data.staffing.create_position`. Not a `SQLAlchemyError`, so it passes the
             # `except` below untouched.
-            raise _diagnose_insert_refusal(session, scenario_id, position_id)
+            raise _diagnose_insert_refusal(session, scenario_id, position_id, risk_id)
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()
@@ -402,7 +431,10 @@ def create_additional_cost(
 
 
 def _diagnose_insert_refusal(
-    session: Session, scenario_id: uuid.UUID, position_id: uuid.UUID | None
+    session: Session,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID | None,
+    risk_id: uuid.UUID | None,
 ) -> Exception:
     """Name the reason the guarded insert wrote nothing — after the refusal, never as the guard.
 
@@ -413,6 +445,8 @@ def _diagnose_insert_refusal(
     """
     if position_id is not None and not _position_in_scenario(session, scenario_id, position_id):
         return AdditionalCostNotFound("No such staffing position in this scenario.")
+    if risk_id is not None and not _risk_in_scenario(session, scenario_id, risk_id):
+        return AdditionalCostNotFound("No such risk in this scenario.")
     if _scenario_is_approved(session, scenario_id):
         return AdditionalCostFrozen(_FROZEN_MESSAGE)
     return ConcurrentAdditionalCostEditConflict(
@@ -468,6 +502,7 @@ def update_additional_cost(
         return None
 
     new_position_id = changes.get("position_id")
+    new_risk_id = changes.get("risk_id")
     conditions: list[sa.ColumnElement[bool]] = [
         _COST_TABLE.c.id == cost_id,
         _COST_TABLE.c.scenario_id == scenario_id,
@@ -479,6 +514,14 @@ def update_additional_cost(
             sa.exists().where(
                 _POSITION_TABLE.c.id == new_position_id,
                 _POSITION_TABLE.c.scenario_id == scenario_id,
+            )
+        )
+    if new_risk_id is not None:
+        # SC-6-08: the new link must be a risk of this scenario - inside the same statement, like
+        # the position above (`None` unlinks, and needs no target).
+        conditions.append(
+            sa.exists().where(
+                _RISK_TABLE.c.id == new_risk_id, _RISK_TABLE.c.scenario_id == scenario_id
             )
         )
     statement = (
@@ -494,7 +537,11 @@ def update_additional_cost(
         applied = session.execute(statement).one_or_none()
         if applied is None:
             raise _diagnose_row_refusal(
-                session, scenario_id, cost_id, new_position_id=new_position_id
+                session,
+                scenario_id,
+                cost_id,
+                new_position_id=new_position_id,
+                new_risk_id=new_risk_id,
             )
         session.commit()
     except SQLAlchemyError as error:
@@ -535,7 +582,9 @@ def delete_additional_cost(
     try:
         deleted = session.execute(statement).one_or_none()
         if deleted is None:
-            raise _diagnose_row_refusal(session, scenario_id, cost_id, new_position_id=None)
+            raise _diagnose_row_refusal(
+                session, scenario_id, cost_id, new_position_id=None, new_risk_id=None
+            )
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()
@@ -549,6 +598,7 @@ def _diagnose_row_refusal(
     cost_id: uuid.UUID,
     *,
     new_position_id: uuid.UUID | None,
+    new_risk_id: uuid.UUID | None,
 ) -> Exception:
     """Name the reason an edit or a delete matched no row — after the refusal, never as the guard.
 
@@ -563,6 +613,8 @@ def _diagnose_row_refusal(
         session, scenario_id, new_position_id
     ):
         return AdditionalCostNotFound("No such staffing position in this scenario.")
+    if new_risk_id is not None and not _risk_in_scenario(session, scenario_id, new_risk_id):
+        return AdditionalCostNotFound("No such risk in this scenario.")
     if _scenario_is_approved(session, scenario_id):
         return AdditionalCostFrozen(_FROZEN_MESSAGE)
     return ConcurrentAdditionalCostEditConflict(
@@ -595,12 +647,16 @@ def copy_scenario_additional_costs(session: Session, source: Scenario, copy: Sce
         .scalars()
         .all()
     )
+    # SC-6-08: the link to a declared risk is remapped to the copy's own risk by name (ADR-0021,
+    # point 8); the risk entry of the registry runs before this one.
+    risk_mapping = copied_risk_ids(session, source.id, copy.id)
     for cost in costs:
         session.add(
             AdditionalCost(
                 id=uuid.uuid4(),
                 scenario_id=copy.id,
                 position_id=None,
+                risk_id=remapped(risk_mapping, cost.risk_id),
                 **values_to_copy(cost, excluded=ADDITIONAL_COST_COLUMNS_NOT_COPIED),
             )
         )

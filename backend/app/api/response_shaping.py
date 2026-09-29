@@ -95,6 +95,13 @@ from app.api.schemas.project import (
     ProjectListResponse,
     ScenarioListItem,
 )
+from app.api.schemas.risk import (
+    ReserveRead,
+    ReserveTotalRead,
+    RiskRead,
+    ScenarioReserves,
+    ScenarioRisks,
+)
 from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
 from app.api.schemas.scenario_results import ScenarioResults
 from app.api.schemas.scenario_what_if import ScenarioWhatIfSalaryRaiseResults
@@ -117,6 +124,8 @@ from app.data.commercial_terms import ScenarioCommercialView
 from app.data.organization_defaults import OrganizationLevel
 from app.data.personnel_cost import ScenarioCostView
 from app.data.project_reads import CallerProjectView
+from app.data.risk import RiskPage, RiskRow
+from app.data.risk_reserve import ReservePage
 from app.data.scenario_results import ScenarioResultsView
 from app.data.scenario_what_if import ScenarioWhatIfView
 from app.data.staffing import StaffingPositionView
@@ -147,6 +156,11 @@ from app.domain.revenue import (
     RevenueResult,
     RevenueUnavailable,
 )
+from app.domain.risk_reserve import CALCULATED as RESERVE_CALCULATED
+from app.domain.risk_reserve import (
+    REPRESENTATION_BOTH,
+    ReserveTotalResult,
+)
 from app.domain.scenario_readiness import assess
 from app.domain.scenario_results import scenario_profitability
 from app.models.catalog import (
@@ -164,6 +178,7 @@ from app.models.commercial_terms import (
 )
 from app.models.person import Person
 from app.models.project import Project, ProjectStatus
+from app.models.risk import RiskReserve
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import StaffingPositionAbsence
 
@@ -1312,6 +1327,7 @@ def shape_additional_cost(row: AdditionalCostRow) -> AdditionalCostRead:
         category_id=cost.category_id,
         category_name=row.category_name,
         position_id=cost.position_id,
+        risk_id=cost.risk_id,
         amount=cost.amount,
         currency=cost.currency,
         cost_type=cost.cost_type,
@@ -1533,3 +1549,76 @@ def shape_scenario_what_if_salary_raise(
         profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)
+
+
+# --- risks and reserves (F-09 pt 4-5, SC-6-08; ADR-0021) ------------------------------------------
+#
+# No gate, and no `caller` argument (ADR-0021, point 9): a risk and a reserve are not personnel
+# costs, carry no `position_id`, and are read under `STAFFING_READ` alone. What makes "no amount on
+# the risk read" true is the *type*: `RiskRow` and `RiskRead` have no money field to fill.
+
+
+def shape_risk(row: RiskRow) -> RiskRead:
+    """One risk as the API returns it - from the list, the create and the edit paths alike.
+
+    Kinds and counts only (gate 1 G-1). `double_represented` is derived from the representation the
+    domain function decided; nothing is recomputed here."""
+    return RiskRead(
+        id=row.risk.id,
+        name=row.risk.name,
+        representation=row.representation,
+        double_represented=row.representation == REPRESENTATION_BOTH,
+        cost_event_count=row.cost_event_count,
+        reserve_count=row.reserve_count,
+        updated_at=row.risk.updated_at,
+    )
+
+
+def shape_scenario_risks(page: RiskPage) -> ScenarioRisks:
+    return ScenarioRisks(
+        scenario_id=page.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[page.scenario.status],
+        total=page.total,
+        risks=[shape_risk(row) for row in page.risks],
+    )
+
+
+def shape_reserve(reserve: RiskReserve) -> ReserveRead:
+    """One reserve row as the API returns it."""
+    return ReserveRead(
+        id=reserve.id,
+        risk_id=reserve.risk_id,
+        amount=reserve.amount,
+        currency=reserve.currency,
+        reserve_type=reserve.reserve_type,
+        start_month=reserve.start_month,
+        end_month=reserve.end_month,
+        updated_at=reserve.updated_at,
+    )
+
+
+def shape_scenario_reserves(page: ReservePage) -> ScenarioReserves:
+    """A page of reserves and the sum of all of them - the total's amount was rounded once, through
+    `app.core.money.round_money`, in `app.domain.risk_reserve`, and is not re-rounded here."""
+    answer = page.reserve_total
+    if isinstance(answer, ReserveTotalResult):
+        total = ReserveTotalRead(
+            state=RESERVE_CALCULATED,
+            amount=answer.amount,
+            currency=answer.currency,
+            currencies=list(answer.currencies),
+        )
+    else:
+        total = ReserveTotalRead(
+            state=answer.reason,
+            amount=NOT_APPLICABLE,
+            currency=None,
+            currencies=list(answer.currencies),
+        )
+    return ScenarioReserves(
+        scenario_id=page.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[page.scenario.status],
+        total=page.total,
+        reserves=[shape_reserve(reserve) for reserve in page.reserves],
+        reserve_total=total,
+    )

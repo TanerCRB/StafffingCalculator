@@ -94,6 +94,10 @@ a refusal came from *this* mechanism."""
 
 CATEGORY_FOREIGN_KEY = "fk_additional_cost_category_id"
 
+RISK_SAME_SCENARIO_FOREIGN_KEY = "fk_additional_cost_risk_same_scenario"
+"""The composite foreign key `(risk_id, scenario_id) -> scenario_risk (id, scenario_id)` (SC-6-08;
+ADR-0021, point 7): the mirror of the position key above, for the declared-risk link."""
+
 
 class AdditionalCost(Base):
     """One additional cost of one scenario: a category, a fixed amount, a currency, a period."""
@@ -118,6 +122,15 @@ class AdditionalCost(Base):
     """`NULL` — a cost of the scenario as a whole (the "project" cost of F-08, Q-2 = A). Otherwise a
     position of **the same** scenario, which the composite foreign key below enforces. Indexed: the
     staffing copier reads "the costs of these positions"."""
+
+    risk_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True, index=True
+    )
+    """The declared risk this cost event represents, or `NULL` (SC-6-08; ADR-0021, points 1 and 7).
+    A risk **of the same scenario**, by the composite foreign key `fk_additional_cost_risk_same_
+    scenario`; no `ON DELETE` action, so a risk with a cost event pointing at it cannot be deleted
+    (Q-8 = A). The link decides nothing in the sum - a linked and an unlinked cost are added up
+    identically (ADR-0021, point 3)."""
 
     category_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
@@ -170,6 +183,11 @@ class AdditionalCost(Base):
             ["position_id", "scenario_id"],
             ["staffing_position.id", "staffing_position.scenario_id"],
             name=POSITION_SAME_SCENARIO_FOREIGN_KEY,
+        ),
+        ForeignKeyConstraint(
+            ["risk_id", "scenario_id"],
+            ["scenario_risk.id", "scenario_risk.scenario_id"],
+            name=RISK_SAME_SCENARIO_FOREIGN_KEY,
         ),
         CheckConstraint("amount > 0", name="amount_positive"),
         # The same two rules `catalog_default_rates` carries for its currency.

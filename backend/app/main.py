@@ -9,6 +9,8 @@ from app.api.health import router as health_router
 from app.api.people import router as people_router
 from app.api.personnel_cost import router as personnel_cost_router
 from app.api.projects import router as projects_router
+from app.api.risk import router as risk_router
+from app.api.risk_reserve import router as risk_reserve_router
 from app.api.scenario_results import compare_router as scenario_results_compare_router
 from app.api.scenario_results import router as scenario_results_router
 from app.api.scenario_what_if import router as scenario_what_if_router
@@ -64,6 +66,11 @@ app.include_router(personnel_cost_router)
 # with no cost conjunction (ADR-0014, point 11; ADR-0005, addendum 2026-09-23 SC-5-05). Not a verb
 # on the personnel-cost router: the two modules never import each other (ADR-0014, "Konsekwencje").
 app.include_router(additional_cost_router)
+# Same nesting, SC-6-08 (F-09 pt 4-5, ADR-0021): a scenario's declared risks and their reserves,
+# under `STAFFING_READ`/`WRITE` with no cost conjunction. Two routers, neither a verb on the
+# additional-cost router: the reserve total is reported beside `additional_cost`, never inside it.
+app.include_router(risk_router)
+app.include_router(risk_reserve_router)
 # Same nesting, seventh router (SC-7-01): the scenario-wide profit, margin and markup declares
 # `RESULTS_READ` on the endpoint and gates four of its fields on `PERSONNEL_COSTS_READ` ∧
 # `can_view_personnel_costs` in response shaping (ADR-0005, addendum 2026-09-24 SC-7-01) — a

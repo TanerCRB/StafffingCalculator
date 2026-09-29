@@ -103,6 +103,7 @@ from app.core.identity import CallerIdentity
 from app.data.absence_budget import BudgetKey, budgets_for_months, statutory_leave_type
 from app.data.column_copy import values_to_copy
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.risk_copy import copied_risk_ids, remapped
 from app.data.scenario_guard import unapproved_scenario
 from app.data.working_calendar import basis_by_location
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
@@ -1819,7 +1820,7 @@ by reflection or named here (criterion K-14), so a column added later forces the
 being silently dropped from every copy."""
 
 ADDITIONAL_COST_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
-    {"id", "scenario_id", "position_id", "created_at", "updated_at"}
+    {"id", "scenario_id", "position_id", "risk_id", "created_at", "updated_at"}
 )
 """Additional-cost attributes a copy does **not** inherit (SC-5-05), for both halves of the copy —
 the position-attached costs in `copy_staffing_positions` and the scenario-level ones in
@@ -1830,6 +1831,9 @@ already depends on this module for its scope; the reverse import would be a cycl
 - `scenario_id` — the copy's own scenario.
 - `position_id` — the *copied* position's id (from `new_position_ids`), or `NULL` for a
   scenario-level cost; never the source's value.
+- `risk_id` — the copy's **own** risk, found by the source risk's name
+  (`app.data.risk_copy.copied_risk_ids`), or `NULL` for an unlinked cost (SC-6-08; ADR-0021,
+  point 8); never the source's value, which would point at another scenario's risk.
 - `created_at` / `updated_at` — the copy is created now, and its ADR-0007 marker is its own.
 
 Everything else — category, amount, currency, type, period, funding — is copied by reflection, and a
@@ -1954,12 +1958,17 @@ def copy_staffing_positions(session: Session, source: Scenario, copy: Scenario) 
         .scalars()
         .all()
     )
+    # SC-6-08: a link to a declared risk is remapped to the copy's own risk (ADR-0021, point 8).
+    # The risk entry of `SCENARIO_CHILD_COPIERS` runs **before** this function, so the copy's
+    # risks exist already; the mapping is by the source risk's name.
+    risk_mapping = copied_risk_ids(session, source.id, copy.id)
     for cost in position_costs:
         session.add(
             AdditionalCost(
                 id=uuid.uuid4(),
                 scenario_id=copy.id,
                 position_id=new_position_ids[cost.position_id],
+                risk_id=remapped(risk_mapping, cost.risk_id),
                 **values_to_copy(cost, excluded=ADDITIONAL_COST_COLUMNS_NOT_COPIED),
             )
         )
