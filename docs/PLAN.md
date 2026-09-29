@@ -2261,6 +2261,40 @@ history / this file's own change log, not as tracked product work.
   testów frontendowych zielono po tym zadaniu (było 234), 262 po scaleniu z SC-7-02 (PR #99). Zob.
   `docs/architecture/capabilities.md`.
 
+- [ ] **SC-6-08** — Risk representation and the double-representation signal (F-09 pt 4-5, backend),
+  gate 1 approved 2026-09-29 (ADR-0021, Accepted) (Issue #89). A risk is a declared per-scenario
+  entity; it may be represented by cost events (ADR-0014 rows carrying an optional risk link) and/or
+  by reserves (own table); a risk linked to both is reported `both`.
+  *Done when:* `backend/tests` prove criteria K-01..K-07 (analyst, 2026-09-29; cross-referenced to
+  ADR-0021 controls R-01..R-09), each with its named contrast and mutation: a risk is reported
+  `cost_event` / `reserve` / `both` / `none` from the declared link only, and `both` is the
+  double-representation signal; the signal never changes any total; the reserve is a month-granular
+  fixed amount with one rounding and no partial sum across currencies; the risk link is refused
+  across scenarios and a referenced risk cannot be deleted, both by the database; writes under an
+  `approved` scenario are refused in the same statement; a copied scenario remaps every link to its
+  own risk; scope is a `404` even for a caller holding every permission.
+
+  **Gate 1 decisions (2026-09-29, architect + analyst, accepted by the human):** Q-1 = A (separate
+  `risk_reserve` table); Q-2 = A (declared risk entity); Q-3 = A now (reserve total reported beside
+  `additional_cost`, not inside `included_cost`; folding it in is a follow-up decision); Q-4 = A
+  (fixed amount, month-granular); Q-5 = A (risk endpoint + one additive field on the additional-cost
+  read: the id of the linked risk, or null; kinds and counts only, no amounts, G-1/G-2); Q-6 = A
+  (`STAFFING_*`, scenario-level only); Q-7 = A (risk copier before `copy_staffing_positions`, remap by
+  unique name); Q-8 = A (deleting a referenced risk is refused).
+
+  **Out of scope (explicit):** scenario duplication (#11); multi-scenario compare (#87); sensitivity
+  analysis (SC-6-04); the additional-cost mechanism itself (SC-5-05); frontend/UI (F-11);
+  probability x impact reserves; folding reserves into `included_cost`/profit/margin; phase-level
+  risk; overlap of reserves with surcharges or the management category (F-08 pt 7); idempotent
+  creation (ADR-0014 R-04); export.
+
+  **Unproven foundation, accepted knowingly:** first consumer of the risk entity, the reserve table
+  and the risk link on `additional_cost`; group 2 write guard and approval race on two new tables;
+  a link column carried through the reflection copier `copy_staffing_positions`; the composite FK for
+  the new link; reserve-vs-`additional_cost` currency comparison. Basis: Issue #89,
+  `Wymagania/Requirements_EN.md` §4 F-09 pt 4-5, `ADR-0021-risk-representation-and-double-counting-signal.md`,
+  ADR-0014, ADR-0004, ADR-0005, ADR-0007.
+
 - [x] **SC-7-02** — Pokaż zysk, marżę, markup i koszt scenariusza na ekranie (F-10, część,
   frontend). Konsument API dostarczonego przez SC-7-01 (`GET .../scenarios/{id}/results`) — ekran
   świadomie odłożony przy SC-7-01, wzorem podziału SC-4-01/SC-4-06 (Issue #94).
