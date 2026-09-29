@@ -81,6 +81,10 @@ COPIED_POSITION_FIELDS: tuple[str, ...] = (
     "cost_basis",
     "fixed_amount",
     "fixed_amount_currency",
+    # SC-5-04 (ADR-0013, addendum 2026-09-29 SC-5-04, point 8; ADR-0004, same date): the stored FTE
+    # travels with the row the existing reflective copier already copies — own data of the
+    # scenario, no new copier entry; the drift guard is what proves it rather than assumes it.
+    "assigned_fte",
     # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: the named person travels
     # with the position the existing copier copies by reflection — the copy points at the *same*
     # person (ADR-0004, addendum 2026-09-27 SC-2-06, point 4), no new `SCENARIO_CHILD_COPIERS`

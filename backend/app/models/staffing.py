@@ -210,8 +210,9 @@ script or a future import never passes through Pydantic. Four claims, four const
 names which one broke: positive when set; not `NULL` on its own basis; `NULL` on every other
 basis (a stray FTE on a `worked_time` row would be an input nothing reads and somebody may believe);
 never together with a stated amount (two ways to say the same cost on one row). There is **no**
-upper bound tied to `headcount`: a value above it is accepted and visible as an over-allocation
-(point 2)."""
+upper bound tied to `headcount`: a value above it is accepted without bound and is not surfaced
+anywhere (point 2, named limitation: a percent typo, 50 for 0.5, prices 100 times too high with
+state `calculated`)."""
 
 
 STAFFING_POSITION_PAGE_INDEX = "ix_staffing_position_scenario_start_date_id"

@@ -90,15 +90,25 @@ the same three values the database's `cost_basis_known` CHECK does, independentl
 compared for drift rather than one silently defining the other."""
 
 AssignedFte = Annotated[
-    DecimalString, Field(gt=0, max_digits=ASSIGNED_FTE_PRECISION, decimal_places=ASSIGNED_FTE_SCALE)
+    DecimalString,
+    Field(
+        gt=0,
+        max_digits=ASSIGNED_FTE_PRECISION,
+        decimal_places=ASSIGNED_FTE_SCALE,
+        description=(
+            "Fraction, 1 = one FTE of the position, not a percent (0.5 is half, 50 is fifty "
+            "FTE). No upper bound: a percent typed by mistake is priced 100 times too high."
+        ),
+    ),
 ]
 """The stored FTE of a position on the way in: a **fraction** (`1` = one FTE of the position,
 `0.5` = half, never a percent), strictly positive (mirrors
 `ck_staffing_position_assigned_fte_positive`) and exactly as precise as `NUMERIC(10,4)` is — a
 fifth decimal place is a `422` naming the field, never a silent rounding at write time (ADR-0008,
-point 6). **No upper bound tied to `headcount`**: a value above it is accepted and stays visible as
-an over-allocation (ADR-0013 addendum 2026-09-29 SC-5-04, point 2). Sent as a decimal string, like
-every other figure at this boundary."""
+point 6). **No upper bound tied to `headcount`**: a value above it is accepted without bound and is
+not surfaced anywhere: a percent typo (`50` for `0.5`) prices 100 times too high with state
+`calculated` (ADR-0013 addendum 2026-09-29 SC-5-04, point 2, named limitation). Sent as a decimal
+string, like every other figure at this boundary."""
 
 FixedAmount = Annotated[
     DecimalString, Field(gt=0, max_digits=FIXED_AMOUNT_PRECISION, decimal_places=FIXED_AMOUNT_SCALE)

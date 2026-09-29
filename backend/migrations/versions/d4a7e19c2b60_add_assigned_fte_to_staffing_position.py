@@ -5,8 +5,9 @@ date). Expand only (ADR-0001, expand -> deploy -> contract): one new nullable co
 CHECK constraints on an existing table, plus one constraint (`cost_basis_known`) replaced by a
 strictly wider one. No column is dropped or altered, no row is rewritten, and no existing row can
 violate any new constraint (every existing row has `assigned_fte IS NULL` and a basis of
-`worked_time` or `fixed_amount`) — so the code deployed before this migration keeps reading and
-writing `staffing_position` exactly as it did, and there is no contract phase to pair with it.
+`worked_time` or `fixed_amount`) — so the code deployed before this migration runs unchanged **until
+the first `assigned_fte` row exists**; from then on an old instance misbehaves in the two ways named
+under "Mixed-version window" below. There is no contract phase to pair with the migration.
 
 **What the database enforces here, and why in the schema** (a fixture, a seed script or a future
 import never passes through a Pydantic model — ADR-0001):
@@ -27,8 +28,9 @@ import never passes through a Pydantic model — ADR-0001):
 6. `assigned_fte_not_with_fixed_amount` — `assigned_fte IS NULL OR (fixed_amount IS NULL AND
    fixed_amount_currency IS NULL)`: two stated costs on one row are two answers.
 
-No upper bound tied to `headcount`: a value above it is accepted and visible as an over-allocation
-(point 2). **The CHECK expressions are spelled here, not imported** from `app.models.staffing`, the
+No upper bound tied to `headcount`: a value above it is accepted without bound and is not surfaced
+anywhere (point 2; named limitation: a percent typo, 50 for 0.5, prices 100 times too high).
+**The CHECK expressions are spelled here, not imported** from `app.models.staffing`, the
 convention every migration since `f3a1d0c58b27` keeps; `tests/test_assigned_fte_schema.py` compares
 the two copies. `a8f18e00172b` is not edited: it keeps describing the schema it produced.
 
@@ -48,10 +50,16 @@ no such row can be committed between the check and the drop; it names no row val
 Once the application that reads `assigned_fte` is deployed, downgrading this revision without also
 redeploying the previous code turns every personnel-cost read into a `column ... does not exist`
 error. **Mixed-version window, named (human decision H-7):** while old and new application versions
-run side by side, an old instance ignores `cost_basis = 'assigned_fte'` (it prices such a position's
-allocation rows by the worked-time formula) and its reflective copier — which does not know the
-column — copies the row without `assigned_fte`, which the new constraints refuse (a `409`, never a
-wrong copy). Accepted, not repaired: no shared environment exists yet.
+run side by side, an old instance (1) ignores `cost_basis = 'assigned_fte'`: it prices such a
+position's allocation rows by the worked-time formula, a wrong figure with state `calculated`; and
+(2) its reflective copier — which does not know the column — copies the row without `assigned_fte`,
+which `assigned_fte_required_for_its_basis` refuses, so the copy fails and nothing wrong is stored.
+How the refusal is answered, verified in `app.data.write_errors.failure_for` (it classifies by
+SQLSTATE, never by constraint name: `23514` check_violation is a refusal, so none of the four new
+names is "unmapped"): `POST .../scenarios/{id}/duplicate` answers `409`
+(`ScenarioDuplicationRefused`), but `POST /projects/{id}/copy` answers `500` (`copy_project` raises
+`ProjectWriteFailed`, which the endpoint does not catch). Accepted, not repaired: no shared
+environment exists yet.
 
 Revision ID: d4a7e19c2b60
 Revises: c6e1a94d7b35

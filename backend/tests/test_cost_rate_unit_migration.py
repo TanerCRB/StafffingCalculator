@@ -426,6 +426,9 @@ def test_k_07_a_row_committed_while_the_downgrade_waits_is_seen_by_the_guard(
     Once for each table. Mutations: the two `LOCK TABLE` statements removed, and the snapshot's
     alone removed, survived every earlier test, which had no writer in flight."""
     dimensions, scenario_id = _committed_plan(engine)
+    # The revision the schema is at when the downgrade starts — `_REVISION` until SC-5-04 put a
+    # newer migration on top of it: the refusal must leave the schema exactly where it was.
+    revision_before = _current_revision(engine)
     inserted, failures, waited = threading.Event(), [], []
 
     def write_slowly() -> None:
@@ -471,5 +474,5 @@ def test_k_07_a_row_committed_while_the_downgrade_waits_is_seen_by_the_guard(
         "the downgrade never queued behind the writer, so the test proved nothing about the "
         "guard's locks"
     )
-    assert _current_revision(engine) == _REVISION
+    assert _current_revision(engine) == revision_before
     assert _column(engine, _LIVE) is not None
