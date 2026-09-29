@@ -1217,7 +1217,7 @@ days came from after the source row changes.
 
 ### 2026-09-29 — SC-5-08 (Issue #80, daily and monthly cost rates): the cost-rate unit is frozen with the rate; the calendar basis is already frozen
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-08; code merged in #167)
 
 > Gate 1 of SC-5-08 (2026-09-29, Q-1 = B, Q-4, Q-6). A separate entry, not a note under the SC-5-02
 > addendum of 2026-09-25: points of that addendum are cited by number in code and tests. Where a
