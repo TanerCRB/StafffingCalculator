@@ -1040,3 +1040,40 @@ price edit targets the whole-scenario rule (`scope_ref IS NULL`).
    request schema carries `scope_ref`. The fix belongs to that future task. It can re-check
    "exactly one rule" in the same transaction before `commit()`. Or it can build the view after
    commit without the single-row assumption of `_rule_of`.
+
+### 2026-09-29 — SC-6-05 (Issue #100): hypothetical reduction in T&M billable utilization
+
+**Status:** Draft — pending approval
+
+> Gate-1 scope choices approved by the human on 2026-09-29: utilization is
+> billable hours divided by planned allocation hours per position and month; the decrease
+> is in percentage points; the what-if affects revenue only. A decrease that would produce
+> negative hypothetical billable hours is refused for the whole request.
+
+1. **The saved commercial input remains `billable_hours`.** The ordinary T&M calculation
+   continues to consume the planner-entered `billable_hours` literally. For a position-month
+   with positive `planned_allocation_hours`, the utilization what-if subtracts
+   `decrease_percentage_points / 100 × planned_allocation_hours` from that saved input
+   to create a temporary input to the T&M calculation. When `planned_allocation_hours` is
+   zero, its saved `billable_hours` is unchanged. The what-if does not redefine persisted
+   `billable_hours` or derive it from availability.
+2. **Refuse invalid results as one request.** If the decrease would produce negative
+   hypothetical billable hours for any position-month, refuse the entire request with a
+   generic `422`. Do not clamp a row to zero or return a partial calculation.
+3. **T&M is the only commercial model affected.** The what-if uses the existing T&M
+   revenue calculation and existing selling-rate resolution. Other model calculations,
+   including Fixed Price, Story Points, and Outcome-based, retain their existing behavior.
+4. **Persisted rules and rates remain unchanged.** The substitution does not modify
+   commercial terms, selling-rate windows, allocation rows, or scenario data. Revenue
+   currency, rate assumptions, and non-computable states follow the existing T&M calculation.
+5. **Profitability composition remains shared.** Derived profit, margin, markup, and
+   non-computable states use the existing calculation with baseline cost inputs. The
+   hypothetical changes no personnel or other cost input.
+
+| Control | Acceptance criterion |
+|---|---|
+| T-12 | A T&M utilization what-if applies the percentage-point decrease independently to each position-month with positive planned allocation hours; rows with zero planned allocation retain saved billable hours; no persisted input changes. |
+| T-13 | A negative requested decrease or any negative hypothetical billable-hours value refuses the whole request with a generic `422`, with no partial result; a zero decrease is valid and reproduces baseline hours. |
+| T-14 | T&M revenue uses the existing calculation and rate resolution; the hypothetical does not change revenue behavior for other commercial models. |
+| T-15 | Profitability uses the existing calculation with baseline costs, and preserves the established currency and non-computable behavior. |
+| T-16 | A negative requested decrease is refused for the whole request with generic `422`; zero decrease is valid and reproduces baseline hours and T&M revenue. |

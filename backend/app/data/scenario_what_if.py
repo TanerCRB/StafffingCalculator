@@ -20,6 +20,11 @@ copy of its rule — to the statuses the three real reads froze right after thei
 (`status_at_read`), never to the shared `Scenario`'s `.status` (SC-7-03, Issue #118; ADR-0015,
 addendum SC-7-03, points 2 and 4) — only *after* which does it touch a rate.
 
+The billable-utilization variant follows the SC-6-05 addendum to ADR-0015 instead: its caller-scoped
+commercial read takes a draft-scenario `FOR SHARE` lock before reading revenue, then holds it while
+cost and additional cost are read. Guarded child writes and approval use `FOR UPDATE` on that row,
+so this variant serializes with them and does not use the status-race `409` guard.
+
 **Zero persistence, structurally** (ADR-0015, point 2). `WorkedMonth`, `MonthCostRate`,
 `CostRateWindow` are plain `@dataclass(frozen=True)` (`app.domain.personnel_cost`), never
 SQLAlchemy-mapped or session-tracked — `dataclasses.replace` on one cannot attach to a session's
@@ -94,7 +99,10 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import CallerIdentity
 from app.data.additional_cost import additional_costs_for_caller
-from app.data.commercial_terms import commercial_terms_for_caller
+from app.data.commercial_terms import (
+    MODEL_TYPE_TIME_AND_MATERIAL,
+    commercial_terms_for_caller,
+)
 from app.data.paid_absence_cost import paid_absence_months
 from app.data.personnel_cost import (
     ScenarioCostView,
@@ -114,6 +122,10 @@ from app.domain.personnel_cost import (
     fully_loaded_personnel_cost,
 )
 from app.domain.revenue import RevenueAnswer
+from app.domain.revenue_time_and_material import (
+    billable_utilization_decrease,
+    time_and_material_revenue,
+)
 from app.models.scenario import Scenario, ScenarioStatus
 
 
@@ -135,6 +147,17 @@ class ScenarioWhatIfView:
     cost_view: ScenarioCostView
     additional_cost: AdditionalCostAnswer
     salary_raise_percent: Decimal
+
+
+@dataclass(frozen=True)
+class ScenarioWhatIfBillableUtilizationView:
+    """One draft T&M result with temporary revenue inputs, read under the draft scenario lock."""
+
+    scenario: Scenario
+    revenue: RevenueAnswer
+    cost_view: ScenarioCostView
+    additional_cost: AdditionalCostAnswer
+    decrease_percentage_points: Decimal
 
 
 def _raised_rate(rate: MonthCostRate | None, multiplier: Decimal) -> MonthCostRate | None:
@@ -298,4 +321,63 @@ def scenario_what_if_salary_raise_for_caller(
         cost_view=hypothetical_cost_view,
         additional_cost=additional.total,
         salary_raise_percent=salary_raise_percent,
+    )
+
+
+def scenario_what_if_billable_utilization_for_caller(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    decrease_percentage_points: Decimal,
+) -> ScenarioWhatIfBillableUtilizationView | None:
+    """Compute a T&M revenue what-if for an in-scope draft; never persist the substitution.
+
+    `None` covers out-of-scope, non-T&M, incomplete T&M, and approved scenarios with one caller-
+    indistinguishable response. The commercial read resolves scope, then locks the draft scenario
+    `FOR SHARE` before reading any calculation component. Guarded child writes and approval use
+    `FOR UPDATE` on the same row, so their state and this composed result serialize without mixing
+    `READ COMMITTED` snapshots.
+    """
+    commercial = commercial_terms_for_caller(
+        session,
+        caller,
+        project_id,
+        scenario_id,
+        include_billable_months=True,
+        lock_draft_scenario_for_composition=True,
+    )
+    if (
+        commercial is None
+        or commercial.terms is None
+        or commercial.terms.model_type != MODEL_TYPE_TIME_AND_MATERIAL
+        or commercial.billable_months is None
+    ):
+        return None
+    cost_view = scenario_cost_for_caller(session, caller, project_id, scenario_id)
+    if cost_view is None:  # pragma: no cover â€” scope agrees with the call above by construction
+        return None
+    additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
+    if additional is None:  # pragma: no cover â€” scope agrees with the two calls above
+        return None
+
+    scenario = cost_view.scenario
+    if scenario.status != ScenarioStatus.DRAFT:
+        return None
+
+    temporary_months = billable_utilization_decrease(
+        commercial.billable_months, decrease_percentage_points
+    )
+    revenue = time_and_material_revenue(
+        temporary_months,
+        rate_source=commercial.revenue.assumptions_used.rate_source,
+        scenario_currency=scenario.currency,
+    )
+    return ScenarioWhatIfBillableUtilizationView(
+        scenario=scenario,
+        revenue=revenue,
+        cost_view=cost_view,
+        additional_cost=additional.total,
+        decrease_percentage_points=decrease_percentage_points,
     )

@@ -81,4 +81,25 @@ class ScenarioWhatIfSalaryRaiseResults(ScenarioResults):
     """
 
     salary_raise_percent: DecimalString
-    """The raise this result was computed with — echoed back, not read from any stored column."""
+    """The raise this result was computed with, echoed from the request."""
+
+
+BillableUtilizationDecreaseQuery = Annotated[
+    Decimal,
+    Query(
+        max_digits=PERCENT_PRECISION,
+        decimal_places=PERCENT_SCALE,
+        description=(
+            "A decrease in billable utilization, in percentage points, applied per position and "
+            "month to planned allocation hours. Negative values and results with negative "
+            "billable hours are refused with a generic 422."
+        ),
+    ),
+]
+
+
+class ScenarioWhatIfBillableUtilizationResults(ScenarioResults):
+    """`GET .../what-if/billable-utilization` with a T&M revenue-input substitution."""
+
+    billable_utilization_decrease_percentage_points: DecimalString
+    """The requested decrease is echoed in the response."""
