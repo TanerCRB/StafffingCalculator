@@ -21,7 +21,7 @@ import { CatalogScreen } from "./CatalogScreen";
  * `tokens.css` only where two sizes have to be compared with each other.
  *
  * Which of these already held on `main` and which are the change is recorded in the PR, per
- * sub-point (the analyst's K-30: "zmiana" is red on the branch point, "już spełnione" green on both).
+ * sub-point (the analyst's K-30: "change" is red on the branch point, "already satisfied" green on both).
  */
 
 // --- Reading the rules that match an element --------------------------------------------------

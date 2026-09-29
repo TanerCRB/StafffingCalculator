@@ -1,16 +1,18 @@
-"""SC-4-03, K-07 — `/results` (SC-7-01) dla scenariusza Outcome-based i strażnik wyścigu po
-wprowadzeniu `rate_source = not_applicable` (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 5a i 8; O-5).
+"""SC-4-03, K-07 — `/results` (SC-7-01) for an Outcome-based scenario and the race guard after
+introducing `rate_source = not_applicable` (ADR-0003, addendum 2026-09-25 SC-4-03, points 5a and 8;
+O-5).
 
-- zatwierdzony scenariusz outcome → `200`, zysk liczony od przychodu **gwarantowanego** (20000), nie
-  od oczekiwanego (23000); `rate_source` przychodu `not_applicable`, kosztu `approved_snapshot`;
-- zatwierdzenie wpadające między odczyt przychodu outcome a odczyt kosztu → `200`, nie `409`:
-  przychód outcome nie utrwala żadnego momentu statusu, więc różne `rate_source` nie są dowodem
-  wyścigu;
-- **prawdziwy wyścig zatwierdzenia scenariusza T&M nadal daje `409`** — strażnik nie został
-  osłabiony dla źródeł zależnych od statusu;
-- what-if (SC-6-04), drugie miejsce porównujące `rate_source`, dla szkicu outcome → `200`.
+- an approved outcome scenario → `200`, profit calculated from the **guaranteed** revenue (20000),
+  not from the expected one (23000); revenue's `rate_source` is `not_applicable`, cost's is
+  `approved_snapshot`;
+- an approval landing between the outcome revenue read and the cost read → `200`, not `409`: the
+  outcome revenue persists no moment of status, so different `rate_source` values are not proof of
+  a race;
+- **a real T&M scenario approval race still gives `409`** — the guard was not weakened for
+  status-dependent sources;
+- what-if (SC-6-04), the second place comparing `rate_source`, for an outcome draft → `200`.
 
-Prawdziwe endpointy; wyścigi na dwóch połączeniach i osobnym wątku, jak w
+Real endpoints; races on two connections and a separate thread, as in
 `tests/test_scenario_results_race.py`.
 """
 
@@ -66,11 +68,13 @@ def _results(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID):
 def test_k_07_an_approved_outcome_scenario_answers_200_with_profit_from_the_guaranteed_revenue(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-07 — gwarantowany 20000, koszt włączony 15000 (12000 osobowy + 3000 dodatkowy) → zysk 5000,
-    marża 25.00, narzut 33.33; oczekiwany 23000 podany obok, ale **nie** wchodzi w zysk.
+    """K-07 — guaranteed value 20000, included cost 15000 (12000 personnel + 3000 additional) →
+    profit 5000, margin 25.00, markup 33.33; the expected value 23000 given alongside, but **not**
+    entering the profit.
 
-    Mutacje: strażnik porównujący `rate_source` przez samą równość (`not_applicable` ≠
-    `approved_snapshot` → `409`); zysk od oczekiwanego (8000.00); `amount` = oczekiwany.
+    Mutations: a guard comparing `rate_source` by mere equality (`not_applicable` ≠
+    `approved_snapshot` → `409`); profit from the expected value (8000.00); `amount` = the expected
+    value.
     """
     _ensure_statutory_bypass(db_session)
     project, scenario, _ = _full_scenario(
@@ -99,9 +103,10 @@ def test_k_07_an_approved_outcome_scenario_answers_200_with_profit_from_the_guar
 
 
 def _committed_outcome_scenario(engine: Engine) -> dict[str, uuid.UUID]:
-    """Zatwierdzony w bazie szkic outcome z kosztem: 100 godzin planu po 120 (12000), reguła AC-08
-    (gwarantowany 20000), bez kosztu dodatkowego — zysk 8000. Kształt `_committed_scenario` z
-    `tests/test_scenario_results_race.py`, z regułą outcome zamiast T&M."""
+    """An outcome draft committed to the database with a cost: 100 planned hours at 120 (12000), an
+    AC-08 rule (guaranteed value 20000), no additional cost — profit 8000. The shape of
+    `_committed_scenario` from `tests/test_scenario_results_race.py`, with an outcome rule instead
+    of T&M."""
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         project = make_project(
             setup,
@@ -144,9 +149,9 @@ def _committed_outcome_scenario(engine: Engine) -> dict[str, uuid.UUID]:
 def _results_with_an_approval_after(
     committing_client: TestClient, engine: Engine, state: dict[str, uuid.UUID], marker: str
 ) -> tuple[Any, dict[str, Any], list[str]]:
-    """`GET …/results`, a w nim — po pierwszej instrukcji zawierającej `marker` (ostatni odczyt
-    ścieżki przychodu) — prawdziwe zatwierdzenie przez endpoint, na osobnym wątku i połączeniu,
-    zatwierdzone zanim `/results` przeczyta koszt."""
+    """`GET …/results`, and within it — after the first statement naming `marker` (the revenue
+    path's last read) — a real approval through the endpoint, on a separate thread and connection,
+    committed before `/results` reads the cost."""
     fired: list[str] = []
     outcome: dict[str, Any] = {}
 
@@ -190,11 +195,11 @@ def _results_with_an_approval_after(
 def test_k_07_a_real_tm_approval_race_between_the_two_reads_is_still_409(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """K-07, druga połowa — prawdziwy wyścig zatwierdzenia scenariusza T&M: zatwierdzenie commituje
-    się po zapytaniu o stawki sprzedażowe (przychód z żywego katalogu), a przed odczytem kosztu (z
-    migawki). Nadal `409` i żadna z liczb 20000/12000/8000 — `not_applicable` nie osłabił strażnika
-    dla źródeł zależnych od statusu. Mutacja: strażnik pomijający porównanie zawsze, gdy któreś
-    źródło nie jest znane (albo w ogóle) → `200` z pomieszanymi połówkami."""
+    """K-07, second half — a real T&M scenario approval race: the approval commits after the query
+    for selling rates (revenue from the live catalogue), and before the cost read (from the
+    snapshot). Still `409` and none of the numbers 20000/12000/8000 — `not_applicable` did not
+    weaken the guard for status-dependent sources. Mutation: a guard that skips the comparison
+    whenever a source is not known (or at all) → `200` with mixed halves."""
     state = _committed_scenario(engine)
 
     response, _, _ = _results_with_an_approval_after(
@@ -209,11 +214,11 @@ def test_k_07_a_real_tm_approval_race_between_the_two_reads_is_still_409(
 def test_k_07_an_approval_between_the_outcome_revenue_and_the_cost_read_is_not_a_race(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """K-07, kontrast dla outcome — to samo wstawienie zatwierdzenia między odczyt przychodu (tu:
-    zapytanie o `outcome_terms`) a odczyt kosztu: `200`. Przychód outcome czyta wyłącznie własne
-    wiersze scenariusza, chronione strażnikiem zapisu, więc jest taki sam przed i po zatwierdzeniu;
-    koszt pochodzi z migawki zrobionej przy tym zatwierdzeniu z tych samych stawek. Zysk 8000 jest
-    spójny, nie zmieszany."""
+    """K-07, contrast for outcome — the same insertion of an approval between the revenue read
+    (here: the query for `outcome_terms`) and the cost read: `200`. The outcome revenue reads only
+    the scenario's own rows, guarded by the write guard, so it is the same before and after the
+    approval; the cost comes from the snapshot made at that approval, from the same rates. Profit
+    8000 is consistent, not mixed."""
     state = _committed_outcome_scenario(engine)
 
     response, _, _ = _results_with_an_approval_after(
@@ -234,10 +239,10 @@ def test_k_07_an_approval_between_the_outcome_revenue_and_the_cost_read_is_not_a
 def test_k_07_the_what_if_of_an_outcome_draft_is_200_not_a_race(
     client: TestClient, db_session: Session
 ) -> None:
-    """Drugie miejsce porównujące `rate_source` przez równość (ADR-0003, aneks SC-4-03, pkt 8:
-    "jawny przegląd każdego miejsca") — what-if SC-6-04 dla szkicu outcome: przychód
-    `not_applicable`, koszt `live_catalog` → `200` z przychodem gwarantowanym i kosztem po podwyżce
-    10% (12000 → 13200). Mutacja: what-if z własnym porównaniem przez równość → `409`."""
+    """The second place comparing `rate_source` by equality (ADR-0003, addendum SC-4-03, point 8:
+    "an explicit review of every place") — what-if SC-6-04 for an outcome draft: revenue
+    `not_applicable`, cost `live_catalog` → `200` with the guaranteed revenue and the cost after a
+    10% increase (12000 → 13200). Mutation: what-if with its own comparison by equality → `409`."""
     _ensure_statutory_bypass(db_session)
     project, scenario, _ = _full_scenario(
         db_session, name="Outcome what-if", create_commercial_terms=False

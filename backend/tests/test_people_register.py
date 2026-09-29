@@ -7,7 +7,7 @@ nothing.
 
 The positive branch of every permission here is reached through `caller_holding`
 (`dependency_overrides`) only. The placeholder identity holds neither `PEOPLE_READ` nor
-`PEOPLE_WRITE` (ADR-0005, aneks 2026-09-27, point 4), so in the running system every request to
+`PEOPLE_WRITE` (ADR-0005, addendum 2026-09-27, point 4), so in the running system every request to
 `/people` is refused. That is a limit of the proof, and it is stated here as one.
 """
 
@@ -313,7 +313,7 @@ def test_k_08_correcting_a_persons_name_is_visible_on_an_approved_scenario_witho
     scenario approved through the **real** approval endpoint:
 
     - the correction (`PEOPLE_WRITE`) succeeds — no `approved` guard on the person row (ADR-0004,
-      aneks 2026-09-27, point 3);
+      addendum 2026-09-27, point 3);
     - the register (`PEOPLE_READ`) shows the corrected name;
     - the approved position still points at the **same** `person_id`;
     - every `approved_snapshot_*` table — the set of them and every row in them — is identical
@@ -531,7 +531,7 @@ def test_no_person_value_is_ever_a_url_segment_or_query_parameter() -> None:
 def test_the_register_answer_names_no_position_scenario_or_project(
     client: TestClient, db_session: Session
 ) -> None:
-    """ADR-0019, "Decyzja" pt 3 — the register returns persons only, never their assignments."""
+    """ADR-0019, "Decision" pt 3 — the register returns persons only, never their assignments."""
     project, scenario, _, position = _approvable_scenario(db_session)
     person = make_person(db_session)
     assign_person_directly(db_session, position, person)
@@ -613,7 +613,7 @@ def test_pd_k8_the_retry_refusal_is_distinguishable_from_the_canonical_form_refu
 def test_pd_k8_an_id_that_is_not_a_version_4_uuid_is_a_422_and_writes_nothing(
     client: TestClient, db_session: Session, person_id: str
 ) -> None:
-    """ADR-0019 aneks 2026-09-28, D-2 point 4 — the nil UUID, a version-1 UUID and garbage are
+    """ADR-0019 addendum 2026-09-28, D-2 point 4 — the nil UUID, a version-1 UUID and garbage are
     refused by the request schema (`UUID4`). Hygiene, not a proof of randomness."""
     before = count_people(db_session)
     with caller_holding(Permission.PEOPLE_WRITE):

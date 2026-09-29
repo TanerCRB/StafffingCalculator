@@ -258,7 +258,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(AuditLog))
             connection.execute(sa.delete(TmTerms))
             connection.execute(sa.delete(StoryPointsTerms))
-            # SC-4-03: szczegóły Outcome-based przed regułą, z tego samego powodu co `tm_terms`.
+            # SC-4-03: Outcome-based details, before its rule, same reason as `tm_terms`.
             connection.execute(sa.delete(OutcomeTerms))
             # SC-4-02: the Fixed Price details row, before its rule for the same reason as
             # `tm_terms` (a composite foreign key with no `ON DELETE` action).
@@ -315,7 +315,7 @@ def caller_holding(*permissions: Permission, user_id: str = IN_SCOPE_USER) -> It
     The only way to reach a caller with `PERSONNEL_COSTS_READ`, and the only way to reach one
     *without* a permission the placeholder grants: `PLACEHOLDER_PERMISSIONS` is a fixed set, and
     widening it would both trip the set-equality canary and widen ADR-0005's dated deviation
-    (addendum 2026-09-19, point 5; addendum "pierwszy zbiór danych bez zasięgu projektu", point 6).
+    (addendum 2026-09-19, point 5; addendum "first dataset without project scope", point 6).
 
     `user_id` stays a real user id, so the `project_access` rows and the scope filter are the real
     ones — this substitutes the permission set, not the subject.
@@ -985,7 +985,7 @@ def make_person(session: Session, *, full_name: str = FICTITIOUS_PERSON_NAME) ->
     """Insert one person into the register directly — no endpoint, no request schema (SC-2-06).
 
     The only way to reach a person in the running system's shape: the placeholder identity holds no
-    `PEOPLE_WRITE` (ADR-0005, aneks 2026-09-27, point 4), so no request can create one without
+    `PEOPLE_WRITE` (ADR-0005, addendum 2026-09-27, point 4), so no request can create one without
     `dependency_overrides`. Flushes rather than commits, like every fixture here."""
     person = Person(id=uuid.uuid4(), full_name=full_name)
     session.add(person)
@@ -1250,14 +1250,14 @@ def make_outcome_terms(
     scope_ref: uuid.UUID | None = None,
     **details: object,
 ) -> CommercialTerms:
-    """Wstaw regułę Outcome-based wprost (SC-4-03) — i, jeśli nie powiedziano inaczej, jej wiersz
-    `outcome_terms`.
+    """Insert an Outcome-based rule directly (SC-4-03) — and, unless stated otherwise, its
+    `outcome_terms` row.
 
-    Domyślnie AC-08 bez prawdopodobieństw: opłata 20000 PLN, premia 10000 PLN, zero jednostek w
-    każdej kategorii. `details` nadpisuje kolumny wiersza szczegółów po ich nazwach. Zapis z
-    pominięciem API — ścieżka produkcyjna tworzy oba wiersze jedną strzeżoną instrukcją.
+    Defaults to AC-08 with no probabilities: a fixed fee of 20000 PLN, a success bonus of 10000 PLN,
+    zero units in every category. `details` overrides the details row's columns by name. A write
+    that bypasses the API — the production path creates both rows in one guarded statement.
 
-    `scope_ref` (SC-4-05) — jak w `make_commercial_terms`: `None` to reguła całego scenariusza.
+    `scope_ref` (SC-4-05) — as in `make_commercial_terms`: `None` is a whole-scenario rule.
     """
     terms = CommercialTerms(
         id=uuid.uuid4(), scenario_id=scenario.id, model_type="outcome_based", scope_ref=scope_ref
@@ -1286,13 +1286,13 @@ def outcome_payload(
     units: tuple[str | None, str | None, str | None, str | None] = ("0", "0", "0", "0"),
     **overrides: object,
 ) -> dict[str, object]:
-    """Ciało `POST …/commercial-terms` dla Outcome-based (SC-4-03) — domyślnie AC-08 bez
-    prawdopodobieństw: opłata 20000 PLN, premia 10000 PLN.
+    """The `POST …/commercial-terms` body for Outcome-based (SC-4-03) — defaults to AC-08 with no
+    probabilities: a fixed fee of 20000 PLN, a success bonus of 10000 PLN.
 
-    `probabilities` i `units` idą w kolejności `not_achieved`, `partial`, `achieved`, `exceeded`;
-    `None` w `probabilities` i w `units` pomija pole kategorii (nie wysyła `0`). Kwoty jako
-    napisy — tak, jak API
-    je zwraca, bez przejścia przez `float`.
+    `probabilities` and `units` go in the order `not_achieved`, `partial`, `achieved`, `exceeded`;
+    `None` in `probabilities` and in `units` omits the category's field (does not send `0`). Amounts
+    as strings — the way the API
+    returns them, with no pass through `float`.
     """
     categories: dict[str, dict[str, object]] = {}
     for index, category in enumerate(("not_achieved", "partial", "achieved", "exceeded")):
@@ -1314,7 +1314,7 @@ def outcome_payload(
 
 
 def count_outcome_rows(connection: sa.Connection | Session) -> tuple[int, int]:
-    """(reguły, wiersze `outcome_terms`) w całej bazie — dla dowodów "zero wierszy"."""
+    """(rules, `outcome_terms` rows) across the whole database — for "zero rows" proofs."""
     rules = connection.execute(
         sa.select(sa.func.count()).select_from(CommercialTerms)
     ).scalar_one()

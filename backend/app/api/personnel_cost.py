@@ -2,10 +2,10 @@
 
 `GET /projects/{project_id}/scenarios/{scenario_id}/personnel-cost` — `STAFFING_READ`.
 
-**`STAFFING_READ` on the endpoint, `PERSONNEL_COSTS_READ` on the field** (ADR-0005, aneks 2026-09-23
-SC-5-01, point 1). The cost is a calculation over the scenario's staffing positions, so it is read
-under the permission that reads them. `PERSONNEL_COSTS_READ` is never a requirement of this
-endpoint: a caller holding `STAFFING_READ` without it gets a `200` whose amount and rates are
+**`STAFFING_READ` on the endpoint, `PERSONNEL_COSTS_READ` on the field** (ADR-0005, addendum
+2026-09-23 SC-5-01, point 1). The cost is a calculation over the scenario's staffing positions, so
+it is read under the permission that reads them. `PERSONNEL_COSTS_READ` is never a requirement of
+this endpoint: a caller holding `STAFFING_READ` without it gets a `200` whose amount and rates are
 `null` — a refusal of the *field*, not of the resource (the precedent of SC-2-01, point 5). The
 conjunction is applied in `app.api.response_shaping.shape_scenario_personnel_cost`.
 
@@ -18,7 +18,7 @@ project outside the caller's scope, a project that does not exist and a scenario
 project are one `404` (criterion K-05). A scenario whose cost cannot be stated is not one of them —
 it is a `200` with a named state.
 
-**Two components, never a total** (SC-5-06; ADR-0013, aneks 2026-09-23 SC-5-06): the base cost
+**Two components, never a total** (SC-5-06; ADR-0013, addendum 2026-09-23 SC-5-06): the base cost
 (`amount`) and, beside it, the cost of paid absences (`paid_absence_*`), each with its own state.
 The paid-absence amount, its budget part and its assumptions go through the same conjunction as the
 base amount; neither component is ever added to the other here (the total is plan block 7's).

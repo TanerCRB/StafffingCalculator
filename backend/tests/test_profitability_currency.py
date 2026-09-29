@@ -1,19 +1,21 @@
-"""SC-4-03, runda 2 weryfikacji, R-01 — zysk, marża i narzut nigdy z kwot w dwóch walutach.
+"""SC-4-03, verification round 2, R-01 — profit, margin and markup never from amounts in two
+currencies.
 
-Scenariusz **bez waluty** (`scenarios.currency IS NULL`): każdy z czterech składników porównuje
-swoją walutę tylko z walutą scenariusza, więc sam z siebie niczego nie odrzuci. Jedyne miejsce,
-które widzi wszystkie cztery waluty, to `app.domain.scenario_results.scenario_profitability` —
-wołane przez `/results`, what-if i porównanie SC-6-02. Każdy test ma kontrast: te same dane w
-jednej walucie dają liczbę, więc nazwany stan nie pochodzi z czegoś innego niż waluta.
+A scenario **without a currency** (`scenarios.currency IS NULL`): each of the four components
+compares its own currency only against the scenario's currency, so on its own it refuses nothing.
+The only place that sees all four currencies is `app.domain.scenario_results.scenario_profitability`
+— called by `/results`, what-if and the SC-6-02 comparison. Every test has a contrast: the same
+data in one currency gives a number, so the named state does not come from something other than
+the currency.
 
-- reguła Outcome-based w EUR + koszty w PLN → `profitability_state = currency_mismatch`, cztery pola
-  `"n/a"`; przychód sam w sobie `calculated` (EUR) — to nie jego stan;
-- ta sama reguła w PLN → liczby (zysk 6000.00);
-- T&M: koszt dodatkowy w EUR + koszt osobowy w PLN → `currency_mismatch` (przypadek sprzed SC-4-03);
-  wszystko w PLN → liczby;
-- what-if i porównanie — ta sama odpowiedź.
+- an Outcome-based rule in EUR + costs in PLN → `profitability_state = currency_mismatch`, four
+  fields `"n/a"`; revenue on its own `calculated` (EUR) — that is not its state;
+- the same rule in PLN → numbers (profit 6000.00);
+- T&M: additional cost in EUR + personnel cost in PLN → `currency_mismatch` (the case from before
+  SC-4-03); everything in PLN → numbers;
+- what-if and the comparison — the same answer.
 
-Prawdziwy PostgreSQL, prawdziwe endpointy.
+Real PostgreSQL, real endpoints.
 """
 
 import uuid
@@ -40,8 +42,8 @@ WITHHELD = {
     "markup": "n/a",
     "profitability_state": "currency_mismatch",
 }
-# 100 h × 200 = 20000 przychodu T&M (i gwarantowany Outcome AC-08: 20000); 100 h × 120 = 12000
-# kosztu osobowego, 2000 kosztu dodatkowego, 0 nieobecności → 14000; zysk 6000; 30.00%; 42.86%.
+# 100 h × 200 = 20000 T&M revenue (and guaranteed Outcome AC-08: 20000); 100 h × 120 = 12000
+# personnel cost, 2000 additional cost, 0 absence → 14000; profit 6000; 30.00%; 42.86%.
 CALCULATED = {
     "included_cost": "14000.00",
     "profit": "6000.00",
@@ -56,8 +58,8 @@ def _aggregate(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _without_currency(session: Session, *, name: str, **kwargs: Any):
-    """`_full_scenario` (stawka PLN, koszt dodatkowy 2000), potem waluta scenariusza zdjęta —
-    składniki zachowują walutę swoich danych, scenariusz żadnej nie deklaruje."""
+    """`_full_scenario` (PLN rate, additional cost 2000), then the scenario's currency removed —
+    the components keep the currency of their own data, the scenario declares none."""
     project, scenario, _ = _full_scenario(session, name=name, **kwargs)
     scenario.currency = None
     session.flush()
@@ -74,10 +76,11 @@ def _results(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID) 
 def test_r_01_an_eur_outcome_rule_with_pln_costs_is_currency_mismatch_never_a_number(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — reguła Outcome-based w EUR, koszty w PLN, scenariusz bez waluty: przychód 20000.00 EUR
-    `calculated`, koszt osobowy i dodatkowy `calculated` w PLN — a zysk, marża, narzut i koszt
-    włączony to `"n/a"` ze stanem `currency_mismatch`. Mutacja: usunięcie porównania walut w
-    `scenario_profitability` → zysk `6000.00` (20000 EUR − 14000 PLN)."""
+    """R-01 — an Outcome-based rule in EUR, costs in PLN, a scenario without a currency: revenue
+    20000.00 EUR `calculated`, personnel and additional cost `calculated` in PLN — and profit,
+    margin, markup and included cost are `"n/a"` with the state `currency_mismatch`. Mutation:
+    removing the currency comparison in `scenario_profitability` → profit `6000.00`
+    (20000 EUR − 14000 PLN)."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 outcome EUR", create_commercial_terms=False
@@ -101,8 +104,9 @@ def test_r_01_an_eur_outcome_rule_with_pln_costs_is_currency_mismatch_never_a_nu
 def test_r_01_contrast_the_same_outcome_rule_in_pln_gives_numbers(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01, kontrast — ta sama reguła i te same koszty, reguła w PLN: liczby i stan `calculated`.
-    Dowodzi, że stan wyżej pochodzi z waluty, nie z braku waluty scenariusza ani z modelu."""
+    """R-01, contrast — the same rule and the same costs, the rule in PLN: numbers and the state
+    `calculated`. Proves that the state above comes from the currency, not from the scenario
+    lacking a currency nor from the model."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 outcome PLN", create_commercial_terms=False
@@ -115,8 +119,9 @@ def test_r_01_contrast_the_same_outcome_rule_in_pln_gives_numbers(
 def test_r_01_an_eur_additional_cost_with_pln_personnel_cost_is_currency_mismatch(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — przypadek sprzed SC-4-03, T&M: koszt dodatkowy 2000 EUR obok kosztu osobowego i
-    przychodu w PLN, scenariusz bez waluty → `currency_mismatch`, nie `6000.00` z sumy PLN i EUR."""
+    """R-01 — the case from before SC-4-03, T&M: additional cost 2000 EUR alongside personnel cost
+    and revenue in PLN, a scenario without a currency → `currency_mismatch`, not `6000.00` from
+    summing PLN and EUR."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 TM additional EUR", additional_currency="EUR"
@@ -132,8 +137,8 @@ def test_r_01_an_eur_additional_cost_with_pln_personnel_cost_is_currency_mismatc
 def test_r_01_contrast_tm_all_in_pln_without_a_scenario_currency_gives_numbers(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01, kontrast — T&M, wszystko w PLN, scenariusz bez waluty: liczby jak dotąd. Dowodzi, że
-    poprawka nie zamienia każdego scenariusza bez waluty w stan nazwany."""
+    """R-01, contrast — T&M, everything in PLN, a scenario without a currency: numbers as before.
+    Proves that the fix does not turn every scenario without a currency into a named state."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(db_session, name="R01 TM PLN")
 
@@ -143,8 +148,9 @@ def test_r_01_contrast_tm_all_in_pln_without_a_scenario_currency_gives_numbers(
 def test_r_01_the_what_if_and_the_comparison_answer_the_same_named_state(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — what-if (SC-6-04, `+0`) i porównanie (SC-6-02) składają zysk tą samą funkcją: EUR
-    reguła + PLN koszty → `currency_mismatch` w obu; wiersz PLN w tym samym porównaniu — liczby."""
+    """R-01 — the what-if (SC-6-04, `+0`) and the comparison (SC-6-02) compose profit through the
+    same function: an EUR rule + PLN costs → `currency_mismatch` in both; a PLN row in the same
+    comparison — numbers."""
     _ensure_statutory_bypass(db_session)
     project, mismatched = _without_currency(
         db_session, name="R01 what-if EUR", create_commercial_terms=False
@@ -164,8 +170,8 @@ def test_r_01_the_what_if_and_the_comparison_answer_the_same_named_state(
 def test_r_01_the_state_is_not_gated_while_the_four_figures_are(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — `profitability_state` nie jest liczbą, więc zostaje dla wołającego bez prawa do
-    kosztów osobowych; cztery pola są `null` jak dotąd (bramka SC-7-01 bez zmian)."""
+    """R-01 — `profitability_state` is not a number, so it stays for a caller without the right to
+    personnel costs; the four fields are `null` as before (the SC-7-01 gate unchanged)."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 gated", create_commercial_terms=False, cost_visible=False

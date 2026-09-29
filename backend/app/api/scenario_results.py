@@ -2,8 +2,8 @@
 
 `GET /projects/{project_id}/scenarios/{scenario_id}/results` — `RESULTS_READ`.
 
-**`RESULTS_READ` on the endpoint, `PERSONNEL_COSTS_READ` on four of its fields** (ADR-0005, aneks
-2026-09-24), the same split SC-5-01 introduced: a caller holding `RESULTS_READ` without
+**`RESULTS_READ` on the endpoint, `PERSONNEL_COSTS_READ` on four of its fields** (ADR-0005, addendum
+2026-09-24 SC-7-01), the same split SC-5-01 introduced: a caller holding `RESULTS_READ` without
 `PERSONNEL_COSTS_READ` (or without `project_access.can_view_personnel_costs` for this project) gets
 a `200` whose `profit`, `margin`, `markup` and `included_cost` are `null` — a refusal of *those
 fields*, never of the resource. `revenue` and `additional_cost` are never gated (they are not
@@ -27,7 +27,7 @@ against the frozen snapshot — one `profit` built from two different moments of
 `app.data.scenario_results.ScenarioResultsRaceDetected` (raised by `refuse_a_status_race`) names
 that exact disagreement — reads that saw the scenario at two statuses that matter (SC-7-03: the
 statuses the reads froze; the revenue's `rate_source` only classifies whether the revenue read's
-status counts, and is never compared with the cost's — ADR-0015, aneks SC-7-03, point 2); this
+status counts, and is never compared with the cost's — ADR-0015, addendum SC-7-03, point 2); this
 endpoint answers it as a `409`, the same "the scenario changed since it was read, retry"
 vocabulary every write path in this repository already uses, applied here to a read instead of a
 write. Never a `200` with numbers mixed from two moments, and never a `500`.
@@ -43,12 +43,12 @@ exception's `revenue_status`/`cost_status`/`additional_cost_status` attributes.
 permissions (`COMMERCIAL_WRITE`, `STAFFING_WRITE`).
 
 ## `GET /projects/{project_id}/scenarios/compare` — N scenarios of the same project, one call
-(SC-6-02, F-09 pkt 2; ADR-0001/ADR-0005, aneks 2026-09-24)
+(SC-6-02, F-09 pt 2; ADR-0001/ADR-0005, addendum 2026-09-24)
 
 **A comparison, not a new calculation.** `compare_scenario_results` calls
 `scenario_results_for_caller`/`shape_scenario_results` once per named `scenario_id`, unchanged —
 the same functions, the same gates, the same race guard `read_scenario_results` above already uses.
-Nothing here sums, nets or averages a field across the compared scenarios (ADR-0005 aneks SC-7-01
+Nothing here sums, nets or averages a field across the compared scenarios (ADR-0005 addendum SC-7-01
 pt.6, reconfirmed for this endpoint): the response is N independent rows.
 
 **Scope, by construction, never a second check.** `scenario_id` is repeated as a query parameter;
@@ -213,7 +213,7 @@ def compare_scenario_results(
     ],
 ) -> ScenarioResultsComparison:
     """N independent rows, one per named `scenario_id`, in request order — never an aggregate
-    across them (ADR-0005 aneks SC-7-01 pt.6).
+    across them (ADR-0005 addendum SC-7-01 pt.6).
 
     Composes `app.data.scenario_results.scenario_results_for_caller` and
     `app.api.response_shaping.shape_scenario_results` once per id, unchanged — the same functions,

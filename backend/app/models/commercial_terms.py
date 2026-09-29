@@ -4,8 +4,8 @@ SC-4-05).
 
 SC-4-05 (Issue #69) adds `scope_ref`, a nullable pointer from a rule to one `scenario_delivery_
 segment` of *its own* scenario (ADR-0003 addendum 2026-09-25, D-3=A). It does not add a new entity
-("reguła łączona" is not a table) and it does not change how a rule's own model prices anything — it
-only widens *how many* rows one scenario may have and *which one* each points at. See `scope_ref`
+("a combined rule" is not a table) and it does not change how a rule's own model prices anything —
+it only widens *how many* rows one scenario may have and *which one* each points at. See `scope_ref`
 below and `SCENARIO_ID_WHOLE_SCENARIO_UNIQUE`/`SCENARIO_ID_SCOPE_UNIQUE`/`SCOPE_REF_FOREIGN_KEY`.
 `scope_ref` lives on `commercial_terms`, not on a details table, so it applies to every model —
 `outcome_based` (SC-4-03) included — with no per-model column.
@@ -16,7 +16,8 @@ choice made here. `story_points_terms` (SC-4-04, Issue #68) is the second model 
 registry, and it is the first real proof that the pattern below generalises: nothing in this module
 names `time_and_material` outside the one constant each model owns, and `MODEL_TYPES` /
 `DETAIL_TABLE_BY_MODEL` / `REVENUE_BY_MODEL` (`app.data.commercial_terms`) are what a caller reads
-to find either model — never a name compared by hand (D-1..D-6 of the addendum, opcja A wszędzie).
+to find either model — never a name compared by hand (D-1..D-6 of the addendum, option A
+everywhere).
 
 1. **The rule belongs to the scenario** (point 1). `commercial_terms.scenario_id` is `NOT NULL` and
    `UNIQUE` — one rule per scenario in the MVP — and its scope is inherited through
@@ -25,8 +26,9 @@ to find either model — never a name compared by hand (D-1..D-6 of the addendum
 2. **A discriminator closed to the models that have a details table** (point 2). The CHECK below
    admits `time_and_material`, `story_points` (SC-4-04), `outcome_based` (SC-4-03) and `fixed_price`
    (SC-4-02); each model widens it in the same migration that creates its details table, recreating
-   the full `IN` list (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 10c). `model_type` is immutable after
-   the write — there is no edit path for it, and changing a rule's model is out of scope of the MVP.
+   the full `IN` list (ADR-0003, addendum 2026-09-25 SC-4-03, point 10c). `model_type` is immutable
+   after the write — there is no edit path for it, and changing a rule's model is out of scope of
+   the MVP.
 3. **Type agreement is a composite foreign key, not an application check** (point 3; criterion
    K-04). `tm_terms (commercial_terms_id, model_type) → commercial_terms (id, model_type)`, the
    parent side carrying `UNIQUE (id, model_type)` and the child side `CHECK (model_type =
@@ -48,7 +50,7 @@ would be a second, unguarded way for the rows of an `approved` scenario to disap
 
 **What is deliberately absent:** a date window (ADR-0008, addendum 2026-09-23 SC-4-01 — one rule per
 scenario, versioned by the copy mechanism), any T&M domain column (hour caps, overtime rates, a
-billable-day length — ADR-0003 points 7 and "Odłożone"), and any rate: the selling rate comes only
+billable-day length — ADR-0003 points 7 and "Deferred"), and any rate: the selling rate comes only
 from the catalogue (point 4), so nothing on these rows is priced and nothing is a personnel cost.
 
 **SC-4-02 (Fixed Price, F-06.2, Issue #66) adds its model** exactly the way point 2 and
@@ -103,7 +105,7 @@ MODEL_TYPE_STORY_POINTS = "story_points"
 shape — price per point × accepted points, no "sprint fee" variant (out of scope)."""
 
 MODEL_TYPE_OUTCOME_BASED = "outcome_based"
-"""Model Outcome-based (F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03)."""
+"""Model Outcome-based (F-06.3; ADR-0003, addendum 2026-09-25 SC-4-03)."""
 
 MODEL_TYPE_FIXED_PRICE = "fixed_price"
 """The Fixed Price commercial model (F-06.2; SC-4-02, Issue #66; ADR-0003, addendum 2026-09-25
@@ -131,9 +133,9 @@ by `tests/test_commercial_terms_schema.py` (`LATEST_MODEL_TYPE_CHECK_MIGRATION_P
 guard R-02 introduced for the catalogue). The constraint keeps its name,
 `ck_commercial_terms_model_type_known`, across every widening.
 
-**Pełna lista `IN`, nie tylko wartość ostatniego modelu** (ADR-0003, aneks 2026-09-25 SC-4-03, pkt
-10c): migracja niosąca wyłącznie własną wartość po cichu unieważniłaby zapisane reguły
-wcześniejszych modeli przy następnej walidacji ograniczenia."""
+**The full `IN` list, not only the latest model's value** (ADR-0003, addendum 2026-09-25 SC-4-03,
+point 10c): a migration carrying only its own value would silently invalidate the saved rules of
+earlier models at the next validation of the constraint."""
 
 TM_MODEL_TYPE_EXPRESSION = f"model_type = '{MODEL_TYPE_TIME_AND_MATERIAL}'"
 SP_MODEL_TYPE_EXPRESSION = f"model_type = '{MODEL_TYPE_STORY_POINTS}'"
@@ -143,32 +145,34 @@ OUTCOME_MODEL_TYPE_EXPRESSION = f"model_type = '{MODEL_TYPE_OUTCOME_BASED}'"
 MODEL_TYPE_LENGTH = 40
 
 OUTCOME_CATEGORIES: tuple[str, ...] = ("not_achieved", "partial", "achieved", "exceeded")
-"""Cztery stałe kategorie wyniku (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 3), od najgorszej. Każda
-jest parą kolumn `outcome_terms`: `<kategoria>_units` i `<kategoria>_probability`."""
+"""Four fixed outcome categories (ADR-0003, addendum 2026-09-25 SC-4-03, point 3), from the worst.
+Each is a pair of `outcome_terms` columns: `<category>_units` and `<category>_probability`."""
 
 
 def units_column(category: str) -> str:
-    """Nazwa kolumny liczby jednostek kategorii — jedna pisownia dla modelu, zapisu i odczytu."""
+    """The name of a category's units-count column — one spelling for the model, the write and the
+    read."""
     return f"{category}_units"
 
 
 def probability_column(category: str) -> str:
-    """Nazwa kolumny prawdopodobieństwa kategorii — jedna pisownia dla modelu, zapisu i odczytu."""
+    """The name of a category's probability column — one spelling for the model, the write and the
+    read."""
     return f"{category}_probability"
 
 
 OUTCOME_AMOUNT_PRECISION = 14
 OUTCOME_AMOUNT_SCALE = 4
-"""`NUMERIC(14,4)` dla kwot i stawki za jednostkę reguły — ta sama skala co stawki katalogu i koszty
-dodatkowe (ADR-0008, pkt 6). Zaokrąglenie do jednostki waluty należy do wyliczenia
-(`app.core.money.round_money`), nigdy do zapisu."""
+"""`NUMERIC(14,4)` for the rule's amounts and unit rate — the same scale as the catalogue's rates
+and additional costs (ADR-0008, point 6). Rounding to the currency unit belongs to the calculation
+(`app.core.money.round_money`), never to the write."""
 
 OUTCOME_UNITS_PRECISION = 14
 OUTCOME_UNITS_SCALE = 4
 
 PROBABILITY_PRECISION = 5
 PROBABILITY_SCALE = 2
-"""`NUMERIC(5,2)` — procenty z dwoma miejscami po przecinku (ADR-0003, aneks SC-4-03, pkt 4)."""
+"""`NUMERIC(5,2)` — percentages with two decimal places (ADR-0003, addendum SC-4-03, point 4)."""
 
 OUTCOME_PROBABILITIES_EXPRESSION = (
     "("
@@ -179,30 +183,32 @@ OUTCOME_PROBABILITIES_EXPRESSION = (
     + " + ".join(probability_column(c) for c in OUTCOME_CATEGORIES)
     + " = 100)"
 )
-""""Wszystkie cztery `NULL` albo wszystkie ustawione i suma dokładnie 100" — `CHECK` jednego wiersza
-(ADR-0003, aneks SC-4-03, pkt 3-4). Bez tolerancji: `NUMERIC` porównuje dokładnie."""
+""""All four `NULL` or all set and the sum exactly 100" — a single-row `CHECK` (ADR-0003, addendum
+SC-4-03, points 3-4). No tolerance: `NUMERIC` compares exactly."""
 
 OUTCOME_UNITS_WITH_UNIT_RATE_EXPRESSION = (
     "unit_rate IS NULL OR ("
     + " AND ".join(f"{units_column(c)} IS NOT NULL" for c in OUTCOME_CATEGORIES)
     + ")"
 )
-"""Liczby jednostek są danymi wejściowymi stawki za jednostkę (runda 2 weryfikacji SC-4-03, pkt 5):
-bez stawki (`unit_rate IS NULL`) każda z czterech może być `NULL` — nie ma czego nimi mnożyć, a `0`
-wpisane za brak byłoby fałszywą wartością; ze stawką wszystkie cztery `NOT NULL`. `CHECK` jednego
-wiersza, więc także fixture i import nie zapiszą stawki bez jednostek."""
+"""The unit counts are inputs to the unit rate (SC-4-03 verification round 2, point 5): with no rate
+(`unit_rate IS NULL`) each of the four may be `NULL` — there is nothing to multiply them by, and a
+`0` written in for the absence would be a false value; with a rate, all four are `NOT NULL`. A
+single-row `CHECK`, so a fixture and an import cannot write a rate with no units either."""
 
 OUTCOME_BOUNDS_ORDERED_EXPRESSION = (
     "revenue_min IS NULL OR revenue_max IS NULL OR revenue_min <= revenue_max"
 )
-"""`min <= max`, gdy oba ustawione (pkt 2). Brak ograniczenia to `NULL`, nigdy `0`."""
+"""`min <= max`, when both are set (point 2). No bound is `NULL`, never `0`."""
 
 OUTCOME_CURRENCY_ISO4217_EXPRESSION = "char_length(currency) = 3"
 OUTCOME_CURRENCY_UPPER_EXPRESSION = "currency = upper(currency)"
-"""Te same dwie reguły waluty co w katalogu (`ck_catalog_default_rates_currency_*`; pkt 7)."""
+"""The same two currency rules as in the catalogue
+(`ck_catalog_default_rates_currency_*`; point 7)."""
 
 OUTCOME_TYPE_AGREEMENT_FOREIGN_KEY = "fk_outcome_terms_commercial_terms_model_type"
-"""Złożony klucz obcy zgodności typu dla `outcome_terms` — wzorzec pkt 3 ADR-0003 bez zmian."""
+"""The composite foreign key for type agreement of `outcome_terms` — the pattern of ADR-0003
+point 3, unchanged."""
 
 TYPE_AGREEMENT_FOREIGN_KEY = "fk_tm_terms_commercial_terms_model_type"
 """The composite foreign key that makes type agreement a property of the database (criterion K-04).
@@ -383,7 +389,7 @@ class StoryPointsTerms(Base):
 
     - **`price_per_point` × `accepted_points`, nothing else** (D-1/A) — the "sprint fee" variant is
       out of scope; a second shape under this same discriminator would be the wide-table defect
-      ADR-0003 already refused once ("Rozważane alternatywy"), so it would need its own
+      ADR-0003 already refused once ("Considered alternatives"), so it would need its own
       discriminator value, not a column here.
     - **`accepted_points` is written once, at creation, with no edit path** (D-5/A) — like this
       whole table, like `tm_terms`: nothing outside the scenario changes it, so approval freezes
@@ -456,25 +462,26 @@ def _probability_column() -> Mapped[Decimal | None]:
 
 
 class OutcomeTerms(Base):
-    """Szczegóły reguły Outcome-based — 1:1, zgodność typu w bazie (ADR-0003, aneks 2026-09-25
-    SC-4-03).
+    """The Outcome-based rule's details — 1:1, type agreement in the database (ADR-0003, addendum
+    2026-09-25 SC-4-03).
 
-    Pierwsza tabela szczegółów z kolumnami dziedzinowymi. Każda reguła poniżej jest ograniczeniem
-    bazy, nie tylko schematu API — fixture, skrypt ani import nie przechodzą przez Pydantic:
+    The first details table with domain columns. Every rule below is a constraint of the database,
+    not only of the API schema — a fixture, a script or an import do not go through Pydantic:
 
-    - **opłata stała obowiązkowa; premia, stawka za jednostkę, minimum i maksimum opcjonalne**, a
-      składnik nieobecny to `NULL`, nigdy `0` (pkt 2) — `0` to wartość wpisana przez
-      użytkownika;
-    - kwoty, stawka i liczby jednostek nieujemne; `revenue_min <= revenue_max`, gdy oba ustawione;
-    - **cztery stałe kategorie jako kolumny** (pkt 3), każda z liczbą jednostek (wpisaną ręcznie;
-      `NULL` dozwolone tylko bez stawki za jednostkę —
-      `ck_outcome_terms_units_given_with_unit_rate`) i opcjonalnym prawdopodobieństwem
-      `NUMERIC(5,2)`; "wszystkie `NULL` albo suma dokładnie 100" jako `CHECK` jednego wiersza
-      (pkt 4);
-    - **własna waluta reguły** (pkt 7), te same dwa `CHECK` co w katalogu.
+    - **the fixed fee is mandatory; the bonus, the unit rate, the minimum and the maximum are
+      optional**, and an absent component is `NULL`, never `0` (point 2) — `0` is a value entered
+      by the user;
+    - the amounts, the rate and the unit counts are non-negative; `revenue_min <= revenue_max`, when
+      both are set;
+    - **four fixed categories as columns** (point 3), each with a unit count (entered by hand;
+      `NULL` allowed only with no unit rate —
+      `ck_outcome_terms_units_given_with_unit_rate`) and an optional `NUMERIC(5,2)`
+      probability; "all `NULL` or the sum exactly 100" as a single-row `CHECK`
+      (point 4);
+    - **the rule's own currency** (point 7), the same two `CHECK`s as in the catalogue.
 
-    Dana własna scenariusza (ADR-0004, aneks 2026-09-25 SC-4-03, grupa 2): chroni ją strażnik
-    zapisu, kopiuje ją jeden wpis agregatu, migawka nie zamraża niczego.
+    Own data of the scenario (ADR-0004, addendum 2026-09-25 SC-4-03, group 2): the write guard
+    protects it, one entry of the aggregate copies it, the snapshot freezes nothing of it.
     """
 
     __tablename__ = "outcome_terms"
@@ -488,17 +495,18 @@ class OutcomeTerms(Base):
         server_default=MODEL_TYPE_OUTCOME_BASED,
         default=MODEL_TYPE_OUTCOME_BASED,
     )
-    """Zawsze `outcome_based` (CHECK niżej) — druga połowa złożonego klucza obcego, jak w
+    """Always `outcome_based` (CHECK below) — the second half of the composite foreign key, as in
     `tm_terms`."""
 
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     fixed_fee: Mapped[Decimal] = _amount_column(nullable=False)
     success_bonus: Mapped[Decimal | None] = _amount_column(nullable=True)
-    """Premia binarna — wypłacana dla kategorii "osiągnięty" i "przekroczony" (pkt 2)."""
+    """A binary bonus — paid for the categories "achieved" and "exceeded" (point 2)."""
     unit_rate: Mapped[Decimal | None] = _amount_column(nullable=True)
     revenue_min: Mapped[Decimal | None] = _amount_column(nullable=True)
     revenue_max: Mapped[Decimal | None] = _amount_column(nullable=True)
-    """Minimum i maksimum ograniczają **cały** przychód kategorii i gwarantowany (pkt 6)."""
+    """The minimum and maximum bound the **whole** revenue — the category's portion together with
+    the guaranteed one (point 6)."""
 
     not_achieved_units: Mapped[Decimal | None] = _units_column()
     not_achieved_probability: Mapped[Decimal | None] = _probability_column()
@@ -512,8 +520,8 @@ class OutcomeTerms(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    # Bez `updated_at`: znacznik współbieżności należy do reguły (ADR-0003, "Konsekwencje"; aneks
-    # SC-4-03, pkt 9).
+    # No `updated_at`: the concurrency marker belongs to the rule (ADR-0003, "Konsekwencje";
+    # addendum SC-4-03, point 9).
 
     __table_args__ = (
         CheckConstraint(OUTCOME_MODEL_TYPE_EXPRESSION, name="model_type_is_outcome"),

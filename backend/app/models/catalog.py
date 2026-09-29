@@ -3,7 +3,7 @@ absence budgets (F-03, F-05; SC-2-01/SC-2-03/SC-3-02/SC-3-03).
 
 Ten tables, and one thing they all have in common: **no column ties a row to a project, a user, a
 business unit or a tenant.** That is what puts them outside the `project_access` scope filter
-(ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu", point 1) and outside
+(ADR-0005, addendum 2026-09-19 "the first dataset with no project scope", point 1) and outside
 the single-guarded-read-path requirement (ADR-0001, addendum 2026-09-19 — a guard function exists so
 a scope predicate cannot be forgotten, and there is no predicate here to forget). The moment one of
 these tables grows such a column, both exceptions expire and need their own dated entry in those
@@ -31,9 +31,10 @@ amount — the decision that it is organisational data rather than cost data is 
 addendum, and the boundary that comes with it is point 4: the *computed cost* of a budget is a cost
 field and goes back through the SC-1-08 conjunction. Nothing in SC-3-03 computes one.
 
-**SC-5-05 adds one more dictionary, `catalog_cost_categories`** (ADR-0014, point 2; ADR-0005, aneks
-2026-09-23 SC-5-05, point 3): the categories of an additional cost, built on the same base as the
-five below and served by the same pair of endpoints — another dictionary, not another mechanism.
+**SC-5-05 adds one more dictionary, `catalog_cost_categories`** (ADR-0014, point 2; ADR-0005,
+addendum 2026-09-23 SC-5-05, point 3): the categories of an additional cost, built on the same
+base as the five below and served by the same pair of endpoints — another dictionary, not another
+mechanism.
 
 The five dictionaries are **data, not code** (NF-10): no `StrEnum` anywhere restricts which roles,
 seniorities, locations, engagement types or vendors may exist, so adding "Site Reliability Engineer"
@@ -295,7 +296,7 @@ class CatalogVendor(_CatalogDimension):
 class CatalogCostCategory(_CatalogDimension):
     """A category of additional cost — recruitment, hardware, licences, cloud… (F-08, SC-5-05).
 
-    **Another dictionary, not another mechanism** (ADR-0014, point 2; ADR-0005, aneks 2026-09-23
+    **Another dictionary, not another mechanism** (ADR-0014, point 2; ADR-0005, addendum 2026-09-23
     SC-5-05, point 3): the same id/name/timestamps base, the same normalised-name index, the same
     shared pair of endpoints (`app.data.catalog.DIMENSION_MODELS`) and the same
     `CATALOG_READ`/`CATALOG_WRITE` gates as the other dictionaries. No project, user or tenant
@@ -303,8 +304,9 @@ class CatalogCostCategory(_CatalogDimension):
 
     **A label and nothing else** (ADR-0014, point 2, Q-4 = A): no amount, no default price, no
     snapshot. Renaming a category after an approval renames it on the approved scenario too — the
-    accepted limitation of ADR-0004's group 1 (aneks SC-5-05, point 2). A default price per category
-    would be a consumer of ADR-0008 and needs its own decision (ADR-0008, aneks SC-5-05, point 3).
+    accepted limitation of ADR-0004's group 1 (addendum SC-5-05, point 2). A default price per
+    category would be a consumer of ADR-0008 and needs its own decision (ADR-0008, addendum
+    SC-5-05, point 3).
 
     **Not deletable while any cost points at it**: `additional_cost.category_id` is a foreign key
     with no `ON DELETE` action (`NO ACTION`), and no endpoint deletes a dictionary entry anyway.
@@ -487,13 +489,13 @@ class CatalogDefaultRate(Base):
         default=Decimal("0"),
     )
     """Personnel overheads/bonuses/benefits, as a percentage of `default_cost_rate` — SC-5-02 (F-07,
-    ADR-0013 aneks 2026-09-25, Q4). **A parameter, not a cost figure**: the classification decided
-    at gate 1 (ADR-0005, aneks 2026-09-25) rests entirely on the shape — a percentage of a rate that
-    is already gated separately reveals nothing on its own — so this column is gated by
+    ADR-0013 addendum 2026-09-25, Q4). **A parameter, not a cost figure**: the classification
+    decided at gate 1 (ADR-0005, addendum 2026-09-25) rests entirely on the shape — a percentage of
+    a rate that is already gated separately reveals nothing on its own — so this column is gated by
     `CATALOG_READ` alone (`app.api.response_shaping.shape_catalog_rate` passes it through
     ungated, never added to `CATALOG_PERSONNEL_COST_FIELDS`). The day this becomes an absolute
     amount instead of a percentage, that classification has to be re-decided, not inherited
-    (ADR-0005, same aneks, point 1).
+    (ADR-0005, same addendum, point 1).
 
     **The same row as `default_cost_rate`, deliberately** (Q5): a new value opens a new
     `effective_from`/`effective_to` window through the same `EXCLUDE` constraint as a rate change,
@@ -504,7 +506,7 @@ class CatalogDefaultRate(Base):
     includes_surcharge: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
-    """Whether `default_cost_rate` **already** carries the surcharge above (ADR-0013, aneks
+    """Whether `default_cost_rate` **already** carries the surcharge above (ADR-0013, addendum
     2026-09-25 SC-5-02, Q5 — the flag named forward as part of SC-5-01, pt 5). `True` means the
     fully loaded cost formula must not add `surcharge_percent` on top a second time (criterion
     K-02) — the fully loaded cost then equals the base cost for this window. The same row, the same
@@ -582,8 +584,8 @@ class CatalogDefaultRate(Base):
             "effective_to IS NULL OR effective_to >= effective_from",
             name="effective_period_ordered",
         ),
-        # SC-5-02 (F-07, ADR-0013 aneks 2026-09-25 Q4): a negative surcharge is a sign error, not a
-        # discount — the same reasoning `RateAmount`/`BudgetDays` give their own non-negative rules.
+        # SC-5-02 (F-07, ADR-0013 addendum 2026-09-25 Q4): a negative surcharge is a sign error,
+        # not a discount — same reasoning as `RateAmount`/`BudgetDays`'s own non-negative rules.
         CheckConstraint("surcharge_percent >= 0", name="surcharge_percent_not_negative"),
         # Five elements, and the fifth is an expression rather than a column (`RATE_EXCLUDE_KEY`):
         # `COALESCE(vendor_id, '00000000-0000-0000-0000-000000000000'::uuid)` — the literal

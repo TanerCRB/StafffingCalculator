@@ -171,9 +171,9 @@ TERMS_FIELDS = {
     "id",
     "model_type",
     "updated_at",
-    # SC-4-03, runda 2 weryfikacji (R-04, zatwierdzone przez człowieka 2026-09-25): zbiór
-    # rozszerzony jawnie o jedno nazwane pole — parametry reguły Outcome-based, `null` dla T&M.
-    # Równość zostaje.
+    # SC-4-03, verification round 2 (R-04, approved by a human 2026-09-25): the set
+    # explicitly widened by one named field — the Outcome-based rule's parameters, `null` for T&M.
+    # Equality stays.
     "outcome_terms",
 }
 OUTCOME_TERMS_FIELDS = {
@@ -192,9 +192,9 @@ REVENUE_FIELDS = {
     "amount",
     "currency",
     "assumptions_used",
-    # SC-4-03 (bramka 1, D-6; ADR-0003 aneks 2026-09-25 pkt 5b i 10b): zbiór rozszerzony jawnie o
-    # trzy nazwane pola addytywne — przychód oczekiwany, jego stan i przychody per kategoria.
-    # Równość zbioru zostaje.
+    # SC-4-03 (gate 1, D-6; ADR-0003 addendum 2026-09-25 point 5b and 10b): the set explicitly
+    # widened by three named additive fields — the expected revenue, its state and revenue per
+    # category. Set equality stays.
     "expected_state",
     "expected_amount",
     "category_revenues",

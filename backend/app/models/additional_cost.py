@@ -17,28 +17,28 @@ its dated addenda in ADR-0004/0005/0007/0008, not a choice made here:
    `CHECK amount > 0` — a zero row has no reason to exist and a credit is a different, undesigned
    mechanism.
 4. **Month granularity, closed periods, type and shape agreeing in the database** (point 3;
-   ADR-0008, aneks SC-5-05, point 2). A one-off cost is one month (`end_month IS NULL`); a
+   ADR-0008, addendum SC-5-05, point 2). A one-off cost is one month (`end_month IS NULL`); a
    recurring cost is a closed `[start_month, end_month]` range, never open-ended. Both ends are
    first days of a month. The recurring amount is the amount **of every month** of the range
    (Q-3 = A) — nothing here or downstream divides it.
-5. **Not a consumer of ADR-0008** (point 4; ADR-0008, aneks SC-5-05, point 1): two costs of one
+5. **Not a consumer of ADR-0008** (point 4; ADR-0008, addendum SC-5-05, point 1): two costs of one
    category in one month are both true and both counted, so there is no `EXCLUDE`. The absence is
    the decision.
 6. **`funding_source` — who carries the cost** (point 9): `internal` or `rebilled_to_client`. The
    word *vendor* is deliberately absent: in this repository it means a subcontractor
    (`catalog_vendors`). A stored attribute only (Q-5 = A) — both values enter the sum of additional
    costs, and neither touches the revenue.
-7. **Its own concurrency marker** (ADR-0007, aneks 2026-09-23 SC-5-05): `updated_at`, per cost row.
-   A cost may exist without a position, so it cannot borrow the position's token the way an absence
-   does; two costs of one position are edited independently.
-8. **Group 2 of ADR-0004** (aneks SC-5-05, point 1): own data of the scenario, protected after an
+7. **Its own concurrency marker** (ADR-0007, addendum 2026-09-23 SC-5-05): `updated_at`, per cost
+   row. A cost may exist without a position, so it cannot borrow the position's token the way an
+   absence does; two costs of one position are edited independently.
+8. **Group 2 of ADR-0004** (addendum SC-5-05, point 1): own data of the scenario, protected after an
    approval by the refusal of a write (`app.data.additional_cost`, through
    `app.data.scenario_guard`), not by a snapshot. The category is group 1 — a label, read live.
 
 **What is deliberately absent: a free-text column** (a description, a note, a person). None was
 decided, and a cost attached to a `headcount = 1` position is already indirectly about one person
-(ADR-0005, aneks SC-5-05, point 2) — a text field would make that direct without the decision that
-governs personal data.
+(ADR-0005, addendum SC-5-05, point 2) — a text field would make that direct without the decision
+that governs personal data.
 """
 
 import uuid
@@ -150,7 +150,7 @@ class AdditionalCost(Base):
 
     end_month: Mapped[date | None] = mapped_column(Date, nullable=True)
     """The last month of a recurring cost, **inclusive** — never `NULL` for one (the database
-    refuses an open-ended recurring cost; ADR-0008, aneks SC-5-05, point 2). Always `NULL` for a
+    refuses an open-ended recurring cost; ADR-0008, addendum SC-5-05, point 2). Always `NULL` for a
     one-off cost, so "one month" has one spelling."""
 
     funding_source: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -162,7 +162,7 @@ class AdditionalCost(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
-    """ADR-0007's concurrency marker for **this cost row** (aneks 2026-09-23 SC-5-05). Always the
+    """ADR-0007's concurrency marker for **this cost row** (addendum 2026-09-23 SC-5-05). Always the
     database's clock (`now()` in the statement that writes), never this process's."""
 
     __table_args__ = (

@@ -463,7 +463,7 @@ def test_k_19_two_concurrent_approvals_of_one_draft_leave_one_snapshot_not_two(
 # "The first statement, whichever tables it holds" rather than "the statement holding table X" is
 # what makes this catch *every* split, not only the historical one (R-01, 2026-09-23). The three
 # pairs that must agree — calendar ↔ days, calendar ↔ budgets, statutory type ↔ location calendar
-# (the last replaced "statutory type ↔ budgets" in ADR-0004, aneks 2026-09-23 SC-5-06, point 5) —
+# (the last replaced "statutory type ↔ budgets" in ADR-0004, addendum 2026-09-23 SC-5-06, point 5) —
 # connect all four tables, so any first statement that is not all of them separates at least one
 # pair from its partner, and the edit then lands between them. A hook keyed to one named table
 # does not: in a split whose *last* statement holds that table (types and budgets first, calendars
@@ -652,7 +652,7 @@ def test_s_01_a_location_given_a_calendar_during_the_approval_cannot_freeze_it_w
 ) -> None:
     """S-01 — the statutory type and the location's calendar are frozen from **one** catalogue.
 
-    The pair "statutory type ↔ location calendar" (ADR-0004, aneks 2026-09-23 SC-5-06, point 5),
+    The pair "statutory type ↔ location calendar" (ADR-0004, addendum 2026-09-23 SC-5-06, point 5),
     which replaced SC-3-03's "statutory type ↔ budgets" together with the contract it guarded.
     `ApprovedSnapshotAbsenceType`'s contract now: a frozen row with `is_statutory_leave = true` is
     present **iff** a type was named and the scenario has an allocation row in a location with a

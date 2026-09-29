@@ -197,7 +197,7 @@ def test_k_01_one_rule_of_each_model_is_not_a_double_count_and_is_not_collapsed_
 def test_k_01_two_story_points_rules_of_one_scenario_refuse_to_guess_instead_of_dropping_one(
     db_session: Session,
 ) -> None:
-    """Reviewer R-01 (bramka 2) — unlike Time & Material, `story_points_terms` carries its own
+    """Reviewer R-01 (gate 2) — unlike Time & Material, `story_points_terms` carries its own
     `price_per_point`/`accepted_points` on the rule's row, so two legally-coexisting Story Points
     rules (K-02/D-3=A: a whole-scenario rule and a segment rule) can genuinely disagree.
     `revenue_by_model_type` must not silently keep one and drop the other's revenue — it refuses.
@@ -268,7 +268,7 @@ def test_k_02_a_second_rule_of_the_same_segment_is_refused(db_session: Session) 
 def test_k_02_a_whole_scenario_rule_and_distinct_segment_rules_coexist(db_session: Session) -> None:
     """The contrast proving the pair of constraints is exactly that — not still a blanket "one rule
     per scenario": a whole-scenario rule and two different-segment rules on the same scenario are
-    all accepted together (D-3=A's "reguła łączona" — schema-level, K-01 proves the revenue side for
+    all accepted together (D-3=A's "combined rule" — schema-level, K-01 proves the revenue side for
     the one case within reach today)."""
     scenario = _scenario(db_session)
     segment_a = make_scenario_delivery_segment(db_session, scenario, name="Phase 1")
@@ -532,7 +532,7 @@ def test_d4_the_segment_copier_runs_before_the_commercial_terms_copier_in_the_re
 # question `scope_ref` makes ill-posed once a scenario carries more than one row. Unreachable
 # through the running API today (no request schema writes `scope_ref`, so the API alone can never
 # create a second row) — reachable only by a direct data-layer write, exactly as the fixture below
-# does. Guardian/reviewer, bramka 2: fail loud with a named exception, not a raw, unhandled
+# does. Guardian/reviewer, gate 2: fail loud with a named exception, not a raw, unhandled
 # `sqlalchemy.exc.MultipleResultsFound`.
 
 

@@ -1,20 +1,20 @@
-"""Przychód Outcome-based: opłata stała + premia binarna + stawka za jednostkę, ograniczone min/max
-(F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03).
+"""Outcome-based revenue: fixed fee + binary bonus + per-unit rate, bounded by min/max
+(F-06.3; ADR-0003, addendum 2026-09-25 SC-4-03).
 
-Czysta funkcja tego, co przeczytała warstwa danych — bez `Session`, bez zegara, bez katalogu. **Nie
-importuje niczego z innego modelu komercyjnego ani z żadnego wyliczenia kosztu** (F-06: niezależne
-wyliczenie per model) i nie dostaje niczego z obsady, alokacji ani katalogu: typ wejściowy
-`OutcomeTermsInput` nie ma na to pola.
+A pure function of what the data layer already read — no `Session`, no clock, no catalogue. **Does
+not import anything from another commercial model or from any cost calculation** (F-06: independent
+calculation per model) and receives nothing about staffing, allocation or the catalogue: the input
+type `OutcomeTermsInput` has no field for that.
 
-Formuła (pkt 2, 5, 6):
+Formula (points 2, 5, 6):
 
-    składnik_k   = premia · [k ∈ {osiągnięty, przekroczony}] + stawka_za_jednostkę · jednostki_k
-    r_k          = ogranicz(opłata_stała + składnik_k, min, max)      — bez zaokrąglenia
-    gwarantowany = ogranicz(opłata_stała, min, max)                    — zaokrąglony raz
-    oczekiwany   = Σ_k (p_k / 100) · r_k                               — zaokrąglony raz, na końcu
+    component_k  = success_bonus · [k ∈ {achieved, exceeded}] + unit_rate · units_k
+    r_k          = bound(fixed_fee + component_k, min, max)        — unrounded
+    guaranteed   = bound(fixed_fee, min, max)                      — rounded once
+    expected     = Σ_k (p_k / 100) · r_k                           — rounded once, at the end
 
-Składnik nieobecny (`None`) nie jest `0` wpisanym przez użytkownika, ale w sumie znaczy "brak
-składnika"; dla min/max `None` znaczy "bez ograniczenia", nigdy "ogranicz do zera".
+A component that is absent (`None`) is not a `0` entered by the user, but within the sum means "no
+component"; for min/max, `None` means "no bound on that side", never "bound to zero".
 """
 
 from collections.abc import Sequence
@@ -40,16 +40,16 @@ from app.domain.revenue import (
 from app.models.commercial_terms import MODEL_TYPE_OUTCOME_BASED
 
 BONUS_CATEGORIES: Final = frozenset({"achieved", "exceeded"})
-"""Kategorie, dla których wypłacana jest premia binarna — "częściowy" jej **nie** dostaje (D-1)."""
+"""Categories for which the binary bonus is paid — "partial" **does not** get it (D-1)."""
 
 _HUNDRED: Final = Decimal("100")
 
 
 @dataclass(frozen=True)
 class OutcomeCategoryInput:
-    """Jedna kategoria wyniku: ile jednostek osiągnięto (wpis ręczny) i z jakim prawdopodobieństwem
-    (procent, opcjonalny). `units` jest `None`, gdy reguła nie ma stawki za jednostkę i użytkownik
-    jednostek nie podał — nigdy `0` za brak."""
+    """One result category: how many units were achieved (a manual entry) and with what
+    probability (percent, optional). `units` is `None` when the rule has no per-unit rate and the
+    user did not give any units — never `0` for absence."""
 
     category: str
     units: Decimal | None
@@ -58,7 +58,7 @@ class OutcomeCategoryInput:
 
 @dataclass(frozen=True)
 class OutcomeTermsInput:
-    """Reguła Outcome-based dokładnie tak, jak zapisał ją użytkownik — nic spoza scenariusza."""
+    """An Outcome-based rule exactly as the user entered it — nothing beyond the scenario."""
 
     currency: str
     fixed_fee: Decimal
@@ -70,10 +70,11 @@ class OutcomeTermsInput:
 
 
 def outcome_assumptions(currencies: tuple[str, ...] = ()) -> AssumptionsUsed:
-    """Założenia przychodu Outcome-based: żadnego źródła stawek, godzin ani osi poddostawcy.
+    """The assumptions of an Outcome-based revenue: no rate source, no hours source, no vendor axis.
 
-    `assumptions_used` nazywa wyłącznie to, co wyliczenie faktycznie czyta (F-06.5; ADR-0003, aneks
-    SC-4-03, pkt 8) — stąd `not_applicable` w trzech polach źródła, zamiast udawania katalogu.
+    `assumptions_used` names only what the calculation actually reads (F-06.5; ADR-0003, addendum
+    SC-4-03, point 8) — hence `not_applicable` in the three source fields, instead of pretending a
+    catalogue lookup.
     """
     return AssumptionsUsed(
         model_type=MODEL_TYPE_OUTCOME_BASED,
@@ -85,7 +86,7 @@ def outcome_assumptions(currencies: tuple[str, ...] = ()) -> AssumptionsUsed:
 
 
 def _bounded(value: Decimal, terms: OutcomeTermsInput) -> Decimal:
-    """Ogranicz **cały** przychód do [min, max] (D-5); `None` to brak ograniczenia z tej strony."""
+    """Bound the **entire** revenue to [min, max] (D-5); `None` means no bound from that side."""
     if terms.revenue_min is not None and value < terms.revenue_min:
         value = terms.revenue_min
     if terms.revenue_max is not None and value > terms.revenue_max:
@@ -94,7 +95,7 @@ def _bounded(value: Decimal, terms: OutcomeTermsInput) -> Decimal:
 
 
 def _category_revenue(terms: OutcomeTermsInput, category: OutcomeCategoryInput) -> Decimal:
-    """Niezaokrąglony przychód jednej kategorii po ograniczeniu min/max."""
+    """The unrounded revenue of one category after the min/max bound."""
     variable = Decimal("0")
     if terms.success_bonus is not None and category.category in BONUS_CATEGORIES:
         variable += terms.success_bonus
@@ -106,19 +107,20 @@ def _category_revenue(terms: OutcomeTermsInput, category: OutcomeCategoryInput) 
 def outcome_based_revenue(
     terms: OutcomeTermsInput, *, scenario_currency: str | None
 ) -> RevenueAnswer:
-    """Przychód gwarantowany (jako `revenue`), oczekiwany i per kategoria — albo nazwany stan.
+    """The guaranteed revenue (as `revenue`), the expected one and per category — or a named state.
 
-    1. **Waluta reguły inna niż waluta scenariusza** (gdy ta jest ustawiona) → `currency_mismatch`,
-       bez kwoty w żadnym polu i bez przeliczenia (pkt 7). Porównanie z walutą kosztów, gdy
-       scenariusz waluty nie ma, należy do `app.domain.scenario_results` (R-01).
-    1a. **Stawka za jednostkę bez liczby jednostek którejkolwiek kategorii** →
-       `incomplete_commercial_terms`, nigdy mnożenie przez `0`. Baza tego nie dopuszcza
-       (`ck_outcome_terms_units_given_with_unit_rate`); ta gałąź chroni czystą funkcję przed
-       wejściem spoza bazy.
-    2. Przychód gwarantowany: opłata stała po ograniczeniu min/max, zaokrąglona raz (pkt 5a, 6).
-    3. Przychód oczekiwany: z **niezaokrąglonych** r_k, zaokrąglony raz, na końcu (pkt 5b). Brak
-       prawdopodobieństw (baza gwarantuje "wszystkie albo żadne") → nazwany stan `no_probabilities`,
-       nigdy `0` i nigdy kopia gwarantowanego (pkt 5c).
+    1. **The rule's currency differs from the scenario's currency** (when the latter is set) →
+       `currency_mismatch`, with no amount in any field and no conversion (point 7). The
+       comparison with the cost currency, when the scenario has no currency, belongs to
+       `app.domain.scenario_results` (R-01).
+    1a. **A per-unit rate with no unit count for any category** →
+       `incomplete_commercial_terms`, never a multiplication by `0`. The database does not allow
+       this (`ck_outcome_terms_units_given_with_unit_rate`); this branch protects the pure
+       function against input from outside the database.
+    2. Guaranteed revenue: the fixed fee after the min/max bound, rounded once (point 5a, 6).
+    3. Expected revenue: from the **unrounded** r_k, rounded once, at the end (point 5b). No
+       probabilities (the database guarantees "all or none") → the named state
+       `no_probabilities`, never `0` and never a copy of the guaranteed one (point 5c).
     """
     assumptions = outcome_assumptions((terms.currency,))
     if scenario_currency is not None and terms.currency != scenario_currency:
@@ -153,7 +155,7 @@ def outcome_based_revenue(
         (
             category.probability / _HUNDRED * revenue
             for category, revenue in unrounded
-            if category.probability is not None  # zawsze prawda tutaj; zawęża typ
+            if category.probability is not None  # always true here; narrows the type
         ),
         Decimal("0"),
     )

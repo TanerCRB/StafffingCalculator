@@ -1,6 +1,6 @@
 """SC-5-03, K-06 — a `fixed_amount` basis with no amount or no currency is unwritable, in the
-database, whoever is writing (F-07; ADR-0013, aneks 2026-09-25 SC-5-03, point 2; ADR-0014 D-10 the
-precedent this mirrors).
+database, whoever is writing (F-07; ADR-0013, addendum 2026-09-25 SC-5-03, point 2; ADR-0014
+D-10 the precedent this mirrors).
 
 Every write here is raw SQL against `staffing_position`, never `StaffingPositionCreateRequest`
 (mirrors `tests/test_additional_cost_schema.py`): K-06's claim is that the **database** makes the
@@ -99,8 +99,9 @@ def _refusal(session: Session, row: dict[str, object]) -> tuple[str | None, str 
 def test_f_4_fixed_amount_basis_with_no_amount_and_no_currency_is_refused(
     db_session: Session,
 ) -> None:
-    """F-4 — the state ADR-0013's aneks calls "nieosiągalne w aplikacji" from construction: neither
-    piece is optional once the basis is `fixed_amount`. Contrast: both present is accepted."""
+    """F-4 — the state ADR-0013's addendum calls "unreachable from the application" from
+    construction: neither piece is optional once the basis is `fixed_amount`. Contrast: both
+    present is accepted."""
     fixture = _fixture(db_session)
 
     assert _refusal(
@@ -111,7 +112,7 @@ def test_f_4_fixed_amount_basis_with_no_amount_and_no_currency_is_refused(
 def test_f_4_fixed_amount_basis_with_an_amount_but_no_currency_is_refused(
     db_session: Session,
 ) -> None:
-    """F-4, the half the aneks names as its own open question, resolved here: the CHECK requires
+    """F-4, the half the addendum names as its own open question, resolved here: the CHECK requires
     the currency too, not only the amount — a `fixed_amount` with no currency is the same unnamed
     state ADR-0013's "two shapes, never a third" forbids for worked time."""
     fixture = _fixture(db_session)

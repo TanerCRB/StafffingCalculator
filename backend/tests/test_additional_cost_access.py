@@ -4,7 +4,7 @@
   proven with a caller holding **every** permission (the precedent of SC-5-01 K-05), so a refusal
   here is provably about scope and not about permission. Path confusion separately: a cost id or a
   position id of another project, sent to a URL of a project in scope, is the same `404` and writes
-  nothing (ADR-0005, aneks 2026-09-23 SC-5-05, point 4).
+  nothing (ADR-0005, addendum 2026-09-23 SC-5-05, point 4).
 - **K-09** permissions: costs under `STAFFING_READ`/`STAFFING_WRITE` with no `PERSONNEL_COSTS_READ`
   conjunction; the category dictionary under `CATALOG_READ`/`CATALOG_WRITE`. The named, accepted
   risk of Q-7 = B is tested as what it is — a cost on a `headcount = 1` position visible to a caller
@@ -279,8 +279,8 @@ def test_k_09_the_named_risk_a_cost_on_a_headcount_one_position_is_visible_witho
 def test_k_09_the_category_dictionary_is_catalog_read_and_catalog_write_only(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-09 (ADR-0005, aneks SC-5-05, point 3) — the categories are served by the shared dictionary
-    endpoints (`/catalog/dimensions/cost-categories`), under the catalogue's own pair:
+    """K-09 (ADR-0005, addendum SC-5-05, point 3) — the categories are served by the shared
+    dictionary endpoints (`/catalog/dimensions/cost-categories`), under the catalogue's own pair:
 
     - everything but `CATALOG_READ` (so `STAFFING_*` held) → listing is `403`; `CATALOG_READ` alone
       → `200`, the entry listed;
@@ -329,9 +329,9 @@ def test_k_09_the_placeholder_permission_set_is_unchanged_and_no_permission_was_
     also joined to `PLACEHOLDER_PERMISSIONS` so their endpoints stay reachable. Repeated here so
     this task's own suite states its claim rather than borrowing it."""
     # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: 14 -> 16 for
-    # `PEOPLE_READ`/`PEOPLE_WRITE` (ADR-0005, aneks 2026-09-27, point 3) — permissions of the person
-    # register, not of this task's additional-cost tables; neither joins the placeholder (the line
-    # below is unchanged).
+    # `PEOPLE_READ`/`PEOPLE_WRITE` (ADR-0005, addendum 2026-09-27, point 3) — permissions of the
+    # person register, not of this task's additional-cost tables; neither joins the placeholder
+    # (the line below is unchanged).
     assert len(Permission) == 16
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
     assert {Permission.STAFFING_READ, Permission.STAFFING_WRITE} <= PLACEHOLDER_PERMISSIONS

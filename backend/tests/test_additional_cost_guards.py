@@ -1,12 +1,13 @@
 """SC-5-05, K-06 — writes to an approved scenario's costs, the per-row marker, and the race.
 
-- **Refused under `approved`, in the statement that writes** (ADR-0004, aneks SC-5-05, point 3):
+- **Refused under `approved`, in the statement that writes** (ADR-0004, addendum SC-5-05, point 3):
   `INSERT`, `UPDATE` and `DELETE` alike, each leaving the rows exactly as they were.
 - **A race with the approval on two connections leaves no row written after the approval began** —
   mandatory, not optional (K-06), and run for each of the three statements, because each is built
   by a separate function and the seam could be present in one and missing in another.
-- **A stale `updated_at` is a `409` told apart from `409 approved`**, and the marker is **per cost
-  row** (ADR-0007, aneks SC-5-05): editing cost A does not invalidate cost B of the same position.
+- **A stale `updated_at` is a `409` told apart from `409 approved`**, and the marker is **per
+  cost row** (ADR-0007, addendum SC-5-05): editing cost A does not invalidate cost B of the
+  same position.
 - **A non-existent id under `approved` is a `404`, not a `409`** — the R-01 order.
 
 `approved` is reached through `make_scenario(status=APPROVED)` (a direct write, the repository's
@@ -181,7 +182,7 @@ def test_k_06_a_cost_id_not_in_the_approved_scenario_is_a_404_not_a_409(
 
 def _committed_pair(engine: Engine) -> dict[str, Any]:
     """A committed draft with **two** costs on the same position — the case the marker's granularity
-    is about (ADR-0007, aneks SC-5-05, point 1)."""
+    is about (ADR-0007, addendum SC-5-05, point 1)."""
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         fixture = _scenario_with_a_cost(setup, status=ScenarioStatus.DRAFT, name="Markers")
         second = make_additional_cost(
@@ -241,9 +242,9 @@ def test_k_06_a_stale_marker_is_a_409_told_apart_from_the_approved_409(
 def test_k_06_the_marker_is_per_cost_row_editing_one_cost_leaves_the_other_editable(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """K-06 (ADR-0007, aneks SC-5-05, point 1) — two costs of **one position**. Editing A moves A's
-    marker (the contrast: the same old marker for A is now refused) and leaves B's marker exactly as
-    it was, so B's edit with the marker read *before* A's edit succeeds.
+    """K-06 (ADR-0007, addendum SC-5-05, point 1) — two costs of **one position**. Editing A
+    moves A's marker (the contrast: the same old marker for A is now refused) and leaves B's
+    marker exactly as it was, so B's edit with the marker read *before* A's edit succeeds.
 
     Mutation: the position's `updated_at` as the token (the absence model) — A's edit would
     invalidate B's marker and B's edit would be a `409`.

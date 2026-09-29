@@ -2,7 +2,7 @@
 
 Every figure is read through the real endpoint, `GET …/personnel-cost`, by a caller for whom the
 cost gate is **open** — `PERSONNEL_COSTS_READ` held (through `dependency_overrides`, the only way:
-the placeholder does not grant it, ADR-0005 aneks 2026-09-23 SC-5-01 point 6) **and** the
+the placeholder does not grant it, ADR-0005 addendum 2026-09-23 SC-5-01 point 6) **and** the
 `project_access` flag set on the scenario's project. The gate itself is K-04's subject, in
 `test_personnel_cost_access.py`; here it must not be the reason a figure is missing.
 
@@ -437,7 +437,7 @@ def _imports_of(relative_path: str) -> set[str]:
 
 def test_k_02_the_cost_path_and_the_revenue_path_never_import_each_other() -> None:
     """K-02 "independently of the selling predicate", structurally (ADR-0013, point 1; ADR-0004,
-    aneks 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant Guardian).
+    addendum 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant Guardian).
 
     The two cost modules import nothing of the revenue path, and the four revenue modules (T&M and
     Story Points since SC-4-04) import nothing of the cost path. The only module that knows both
@@ -463,7 +463,7 @@ def test_k_02_the_cost_path_and_the_revenue_path_never_import_each_other() -> No
 
 
 def test_c5_rate_windows_shares_geometry_never_a_rate_column() -> None:
-    """ADR-0004, aneks 2026-09-23 SC-5-01, control C-5 — the geometry `commercial_terms.py` and
+    """ADR-0004, addendum 2026-09-23 SC-5-01, control C-5 — the geometry `commercial_terms.py` and
     `personnel_cost.py` both import (`app.data.rate_windows`) stays neutral: it imports neither
     calculation path and never names either rate column, so a future edit to it cannot quietly
     re-couple cost to revenue through the module they already share.
@@ -625,8 +625,8 @@ COST_FIELDS = {
     "paid_absence_budget_amount",
     "paid_absence_currency",
     "paid_absence_assumptions_used",
-    # SC-5-02 (Issue #77; ADR-0013 aneks 2026-09-25, point 8 named this task as exactly the one
-    # that would re-arm this equality with a fully loaded field — "musi nazwać to wprost", not a
+    # SC-5-02 (Issue #77; ADR-0013 addendum 2026-09-25, point 8 named this task as exactly the one
+    # that would re-arm this equality with a fully loaded field — "must name it explicitly", not a
     # surprise regression). `cost_basis` stays the literal `"base"` and `amount` is untouched
     # (K-01): the fully loaded cost is these two new, separate fields, never a widening of the two
     # above.
@@ -634,10 +634,10 @@ COST_FIELDS = {
     "surcharge_amount",
     "paid_absence_fully_loaded_amount",
     "paid_absence_surcharge_amount",
-    # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 1: the fixed-amount basis lives beside the
-    # base cost in this same payload) — re-armed again, still an equality. No fully loaded/surcharge
-    # pair of its own (crossed with SC-5-02): a fixed amount has no rate for a surcharge to
-    # multiply.
+    # SC-5-03 (ADR-0013, addendum 2026-09-25 SC-5-03, point 1: the fixed-amount basis lives
+    # beside the base cost in this same payload) — re-armed again, still an equality. No fully
+    # loaded/surcharge pair of its own (crossed with SC-5-02): a fixed amount has no rate for a
+    # surcharge to multiply.
     "fixed_amount_state",
     "fixed_amount_amount",
     "fixed_amount_currency",
@@ -732,7 +732,7 @@ def _twin_draft(
 def test_k_07_a_month_with_a_mid_month_selling_change_keeps_its_cost_through_approval(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-07 on the class the ADR-0004 aneks 2026-09-23 SC-5-01 exists for (its C-1 and C-2).
+    """K-07 on the class the ADR-0004 addendum 2026-09-23 SC-5-01 exists for (its C-1 and C-2).
 
     March: one cost rate (120), the selling rate changing on the 16th. The draft's cost is
     14400.00; the revenue is `no_rate`, so **the selling predicate freezes nothing** for March.
@@ -810,7 +810,7 @@ def test_k_07_a_month_with_a_mid_month_cost_change_stays_without_a_cost_rate_thr
 def test_k_07_an_approved_cost_across_two_cost_windows_is_resolved_per_month_from_the_snapshot(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-07, the snapshot reader resolves per month (ADR-0004 aneks SC-5-01, point 4) — February
+    """K-07, the snapshot reader resolves per month (ADR-0004 addendum SC-5-01, point 4) — February
     at 120, March at 130, a boundary on the 1st: 30000.00 before approval, after it, and after both
     cost rates are raised to 999. A reader taking "the" frozen row of the tuple would cost both
     months alike; a reader of the live catalogue would answer 239760.00.

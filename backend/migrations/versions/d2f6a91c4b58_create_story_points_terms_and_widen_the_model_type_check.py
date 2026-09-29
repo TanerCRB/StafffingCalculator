@@ -10,7 +10,7 @@ version deployed before this migration keeps working against the new schema (it 
 
 1. `commercial_terms.model_type` is widened from `CHECK (model_type IN ('time_and_material'))` to
    `CHECK (model_type IN ('time_and_material', 'story_points'))` (ADR-0003, point 2; addendum
-   2026-09-25, "Rozszerza się wprost", point 1). Every later model widens this same CHECK in the
+   2026-09-25, "Extends directly", point 1). Every later model widens this same CHECK in the
    migration that creates its own details table — this is the first migration to do it, proving the
    pattern generalises rather than being a property of the one CHECK T&M shipped with.
 2. **Type agreement between the rule and `story_points_terms` is a composite foreign key**, not an
@@ -25,7 +25,7 @@ version deployed before this migration keeps working against the new schema (it 
 
 **What is deliberately not here** (ADR-0003 addendum 2026-09-25, D-4/A and D-5/A):
 
-- No budget cap column and no "sprint fee" variant — out of scope of SC-4-04, opcja A.
+- No budget cap column and no "sprint fee" variant — out of scope of SC-4-04, option A.
 - No edit path and no `updated_at` on `story_points_terms` — `accepted_points` is written once, at
   creation, in the one guarded statement (`app.data.commercial_terms.create_commercial_terms`); a
   changed figure needs a copy of the scenario, the mechanism every commercial rule already uses.

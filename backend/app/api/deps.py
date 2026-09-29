@@ -31,14 +31,14 @@ from app.core.identity import CallerIdentity, Permission
 # endpoint (see `require_permission`), while who holds it is not yet a real decision.
 #
 # `PROJECT_EDIT`, `PROJECT_COPY` and `PROJECT_ARCHIVE` join the set for the same reason and under
-# the same reservation (ADR-0005, addendum 2026-09-18, "uprawnienia akcji zapisu na Projekcie i
-# dostęp do kopii"): while every caller is this one fixed placeholder, `PATCH /projects/{id}`,
-# `POST /projects/{id}/copy` and `POST /projects/{id}/archive` would otherwise be unreachable. It
-# is *not* a decision that everyone may edit, copy or archive projects — the role dimension
-# arrives with the authentication ADR.
+# the same reservation (ADR-0005, addendum 2026-09-18 SC-1-02..04, "write-action permissions on
+# the Project and access to the copy"): while every caller is this one fixed placeholder,
+# `PATCH /projects/{id}`, `POST /projects/{id}/copy` and `POST /projects/{id}/archive` would
+# otherwise be unreachable. It is *not* a decision that everyone may edit, copy or archive
+# projects — the role dimension arrives with the authentication ADR.
 #
 # `CATALOG_READ` and `CATALOG_WRITE` join for the same reason and under the same reservation
-# (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu", point 6, which
+# (ADR-0005, addendum 2026-09-19 SC-2-01 "first dataset without project scope", point 6, which
 # names this widening and only this one): without them the catalogue endpoints of SC-2-01 would be
 # unreachable while every caller is this one placeholder. NF-10 puts catalogue *writing* with an
 # organisation administrator, so "everyone may write the catalogue" is not what this says either.
@@ -47,13 +47,13 @@ from app.core.identity import CallerIdentity, Permission
 # positive branch is reachable from a test only, through `dependency_overrides`.
 #
 # `STAFFING_READ` and `STAFFING_WRITE` join for the same reason and under the same reservation
-# (ADR-0005, addendum 2026-09-19 "pozycje obsady: zasięg dziedziczony przez scenariusz", point 3,
-# which names this widening and only this one — `PERSONNEL_COSTS_READ` still does not belong here).
-# Without them the staffing endpoints of SC-3-01 would be unreachable while every caller is this one
-# placeholder. It is *not* a decision that everyone may plan staffing: the role dimension arrives
-# with the authentication ADR. Note what this does **not** widen — scope: a caller holding these two
-# still sees only the projects their `project_access` rows name, because the staffing path inherits
-# that filter from `project_for_caller` (ADR-0001, addendum 2026-09-19).
+# (ADR-0005, addendum 2026-09-19 SC-3-01 "staffing positions: scope inherited via scenario", point
+# 3, which names this widening and only this one — `PERSONNEL_COSTS_READ` still does not belong
+# here). Without them the staffing endpoints of SC-3-01 would be unreachable while every caller is
+# this one placeholder. It is *not* a decision that everyone may plan staffing: the role dimension
+# arrives with the authentication ADR. Note what this does **not** widen — scope: a caller holding
+# these two still sees only the projects their `project_access` rows name, because the staffing path
+# inherits that filter from `project_for_caller` (ADR-0001, addendum 2026-09-19).
 #
 # `COMMERCIAL_READ` and `COMMERCIAL_WRITE` join for the same reason and under the same reservation
 # (ADR-0005, addendum 2026-09-23 SC-4-01, point 5, which names this widening and only this one —
@@ -62,7 +62,7 @@ from app.core.identity import CallerIdentity, Permission
 # everyone
 # may set commercial terms. Scope is not widened: the path inherits `project_for_caller`.
 #
-# `RESULTS_READ` joins for the same reason and under the same reservation (ADR-0005, aneks
+# `RESULTS_READ` joins for the same reason and under the same reservation (ADR-0005, addendum
 # 2026-09-24 SC-7-01, the widening it names and only it — `PERSONNEL_COSTS_READ` still stays out).
 # Without it the results endpoint of SC-7-01 would be unreachable while every caller is this one
 # placeholder; it is not a decision that everyone may read a scenario's profit, margin and markup.
@@ -78,8 +78,8 @@ from app.core.identity import CallerIdentity, Permission
 # always the source's own project, resolved through `scenario_in_scope`/`project_for_caller`.
 #
 # `PEOPLE_READ` and `PEOPLE_WRITE` (SC-2-06) do **not** join, and that absence is the decision
-# (ADR-0005, aneks 2026-09-27 SC-2-06, point 4; ADR-0019, point 4; Q-3 = a). The person register is
-# the first personal-data register of this system: granting it to "whoever the header says" would
+# (ADR-0005, addendum 2026-09-27 SC-2-06, point 4; ADR-0019, point 4; Q-3 = a). The person register
+# is the first personal-data register of this system: granting it to "whoever the header says" would
 # hand every dev/test caller the names in it. Consequence accepted with the decision: in the running
 # system nobody reads a name, writes a person or assigns one through the API, and the positive
 # branch is reachable from a test only, through `dependency_overrides`. The set-equality canary over
@@ -202,7 +202,7 @@ def require_permissions(*permissions: Permission) -> Callable[..., CallerIdentit
 
     For an endpoint whose action needs more than one permission *regardless of the data* — the first
     one being the assignment of a person to a staffing position, `STAFFING_READ` ∧ `STAFFING_WRITE`
-    ∧ `PEOPLE_READ` (ADR-0005, aneks 2026-09-27 SC-2-06 point 5 and aneks 2026-09-28 point 1).
+    ∧ `PEOPLE_READ` (ADR-0005, addendum 2026-09-27 SC-2-06 point 5 and addendum 2026-09-28 point 1).
     Declared on the endpoint, like `require_permission`, so the refusal happens before the handler
     runs and before any row is read: a caller missing any of the permissions learns nothing about
     whether the position, the scenario or the person exists (point 5b — no existence oracle).

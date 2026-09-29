@@ -112,7 +112,7 @@ CONCURRENCY_MARKER_REASON = (
 
 Carries nothing about the competing change — not the field, not the value, not who made it. This is
 a refusal, not a merge, and the other writer's value may well be data this caller is not entitled to
-see (ADR-0007: "bez informacji o treści cudzej zmiany"; NF-11)."""
+see (ADR-0007: "without information about the content of someone else's change"; NF-11)."""
 
 
 def refusal_by_condition[RefusedT: WriteRefused](

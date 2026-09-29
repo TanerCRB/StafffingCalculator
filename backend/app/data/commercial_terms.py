@@ -144,7 +144,7 @@ _TERMS_TABLE = CommercialTerms.__table__
 # count, "the windows overlapping the month cover it" and the two overlap joins (live catalogue and
 # the scenario's own snapshot). Moved, not copied: the cost path (`app.data.personnel_cost`) needs
 # the same spelling of "the month", "internal" and "this scenario's snapshot", and may not import
-# this module to get it (ADR-0004, aneks 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant
+# this module to get it (ADR-0004, addendum 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant
 # Guardian). What stays here is the revenue's own half of the predicate: one *selling* rate.
 
 
@@ -327,13 +327,13 @@ def _time_and_material(session: Session, scenario: Scenario, rule: _Rule) -> Rev
 
 
 def _outcome_based(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
-    """Outcome-based (F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03): czyta **wyłącznie** wiersz
-    `outcome_terms` tej reguły — ani obsady, ani alokacji, ani katalogu, ani migawki.
+    """Outcome-based (F-06.3; ADR-0003, addendum 2026-09-25 SC-4-03): reads **only** the
+    `outcome_terms` row of this rule — no staffing, no allocation, no catalogue, no snapshot.
 
-    Dlatego źródło nie zależy od statusu scenariusza (`rate_source = not_applicable`, pkt 8):
-    wiersz jest daną własną scenariusza chronioną strażnikiem zapisu (ADR-0004, aneks SC-4-03), a
-    zatwierdzenie nie zamraża niczego nowego. Reguła bez wiersza szczegółów to
-    `incomplete_commercial_terms`, nigdy przychód `0` (pkt 1).
+    That is why the source does not depend on the scenario's status (`rate_source = not_applicable`,
+    point 8): the row is the scenario's own data, protected by the write guard (ADR-0004, addendum
+    SC-4-03), and an approval freezes nothing new. A rule without its details row is
+    `incomplete_commercial_terms`, never a revenue of `0` (point 1).
     """
     details = _outcome_details_of(session, rule)
     if details is None:
@@ -344,10 +344,10 @@ def _outcome_based(session: Session, scenario: Scenario, rule: _Rule) -> Revenue
 
 
 def _outcome_details_of(session: Session, rule: _Rule) -> OutcomeTerms | None:
-    """Wiersz `outcome_terms` reguły — `None` dla innego modelu albo reguły bez szczegółów.
+    """The rule's `outcome_terms` row — `None` for another model or a rule without details.
 
-    Jedno miejsce odczytu, wspólne dla wyceny (`_outcome_based`) i dla parametrów reguły w
-    odpowiedzi (`ScenarioCommercialView.outcome_terms`, R-04), żeby obie czytały ten sam wiersz."""
+    One read, shared by the pricing (`_outcome_based`) and by the rule's parameters in the
+    response (`ScenarioCommercialView.outcome_terms`, R-04), so both read the same row."""
     if rule.terms.model_type != MODEL_TYPE_OUTCOME_BASED or not rule.has_details:
         return None
     return session.execute(
@@ -356,7 +356,7 @@ def _outcome_details_of(session: Session, rule: _Rule) -> OutcomeTerms | None:
 
 
 def _outcome_input(details: OutcomeTerms) -> OutcomeTermsInput:
-    """Wiersz `outcome_terms` jako wejście czystej funkcji — kategorie w stałej kolejności."""
+    """The `outcome_terms` row as the input of a pure function — categories in a fixed order."""
     return OutcomeTermsInput(
         currency=details.currency,
         fixed_fee=details.fixed_fee,
@@ -385,7 +385,7 @@ def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueA
     price is entirely the rule's own row, so a scenario's billable-hours plan can change arbitrarily
     without moving this revenue by a cent. `assumptions_used` names that explicitly
     (`HOURS_SOURCE_NOT_APPLICABLE`), not merely by omission — on the incomplete branch too, through
-    the same `story_points_assumptions` the priced path uses (weryfikacja SC-4-07, R-01).
+    the same `story_points_assumptions` the priced path uses (verification SC-4-07, R-01).
     """
     if not rule.has_details:
         return RevenueUnavailable(
@@ -482,7 +482,7 @@ class MultipleCommercialRulesNotSupported(RuntimeError):
 
     Raised instead of letting `scalar_one_or_none()` throw the raw, unnamed
     `sqlalchemy.exc.MultipleResultsFound` — fail loud with a name a caller can catch or at least
-    read in a log, not a stack trace attached to nothing (reviewer/invariant-guardian, bramka 2 of
+    read in a log, not a stack trace attached to nothing (reviewer/invariant-guardian, gate 2 of
     SC-4-05). Unreachable through the running API today: no request schema writes `scope_ref`, so
     the only way to reach this state is a direct write at the data layer (tests, or a future caller
     of `create_commercial_terms` with `scope_ref` set) — named here rather than left to surface as
@@ -557,7 +557,7 @@ def rules_of_scenario(session: Session, scenario_id: uuid.UUID) -> list[_Rule]:
 class MultipleRulesOfOneModelNotSupported(RuntimeError):
     """More than one rule of one `model_type` exists for a scenario, and that model's revenue is
     not *proven* independent of which row priced it — so picking one and dropping the rest would
-    silently lose the dropped rule's revenue (reviewer R-01, bramka 2 of SC-4-05).
+    silently lose the dropped rule's revenue (reviewer R-01, gate 2 of SC-4-05).
 
     Time & Material is the one model this is proven safe for (`_MODEL_TYPES_WITH_SHARED_SCENARIO_
     REVENUE` below): its formula reads the whole scenario's shared, unscoped `staffing_position`/
@@ -612,8 +612,8 @@ def revenue_by_model_type(
     Returns one answer **per distinct model**, not one combined scenario total: combining two
     models' revenue into a single figure (reconciling currency, in particular) is the per-segment
     allocation F-06.5 asks for once a position knows its segment — F-04, out of scope here (ADR-0003
-    addendum 2026-09-25, closing annex: "SC-4-05 dowodzi rozłączności na poziomie SCHEMATU, nie na
-    poziomie PRZYCHODU").
+    addendum 2026-09-25, closing annex: "SC-4-05 proves disjointness at the SCHEMA level, not at the
+    REVENUE level").
     """
     rules_by_model_type: dict[str, list[_Rule]] = {}
     for rule in rules:
@@ -678,7 +678,7 @@ class ScenarioCommercialView:
     status_at_read: ScenarioStatus
     """The scenario's status **as this read saw it**, copied into an immutable value right after
     this read's own `session.refresh` — for every commercial model alike, before the dispatcher
-    runs (SC-7-03, Issue #118; ADR-0015, aneks SC-7-03, points 1 and 3).
+    runs (SC-7-03, Issue #118; ADR-0015, addendum SC-7-03, points 1 and 3).
 
     Never `scenario.status` read later: `scenario` is an identity-mapped object that a later read
     in the same session (`app.data.personnel_cost.scenario_cost_for_caller`) refreshes again, so its
@@ -686,10 +686,10 @@ class ScenarioCommercialView:
     move. It is what `app.data.scenario_results.refuse_a_status_race` compares with the cost read's
     status — only when `revenue.assumptions_used.rate_source` classifies the revenue as
     status-dependent (`STATUS_DEPENDENT_SOURCES`); `rate_source` itself is never compared with the
-    cost's (ADR-0003, aneks SC-7-03)."""
+    cost's (ADR-0003, addendum SC-7-03)."""
     outcome_terms: OutcomeTerms | None = None
-    """Wiersz szczegółów reguły Outcome-based, do pokazania jej parametrów (R-04) — `None` dla
-    każdego innego modelu i dla reguły bez wiersza szczegółów. Parametry przychodu, nie koszt."""
+    """The Outcome-based rule's details row, to show its parameters (R-04) — `None` for
+    every other model and for a rule without a details row. Revenue parameters, not cost."""
     agreed_price: AgreedPrice | None = None
     """The Fixed Price details row of the rule, as stored (SC-4-02) — `None` for a rule of another
     model and for a Fixed Price rule without its details row (`incomplete_commercial_terms`). Stated
@@ -786,11 +786,11 @@ def create_commercial_terms(
 ) -> ScenarioCommercialView | None:
     """Create the rule of one scenario **and** its details row, in one guarded statement.
 
-    `domain_values` — kolumny dziedzinowe wiersza szczegółów (dla `outcome_based`: opłata, premia,
-    stawka, min/max, waluta, jednostki i prawdopodobieństwa kategorii; dla `story_points`: cena
-    punktu, liczba punktów, waluta; dla T&M brak). Wchodzą do **tej
-    samej** instrukcji jako literały obok `RETURNING` reguły, więc strażnik `approved` obejmuje je
-    tak samo (ADR-0004, aneks 2026-09-25 SC-4-03, pkt 2), a odmowa nie zapisuje żadnego wiersza.
+    `domain_values` — the domain columns of the details row (for `outcome_based`: fee, bonus,
+    rate, min/max, currency, units and the categories' probabilities; for `story_points`: price
+    per point, number of points, currency; none for T&M). They enter the **same**
+    statement as literals next to the rule's `RETURNING`, so the `approved` guard covers them
+    the same way (ADR-0004, addendum 2026-09-25 SC-4-03, point 2), and a refusal writes no row.
 
     For Fixed Price (SC-4-02) the domain columns are `agreed_price` and `currency`. Since SC-4-02
     `domain_values` must be exactly the table's domain columns (`_domain_columns_of`), for every
@@ -1226,8 +1226,8 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
     Unreachable in a single-version deployment; it covers the mixed-version window of ADR-0001 in
     which a later model's rows exist before every instance runs the code that knows its details
     table (since SC-4-03 proven on a real `outcome_based` row). Every details table is copied by
-    reflection here — `outcome_terms` with all its domain columns (ADR-0004, aneks 2026-09-25
-    SC-4-03, pkt 3) — so no model needs a branch of its own, and `scope_ref` is remapped above the
+    reflection here — `outcome_terms` with all its domain columns (ADR-0004, addendum 2026-09-25
+    SC-4-03, point 3) — so no model needs a branch of its own, and `scope_ref` is remapped above the
     model dispatch, identically for every model. `fixed_price_terms` (SC-4-02) is copied the same
     way, with its price pair; the columns each details table does not pass on are named per model by
     `DETAIL_COLUMNS_NOT_COPIED_BY_MODEL`.

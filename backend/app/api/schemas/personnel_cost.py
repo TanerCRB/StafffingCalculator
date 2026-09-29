@@ -3,40 +3,41 @@
 Three boundary decisions are visible in the shapes below.
 
 **The base figure is still explicitly the base cost** (ADR-0013, point 5): `cost_basis` is the
-literal `"base"`, and `amount`/`currency`/`assumptions_used` are untouched by SC-5-02 — no overhead,
-bonus, profit or margin was ever mixed into them, and none is now. **Since SC-5-02, a second, named
-figure sits beside it**: `fully_loaded_amount` and `surcharge_amount` (criteria K-01/K-02), the
-field set change ADR-0013's aneks of 2026-09-25 (point 8) pre-announced for exactly this task — the
-equality assertion `test_personnel_cost.py::_assert_field_sets` (K-03) grows with it, deliberately,
-rather than a fully loaded field hiding inside the base one.
+literal `"base"`, and `amount`/`currency`/`assumptions_used` are untouched by SC-5-02 — no
+overhead, bonus, profit or margin was ever mixed into them, and none is now. **Since SC-5-02, a
+second, named figure sits beside it**: `fully_loaded_amount` and `surcharge_amount` (criteria
+K-01/K-02), the field set change ADR-0013's addendum of 2026-09-25 SC-5-02 (point 8) pre-announced
+for exactly this task — the equality assertion `test_personnel_cost.py::_assert_field_sets` (K-03)
+grows with it, deliberately, rather than a fully loaded field hiding inside the base one.
 
 **Two fields are personnel costs and are removed for a caller the gate refuses** — `amount` and
 `assumptions_used` (which names every cost rate used, and — since SC-5-02 — every window's surcharge
 percentage and flag alongside it). They are `null` then, never `"0.00"`, never `"n/a"`: `"n/a"` is
 the named-state sentinel, and reusing it for "withheld" would make "the catalogue has no cost rate"
 and "you may not see the cost rate" one answer. The removal is done by `app.api.response_shaping`,
-before serialisation (ADR-0005, aneks 2026-09-23 SC-5-01, points 2–3). `fully_loaded_amount` and
+before serialisation (ADR-0005, addendum 2026-09-23 SC-5-01, points 2–3). `fully_loaded_amount` and
 `surcharge_amount` are removed alongside `amount`, through the same `SCENARIO_COST_FIELDS` set.
 
 **Money crosses the boundary as a fixed-point string** (`DecimalString`), never a JSON float
 (ADR-0002).
 
 **Since SC-5-06 the payload carries a second, named component** — the cost of paid absences
-(`paid_absence_*`, ADR-0013 aneks 2026-09-23 SC-5-06) — beside the base amount and never summed with
-it. Its amount, its budget part and its assumptions are personnel costs and join
+(`paid_absence_*`, ADR-0013 addendum 2026-09-23 SC-5-06) — beside the base amount and never summed
+with it. Its amount, its budget part and its assumptions are personnel costs and join
 `SCENARIO_COST_FIELDS`; its state and currency do not. **Since SC-5-02 (criterion K-05) the
 component has its own fully loaded pair too** — `paid_absence_fully_loaded_amount`/
 `paid_absence_surcharge_amount` — gated the same way.
 
 **Since SC-5-03 a fourth, named component** — the fixed-amount basis's own cost (`fixed_amount_*`,
-ADR-0013 aneks 2026-09-25 SC-5-03), beside the base amount and the paid-absence one and never summed
-with either. The same split: `fixed_amount_amount` and `fixed_amount_assumptions_used` are personnel
-costs and join `SCENARIO_COST_FIELDS`; `fixed_amount_state` and `fixed_amount_currency` do not
-(ADR-0005, aneks 2026-09-25 SC-5-03, point 1 — a caller without the conjunction may learn that this
-scenario's fixed-amount cost is, say, `currency_mismatch`, never the amount or the currency of any
-line that produced it). **Carries no fully loaded/surcharge pair of its own** (SC-5-02 crossed with
-SC-5-03): a fixed amount is not a rate a surcharge multiplies, so there is no second figure to gate
-beside `fixed_amount_amount` the way `paid_absence` and the base cost each gained one.
+ADR-0013 addendum 2026-09-25 SC-5-03), beside the base amount and the paid-absence one and never
+summed with either. The same split: `fixed_amount_amount` and `fixed_amount_assumptions_used` are
+personnel costs and join `SCENARIO_COST_FIELDS`; `fixed_amount_state` and `fixed_amount_currency`
+do not (ADR-0005, addendum 2026-09-25 SC-5-03, point 1 — a caller without the conjunction may
+learn that this scenario's fixed-amount cost is, say, `currency_mismatch`, never the amount or the
+currency of any line that produced it). **Carries no fully loaded/surcharge pair of its own**
+(SC-5-02 crossed with SC-5-03): a fixed amount is not a rate a surcharge multiplies, so there is
+no second figure to gate beside `fixed_amount_amount` the way `paid_absence` and the base cost
+each gained one.
 """
 
 import uuid
@@ -106,7 +107,7 @@ PaidAbsenceCostState = Literal[
     "currency_mismatch",
     "no_cost_currency",
 ]
-"""The paid-absence component's states (ADR-0013, aneks 2026-09-23 SC-5-06, point 4) — the
+"""The paid-absence component's states (ADR-0013, addendum 2026-09-23 SC-5-06, point 4) — the
 calendar's and the budget's own names first, then the base cost's."""
 
 
@@ -132,7 +133,7 @@ class UnresolvedPaidAbsenceMonthRead(BaseModel):
 
 
 FixedAmountCostState = Literal["calculated", "currency_mismatch", "no_cost_currency"]
-"""The fixed-amount basis's own states (ADR-0013, aneks 2026-09-25 SC-5-03, point 1) — its own,
+"""The fixed-amount basis's own states (ADR-0013, addendum 2026-09-25 SC-5-03, point 1) — its own,
 independent vocabulary, not the worked-time basis's `PersonnelCostState` reused: the two formulas
 are two independent predicates (K-01), and the values happen to read the same because both mirror
 `ADR-0014` point 7, not because one is derived from the other."""
@@ -149,7 +150,7 @@ class FixedAmountLineRead(BaseModel):
 class FixedAmountAssumptionsRead(BaseModel):
     """What the fixed-amount component — or its absence — depends on, gated with its amount
     exactly as `CostAssumptionsRead` is (it names a stated cost, one `headcount = 1` position away
-    from naming what one person costs — ADR-0005, aneks 2026-09-25 SC-5-03, point 2)."""
+    from naming what one person costs — ADR-0005, addendum 2026-09-25 SC-5-03, point 2)."""
 
     lines: list[FixedAmountLineRead]
     currencies: list[str]
@@ -172,7 +173,7 @@ class PersonnelCostRead(BaseModel):
     state: PersonnelCostState
     cost_basis: Literal["base"]
     """Always `"base"`: `default_cost_rate` before overheads (ADR-0013, point 5) — for the base
-    amount and for the paid-absence component alike (aneks 2026-09-23 SC-5-06, point 5)."""
+    amount and for the paid-absence component alike (addendum 2026-09-23 SC-5-06, point 5)."""
     amount: DecimalString | Literal[NOT_APPLICABLE] | None
     """A fixed-point string when `state` is `"calculated"`, `"n/a"` for a named state — and `null`
     when the caller may not see personnel costs of this scenario's project. **The base cost only**:
@@ -212,13 +213,13 @@ class PersonnelCostRead(BaseModel):
 
     fixed_amount_state: FixedAmountCostState
     """The fixed-amount basis's own state (SC-5-03) — independent of `state` above and shown to
-    every caller, like it: naming *why* a fixed-amount figure cannot be stated carries no amount and
-    no currency by itself (ADR-0005, aneks 2026-09-25 SC-5-03, point 1 — the property this field's
-    own gate test proves, not assumes)."""
+    every caller, like it: naming *why* a fixed-amount figure cannot be stated carries no amount
+    and no currency by itself (ADR-0005, addendum 2026-09-25 SC-5-03, point 1 — the property this
+    field's own gate test proves, not assumes)."""
     fixed_amount_amount: DecimalString | Literal[NOT_APPLICABLE] | None
     """The scenario's `fixed_amount` positions, summed — a **fourth**, independent figure beside
     `amount` (worked time), `fully_loaded_amount`/`surcharge_amount` and `paid_absence_amount`,
-    never added to any of them (SC-5-03 out of scope: "suma kosztu scenariusza łącząca podstawy").
+    never added to any of them (SC-5-03 out of scope: "a scenario cost total combining bases").
     `"n/a"` for a named state; `null` when the caller may not see personnel costs of this
     scenario's project."""
     fixed_amount_currency: str | None

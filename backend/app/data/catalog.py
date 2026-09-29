@@ -77,7 +77,7 @@ DIMENSION_MODELS: dict[str, DimensionModel] = {
     "locations": CatalogLocation,
     "engagement-types": CatalogEngagementType,
     "vendors": CatalogVendor,
-    # SC-5-05 (ADR-0014, point 2; ADR-0005, aneks 2026-09-23 SC-5-05, point 3): the categories of
+    # SC-5-05 (ADR-0014, point 2; ADR-0005, addendum 2026-09-23 SC-5-05, point 3): the categories of
     # an additional cost join as an entry here and nothing else — another dictionary, not another
     # mechanism, exactly as `"vendors"` joined in SC-2-03.
     "cost-categories": CatalogCostCategory,
@@ -306,7 +306,7 @@ EDITABLE_RATE_FIELDS: frozenset[str] = frozenset(
         "effective_from",
         "effective_to",
         # SC-5-02 (F-07): the surcharge percentage and the "already includes it" flag live on this
-        # same row (ADR-0013, aneks 2026-09-25, Q5) and are edited through this same allow-list —
+        # same row (ADR-0013, addendum 2026-09-25, Q5) and are edited through this same allow-list —
         # no second edit path for two columns of one row already being edited here.
         "surcharge_percent",
         "includes_surcharge",
@@ -691,7 +691,7 @@ def create_rate(
     by the database inside the `INSERT`. A `SELECT` here asking "does an overlapping row exist?"
     would be a check-then-act window: a competing connection committing its row between that
     `SELECT` and this `INSERT` produces two overlapping rows, and no single-threaded test can see
-    it (ADR-0008, "Rozważane alternatywy"; the same mutation survived delivered tests in SC-1-02
+    it (ADR-0008, "Considered alternatives"; the same mutation survived delivered tests in SC-1-02
     and SC-1-04).
 
     `valid_period` is absent from the arguments and from the insert: it is a generated column, and

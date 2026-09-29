@@ -1,5 +1,5 @@
-"""SC-6-02, K-01..K-05 — comparing several scenarios of the same project in one call (F-09 pkt 2,
-Issue #87; ADR-0001/ADR-0005, aneks 2026-09-24).
+"""SC-6-02, K-01..K-05 — comparing several scenarios of the same project in one call (F-09 point 2,
+Issue #87; ADR-0001/ADR-0005, addendum 2026-09-24).
 
 `GET /projects/{project_id}/scenarios/compare?scenario_id=...&scenario_id=...` composes
 `app.data.scenario_results.scenario_results_for_caller` and

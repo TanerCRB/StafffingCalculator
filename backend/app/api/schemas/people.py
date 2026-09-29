@@ -52,7 +52,7 @@ class PersonList(BaseModel):
 
 
 class PersonCreateRequest(BaseModel):
-    """The body of `POST /people`: the id the **client** chose, and the name (ADR-0019 aneks
+    """The body of `POST /people`: the id the **client** chose, and the name (ADR-0019 addendum
     2026-09-28, D-2 = B). The timestamps are the server's.
 
     `id` is **required**, so a retried request cannot create the same person twice: the retry hits
@@ -67,7 +67,7 @@ class PersonCreateRequest(BaseModel):
 
 
 class PersonCorrectionRequest(BaseModel):
-    """The body of `PATCH /people/{person_id}` — correcting a name (RODO art. 16).
+    """The body of `PATCH /people/{person_id}` — correcting a name (GDPR art. 16).
 
     The marker is required, as on every edit (ADR-0007): an edit without one would make the
     protection opt-in for whoever forgets it. The name is required too: it is the only editable

@@ -5,15 +5,15 @@ Three tables, one aggregate. `staffing_position` is a child of `scenarios`; its 
 rows and its absences (SC-3-02) are grandchildren, reachable only through a position. That shape
 decides four things, each of them written down in an accepted decision rather than chosen here:
 
-1. **Own data of the scenario, not an inherited value** (ADR-0004, addendum 2026-09-19 "pozycja
-   obsady i alokacja nie wchodzą do migawki"). Nothing outside the scenario can change these rows,
-   so there is nothing for an approval snapshot to freeze: what protects them after approval is the
-   refusal of a write (`app.data.staffing`), not a second copy of the rows.
+1. **Own data of the scenario, not an inherited value** (ADR-0004, addendum 2026-09-19 "the
+   staffing position and allocation do not enter the snapshot"). Nothing outside the scenario can
+   change these rows, so there is nothing for an approval snapshot to freeze: what protects them
+   after approval is the refusal of a write (`app.data.staffing`), not a second copy of the rows.
 2. **Scope is inherited through the scenario** (ADR-0001, addendum 2026-09-19; ADR-0005, addendum
-   2026-09-19 "pozycje obsady"). `scenario_id → scenarios.project_id` ties every row to a project,
-   so the `project_access` filter applies — and this is the first table in the repository for which
-   it applies *indirectly*. The catalogue's exemption ("a row belonging to no project") explicitly
-   does not stretch here.
+   2026-09-19 "staffing positions"). `scenario_id → scenarios.project_id` ties every row to a
+   project, so the `project_access` filter applies — and this is the first table in the repository
+   for which it applies *indirectly*. The catalogue's exemption ("a row belonging to no project")
+   explicitly does not stretch here.
 3. **No effective-range pattern.** ADR-0008 is deliberately *not* applied (ADR-0004, addendum
    2026-09-19): two positions for the same role over the same months are legal — a PM plans
    different people on one role at different times, and an overlap is a state to see, not a write to
@@ -34,22 +34,23 @@ whose name differs from the decision that created it cannot be found by reading 
 headcount, its own period and hours — nothing a currency could be attached to (ADR-0005, addendum
 2026-09-19, point 5).
 
-**Since SC-5-03: `cost_basis`, `fixed_amount` and `fixed_amount_currency` (F-07; ADR-0013, aneks
+**Since SC-5-03: `cost_basis`, `fixed_amount` and `fixed_amount_currency` (F-07; ADR-0013, addendum
 2026-09-25 SC-5-03).** Own data of the scenario, group 2 like every other column of this table
-(ADR-0004, aneks 2026-09-25 SC-5-03) — protected after approval by the same write guard as the rest
-of the row, not by a snapshot: nothing outside the scenario ever changes them, so there is nothing
-for an approval to freeze (point 2 of that aneks; contrast with `catalog_default_rates`, whose value
-*is* inherited and therefore *is* snapshotted). `fixed_amount`/`fixed_amount_currency` are `NULL`
-for the default basis (`worked_time`) and are the position's own stated amount for the other. They
-are **never** part of `GET .../staffing-positions`'s response schema (ADR-0005, aneks 2026-09-25
+(ADR-0004, addendum 2026-09-25 SC-5-03) — protected after approval by the same write guard as the
+rest of the row, not by a snapshot: nothing outside the scenario ever changes them, so there is
+nothing for an approval to freeze (point 2 of that addendum; contrast with `catalog_default_rates`,
+whose value *is* inherited and therefore *is* snapshotted). `fixed_amount`/`fixed_amount_currency`
+are `NULL` for the default basis (`worked_time`) and are the position's own stated amount for the
+other. They
+are **never** part of `GET .../staffing-positions`'s response schema (ADR-0005, addendum 2026-09-25
 SC-5-03, Q4) — visible only through the cost endpoint the SC-1-08 conjunction already gates
 (`app.api.personnel_cost`), the same treatment `default_cost_rate` gets on the catalogue.
 
-**Since SC-2-06: `person_id` (F-03; ADR-0019; ADR-0004 and ADR-0005, aneksy 2026-09-27).** A
+**Since SC-2-06: `person_id` (F-03; ADR-0019; ADR-0004 and ADR-0005, addenda 2026-09-27).** A
 position is still anonymous by default; it may optionally point at one row of the person register
 (`app.models.person`). A reference, not a name — see `StaffingPosition`. The absence row keeps its
-own boundary unchanged: an absence still hangs on the position, never on a person (ADR-0005, aneks
-2026-09-27, point 10)."""
+own boundary unchanged: an absence still hangs on the position, never on a person (ADR-0005,
+addendum 2026-09-27, point 10)."""
 
 import uuid
 from datetime import date, datetime
@@ -140,7 +141,7 @@ point at "this position **of this scenario**" with a composite foreign key (ADR-
 COST_BASIS_WORKED_TIME = "worked_time"
 COST_BASIS_FIXED_AMOUNT = "fixed_amount"
 COST_BASIS_VALUES: tuple[str, ...] = (COST_BASIS_WORKED_TIME, COST_BASIS_FIXED_AMOUNT)
-"""The two personnel-cost bases a position may choose (F-07; ADR-0013, aneks 2026-09-25 SC-5-03).
+"""The two personnel-cost bases a position may choose (F-07; ADR-0013, addendum 2026-09-25 SC-5-03).
 `worked_time` is the default (K-02: every position that existed before this task keeps costing
 exactly as it did) — `assigned_fte` is a third value F-07 names but SC-5-04 has not built the
 FTE→hours conversion it would need, so it is not in this tuple yet."""
@@ -157,15 +158,16 @@ FIXED_AMOUNT_REQUIRES_ITS_OWN_BASIS_EXPRESSION = (
     "cost_basis <> 'fixed_amount' OR "
     "(fixed_amount IS NOT NULL AND fixed_amount_currency IS NOT NULL)"
 )
-"""ADR-0013, aneks 2026-09-25 SC-5-03, point 2 (Q2 = A): a CHECK, not an application validation —
+"""ADR-0013, addendum 2026-09-25 SC-5-03, point 2 (Q2 = A): a CHECK, not an application validation —
 `cost_basis = 'fixed_amount' → fixed_amount IS NOT NULL`, widened here to require the currency too
-(the open question the aneks names for this task to settle, point 2, second half). Reasoning: a
+(the open question the addendum names for this task to settle, point 2, second half). Reasoning: a
 `fixed_amount` with no currency is exactly the shape ADR-0013's "two shapes, never a third" forbids
 for the worked-time basis (an amount nobody can state a currency for), so the same rule applies to
 its own basis rather than being left to a `NULL` currency nobody decided the meaning of. Named here
-so the choice is not a silent one (the aneks requires it named in "Done when", not left implicit).
-Mirrors `ck_additional_cost_amount_positive`/G-1 (ADR-0014, D-10) in spelling the guarantee once, in
-the database, so a fixture, a seed script or a future import can never write the unnamed state."""
+so the choice is not a silent one (the addendum requires it named in "Done when", not left
+implicit). Mirrors `ck_additional_cost_amount_positive`/G-1 (ADR-0014, D-10) in spelling the
+guarantee once, in the database, so a fixture, a seed script or a future import can never write the
+unnamed state."""
 FIXED_AMOUNT_POSITIVE_EXPRESSION = "fixed_amount IS NULL OR fixed_amount > 0"
 FIXED_AMOUNT_CURRENCY_ISO4217_EXPRESSION = (
     "fixed_amount_currency IS NULL OR char_length(fixed_amount_currency) = 3"
@@ -220,17 +222,17 @@ class StaffingPosition(Base):
     **Anonymous by default** (F-03/F-04): `person_id` is nullable, every position created before
     SC-2-06 has none, and creating a position never sets one. **Optionally named** (F-03: "Assigning
     a named person shall be optional"), under ADR-0019 (the personal-data decision) and ADR-0005's
-    aneks 2026-09-27 — no longer "blocked on the authentication ADR" (decision P-2 = a: a named
+    addendum 2026-09-27 — no longer "blocked on the authentication ADR" (decision P-2 = a: a named
     person is a separate record, not a user account). What the assignment is, and is not:
 
     - a reference to `person.id`, never a copy of the name — the name lives in the register only,
       so a correction (RODO art. 16) is one row, visible on every scenario, approved ones included;
-    - own data of the scenario, group 2 (ADR-0004, aneks 2026-09-27, point 2): protected after
+    - own data of the scenario, group 2 (ADR-0004, addendum 2026-09-27, point 2): protected after
       approval by the write guard in the same statement as the write, never by a snapshot;
     - allowed only at `headcount = 1` (`PERSON_REQUIRES_SINGLE_HEADCOUNT_EXPRESSION`);
     - written through **one** path (`app.data.staffing.assign_person`), never as a side effect of
-      another write — every other write of this row leaves it as it is (ADR-0005, aneks 2026-09-27,
-      point 6);
+      another write — every other write of this row leaves it as it is (ADR-0005, addendum
+      2026-09-27, point 6);
     - visible in a response only to a caller holding `STAFFING_READ` ∧ `PEOPLE_READ`, and for
       everyone else not even as a key (`app.api.response_shaping.shape_staffing_position`).
     """
@@ -342,7 +344,7 @@ class StaffingPosition(Base):
     cost_basis: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=COST_BASIS_WORKED_TIME
     )
-    """Which formula prices this position's personnel cost (F-07; ADR-0013, aneks 2026-09-25
+    """Which formula prices this position's personnel cost (F-07; ADR-0013, addendum 2026-09-25
     SC-5-03) — `worked_time` (the default, K-02) or `fixed_amount`. A stored, persistent choice, not
     a parameter of a read: two callers reading the same position on the same day must see the same
     basis. `server_default` rather than an application default alone, so a row written outside the
@@ -356,7 +358,7 @@ class StaffingPosition(Base):
     lookup, no dependency on `planned_allocation_hours` (K-01)."""
 
     fixed_amount_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
-    """`fixed_amount`'s own currency (ADR-0013, aneks 2026-09-25 SC-5-03, Q1 = A) — not inherited
+    """`fixed_amount`'s own currency (ADR-0013, addendum 2026-09-25 SC-5-03, Q1 = A) — not inherited
     from `scenarios.currency`: the two are compared by the formula, and disagreement is the named
     `currency_mismatch` state, never a silent conversion (ADR-0006)."""
 
@@ -371,13 +373,13 @@ class StaffingPosition(Base):
     meaning (ADR-0019, point 7): a person assigned to a position cannot be physically deleted, which
     is the direction the future deletion Story is decided to take anyway (anonymisation in place,
     `id` and assignments untouched). Copied as-is by `copy_staffing_positions` — the copy points at
-    the **same** person, never at a copy of one (ADR-0004, aneks 2026-09-27, point 4)."""
+    the **same** person, never at a copy of one (ADR-0004, addendum 2026-09-27, point 4)."""
 
     person_assignment_updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    """The assignment's **own** concurrency marker (ADR-0007 aneks 2026-09-28, D-4 = B) — protecting
-    `person_id` and nothing else, and moved by the assignment path and nothing else.
+    """The assignment's **own** concurrency marker (ADR-0007 addendum 2026-09-28, D-4 = B) —
+    protecting `person_id` and nothing else, and moved by the assignment path and nothing else.
 
     **No `onupdate`, on purpose.** The position's `updated_at` is visible to every caller with
     `STAFFING_READ`, `PEOPLE_READ` or not; if an assignment moved it, the move itself would be the
@@ -387,8 +389,8 @@ class StaffingPosition(Base):
     updated_at` explicitly, because an ORM-level `onupdate` fires on any `UPDATE` of the table that
     does not name the column (`app.data.staffing.assign_person`).
 
-    Gated in responses exactly like `person_id` (ADR-0005 aneks 2026-09-28, point 3). **Not**
-    copied: a copy gets its own (ADR-0007 aneks 2026-09-28, point 5)."""
+    Gated in responses exactly like `person_id` (ADR-0005 addendum 2026-09-28, point 3). **Not**
+    copied: a copy gets its own (ADR-0007 addendum 2026-09-28, point 5)."""
 
     scenario: Mapped["Scenario"] = relationship()
 
@@ -411,7 +413,7 @@ class StaffingPosition(Base):
         # constraint on exactly the referenced columns. The same construction as
         # `uq_commercial_terms_id_model_type` (SC-4-01).
         UniqueConstraint("id", "scenario_id", name=POSITION_ID_SCENARIO_UNIQUE),
-        # SC-5-03 (F-07; ADR-0013, aneks 2026-09-25 SC-5-03, points 2 and 6; K-06). The
+        # SC-5-03 (F-07; ADR-0013, addendum 2026-09-25 SC-5-03, points 2 and 6; K-06). The
         # database, not the request schema, is what makes "fixed_amount basis with no amount" a
         # state nobody can write — a fixture, a seed script or a future import included.
         CheckConstraint(COST_BASIS_KNOWN_EXPRESSION, name="cost_basis_known"),

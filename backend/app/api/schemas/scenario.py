@@ -9,7 +9,7 @@ could reach a client without anyone deciding it should. The counts are what a ca
 "this calculation was frozen against two calendars, eleven exceptional days and three absence
 types" is a sentence a person can check against what they expected.
 
-**No author and no timestamp of the approval, still.** Since SC-8-01 (Issue #14, ADR-0004 aneks
+**No author and no timestamp of the approval, still.** Since SC-8-01 (Issue #14, ADR-0004 addendum
 2026-09-27) an `audit_log` row exists for every approval — but no endpoint reads it back (out of
 scope for that task, F-13 access control to the resource being a separate, future concern), so this
 payload has nothing truthful to put in such a field yet. A field filled from `created_at` of a

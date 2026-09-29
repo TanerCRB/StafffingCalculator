@@ -6,17 +6,17 @@ Under `/projects/{project_id}/scenarios/{scenario_id}/staffing-positions`:
   (`STAFFING_READ`)
 - `POST   ""` — one position with the months it plans for (`STAFFING_WRITE`; also
   `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` when the request's `cost_basis` is
-  `fixed_amount` — F-07, SC-5-03; Security-Auditor finding, bramka 1 SC-5-03)
+  `fixed_amount` — F-07, SC-5-03; Security-Auditor finding, gate 1 SC-5-03)
 - `PATCH  "/{position_id}"` — the position's personnel-cost basis (`STAFFING_WRITE` ∧
   `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`, F-07, SC-5-03; Security-Auditor finding,
-  bramka 1 SC-5-03)
+  gate 1 SC-5-03)
 - `PATCH  "/{position_id}/allocations/{period_month}"` — one month of one position
   (`STAFFING_WRITE`)
 - `GET    "/{position_id}/absences"` — the absences of one position (`STAFFING_READ`)
 - `POST   "/{position_id}/absences"` — add one absence (`STAFFING_WRITE`)
 - `DELETE "/{position_id}/absences/{absence_id}"` — remove one absence (`STAFFING_WRITE`)
 - `PATCH  "/{position_id}/person"` — assign a named person to the position, or remove the assignment
-  (`STAFFING_READ` ∧ `STAFFING_WRITE` ∧ `PEOPLE_READ`, F-03, SC-2-06; ADR-0019; ADR-0005, aneksy
+  (`STAFFING_READ` ∧ `STAFFING_WRITE` ∧ `PEOPLE_READ`, F-03, SC-2-06; ADR-0019; ADR-0005, addenda
   2026-09-27 point 5 and 2026-09-28 point 1)
 
 **The person on a position is visible only to `STAFFING_READ` ∧ `PEOPLE_READ`** (SC-2-06), on every
@@ -52,7 +52,7 @@ response schema has no such field at all, so there is no gate to apply and none 
 *read* side of any endpoint on this router. Two write paths are the exception (F-07, SC-5-03): the
 cost-basis `PATCH` unconditionally, and the position `POST` when its `cost_basis` is `fixed_amount`
 — both persist `fixed_amount`, a personnel-cost figure, so both reinstate the SC-1-08 conjunction on
-the write itself, even though neither response carries such a field either (bramka 1 SC-5-03,
+the write itself, even though neither response carries such a field either (gate 1 SC-5-03,
 Security-Auditor finding — see `_require_personnel_cost_write_access`).
 """
 
@@ -138,9 +138,9 @@ def _not_found() -> HTTPException:
 _PERSONNEL_COST_WRITE_DENIED_DETAIL = (
     "Caller lacks the personnel-cost visibility needed to write a position's cost basis."
 )
-"""`fixed_amount` is, at `headcount = 1`, directly the cost of the position (ADR-0005, aneks
+"""`fixed_amount` is, at `headcount = 1`, directly the cost of the position (ADR-0005, addendum
 2026-09-25 SC-5-03, Q4) — the same figure the read side never shows without the SC-1-08
-conjunction. Security-Auditor finding, bramka 1 SC-5-03: a caller could set that figure while
+conjunction. Security-Auditor finding, gate 1 SC-5-03: a caller could set that figure while
 holding only `STAFFING_WRITE`, without ever holding `PERSONNEL_COSTS_READ` or this project's
 `can_view_personnel_costs`, and never read it back — a write-side hole beside a read side that is
 fully gated. Shared by both write paths that can persist `fixed_amount`: `create_staffing_position`
@@ -396,7 +396,7 @@ def create_staffing_position(
     """Create one position and the month rows given with it — or refuse.
 
     **The SC-1-08 conjunction, but only when the request would persist `fixed_amount`**
-    (Security-Auditor finding, bramka 1 SC-5-03, extended from `PATCH` to this endpoint on the
+    (Security-Auditor finding, gate 1 SC-5-03, extended from `PATCH` to this endpoint on the
     human's explicit follow-up: `create_position` has the identical gap `edit_staffing_position_
     cost_basis` had). A request whose `cost_basis` is (still) `worked_time` — the default, and every
     request this repository's tests sent before SC-5-03 — writes no personnel-cost figure at all, so
@@ -544,7 +544,7 @@ def edit_staffing_position_cost_basis(
     the position and its new token.
 
     **`STAFFING_WRITE` on the endpoint, `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` on the
-    write itself** (Security-Auditor finding, bramka 1 SC-5-03) — unlike every other write on this
+    write itself** (Security-Auditor finding, gate 1 SC-5-03) — unlike every other write on this
     path, because this one persists a personnel-cost figure rather than a dimension, a headcount or
     an hours count. The conjunction is the read side's own (`app.data.personnel_cost`,
     `app.api.response_shaping`), resolved here through the same `scenario_view_in_scope` the read
@@ -563,12 +563,12 @@ def edit_staffing_position_cost_basis(
 
     - the scenario is `approved` — permanent;
     - `fixed_amount`/`fixed_amount_currency` were named without `cost_basis` while the position's
-      stored basis is not already `fixed_amount` (Guardian finding, bramka 1 SC-5-03) — resolved by
+      stored basis is not already `fixed_amount` (Guardian finding, gate 1 SC-5-03) — resolved by
       also naming `cost_basis='fixed_amount'`, or by re-reading to confirm the basis first;
     - the position changed since it was read — resolved by re-reading.
 
     `cost_basis`/`fixed_amount`/`fixed_amount_currency` are never part of the response body
-    (`StaffingPositionRead` has no such field — ADR-0005, aneks 2026-09-25 SC-5-03, Q4): this
+    (`StaffingPositionRead` has no such field — ADR-0005, addendum 2026-09-25 SC-5-03, Q4): this
     endpoint answers with the same dimension-and-hours shape every other write on this path does, so
     a caller reading back what it just wrote here has to go through the personnel-cost endpoint,
     exactly as it would for a resolved catalogue rate.
@@ -634,16 +634,16 @@ def assign_staffing_position_person(
     """Assign a person (`person_id`) to the position, or remove the assignment (`null`) — the one
     write path of `staffing_position.person_id` (gate 1, decision 3).
 
-    **`STAFFING_READ` ∧ `STAFFING_WRITE` ∧ `PEOPLE_READ`, all on the endpoint** (ADR-0005, aneks
-    2026-09-27 point 5, completed by aneks 2026-09-28 point 1 — D-1 = A): assigning is a planner's
-    act, choosing a person requires knowing who they are, and whoever assigns must be able to read
-    the assignment back (the field is gated on `STAFFING_READ` ∧ `PEOPLE_READ`). Declared as one
-    dependency, so a caller missing any of the three is refused `403` before any row is read — its
-    answer does not depend on whether the project, the scenario, the position or the person exists
-    (no existence oracle, point 5b). `PEOPLE_WRITE` is not needed and not sufficient: it maintains
-    the register, it does not plan staffing.
+    **`STAFFING_READ` ∧ `STAFFING_WRITE` ∧ `PEOPLE_READ`, all on the endpoint** (ADR-0005,
+    addendum 2026-09-27 point 5, completed by addendum 2026-09-28 point 1 — D-1 = A): assigning is
+    a planner's act, choosing a person requires knowing who they are, and whoever assigns must be
+    able to read the assignment back (the field is gated on `STAFFING_READ` ∧ `PEOPLE_READ`).
+    Declared as one dependency, so a caller missing any of the three is refused `403` before any
+    row is read — its answer does not depend on whether the project, the scenario, the position or
+    the person exists (no existence oracle, point 5b). `PEOPLE_WRITE` is not needed and not
+    sufficient: it maintains the register, it does not plan staffing.
 
-    **The position's `updated_at` is neither compared nor moved here** (D-4 = B; ADR-0007 aneks
+    **The position's `updated_at` is neither compared nor moved here** (D-4 = B; ADR-0007 addendum
     2026-09-28): the request carries the assignment's own marker, `person_assignment_updated_at`.
 
     Then, in this order (gate 1, decision 3), each decided one layer down

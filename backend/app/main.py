@@ -40,7 +40,7 @@ app.include_router(projects_router)
 app.include_router(catalog_router)
 # The person register (SC-2-06, ADR-0019): a router of its own, not a dimension of the catalogue —
 # it declares `PEOPLE_READ`/`PEOPLE_WRITE`, refuses the whole resource rather than a field, and a
-# shared router would make it look like one more dictionary under `CATALOG_*` (ADR-0005, aneks
+# shared router would make it look like one more dictionary under `CATALOG_*` (ADR-0005, addendum
 # 2026-09-27, point 3).
 app.include_router(people_router)
 # Nested under `/projects/{project_id}/scenarios/{scenario_id}` but a router of its own: the
@@ -57,17 +57,17 @@ app.include_router(scenarios_router)
 app.include_router(commercial_terms_router)
 # Same nesting, fifth router (SC-5-01): the base personnel cost declares `STAFFING_READ` on the
 # endpoint and gates its figure on `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` in response
-# shaping (ADR-0005, aneks 2026-09-23 SC-5-01). Not a verb on the commercial router — cost and
+# shaping (ADR-0005, addendum 2026-09-23 SC-5-01). Not a verb on the commercial router — cost and
 # revenue are independent calculations (F-06) under different permissions.
 app.include_router(personnel_cost_router)
 # Same nesting, sixth router (SC-5-05): a scenario's additional costs, under `STAFFING_READ`/`WRITE`
-# with no cost conjunction (ADR-0014, point 11; ADR-0005, aneks 2026-09-23 SC-5-05). Not a verb on
-# the personnel-cost router: the two modules never import each other (ADR-0014, "Konsekwencje").
+# with no cost conjunction (ADR-0014, point 11; ADR-0005, addendum 2026-09-23 SC-5-05). Not a verb
+# on the personnel-cost router: the two modules never import each other (ADR-0014, "Konsekwencje").
 app.include_router(additional_cost_router)
 # Same nesting, seventh router (SC-7-01): the scenario-wide profit, margin and markup declares
 # `RESULTS_READ` on the endpoint and gates four of its fields on `PERSONNEL_COSTS_READ` ∧
-# `can_view_personnel_costs` in response shaping (ADR-0005, aneks 2026-09-24) — a composition over
-# the three routers above, never a fourth independent calculation (F-06).
+# `can_view_personnel_costs` in response shaping (ADR-0005, addendum 2026-09-24 SC-7-01) — a
+# composition over the three routers above, never a fourth independent calculation (F-06).
 app.include_router(scenario_results_router)
 # Same nesting, an eighth router (SC-6-02): comparing several scenarios of the same project in one
 # call — a composition over `scenario_results_router` above (same `RESULTS_READ`, same functions,

@@ -1,6 +1,6 @@
 """add cost_basis and fixed_amount to staffing_position
 
-SC-5-03 (F-07, Issue #78; ADR-0013 aneks 2026-09-25 SC-5-03, ADR-0004/0005 addenda of the same
+SC-5-03 (F-07, Issue #78; ADR-0013 addendum 2026-09-25 SC-5-03, ADR-0004/0005 addenda of the same
 date). Expand only (ADR-0001, expand -> deploy -> contract): three new, nullable-or-defaulted
 columns on an existing table and five new CHECK constraints. No column is dropped or altered, no
 existing constraint is changed, and no row is rewritten by anything other than its own default — so
@@ -19,10 +19,10 @@ import never passes through a Pydantic model — ADR-0001):
 2. `fixed_amount` (`NUMERIC(14,4)`, nullable) and `fixed_amount_currency` (`CHAR(3)`, nullable) are
    the position's own stated cost and its currency when `cost_basis = 'fixed_amount'` — `NULL`
    otherwise.
-3. **`fixed_amount_required_for_its_basis`** (ADR-0013 aneks 2026-09-25 SC-5-03, point 2; the same
-   construction as `ck_additional_cost_amount_positive`/G-1, ADR-0014 D-10):
+3. **`fixed_amount_required_for_its_basis`** (ADR-0013 addendum 2026-09-25 SC-5-03,
+   point 2; the same construction as `ck_additional_cost_amount_positive`/G-1, ADR-0014 D-10):
    `cost_basis <> 'fixed_amount' OR (fixed_amount IS NOT NULL AND fixed_amount_currency IS NOT
-   NULL)`. The aneks leaves open whether the currency joins the amount in this CHECK or stays
+   NULL)`. The addendum leaves open whether the currency joins the amount in this CHECK or stays
    nullable with a fallback; this migration's answer is that it joins it — a `fixed_amount` with no
    currency is exactly the unnamed state ADR-0013's "two shapes, never a third" forbids, so the
    database refuses it from existing at all rather than leaving a formula to invent a third shape
@@ -31,15 +31,15 @@ import never passes through a Pydantic model — ADR-0001):
    two ISO-4217 rules `additional_cost.currency`/`catalog_default_rates.currency` already carry
    (three characters, upper case) on `fixed_amount_currency` when not `NULL`.
 
-**What is deliberately not here:** a snapshot table (ADR-0004, aneks 2026-09-25 SC-5-03, point 2 —
-own data of the scenario, protected by the write guard, not by a copy: nothing outside the scenario
-ever changes these columns, so there is nothing for an approval to freeze); a new entry in
-`SCENARIO_CHILD_COPIERS` (point 3 of the same aneks — the columns travel with the position row the
-existing copier already copies by reflection); a new ADR-0007 concurrency token (point 4 — the
-position's `updated_at` already covers every column of this row).
+**What is deliberately not here:** a snapshot table (ADR-0004, addendum 2026-09-25 SC-5-03,
+point 2 — own data of the scenario, protected by the write guard, not by a copy: nothing outside
+the scenario ever changes these columns, so there is nothing for an approval to freeze); a new
+entry in `SCENARIO_CHILD_COPIERS` (point 3 of the same addendum — the columns travel with the
+position row the existing copier already copies by reflection); a new ADR-0007 concurrency token
+(point 4 — the position's `updated_at` already covers every column of this row).
 
 5. **`NOT VALID` + `VALIDATE CONSTRAINT` considered and rejected for these five `CHECK`s** (Reviewer
-   finding R-01, bramka 1 SC-5-03) — `migrations/env.py` wraps this migration's `upgrade()` in one
+   finding R-01, gate 1 SC-5-03) — `migrations/env.py` wraps this migration's `upgrade()` in one
    transaction, so the split buys nothing here, exactly as `c8e2a4f61d93` already found for the same
    shape of migration; the plain `ADD CONSTRAINT ... CHECK (...)` below is deliberate, not an
    oversight. R-01 is tracked as a named exception for this whole class of migration
@@ -54,7 +54,7 @@ Create Date: 2026-09-25
 migration chain from the same parent, `d2f6a91c4b58`): `down_revision` moved from `d2f6a91c4b58` to
 `9b3f6a1d0c47`, the new tip of that chain (`d2f6a91c4b58 -> b7e3f19a6c52 -> b9e3c7a1f264 ->
 9b3f6a1d0c47`), so Alembic has one head again. Content unchanged, same linearisation pattern as
-`dc9c9b4` ("SC-5-02: zlinearyzuj migracje po merge z main (SC-4-05)").
+`dc9c9b4` ("SC-5-02: linearize migrations after merging main (SC-4-05)").
 """
 
 from collections.abc import Sequence

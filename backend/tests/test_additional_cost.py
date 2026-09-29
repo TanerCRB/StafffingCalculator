@@ -236,7 +236,7 @@ def test_k_02_months_outside_the_delivery_period_and_the_allocation_still_count(
 def test_k_04_four_decimal_places_are_stored_unrounded_and_five_are_a_422_writing_nothing(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-04 (ADR-0002, aneks SC-2-04, point 2; ADR-0008, point 6) — through the real `POST`.
+    """K-04 (ADR-0002, addendum SC-2-04, point 2; ADR-0008, point 6) — through the real `POST`.
 
     `1.0025` is stored as `1.0025` — read back from the database and from the API, never `1.00`
     or `1.01`. `1.00255` is a `422` and **no** row is written (the count is asserted, not only the

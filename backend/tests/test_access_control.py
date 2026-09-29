@@ -117,13 +117,13 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     and the question to answer is whether ADR-0005's addendum grew with it.
 
     It grew three times on 2026-09-18: by `PROJECT_EDIT` (SC-1-02), `PROJECT_COPY` (SC-1-03) and
-    `PROJECT_ARCHIVE` (SC-1-04). ADR-0005's addendum "uprawnienia akcji zapisu na Projekcie i
-    dostęp do kopii" names all three widenings, so the expected set below was updated with them
+    `PROJECT_ARCHIVE` (SC-1-04). ADR-0005's addendum "write-action permissions on a Project and
+    access to a copy" names all three widenings, so the expected set below was updated with them
     and not around them. The assertion stays a set equality — the canary is re-armed around the
     new set, not softened into a membership check.
 
     It grew twice more on 2026-09-19, by `CATALOG_READ` and `CATALOG_WRITE` (SC-2-01): ADR-0005's
-    addendum "pierwszy zbiór danych bez zasięgu projektu" (point 6) names those two widenings and
+    addendum "first dataset without project scope" (point 6) names those two widenings and
     only those two, and says in the same breath that `PERSONNEL_COSTS_READ` stays out. So the
     catalogue's cost-rate deny path is the real one for every caller the running system has, and its
     positive branch is reachable from a test only (`dependency_overrides`) — the same shape SC-1-08
@@ -131,12 +131,12 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
     afterthought.
 
     It grew twice again on 2026-09-19, by `STAFFING_READ` and `STAFFING_WRITE` (SC-3-01): ADR-0005's
-    addendum "pozycje obsady: zasięg dziedziczony przez scenariusz" (point 3) names those two
+    addendum "staffing positions: scope inherited from the scenario" (point 3) names those two
     widenings **and says in the same breath that `PERSONNEL_COSTS_READ` still does not belong
     here**. So the canary is re-armed around the new set, not loosened — and the assertion below
     stays a set equality, which is the only form that can tell a widening apart from the status quo.
 
-    It grew once more on 2026-09-24, by `RESULTS_READ` (SC-7-01): ADR-0005's aneks of that date
+    It grew once more on 2026-09-24, by `RESULTS_READ` (SC-7-01): ADR-0005's addendum of that date
     names this widening and only this one, and repeats that `PERSONNEL_COSTS_READ` still does not
     belong here — so the deny path for `profit`/`margin`/`markup`/`included_cost`
     (`app.api.response_shaping._without_scenario_profitability`) is the real one for every caller
@@ -164,7 +164,7 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             # this one — re-armed around the new set, not loosened.
             Permission.COMMERCIAL_READ,
             Permission.COMMERCIAL_WRITE,
-            # SC-7-01: ADR-0005's aneks of 2026-09-24 names this widening and only this one.
+            # SC-7-01: ADR-0005's addendum of 2026-09-24 names this widening and only this one.
             Permission.RESULTS_READ,
             # SC-6-01 (Issue #11, gate 1 decision 2) — re-armed around the new set, not loosened.
             Permission.SCENARIO_COPY,

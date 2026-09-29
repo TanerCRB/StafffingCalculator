@@ -1,22 +1,22 @@
 """Response schema for a scenario's whole-life profit, margin and markup (F-10; SC-7-01, Issue #12;
-ADR-0002 aneks 2026-09-24).
+ADR-0002 addendum 2026-09-24).
 
 **Three already-proven read shapes, reused rather than re-declared** (ADR-0004 "fits", confirmed at
 gate 1): `revenue` is `app.api.schemas.commercial_terms.RevenueRead` (SC-4-01), `personnel_cost` is
 `app.api.schemas.personnel_cost.PersonnelCostRead` (SC-5-01/SC-5-06), `additional_cost` is
 `app.api.schemas.additional_cost.AdditionalCostTotalRead` (SC-5-05). Each keeps naming its own
 `state` independently — a scenario with, say, a `no_rate` revenue and a `calculated` cost reports
-both, never one sentinel standing in for whichever of the three failed (ADR-0002, aneks SC-7-01,
-"stan złożony").
+both, never one sentinel standing in for whichever of the three failed (ADR-0002, addendum SC-7-01,
+"composite state").
 
-**Four new fields, gated as a group and never split** (ADR-0005, aneks 2026-09-24): `profit`,
-`margin`, `markup` and `included_cost`. `null` when the caller may not see personnel costs of this
-scenario's project (the conjunction `PERSONNEL_COSTS_READ` ∧ `project_access.
-can_view_personnel_costs`, applied by `app.api.response_shaping._without_scenario_profitability`) —
-never `403` of the whole resource. `NOT_APPLICABLE` ("n/a") when the conjunction is open but at
+**Four new fields, gated as a group and never split** (ADR-0005, addendum 2026-09-24 SC-7-01):
+`profit`, `margin`, `markup` and `included_cost`. `null` when the caller may not see personnel
+costs of this scenario's project (the conjunction `PERSONNEL_COSTS_READ` ∧ `project_access.
+can_view_personnel_costs`, applied by `app.api.response_shaping._without_scenario_profitability`)
+— never `403` of the whole resource. `NOT_APPLICABLE` ("n/a") when the conjunction is open but at
 least one of the four components (`revenue`, the base cost, the paid-absence cost, the additional
-cost) is not itself `calculated` — the two withholding reasons are deliberately different values so
-a client, and a test, can tell "you may not see this" from "this cannot be computed" apart.
+cost) is not itself `calculated` — the two withholding reasons are deliberately different values
+so a client, and a test, can tell "you may not see this" from "this cannot be computed" apart.
 
 **`profitability_state` says why the four are `"n/a"`** (SC-4-03, R-01 of the verification,
 2026-09-25): `not_applicable` — a component is not `calculated`; `currency_mismatch` — all four are,
@@ -58,11 +58,11 @@ class ScenarioResults(BaseModel):
     revenue: RevenueRead
     personnel_cost: PersonnelCostRead
     """Never gated further than SC-5-01/SC-5-06 already gate it — this endpoint reuses that gate
-    unchanged rather than extending it (ADR-0005, aneks 2026-09-24)."""
+    unchanged rather than extending it (ADR-0005, addendum 2026-09-24 SC-7-01)."""
     additional_cost: AdditionalCostTotalRead
-    """Never gated (ADR-0014, point 11; ADR-0005, aneks 2026-09-23 SC-5-05, point 1) — visible here
-    exactly as it is on its own endpoint, even when `profit`/`margin`/`markup`/`included_cost` are
-    withheld below."""
+    """Never gated (ADR-0014, point 11; ADR-0005, addendum 2026-09-23 SC-5-05, point 1) — visible
+    here exactly as it is on its own endpoint, even when
+    `profit`/`margin`/`markup`/`included_cost` are withheld below."""
 
     included_cost: DecimalString | Literal[NOT_APPLICABLE] | None
     """`base` personnel cost + paid-absence cost + additional cost, all three already stated. `null`
@@ -86,11 +86,11 @@ class ScenarioResults(BaseModel):
 class ScenarioResultsComparison(BaseModel):
     """`GET …/scenarios/compare` — the same eight result fields `ScenarioResults` already carries
     (seven since SC-6-02, plus `profitability_state` since SC-4-03), once per named `scenario_id`,
-    in request order (SC-6-02, F-09 pkt 2; ADR-0001/ADR-0005, aneks 2026-09-24).
+    in request order (SC-6-02, F-09 pt 2; ADR-0001/ADR-0005, addendum 2026-09-24).
 
     **A set of independent rows, never an aggregate.** No field here sums, nets or averages
-    `revenue`/`profit`/etc. across the compared scenarios (ADR-0005 aneks SC-7-01 pt.6, reconfirmed
-    for this endpoint) — each `ScenarioResults` row is exactly what `GET
+    `revenue`/`profit`/etc. across the compared scenarios (ADR-0005 addendum SC-7-01 pt.6,
+    reconfirmed for this endpoint) — each `ScenarioResults` row is exactly what `GET
     …/scenarios/{scenario_id}/results` would answer for that one scenario, unchanged. Perturbing one
     scenario's input changes only its own row; the others are byte-identical to before (K-01).
 

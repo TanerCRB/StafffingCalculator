@@ -24,7 +24,7 @@ import never passes through a Pydantic model):
    scenario-level cost. A cost pointing at another scenario's position is unwritable (criterion
    K-03, control D-7).
 3. `amount > 0` (G-1), `NUMERIC(14,4)` (ADR-0008, point 6).
-4. The shape of the period agreeing with the type: a recurring cost has an end (ADR-0008, aneks
+4. The shape of the period agreeing with the type: a recurring cost has an end (ADR-0008, addendum
    SC-5-05, point 2), a one-off cost has none, the end is not before the start, and both ends are
    first days of a month.
 5. `cost_type` and `funding_source` closed by CHECKs; the currency by the two rules
@@ -35,9 +35,10 @@ import never passes through a Pydantic model):
    (`name_not_blank` CHECK, unique index on the normalised name, `updated_at` marker). **Not
    seeded** (ADR-0014, point 2; the precedent of ADR-0012, point 3).
 
-**What is deliberately not here:** an `EXCLUDE` constraint (ADR-0008, aneks SC-5-05, point 1 — two
-costs of one category in one month are both counted), a snapshot table (ADR-0004, aneks SC-5-05:
-group 2, protected by the write guard), a free-text column, and any `ON DELETE` action.
+**What is deliberately not here:** an `EXCLUDE` constraint (ADR-0008, addendum SC-5-05,
+point 1 — two costs of one category in one month are both counted), a snapshot table
+(ADR-0004, addendum SC-5-05: group 2, protected by the write guard), a free-text column,
+and any `ON DELETE` action.
 
 Revision ID: a3d9e6f20c71
 Revises: e7b41c9d2a58
@@ -83,7 +84,7 @@ _END_MONTH_IS_FIRST_EXPRESSION = "end_month IS NULL OR end_month = date_trunc('m
 def upgrade() -> None:
     op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
 
-    # --- the dictionary (ADR-0014, point 2; ADR-0005, aneks SC-5-05, point 3) -------------------
+    # --- the dictionary (ADR-0014, point 2; ADR-0005, addendum SC-5-05, point 3) -----------------
     op.create_table(
         _CATEGORY_TABLE,
         sa.Column("id", sa.UUID(), nullable=False),

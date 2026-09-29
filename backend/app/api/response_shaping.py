@@ -18,7 +18,7 @@ the flag, so the gate cannot be half-applied by forgetting an argument. The view
 caller it was built for, and `_without_personnel_costs` refuses to shape it for anyone else — see
 its docstring.
 
-**Two gates, not one** (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu projektu",
+**Two gates, not one** (ADR-0005, addendum 2026-09-19 SC-2-01 "first dataset without project scope",
 point 4). `_without_personnel_costs` gates project payloads on the *conjunction* above.
 `_without_catalog_personnel_costs` gates catalogue payloads on the permission alone, because a
 catalogue row has no project for the second factor to be true or false about. The addendum accepts
@@ -29,11 +29,11 @@ reading a project's cost rate "through the catalogue" must not become a way arou
 flag. Both gates remove *fields* and never refuse the row, and both do it here rather than in the
 frontend (AC-06, NF-04), so the F-11 export inherits them.
 
-**A third gate since SC-5-01** (ADR-0005, aneks 2026-09-23 SC-5-01): `_without_scenario_personnel_
-costs` gates a scenario's base personnel cost on the same conjunction as the project gate, with its
-own field set (`SCENARIO_COST_FIELDS`) and its own view type (`ScenarioCostView`) — the first gate
-here that removes a real personnel-cost figure inside a project context. `PERSONNEL_COST_FIELDS`
-(project payloads) stays empty.
+**A third gate since SC-5-01** (ADR-0005, addendum 2026-09-23 SC-5-01):
+`_without_scenario_personnel_costs` gates a scenario's base personnel cost on the same conjunction
+as the project gate, with its own field set (`SCENARIO_COST_FIELDS`) and its own view type
+(`ScenarioCostView`) — the first gate here that removes a real personnel-cost figure inside a
+project context. `PERSONNEL_COST_FIELDS` (project payloads) stays empty.
 """
 
 from collections.abc import Sequence
@@ -185,23 +185,23 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
     {
         "amount",
         "assumptions_used",
-        # SC-5-06 (ADR-0013, aneks 2026-09-23 SC-5-06, point 6): the paid-absence component's
+        # SC-5-06 (ADR-0013, addendum 2026-09-23 SC-5-06, point 6): the paid-absence component's
         # amount, **its budget part** and its assumptions. The budget part is a cost although the
-        # budget is not (ADR-0005, aneks SC-3-03, point 4): days × a cost rate is what a person's
+        # budget is not (ADR-0005, addendum SC-3-03, point 4): days × a cost rate is what a person's
         # leave costs, while the same days in the staffing and catalogue payloads stay outside this
         # set, as they were.
         "paid_absence_amount",
         "paid_absence_budget_amount",
         "paid_absence_assumptions_used",
-        # SC-5-02 (Issue #77, K-01/K-03/K-05; ADR-0013 aneks 2026-09-25): the fully loaded cost and
-        # its surcharge, for the base component and for the paid-absence component — the identical
-        # conjunction as `amount`/`paid_absence_amount`, through this same set (K-03), never a
-        # second mechanism for a second money figure.
+        # SC-5-02 (Issue #77, K-01/K-03/K-05; ADR-0013 addendum 2026-09-25): the fully loaded cost
+        # and its surcharge, for the base component and for the paid-absence component — the
+        # identical conjunction as `amount`/`paid_absence_amount`, through this same set (K-03),
+        # never a second mechanism for a second money figure.
         "fully_loaded_amount",
         "surcharge_amount",
         "paid_absence_fully_loaded_amount",
         "paid_absence_surcharge_amount",
-        # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 5; ADR-0005, aneks 2026-09-25
+        # SC-5-03 (ADR-0013, addendum 2026-09-25 SC-5-03, point 5; ADR-0005, addendum 2026-09-25
         # SC-5-03, point 1): the fixed-amount basis's own amount and its assumptions —
         # identically to `amount` and `assumptions_used` above (criterion K-05). No fully
         # loaded/surcharge pair of its own (SC-5-02 crossed with SC-5-03): a fixed amount has no
@@ -216,7 +216,7 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
 """Fields of a scenario's personnel cost that carry a personnel cost (SC-5-01, SC-5-06, SC-5-02).
 
 A third set, next to `PERSONNEL_COST_FIELDS` (project payloads — still empty, and deliberately left
-so: ADR-0005, aneks 2026-09-23 SC-5-01, point 3) and `CATALOG_PERSONNEL_COST_FIELDS` (catalogue
+so: ADR-0005, addendum 2026-09-23 SC-5-01, point 3) and `CATALOG_PERSONNEL_COST_FIELDS` (catalogue
 rows). Applied by `_without_scenario_personnel_costs` to `PersonnelCostRead`.
 
 **Two fields, and both are necessary**: `amount` is the cost, and `assumptions_used` names every
@@ -234,7 +234,7 @@ SCENARIO_PROFITABILITY_FIELDS: frozenset[str] = frozenset(
     {"profit", "margin", "markup", "included_cost"}
 )
 """Fields of a scenario's whole-life result that mix a personnel cost into one number (SC-7-01,
-ADR-0005 aneks 2026-09-24).
+ADR-0005 addendum 2026-09-24).
 
 A fourth set, next to `PERSONNEL_COST_FIELDS` (project payloads), `CATALOG_PERSONNEL_COST_FIELDS`
 (catalogue rows) and `SCENARIO_COST_FIELDS` (a scenario's base personnel cost). Applied by
@@ -295,8 +295,8 @@ def shape_scenario_assumptions(view: ScenarioAssumptionsView) -> ScenarioAssumpt
 
     **No `caller` argument, and that absence is the statement** — the one `shape_dimension_entry`
     makes: a target margin and an overload threshold are commercial parameters, not what a person
-    costs (Issue #4, "Dane osobowe: nie dotyczy"), so nothing here is gated on a permission. The day
-    a resolved *rate* or cost travels through this payload it grows the SC-1-08 conjunction.
+    costs (Issue #4, "Personal data: not applicable"), so nothing here is gated on a permission.
+    The day a resolved *rate* or cost travels through this payload it grows the SC-1-08 conjunction.
 
     Nothing is decided here: value, state and source arrive resolved from `app.domain.assumptions`,
     and the frozen-or-live choice was made in `app.data.organization_defaults`.
@@ -430,7 +430,7 @@ def shape_project_list(
 
 # --- the catalogue (SC-2-01) --------------------------------------------------------------------
 # A second shaping function with a different gate input, accepted as such by ADR-0005's addendum of
-# 2026-09-19 (point 4): "jedno miejsce" becomes two functions in one module, not two modules. It
+# 2026-09-19 (point 4): "one place" becomes two functions in one module, not two modules. It
 # takes a bare row and a caller — there is no `CallerCatalogView` and there must not be one,
 # because a view object exists to carry a per-(caller, row) flag and the catalogue has no such flag
 # to carry (ADR-0001, addendum 2026-09-19). Inventing one would suggest a scope decision nobody
@@ -440,8 +440,8 @@ def shape_project_list(
 def _without_catalog_personnel_costs(item: CatalogRate, caller: CallerIdentity) -> CatalogRate:
     """Remove the catalogue's cost-rate field unless the caller holds `PERSONNEL_COSTS_READ`.
 
-    One factor, and this is the exception ADR-0005's addendum of 2026-09-19 ("pierwszy zbiór danych
-    bez zasięgu projektu", point 3) creates, named as a weakening: outside a project context the
+    One factor, and this is the exception ADR-0005's addendum of 2026-09-19 SC-2-01 ("first dataset
+    without project scope", point 3) creates, named as a weakening: outside a project context the
     second factor of the SC-1-08 conjunction — `project_access.can_view_personnel_costs` — has no
     subject, since there is no project it could be true or false *about*. Applied literally, the
     conjunction would close this gate forever rather than gate it.
@@ -642,7 +642,7 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
             # Passed through for every caller, exactly like `vendor_id` above and for the identical
             # reason (SC-5-02, criterion K-04): a percentage/flag that only multiplies an
             # already-gated `default_cost_rate` is an organisational parameter classified under
-            # `CATALOG_READ` alone (ADR-0005, aneks 2026-09-25, Q4) — never added to
+            # `CATALOG_READ` alone (ADR-0005, addendum 2026-09-25, Q4) — never added to
             # `CATALOG_PERSONNEL_COST_FIELDS`, which stays the one-element set it always was.
             surcharge_percent=rate.surcharge_percent,
             includes_surcharge=rate.includes_surcharge,
@@ -828,7 +828,7 @@ def shape_staffing_position(
 
 def shape_person(person: Person) -> PersonRead:
     """One person as the register returns it: id, name, marker — never `created_at`, never the
-    positions the person is assigned to (ADR-0019, "Decyzja" pt 3)."""
+    positions the person is assigned to (ADR-0019, "Decision" pt 3)."""
     return PersonRead(id=person.id, full_name=person.full_name, updated_at=person.updated_at)
 
 
@@ -940,9 +940,10 @@ def _commercial_terms_read_of(
 
 
 def _outcome_terms_read_of(details: OutcomeTerms | None) -> OutcomeTermsRead | None:
-    """Parametry reguły Outcome-based przepisane z wiersza (R-04, runda 2 SC-4-03) — bez
-    zaokrąglenia i bez wartości domyślnej: `NULL` w bazie to `null` w odpowiedzi, nigdy `"0"`.
-    Nazwy kolumn kategorii przez `units_column`/`probability_column` — jedna pisownia z modelem."""
+    """Outcome-based rule parameters copied from the row (R-04, verification round 2 SC-4-03) — no
+    rounding and no default value: `NULL` in the database is `null` in the response, never `"0"`.
+    Category column names via `units_column`/`probability_column` — one spelling matching the
+    model."""
     if details is None:
         return None
     return OutcomeTermsRead(
@@ -1008,8 +1009,8 @@ def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
     else:
         assumptions_read = RevenueAssumptionsRead(**shared)
     if isinstance(answer, RevenueResult):
-        # Przychód oczekiwany i per kategoria (SC-4-03) przechodzą tak, jak je podała domena —
-        # zaokrąglone tam raz, tutaj niczego nie liczy się ani nie zaokrągla ponownie.
+        # Expected revenue and per-category revenue (SC-4-03) pass through exactly as the domain
+        # supplied them — rounded there once, nothing here is computed or rounded again.
         return RevenueRead(
             state=REVENUE_CALCULATED,
             amount=answer.revenue,
@@ -1027,7 +1028,7 @@ def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
                 for category in answer.category_revenues
             ],
         )
-    # Nazwany stan przychodu: żadnej kwoty w żadnym polu (ADR-0003, aneks SC-4-03, pkt 7; O-4).
+    # A named revenue state: no amount in any field (ADR-0003, addendum SC-4-03, point 7; O-4).
     return RevenueRead(
         state=answer.reason,
         amount=NOT_APPLICABLE,
@@ -1040,8 +1041,8 @@ def _revenue_read_of(answer: RevenueResult | RevenueUnavailable) -> RevenueRead:
 
 
 # --- a scenario's base personnel cost (SC-5-01) --------------------------------------------------
-# The third shaping function with its own gate (ADR-0005, aneks 2026-09-23 SC-5-01, point 4): not an
-# extension of `_without_personnel_costs` (the payload is not a project) nor of
+# The third shaping function with its own gate (ADR-0005, addendum 2026-09-23 SC-5-01, point 4): not
+# an extension of `_without_personnel_costs` (the payload is not a project) nor of
 # `_without_catalog_personnel_costs` (the rate is not a bare catalogue row — it sits inside a
 # scenario, so the conjunction applies, never the catalogue's single-factor exception). The point
 # also says this is the last one admitted without a new decision.
@@ -1085,7 +1086,7 @@ def _paid_absence_fields(answer: PaidAbsenceCostAnswer) -> dict[str, Any]:
     Spread into `PersonnelCostRead` rather than built as a nested object, so the component's gated
     fields are members of `SCENARIO_COST_FIELDS` by name and go through the one
     `_without_scenario_personnel_costs` below — a nested object would need a second field set and a
-    second removal, i.e. a second gate (ADR-0013, aneks 2026-09-23 SC-5-06, point 6: "the same
+    second removal, i.e. a second gate (ADR-0013, addendum 2026-09-23 SC-5-06, point 6: "the same
     conjunction", not a new one). Nothing is decided here: the state, both amounts and the hours
     arrive from `app.domain.paid_absence_cost`, rounded there once, not re-rounded here.
     """
@@ -1134,8 +1135,8 @@ def _fixed_amount_fields(answer: FixedAmountCostAnswer) -> dict[str, Any]:
 
     Spread into `PersonnelCostRead`, exactly as `_paid_absence_fields` is, so the component's
     gated fields are members of `SCENARIO_COST_FIELDS` by name and go through the one
-    `_without_scenario_personnel_costs` below — no second gate (ADR-0013, aneks 2026-09-25
-    SC-5-03, point 1, applying the same "one conjunction" rule the paid-absence aneks already
+    `_without_scenario_personnel_costs` below — no second gate (ADR-0013, addendum 2026-09-25
+    SC-5-03, point 1, applying the same "one conjunction" rule the paid-absence addendum already
     states). Nothing is decided here: the state, the amount and the lines arrive from
     `app.domain.fixed_amount_cost`, rounded there once, not re-rounded here.
     """
@@ -1277,7 +1278,7 @@ def shape_scenario_personnel_cost(
 
 
 # --- a scenario's additional costs (SC-5-05) -----------------------------------------------------
-# No gate, and no fourth shaping function with one (ADR-0005, aneks 2026-09-23 SC-5-05, point 1):
+# No gate, and no fourth shaping function with one (ADR-0005, addendum 2026-09-23 SC-5-05, point 1):
 # additional costs are not personnel costs by nature, so the "fourth shaping function" that point
 # 4 of the SC-5-01 addendum reserves stays unused. What makes that true is the absence of a
 # `caller` argument below — there is nothing to decide per caller.
@@ -1289,7 +1290,7 @@ def shape_additional_cost(row: AdditionalCostRow) -> AdditionalCostRead:
     **No `caller` argument, and that absence is the statement** (the one `shape_dimension_entry`
     makes): nothing on this row is gated, under Q-7 = B of ADR-0014. The named risk that decision
     accepted — a cost on a `headcount = 1` position is indirectly about one person — is recorded in
-    ADR-0005, aneks SC-5-05, point 2, not hidden here.
+    ADR-0005, addendum SC-5-05, point 2, not hidden here.
     """
     cost = row.cost
     return AdditionalCostRead(
@@ -1391,13 +1392,13 @@ def shape_catalog_rate_list(
 
 
 # --- a scenario's whole-life profit, margin and markup (SC-7-01) --------------------------------
-# The fourth shaping function with its own gate (ADR-0005, aneks 2026-09-24): not an extension of
-# `_without_scenario_personnel_costs` (this payload also carries `revenue` and `additional_cost`,
-# neither of which that function's field set may touch) nor of `_without_personnel_costs` or
-# `_without_catalog_personnel_costs` (neither payload here is a project row or a bare catalogue
-# row). `personnel_cost` inside this payload goes through the existing SC-5-01/SC-5-06 gate
-# unchanged, on the same `ScenarioCostView` — this section adds a gate for the four aggregate
-# fields only, and does not touch any of the other three.
+# The fourth shaping function with its own gate (ADR-0005, addendum 2026-09-24 SC-7-01): not an
+# extension of `_without_scenario_personnel_costs` (this payload also carries `revenue` and
+# `additional_cost`, neither of which that function's field set may touch) nor of
+# `_without_personnel_costs` or `_without_catalog_personnel_costs` (neither payload here is a
+# project row or a bare catalogue row). `personnel_cost` inside this payload goes through the
+# existing SC-5-01/SC-5-06 gate unchanged, on the same `ScenarioCostView` — this section adds a gate
+# for the four aggregate fields only, and does not touch any of the other three.
 
 
 def _without_scenario_profitability(
@@ -1489,7 +1490,7 @@ def shape_scenario_what_if_salary_raise(
     that function's own `ScenarioResultsView` is documented as built only by
     `scenario_results_for_caller`, from the three reads that refresh the scenario (revenue,
     personnel cost, additional cost), whose frozen `status_at_read` values are known to agree — any
-    further read that refreshes the scenario must join that comparison (ADR-0015, aneks SC-7-03,
+    further read that refreshes the scenario must join that comparison (ADR-0015, addendum SC-7-03,
     point 8).
     A `ScenarioWhatIfView` makes no such claim about the *hypothetical* cost view it
     carries, so this is its own, small composition rather than a call that would misrepresent what

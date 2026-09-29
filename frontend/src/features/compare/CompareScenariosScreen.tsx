@@ -27,7 +27,7 @@ import "./CompareScenariosScreen.css";
 
 /**
  * SC-7-04 — a workspace-level screen comparing the whole-life results of N scenarios of one
- * project (F-09 pkt 2, F-11; Issue #108), consuming the comparison endpoint SC-6-02 already
+ * project (F-09 point 2, F-11; Issue #108), consuming the comparison endpoint SC-6-02 already
  * built and never computing anything of its own (ADR-0002 not engaged).
  *
  * **Two-level state, own to this screen (gate 1, Q1 = option A):** first a project, chosen from

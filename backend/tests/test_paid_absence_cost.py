@@ -1,6 +1,6 @@
 """SC-5-06, K-01..K-07 — the cost of paid absences as a named component beside the base personnel
-cost (F-07, F-05; ADR-0013 aneks 2026-09-23 SC-5-06, controls N-1..N-4; ADR-0004 aneks 2026-09-23
-SC-5-06, controls M-1, M-2).
+cost (F-07, F-05; ADR-0013 addendum 2026-09-23 SC-5-06, controls N-1..N-4; ADR-0004 addendum
+2026-09-23 SC-5-06, controls M-1, M-2).
 
 Every figure is read through the real endpoint, `GET …/personnel-cost`, by a caller for whom the
 cost gate is **open** (`caller_holding(*Permission)` plus the `project_access` flag), except in the
@@ -258,7 +258,7 @@ def test_k_01_the_component_is_manual_paid_hours_plus_the_budget_top_up_at_the_c
 def test_k_01_the_base_amount_is_the_same_with_and_without_paid_absences(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-01, "koszt bazowy SC-5-01 nietknięty" as a contrast rather than a constant: the same plan
+    """K-01, "the SC-5-01 base cost untouched" as a contrast rather than a constant: the same plan
     without any booking and with all three — `amount` and `assumptions_used` identical, the
     component moving from the budget alone (52 days × 7.50 = 390.00 h, March 32.50 h → 3900.00) to
     11700.00. Mutation: the component summed into the base amount."""
@@ -576,7 +576,7 @@ def test_k_05_the_component_and_its_budget_part_are_present_only_under_the_conju
 def test_k_05_the_budget_in_days_and_hours_stays_outside_the_conjunction(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-05, the other half (ADR-0005 aneks SC-3-03 point 4, aneks SC-3-02 point 7): a caller
+    """K-05, the other half (ADR-0005 addendum SC-3-03 point 4, addendum SC-3-02 point 7): a caller
     **without** `PERSONNEL_COSTS_READ` and without the flag — the one refused the component above —
     still reads the budget as a number: `absence_budget_hours` 30.00 on the staffing grid and
     `budget_days` 26.00 in the catalogue. The contrast is the same caller's `null` component.
@@ -661,8 +661,8 @@ def test_k_06_m_1_the_approved_component_equals_the_draft_and_no_catalogue_edit_
 def test_k_06_an_approved_scenario_resolves_its_frozen_budget_windows_per_month(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-06, ADR-0004 aneks SC-5-06 point 2 (the condition of aneks SC-3-03 point 7c met): a plan
-    over December 2026 and January 2027, two budget windows — 26 days in 2026, 20 in 2027 —
+    """K-06, ADR-0004 addendum SC-5-06 point 2 (the condition of addendum SC-3-03 point 7c met):
+    a plan over December 2026 and January 2027, two budget windows — 26 days in 2026, 20 in 2027 —
     headcount 1, no booking. December: 195.00 h, its twelfth by remainder distribution 16.25 h;
     January: 150.00 h, 12.50 h. 28.75 h × 120 = **3450.00**, before and after the approval, and
     after both budgets are raised to 40 days. A reader taking one frozen window per pair would cost
@@ -784,8 +784,8 @@ def test_r_01_m_1_a_named_non_costing_statutory_type_without_a_frozen_budget_sur
     `None`, and the reader can no longer tell "named, not cost-generating" from "nobody named one".
     Nothing repairs it later — the snapshot has no `UPDATE` path.
 
-    This is control M-3 of ADR-0004, aneks 2026-09-23 SC-5-06 (point 5, which changed contract S-02
-    so that the flagged type is frozen whenever the scenario plans a month in a location with a
+    This is control M-3 of ADR-0004, addendum 2026-09-23 SC-5-06 (point 5, which changed contract
+    S-02 so that the flagged type is frozen whenever the scenario plans a month in a location with a
     calendar, budget or no budget). Its contrast — no calendar in the location, the type **not**
     frozen — is `test_scenario_approval_snapshot.py::test_k_07_m_3_the_flagged_type_is_frozen_by_
     the_location_calendar_not_by_a_frozen_budget` (second scenario) and `test_k_07_a_scenario_whose_

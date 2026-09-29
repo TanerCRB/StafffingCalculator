@@ -5,7 +5,7 @@ persisted, cost-rate structure (F-09 pt.3; SC-6-04, Issue #88; ADR-0015).
 module calls the same readers/formulas every other personnel-cost path already calls —
 `app.data.personnel_cost._worked_months`, `app.data.paid_absence_cost.paid_absence_months`,
 `app.domain.personnel_cost.base_personnel_cost`, `app.domain.paid_absence_cost.paid_absence_cost`
-(ADR-0013, aneks 2026-09-24: "jedna funkcja, cztery miejsca") — on a rate structure this module
+(ADR-0013, addendum 2026-09-24: "jedna funkcja, cztery miejsca") — on a rate structure this module
 built with `dataclasses.replace`, never on arithmetic written here. It also calls
 `app.data.commercial_terms.commercial_terms_for_caller`,
 `app.data.personnel_cost.scenario_cost_for_caller` and
@@ -18,7 +18,7 @@ cost view does not represent. This composition reads the same real sources separ
 the same guard, `app.data.scenario_results.refuse_a_status_race` — one function, never a second
 copy of its rule — to the statuses the three real reads froze right after their own refreshes
 (`status_at_read`), never to the shared `Scenario`'s `.status` (SC-7-03, Issue #118; ADR-0015,
-aneks SC-7-03, points 2 and 4) — only *after* which does it touch a rate.
+addendum SC-7-03, points 2 and 4) — only *after* which does it touch a rate.
 
 **Zero persistence, structurally** (ADR-0015, point 2). `WorkedMonth`, `MonthCostRate`,
 `CostRateWindow` are plain `@dataclass(frozen=True)` (`app.domain.personnel_cost`), never
@@ -51,7 +51,7 @@ imports (F-06; rule 10 of the Invariant Guardian).
 **Scope: `draft` only** (ADR-0015, point 5). A scenario that is, or becomes mid-request, `approved`
 answers `None` here — the same "no such scenario for this caller" every scope failure in this
 module already answers with, never a distinct error. The check runs *after* the inherited race
-guard and *before* any substitution (ADR-0015, aneks SC-7-03, points 2, 5 and 8):
+guard and *before* any substitution (ADR-0015, addendum SC-7-03, points 2, 5 and 8):
 
 - an approval landing between the cost and the additional-cost read, for every model, or between
   the revenue and the cost read of a status-dependent revenue (T&M, or no rule at all), is caught
@@ -64,9 +64,9 @@ guard and *before* any substitution (ADR-0015, aneks SC-7-03, points 2, 5 and 8)
   agrees and the guard has nothing to catch.
 
 **The additional-cost read runs before the guard, on purpose** (SC-7-03, reviewer R-01; ADR-0015,
-aneks SC-7-03, point 8). It is the last of the three `session.refresh(scenario)` calls on this path.
-Called after the guard (as before SC-7-03), an approval landing between the cost read and it left
-the compared statuses agreeing on `draft` while its refresh flipped the shared `Scenario` to
+addendum SC-7-03, point 8). It is the last of the three `session.refresh(scenario)` calls on this
+path. Called after the guard (as before SC-7-03), an approval landing between the cost read and it
+left the compared statuses agreeing on `draft` while its refresh flipped the shared `Scenario` to
 `approved` — and `_worked_months(session, scenario)` below then branched on that live `approved`
 and served a hypothesis computed on the approval snapshot. With the third status frozen and
 compared with the cost's (rule (b)), and no `session.refresh(scenario)` anywhere after it
@@ -139,10 +139,10 @@ def _raised_rate(rate: MonthCostRate | None, multiplier: Decimal) -> MonthCostRa
     `surcharge_percent`/`includes_surcharge`) survives untouched.
 
     **This is the whole of SC-5-02's criterion K-07.** `surcharge_percent` is a *percentage of*
-    `cost_rate` (ADR-0013, aneks 2026-09-25, Q4), so raising `cost_rate` here and leaving
+    `cost_rate` (ADR-0013, addendum 2026-09-25, Q4), so raising `cost_rate` here and leaving
     `surcharge_percent` exactly as `replace` already leaves every field it is not told to change is
     what makes the fully loaded cost's surcharge amount rise proportionally with the base, with no
-    line added to this function and no new substitution path in this module (ADR-0015, aneks
+    line added to this function and no new substitution path in this module (ADR-0015, addendum
     2026-09-25 SC-5-02).
     """
     if rate is None:
@@ -169,7 +169,7 @@ def _raised_rates_by_month(
     """The `(position_id, period_month) -> rate` mapping `paid_absence_months` needs, built from the
     **already-raised** months — the same shape `scenario_cost_for_caller` builds from the real ones,
     so the paid-absence component is costed at literally the same raised rate the base cost is
-    (ADR-0015, point 3; ADR-0013, aneks 2026-09-24)."""
+    (ADR-0015, point 3; ADR-0013, addendum 2026-09-24)."""
     return {(month.position_id, month.period_month): month.rate for month in months}
 
 
@@ -194,12 +194,12 @@ def scenario_what_if_salary_raise_for_caller(
     cost_view = scenario_cost_for_caller(session, caller, project_id, scenario_id)
     if cost_view is None:  # pragma: no cover — scope agrees with the call above by construction
         return None
-    # Before the guard, not after it: its refresh is the last one on this path (aneks SC-7-03,
+    # Before the guard, not after it: its refresh is the last one on this path (addendum SC-7-03,
     # point 8), so its status has to be frozen and compared before anything branches on it.
     additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
     if additional is None:  # pragma: no cover — scope agrees with the two calls above
         return None
-    # The same function as `/results`, never a second copy of the rule (ADR-0015, aneks SC-7-03,
+    # The same function as `/results`, never a second copy of the rule (ADR-0015, addendum SC-7-03,
     # points 2 and 4): an approval landing between the real reads above is still a race whenever
     # the rule compares those two reads, whatever this endpoint goes on to compute from a
     # hypothetical rate. Every status is the one a real read froze right after its own refresh —

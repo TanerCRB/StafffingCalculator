@@ -111,7 +111,7 @@ def _refusal(session: Session, row: dict[str, object]) -> tuple[str | None, str 
 def test_k_03_a_recurring_cost_without_an_end_is_refused_by_the_database(
     db_session: Session,
 ) -> None:
-    """K-03 (D-2; ADR-0008, aneks SC-5-05, point 2) — an open-ended recurring cost has no finite
+    """K-03 (D-2; ADR-0008, addendum SC-5-05, point 2) — an open-ended recurring cost has no finite
     sum. Contrast: the same row closed (March–June) is accepted."""
     fixture = _fixture(db_session)
     _insert(db_session, _row(fixture, cost_type="recurring", end_month=JUN))
@@ -316,7 +316,7 @@ def test_no_foreign_key_of_the_cost_row_cascades_or_nulls_a_delete(db_session: S
 def test_two_overlapping_costs_of_one_category_are_both_legal_there_is_no_exclude(
     db_session: Session,
 ) -> None:
-    """ADR-0008, aneks SC-5-05, point 1 — not a consumer of the effective-range pattern: two
+    """ADR-0008, addendum SC-5-05, point 1 — not a consumer of the effective-range pattern: two
     licences of one category in the same months are both true. The absence of an `EXCLUDE` is the
     decision, asserted both ways: the rows are accepted, and `pg_constraint` holds none."""
     fixture = _fixture(db_session)
@@ -371,7 +371,7 @@ def test_the_model_and_the_migration_agree_on_every_sql_expression() -> None:
 
 
 def test_the_cost_row_carries_no_free_text_and_no_person_column(engine: Engine) -> None:
-    """ADR-0014/ADR-0005, aneks SC-5-05, point 2 — the column set, by equality, read from the
+    """ADR-0014/ADR-0005, addendum SC-5-05, point 2 — the column set, by equality, read from the
     migrated database. A `description`, a `note` or a `person` column added later would make a cost
     on a `headcount = 1` position *directly* about one person, without the decision that governs
     personal data; this fails on the day it is added."""

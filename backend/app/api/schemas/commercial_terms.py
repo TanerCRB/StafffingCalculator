@@ -57,16 +57,16 @@ from app.models.commercial_terms import (
 )
 
 OutcomeCategory = Literal["not_achieved", "partial", "achieved", "exceeded"]
-"""Cztery stałe kategorie wyniku (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 3) —
-`app.models.commercial_terms.OUTCOME_CATEGORIES` w pisowni API."""
+"""Four fixed outcome categories (ADR-0003, addendum 2026-09-25 SC-4-03, point 3) —
+`app.models.commercial_terms.OUTCOME_CATEGORIES` in the API's spelling."""
 
 ExpectedRevenueState = Literal["calculated", "no_probabilities", "not_applicable"]
-"""Stan przychodu oczekiwanego (pkt 5b-c): `no_probabilities` to nazwany stan reguły bez
-prawdopodobieństw; `not_applicable` — model bez przychodu oczekiwanego albo przychód w ogóle
-niepodany (wtedy `state` mówi dlaczego)."""
+"""The state of the expected revenue (points 5b-c): `no_probabilities` is the named state of a rule
+with no probabilities; `not_applicable` — a model with no expected revenue, or revenue not stated
+at all (then `state` says why)."""
 
 SourceNotApplicable = Literal["not_applicable"]
-"""Źródło, którego wyliczenie nie czyta — model bez katalogu stawek (pkt 8, 10a)."""
+"""A source the calculation does not read — a model with no rate catalogue (points 8, 10a)."""
 
 ModelType = Literal["time_and_material", "story_points", "outcome_based", "fixed_price"]
 """The models a rule may name — the API spelling of `app.models.commercial_terms.MODEL_TYPES`. The
@@ -107,7 +107,7 @@ class TimeAndMaterialTermsCreateRequest(BaseModel):
     """`POST …/commercial-terms` for T&M — the one thing a T&M rule says: which model prices it.
 
     `extra="forbid"`: there is no rate, override, cap or day length to send (ADR-0003, points 4 and
-    7, "Odłożone"), and a field the server silently ignored would be a promise it does not keep.
+    7, "Deferred"), and a field the server silently ignored would be a promise it does not keep.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -141,8 +141,8 @@ OutcomeAmount = Annotated[
     DecimalString,
     Field(ge=0, max_digits=OUTCOME_AMOUNT_PRECISION, decimal_places=OUTCOME_AMOUNT_SCALE),
 ]
-"""Kwota reguły na wejściu: nieujemna i dokładnie tak precyzyjna jak `NUMERIC(14,4)` — piąte miejsce
-po przecinku to `422`, nie zaokrąglenie przy zapisie (ADR-0002)."""
+"""The rule's amount on the way in: non-negative and exactly as precise as `NUMERIC(14,4)` — a fifth
+decimal place is a `422`, not a rounding at write time (ADR-0002)."""
 
 OutcomeUnits = Annotated[
     DecimalString,
@@ -153,17 +153,17 @@ Probability = Annotated[
     DecimalString,
     Field(ge=0, le=100, max_digits=PROBABILITY_PRECISION, decimal_places=PROBABILITY_SCALE),
 ]
-"""Procent z co najwyżej dwoma miejscami po przecinku. `33.333` to `422` — nigdy zaokrąglenie po
-cichu, które zmieniłoby sumę sprawdzoną przez użytkownika (ADR-0003, aneks SC-4-03, pkt 4)."""
+"""A percentage with at most two decimal places. `33.333` is a `422` — never a silent
+rounding that would change a sum the user already checked (ADR-0003, addendum SC-4-03, point 4)."""
 
 
 class OutcomeCategoryRequest(BaseModel):
-    """Jedna kategoria wyniku: liczba osiągniętych jednostek (wpis ręczny) i opcjonalne
-    prawdopodobieństwo.
+    """One outcome category: the number of units achieved (a manual entry) and an optional
+    probability.
 
-    `units` opcjonalne — obowiązkowe tylko wtedy, gdy reguła ma stawkę za jednostkę (walidator
-    `OutcomeBasedTermsCreateRequest`, ten sam warunek co
-    `ck_outcome_terms_units_given_with_unit_rate`). Pominięte zostaje `null`, nigdy `0`."""
+    `units` is optional — mandatory only when the rule has a per-unit rate (the
+    `OutcomeBasedTermsCreateRequest` validator, the same condition as
+    `ck_outcome_terms_units_given_with_unit_rate`). Omitted stays `null`, never `0`."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -172,7 +172,7 @@ class OutcomeCategoryRequest(BaseModel):
 
 
 class OutcomeCategoriesRequest(BaseModel):
-    """Dokładnie cztery stałe kategorie — każda obowiązkowa, żadna dodatkowa (pkt 3)."""
+    """Exactly four fixed categories — every one mandatory, none extra (point 3)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -183,23 +183,23 @@ class OutcomeCategoriesRequest(BaseModel):
 
 
 class OutcomeBasedTermsCreateRequest(BaseModel):
-    """`POST …/commercial-terms` dla Outcome-based (F-06.3; ADR-0003, aneks 2026-09-25 SC-4-03).
+    """`POST …/commercial-terms` for Outcome-based (F-06.3; ADR-0003, addendum 2026-09-25 SC-4-03).
 
-    **Każda reguła tutaj jest też regułą bazy** (`app.models.commercial_terms.OutcomeTerms`):
-    schemat zamienia błąd klienta na `422` wskazujący pole; gwarancją jest `CHECK`, bo fixture ani
-    import nie przechodzą przez ten moduł. Składnik opcjonalny pominięty albo `null` to brak
-    składnika — nigdy `0` (pkt 2).
+    **Every rule here is also a rule of the database** (`app.models.commercial_terms.OutcomeTerms`):
+    the schema turns a client's mistake into a `422` naming the field; the guarantee is the `CHECK`,
+    because neither a fixture nor an import passes through this module. An optional component
+    omitted or `null` means the component is absent — never `0` (point 2).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     model_type: Literal["outcome_based"]
     currency: Iso4217Code
-    """Waluta reguły, bez przeliczenia (pkt 7): inna niż waluta scenariusza →
-    `currency_mismatch`."""
+    """The rule's currency, with no conversion (point 7): different from the scenario's
+    currency → `currency_mismatch`."""
     fixed_fee: OutcomeAmount
     success_bonus: OutcomeAmount | None = None
-    """Premia binarna dla kategorii "osiągnięty" i "przekroczony" — nie dla "częściowy" (D-1)."""
+    """A binary bonus for the "achieved" and "exceeded" categories — not for "partial" (D-1)."""
     unit_rate: OutcomeAmount | None = None
     revenue_min: OutcomeAmount | None = None
     revenue_max: OutcomeAmount | None = None
@@ -207,9 +207,9 @@ class OutcomeBasedTermsCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
-        """Te same reguły co `ck_outcome_terms_revenue_bounds_ordered`,
-        `ck_outcome_terms_probabilities_sum_to_100` i `ck_outcome_terms_units_given_with_unit_rate`,
-        jako `422` przed jakimkolwiek zapisem."""
+        """The same rules as `ck_outcome_terms_revenue_bounds_ordered`,
+        `ck_outcome_terms_probabilities_sum_to_100` and
+        `ck_outcome_terms_units_given_with_unit_rate`, as a `422` before any write."""
         if (
             self.revenue_min is not None
             and self.revenue_max is not None
@@ -260,21 +260,21 @@ CommercialTermsCreateRequest = Annotated[
     Field(discriminator="model_type"),
 ]
 """The request shape as a discriminated union on `model_type` (ADR-0003 addendum 2026-09-25, D-6/A;
-ADR-0003, pkt 9 — wybór po `model_type`, nigdy po kształcie danych): each model's own request
-carries only its own fields (Fixed Price, SC-4-02, the same way), and Pydantic itself refuses a
-`model_type` its `Literal` does not name, before any of this reaches `app.data.commercial_terms`. A
-missing or unknown `model_type` is a `422` naming the field."""
+ADR-0003, point 9 — chosen by `model_type`, never by the shape of the data): each model's own
+request carries only its own fields (Fixed Price, SC-4-02, the same way), and Pydantic itself
+refuses a `model_type` its `Literal` does not name, before any of this reaches
+`app.data.commercial_terms`. A missing or unknown `model_type` is a `422` naming the field."""
 
 
 class OutcomeCategoryRead(BaseModel):
-    """Jedna kategoria reguły Outcome-based tak, jak ją zapisano — `null` za brak, nigdy `0`."""
+    """One category of an Outcome-based rule as it was stored — `null` for absent, never `0`."""
 
     units: DecimalString | None
     probability: DecimalString | None
 
 
 class OutcomeCategoriesRead(BaseModel):
-    """Cztery stałe kategorie — ten sam kształt co `OutcomeCategoriesRequest`."""
+    """Four fixed categories — the same shape as `OutcomeCategoriesRequest`."""
 
     not_achieved: OutcomeCategoryRead
     partial: OutcomeCategoryRead
@@ -283,10 +283,10 @@ class OutcomeCategoriesRead(BaseModel):
 
 
 class OutcomeTermsRead(BaseModel):
-    """Parametry reguły Outcome-based do odczytu (runda 2 weryfikacji SC-4-03, R-04) — ten sam
-    kształt co `OutcomeBasedTermsCreateRequest` bez `model_type`, żeby klient mógł wyświetlić
-    dokładnie to, co zapisał. Kwoty jako napisy stałoprzecinkowe przepisane z wiersza, bez
-    zaokrąglenia; składnik nieobecny to `null`. Żadnego kosztu — to parametry przychodu."""
+    """Outcome-based rule parameters for reading (verification round 2 of SC-4-03, R-04) — the same
+    shape as `OutcomeBasedTermsCreateRequest` without `model_type`, so a client can display
+    exactly what it stored. Amounts as fixed-point strings copied from the row, with no
+    rounding; an absent component is `null`. No cost at all — these are revenue parameters."""
 
     currency: str
     fixed_fee: DecimalString
@@ -352,10 +352,10 @@ class CommercialTermsRead(BaseModel):
     model_type: StoredModelType
     updated_at: datetime
     outcome_terms: OutcomeTermsRead | None
-    """Parametry reguły Outcome-based (R-04). `null` dla każdego innego modelu — T&M nie ma
-    parametrów (ADR-0003, pkt 4) — i dla reguły Outcome-based bez wiersza szczegółów (wtedy
-    `revenue.state` to `incomplete_commercial_terms`). Jedno pole addytywne, jedyna zmiana kształtu
-    odpowiedzi T&M."""
+    """Outcome-based rule parameters (R-04). `null` for every other model — T&M has no
+    parameters (ADR-0003, point 4) — and for an Outcome-based rule with no details row (then
+    `revenue.state` is `incomplete_commercial_terms`). One additive field, the only change to the
+    shape of a T&M response."""
 
 
 class FixedPriceCommercialTermsRead(BaseModel):
@@ -421,9 +421,9 @@ class RevenueAssumptionsRead(BaseModel):
     rate_source: (
         Literal["live_catalog", "approved_snapshot", "story_points_terms"] | SourceNotApplicable
     )
-    """`not_applicable` w trzech polach źródła dla modelu bez katalogu stawek (Outcome-based;
-    ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8) — założenia nazywają tylko to, co wyliczenie
-    czyta. Story Points: `hours_source`/`vendor_axis` `not_applicable`, `rate_source`
+    """`not_applicable` on all three source fields for a model with no rate catalogue (Outcome-
+    based; ADR-0003, addendum 2026-09-25 SC-4-03, point 8) — the assumptions name only what the
+    calculation reads. Story Points: `hours_source`/`vendor_axis` `not_applicable`, `rate_source`
     `story_points_terms` (SC-4-04)."""
     rate_windows: list[RateWindowRead]
     unresolved_months: list[UnresolvedMonthRead]
@@ -464,13 +464,13 @@ RevenueAssumptionsReadAny = Annotated[
 
 
 class CategoryRevenueRead(BaseModel):
-    """Przychód jednej kategorii wyniku Outcome-based, po ograniczeniu min/max (pkt 5b, 6)."""
+    """The revenue of one Outcome-based category, after the min/max clamp (points 5b, 6)."""
 
     category: OutcomeCategory
     units: DecimalString | None
-    """`null`, gdy reguła nie ma stawki za jednostkę i jednostek nie podano — nigdy `0`."""
+    """`null` when the rule has no per-unit rate and no units were given — never `0`."""
     probability: DecimalString | None
-    """`null`, gdy reguła nie ma prawdopodobieństw — nigdy `0`."""
+    """`null` when the rule has no probabilities — never `0`."""
     amount: DecimalString
 
 
@@ -479,16 +479,18 @@ class RevenueRead(BaseModel):
 
     state: RevenueState
     amount: DecimalString | Literal[NOT_APPLICABLE]
-    """A fixed-point string when `state` is `"calculated"`, `"n/a"` otherwise — never `0`.
-    Dla Outcome-based: przychód **gwarantowany** (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 5a)."""
+    """A fixed-point string when `state` is `"calculated"`, `"n/a"` otherwise — never `0`. For
+    Outcome-based: the **guaranteed** revenue (ADR-0003, addendum 2026-09-25 SC-4-03, point 5a)."""
     currency: str | None
     assumptions_used: RevenueAssumptionsReadAny
     expected_state: ExpectedRevenueState
-    """Pole addytywne SC-4-03 (pkt 5b-d; bramka 1, D-6)."""
+    """An additive field of SC-4-03 (points 5b-d; gate 1, D-6)."""
     expected_amount: DecimalString | Literal[NOT_APPLICABLE]
-    """Przychód oczekiwany — kwota tylko przy `expected_state == "calculated"`, inaczej `"n/a"`."""
+    """The expected revenue — an amount only when `expected_state == "calculated"`, otherwise
+    `"n/a"`."""
     category_revenues: list[CategoryRevenueRead]
-    """Przychody per kategoria — puste dla modelu bez kategorii i dla nazwanego stanu przychodu."""
+    """Per-category revenues — empty for a model with no categories and for a named revenue
+    state."""
 
 
 class ScenarioCommercialTerms(BaseModel):

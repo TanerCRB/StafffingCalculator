@@ -1,4 +1,4 @@
-"""SC-5-02 (Issue #77, F-07) — narzuty osobowe i koszt w pełni obciążony, K-01..K-08.
+"""SC-5-02 (Issue #77, F-07) — personnel surcharges and the fully loaded cost, K-01..K-08.
 
 `app.domain.personnel_cost.fully_loaded_personnel_cost`/`app.domain.paid_absence_cost.
 fully_loaded_paid_absence_cost` are new, third and fourth consumers of the shared rate dictionary
@@ -234,7 +234,7 @@ def test_s_01_a_mid_month_includes_surcharge_flag_change_leaves_the_month_withou
 def test_k_04_the_raw_surcharge_percent_and_flag_are_visible_under_catalog_read_alone(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-04, positive half (ADR-0005, aneks 2026-09-25, Q4) — mirrors the leave budget's own
+    """K-04, positive half (ADR-0005, addendum 2026-09-25, Q4) — mirrors the leave budget's own
     catalogue field (SC-3-03), not `default_cost_rate` (SC-2-01): a caller who cannot see
     `default_cost_rate` still sees `surcharge_percent`/`includes_surcharge` on the same row, because
     the percentage reveals nothing without the base rate it multiplies, which is gated separately.
@@ -258,7 +258,7 @@ def test_k_04_the_raw_surcharge_percent_and_flag_are_visible_under_catalog_read_
 def test_k_04_the_surcharge_amount_is_never_served_by_the_catalogs_one_factor_path(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-04, negative half (ADR-0005, aneks 2026-09-22 SC-3-03 pt 4, applied to SC-5-02) — the
+    """K-04, negative half (ADR-0005, addendum 2026-09-22 SC-3-03 pt 4, applied to SC-5-02) — the
     composed *amount* never reaches a caller through `CATALOG_READ` alone, only through the
     conjunction (`PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs`), identically to `amount`.
 
@@ -293,9 +293,10 @@ def test_k_04_the_surcharge_amount_is_never_served_by_the_catalogs_one_factor_pa
 def test_k_05_the_paid_absence_component_gets_the_surcharge_too(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-05 (ADR-0013, aneks 2026-09-23 SC-5-06 pt 5, applied by the 2026-09-25 SC-5-02 aneks) —
-    proven by contrast with `test_k_01_…`/`test_k_02_…` above: the identical 25% surcharge, applied
-    to the paid-absence component's own (manual + budget) hours at the identical cost rate.
+    """K-05 (ADR-0013, addendum 2026-09-23 SC-5-06 pt 5, applied by the 2026-09-25 SC-5-02
+    addendum) — proven by contrast with `test_k_01_…`/`test_k_02_…` above: the identical
+    25% surcharge, applied to the paid-absence component's own (manual + budget) hours at the
+    identical cost rate.
 
     Mutation this kills (Analyst's K-05 mutation): the surcharge multiplier applied only around
     `base_personnel_cost`'s hours, never around `paid_absence_cost`'s — `paid_absence_fully_loaded_
@@ -324,7 +325,7 @@ def test_k_05_the_paid_absence_component_gets_the_surcharge_too(
 def test_k_06_the_frozen_surcharge_column_does_not_move_after_a_post_approval_catalog_edit(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-06 — the canary (ADR-0004, aneks 2026-09-25 SC-5-02, point 6; the M-1/SC-3-02 pattern):
+    """K-06 — the canary (ADR-0004, addendum 2026-09-25 SC-5-02, point 6; the M-1/SC-3-02 pattern):
     `surcharge_percent`/`includes_surcharge` are frozen on `approved_snapshot_catalog_default_rate`
     at approval, in the same row and the same transaction as `default_cost_rate`, and editing the
     catalogue afterward moves neither.
@@ -378,7 +379,7 @@ def test_k_06_the_frozen_surcharge_column_does_not_move_after_a_post_approval_ca
 def test_k_07_a_salary_raise_what_if_raises_the_surcharge_amount_proportionally(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-07 (ADR-0015, aneks 2026-09-25 SC-5-02) — the surcharge is a percentage of the cost rate
+    """K-07 (ADR-0015, addendum 2026-09-25 SC-5-02) — the surcharge is a percentage of the cost rate
     the what-if mechanism already substitutes once, on the shared `WorkedMonth`/`MonthCostRate`
     dictionary (`app.data.scenario_what_if._raised_rate`); no separate substitution exists for it.
 
@@ -423,7 +424,7 @@ def test_k_07_a_salary_raise_what_if_raises_the_surcharge_amount_proportionally(
 def test_k_08_a_vendor_rates_surcharge_is_writable_but_never_affects_the_formula(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-08 — the vendor-row edge case named in ADR-0013's aneks of 2026-09-25: `catalog_default_
+    """K-08 — the vendor-row edge case named in ADR-0013's addendum of 2026-09-25: `catalog_default_
     rates.vendor_id NOT NULL` rows carry the same two columns (one table, Q5) and the write path
     accepts a non-zero percent on them, but the base cost formula reads `vendor_id IS NULL`
     exclusively (ADR-0013, point 1, unchanged) — the vendor row's surcharge has no effect.
@@ -467,9 +468,10 @@ def test_qa_finding_approving_a_scenario_with_a_configured_surcharge_changes_its
 ) -> None:
     """QA finding (SC-5-02 review, 2026-09-25), fixed — `costed_month_windows`'s snapshot branch
     named a literal `0`/`false` for `surcharge_percent`/`includes_surcharge` instead of reading
-    `ApprovedSnapshotCatalogDefaultRate`'s own columns, reading ADR-0013's aneks 2026-09-25 point 2
-    ("SC-5-02 sam nie musi wystawiać żadnej ścieżki, która zwraca tę kolumnę" — *does not have to*,
-    not *must not*) as a prohibition rather than a permission. The consequence was a silent
+    `ApprovedSnapshotCatalogDefaultRate`'s own columns, reading ADR-0013's addendum 2026-09-25
+    point 2 ("SC-5-02 itself does not have to expose any path that returns this column" —
+    *does not have to*, not *must not*) as a prohibition rather than a permission. The
+    consequence was a silent
     regression: approving a scenario with a non-zero, not-already-included surcharge moved its OWN
     `fully_loaded_amount`/`surcharge_amount` down to the base cost, with no catalogue edit in
     between — the exact invariant `test_personnel_cost.py`'s K-07/M-1 tests already prove for

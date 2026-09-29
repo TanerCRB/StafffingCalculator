@@ -1,9 +1,9 @@
 """add surcharge_percent and includes_surcharge to catalog_default_rates and its snapshot
 
-SC-5-02 (Issue #77, F-07): "Rozdziel narzuty osobowe od stawki bazowej, policz koszt w pełni
-obciążony" — the first schema change of the fully loaded personnel cost. Two new columns, on the
+SC-5-02 (Issue #77, F-07): "Separate personnel surcharges from the base rate, calculate the fully
+loaded cost" — the first schema change of the fully loaded personnel cost. Two new columns, on the
 same row as `default_cost_rate`, on both the live rate table and its approval snapshot (ADR-0013,
-aneks 2026-09-25 SC-5-02, Q4/Q5; ADR-0005, same date; ADR-0004, same date).
+addendum 2026-09-25 SC-5-02, Q4/Q5; ADR-0005, same date; ADR-0004, same date).
 
 **Expand only.** Both columns are added `NOT NULL` with a default that makes every existing row a
 legal, meaningful row rather than an unanswered question: `0` surcharge and "does not already
@@ -99,7 +99,7 @@ def upgrade() -> None:
     )
     op.execute("SET LOCAL lock_timeout = DEFAULT")
 
-    # The matching columns on the approval snapshot (ADR-0004, aneks 2026-09-25 SC-5-02, point 2):
+    # Matching columns on the approval snapshot (ADR-0004, addendum 2026-09-25 SC-5-02, point 2):
     # `NOT NULL DEFAULT` for the length of this migration only, so a scenario approved before this
     # revision gets the honest backfilled value (`0`/`false`), then the default is dropped so the
     # copier must always name the column explicitly (module docstring of

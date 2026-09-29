@@ -1,12 +1,12 @@
-"""SC-2-06 (Issue #31; ADR-0019; ADR-0004/0005 aneksy 2026-09-27) — a named person on a staffing
-position: K-03, K-04, K-05, K-06, K-07.
+"""SC-2-06 (Issue #31; ADR-0019; ADR-0004/0005 addenda 2026-09-27) — a named person on a
+staffing position: K-03, K-04, K-05, K-06, K-07.
 
 Every person here is fictitious (ADR-0019, point 8). Every approved scenario reached without the
 approval endpoint is made by a direct database write, the limit `tests/conftest.py` already names
 for SC-3-01; the race tests go through the real approval endpoint.
 
 The positive branch of `PEOPLE_READ` is reached through `caller_holding` only — the placeholder
-identity does not hold it (ADR-0005, aneks 2026-09-27, point 4).
+identity does not hold it (ADR-0005, addendum 2026-09-27, point 4).
 """
 
 import uuid
@@ -56,7 +56,7 @@ MARCH = date(2026, 3, 1)
 MARKER = "person_assignment_updated_at"
 OLD_MARKER = datetime(2020, 1, 1, tzinfo=UTC)
 """The assignment's own concurrency marker — request field and response key alike (P-1, P-4;
-ADR-0007 aneks 2026-09-28)."""
+ADR-0007 addendum 2026-09-28)."""
 EVERYTHING = frozenset(Permission)
 WITHOUT_PEOPLE_READ = EVERYTHING - {Permission.PEOPLE_READ}
 ASSIGNER = (Permission.STAFFING_READ, Permission.STAFFING_WRITE, Permission.PEOPLE_READ)
@@ -70,7 +70,7 @@ def _person_path(project_id: uuid.UUID, scenario_id: uuid.UUID, position_id: uui
 
 def _marker(session: Session, position_id: uuid.UUID) -> str:
     """The position's `person_assignment_updated_at` as stored — the marker `PATCH …/person` needs
-    (ADR-0007 aneks 2026-09-28)."""
+    (ADR-0007 addendum 2026-09-28)."""
     session.expire_all()
     return session.execute(
         sa.select(StaffingPosition.person_assignment_updated_at).where(
@@ -569,7 +569,7 @@ def test_k_05c_raising_the_headcount_of_a_position_with_a_person_is_refused_by_t
 def test_a5_31_7_the_assignment_needs_all_three_permissions_and_answers_the_same_whatever_exists(
     client: TestClient, db_session: Session
 ) -> None:
-    """A5-31-7 (ADR-0005 aneks 2026-09-28, D-1 = A) — a caller missing exactly one of
+    """A5-31-7 (ADR-0005 addendum 2026-09-28, D-1 = A) — a caller missing exactly one of
     `STAFFING_READ`, `STAFFING_WRITE`, `PEOPLE_READ` (and holding every other permission), or the
     running system's placeholder, is refused `403` with **the same body** whether the position and
     the person exist or not (no existence oracle), and nothing is written. Contrast: with all three
@@ -611,9 +611,10 @@ def test_a5_31_7_the_assignment_needs_all_three_permissions_and_answers_the_same
 def test_other_writes_by_a_caller_without_people_read_never_remove_the_assignment(
     client: TestClient, db_session: Session
 ) -> None:
-    """ADR-0005, aneks 2026-09-27, point 6 (A5-31-5) — the allocation edit, the cost-basis edit and
-    the absence add/delete, made by a caller who cannot see the assignment, leave it in place; and a
-    `person_id` smuggled into the position create is a `422`, never an assignment."""
+    """ADR-0005, addendum 2026-09-27, point 6 (A5-31-5) — the allocation edit, the
+    cost-basis edit and the absence add/delete, made by a caller who cannot see the assignment,
+    leave it in place; and a `person_id` smuggled into the position create is a `422`, never an
+    assignment."""
     state = _twin_positions(db_session)
     project, scenario, person = state["project"], state["scenario"], state["person"]
     base = f"{staffing_path(project.id, scenario.id)}/{state['assigned'].id}"
@@ -720,7 +721,7 @@ def test_k_06_assigning_and_removing_on_an_approved_scenario_is_refused_and_chan
             draft_path, json={MARKER: draft_token, "person_id": str(state["other_id"])}
         )
         assert assigned.status_code == 200, assigned.text
-        # D-4 = B (ADR-0007 aneks 2026-09-28): the assignment's own marker rotates, the
+        # D-4 = B (ADR-0007 addendum 2026-09-28): the assignment's own marker rotates, the
         # position's `updated_at` does not.
         assert assigned.json()[MARKER] != draft_token
         assert assigned.json()["updated_at"] == grid_token
@@ -903,7 +904,7 @@ def test_k_07_a_copied_project_keeps_the_assignment_to_the_same_person(
     assert count_people(db_session) == people_before
 
 
-# --- D-4 = B: the assignment has its own marker (ADR-0007 aneks 2026-09-28) ----------------------
+# --- D-4 = B: the assignment has its own marker (ADR-0007 addendum 2026-09-28) ------------------
 
 
 def _updated_at_in_db(session: Session, position_id: uuid.UUID) -> datetime:
@@ -1110,10 +1111,10 @@ def test_a7_31_2_a_competing_assignment_committed_in_the_window_refuses_the_seco
 def test_a7_31_3_other_writes_leave_the_assignment_and_its_marker_and_a_stale_grid_token_still_works(  # noqa: E501
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """A7-31-3 — the allocation edit, the cost-basis edit and the absence add/delete change neither
-    `person_id` nor the assignment's marker (disjoint columns, ADR-0007 aneks 2026-09-28 point 2).
-    And a grid edit holding an `updated_at` read *before* somebody's assignment succeeds after it,
-    with both writes in the database afterwards.
+    """A7-31-3 — the allocation edit, the cost-basis edit and the absence add/delete change
+    neither `person_id` nor the assignment's marker (disjoint columns, ADR-0007 addendum
+    2026-09-28 point 2). And a grid edit holding an `updated_at` read *before* somebody's
+    assignment succeeds after it, with both writes in the database afterwards.
 
     Committed requests, each its own transaction — so a write path that touched the marker (`now()`)
     would leave a different value, not the same one by coincidence."""

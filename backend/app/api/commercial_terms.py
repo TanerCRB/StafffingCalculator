@@ -28,11 +28,11 @@ scenario the caller may see, not about whether it exists.
 **One edit path, and no delete path.** The model is immutable after the write (ADR-0003, point 2);
 `tm_terms` has no column to edit and neither `story_points_terms` nor `outcome_terms` has an edit
 path — a changed Story Points `accepted_points` needs a copy of the scenario (ADR-0003 addendum
-2026-09-25, D-5/A), the same mechanism a changed model would; edycja i usunięcie reguły
-Outcome-based to osobne zadanie (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 9). The only editable
-value is the Fixed Price agreed price (and its currency), through `PATCH` with ADR-0007's marker of
-the rule — guarded, raced and tested like the creation (ADR-0004, addendum 2026-09-25 SC-4-02,
-point 1).
+2026-09-25, D-5/A), the same mechanism a changed model would; editing and deleting an
+Outcome-based rule is a separate task (ADR-0003, addendum 2026-09-25 SC-4-03, point 9). The only
+editable value is the Fixed Price agreed price (and its currency), through `PATCH` with ADR-0007's
+marker of the rule — guarded, raced and tested like the creation (ADR-0004, addendum 2026-09-25
+SC-4-02, point 1).
 """
 
 import uuid
@@ -79,15 +79,15 @@ alone — `app.data.commercial_terms` returns the same `None` for every such cas
 
 
 def _details_of(payload: CommercialTermsCreateRequest) -> dict[str, object]:
-    """Kolumny dziedzinowe wiersza szczegółów z ciała żądania — puste dla T&M.
+    """Domain-specific columns of the details row from the request body — empty for T&M.
 
-    Tylko przepisanie nazw pól na nazwy kolumn (`units_column`/`probability_column` — jedna
-    pisownia z modelem); żadnej wartości domyślnej: pominięty składnik opcjonalny zostaje `None`,
-    czyli `NULL` w bazie, nigdy `0` (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 2).
+    Just field names rewritten as column names (`units_column`/`probability_column` — one
+    spelling matching the model); no default value: an omitted optional component stays `None`,
+    i.e. `NULL` in the database, never `0` (ADR-0003, addendum 2026-09-25 SC-4-03, point 2).
 
-    **Jawna gałąź dla każdego modelu** (runda 2 weryfikacji SC-4-03, R-02): typ ciała, którego ta
-    funkcja nie zna, to błąd programisty — model dodany do unii żądania bez gałęzi tutaj — i kończy
-    się wyjątkiem, nigdy regułą zapisaną bez parametrów.
+    **An explicit branch for every model** (verification round 2 of SC-4-03, R-02): a body type
+    this function does not know — a model added to the request union without a branch here — is a
+    programmer error, and ends in an exception, never a rule written with no parameters.
     """
     if isinstance(payload, TimeAndMaterialTermsCreateRequest):
         return {}
@@ -186,8 +186,8 @@ def create_scenario_commercial_terms(
     - **201** — the rule, and the revenue it now yields.
     - **422** — an invalid body, decided before any write: for Outcome-based a probability set that
       is incomplete, does not sum to exactly 100.00 or has a third decimal place, `revenue_min >
-      revenue_max`, a negative amount (ADR-0003, aneks 2026-09-25 SC-4-03, pkt 2-4). Nothing is
-      written.
+      revenue_max`, a negative amount (ADR-0003, addendum 2026-09-25 SC-4-03, points 2-4). Nothing
+      is written.
       For Fixed Price (SC-4-02), a rule without its agreed price or currency, or a price more
       precise than `NUMERIC(14,4)`; for any model, an unknown `model_type` or a field the model
       does not take.

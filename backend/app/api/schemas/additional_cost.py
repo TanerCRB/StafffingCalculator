@@ -3,14 +3,14 @@
 Three boundary decisions are visible in the shapes below.
 
 **No field is gated.** Additional costs are read under `STAFFING_READ` with no
-`PERSONNEL_COSTS_READ` conjunction (ADR-0014, point 11, Q-7 = B; ADR-0005, aneks 2026-09-23
+`PERSONNEL_COSTS_READ` conjunction (ADR-0014, point 11, Q-7 = B; ADR-0005, addendum 2026-09-23
 SC-5-05, point 1), so nothing here is `null` "for this caller" — a field is `null` only where its
 own meaning says so (`position_id` of a scenario-level cost, `end_month` of a one-off cost,
 `currency` of a named state).
 
 **Money crosses the boundary as a fixed-point string** (`DecimalString`), never a JSON float
 (ADR-0002). On the way in an amount is bounded by the column's own precision: five decimal places
-are a `422`, never a silent rounding at write time (ADR-0002, aneks SC-2-04, point 2; criterion
+are a `422`, never a silent rounding at write time (ADR-0002, addendum SC-2-04, point 2; criterion
 K-04).
 
 **Every rule stated here is also stated in the database** (`app.models.additional_cost`). The schema
@@ -146,7 +146,7 @@ class AdditionalCostEditRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     updated_at: AwareDatetime
-    """**This cost's** marker, as returned by the read this edit is based on (ADR-0007, aneks
+    """**This cost's** marker, as returned by the read this edit is based on (ADR-0007, addendum
     SC-5-05). Required, and required with an offset."""
 
     category_id: uuid.UUID | None = None

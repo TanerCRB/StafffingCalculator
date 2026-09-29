@@ -1103,8 +1103,8 @@ def test_k_07_a_scenario_whose_location_has_no_calendar_freezes_neither_a_calend
 
     **And it is what defends "the flagged type is copied only when a planned location has a
     calendar"** (invariant-guardian, third round, for the then budget condition; the condition is
-    now the calendar — ADR-0004, aneks 2026-09-23 SC-5-06, point 5). The catalogue below therefore
-    names a statutory type: the scenario has a position and an allocation row, so a copy
+    now the calendar — ADR-0004, addendum 2026-09-23 SC-5-06, point 5). The catalogue below
+    therefore names a statutory type: the scenario has a position and an allocation row, so a copy
     conditioned on *allocation rows* rather than on *a calendar behind their location* would put
     that type into the snapshot, and the "zero snapshot rows" assertion catches it — the mutation
     "drop the join to `working_calendar` from the statutory branch of `_copy_absence_types`".
@@ -1361,9 +1361,9 @@ def test_the_snapshot_distinguishes_a_named_statutory_type_from_none_even_with_n
     that describe the same case in opposite terms.
 
     The fix copies the flagged type **unconditionally** — not through the bookings — whenever the
-    scenario plans a month in a location with a calendar (since ADR-0004, aneks 2026-09-23 SC-5-06,
-    point 5; under SC-3-03 it was "whenever a budget is frozen", and both scenarios here satisfy
-    either), so the presence of a row with `is_statutory_leave = true` *is* the fact. Both
+    scenario plans a month in a location with a calendar (since ADR-0004, addendum 2026-09-23
+    SC-5-06, point 5; under SC-3-03 it was "whenever a budget is frozen", and both scenarios here
+    satisfy either), so the presence of a row with `is_statutory_leave = true` *is* the fact. Both
     halves are asserted here, in one test, because either alone is satisfied by a wrong
     implementation: "always copy the flagged type" passes the first, "never copy it" passes the
     second.
@@ -1429,13 +1429,13 @@ def test_k_07_m_3_the_flagged_type_is_frozen_by_the_location_calendar_not_by_a_f
 ) -> None:
     """The flagged type follows **the calendar of the planned location**, not the frozen budget.
 
-    Contract S-02 as amended by ADR-0004, aneks 2026-09-23 SC-5-06, point 5 (control M-3): the
+    Contract S-02 as amended by ADR-0004, addendum 2026-09-23 SC-5-06, point 5 (control M-3): the
     type flagged `is_statutory_leave` is frozen whenever the scenario has an allocation row in a
-    location with a calendar — independently of whether a budget is frozen. Until that aneks this
-    test asserted the opposite for its first scenario ("no budget frozen → no flagged type"), which
-    was the SC-3-03 contract; the paid-absence cost reads the type's `generates_cost` in every
-    month with a calendar, so the aneks widened the copy, and this test now encodes the new
-    contract rather than the old one.
+    location with a calendar — independently of whether a budget is frozen. Until that addendum
+    this test asserted the opposite for its first scenario ("no budget frozen → no flagged type"),
+    which was the SC-3-03 contract; the paid-absence cost reads the type's `generates_cost` in
+    every month with a calendar, so the addendum widened the copy, and this test now encodes the
+    new contract rather than the old one.
 
     Three scenarios in one catalogue, one flagged type:
 

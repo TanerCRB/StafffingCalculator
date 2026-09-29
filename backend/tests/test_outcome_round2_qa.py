@@ -1,23 +1,26 @@
-"""SC-4-03, runda 2 weryfikacji — testy QA domykające dowód R-01 i pkt 5 (jednostki).
+"""SC-4-03, verification round 2 — QA tests closing the proof of R-01 and point 5 (units).
 
-Każdy test jest kontrastem: ta sama sytuacja z jedną zmienioną rzeczą i odwróconym wynikiem.
+Each test is a contrast: the same situation with one thing changed and the result reversed.
 
-- **R-01, każde źródło kosztu osobno**: `scenario_profitability` z czterema `calculated`
-  składnikami, z których **dokładnie jeden** ma inną walutę — po kolei przychód, koszt bazowy,
-  koszt nieobecności płatnych, koszt dodatkowy → `currency_mismatch`; te same cztery w jednej
-  walucie → liczby. Testy endpointowe (`tests/test_profitability_currency.py`) różnicują tylko
-  przychód i koszt dodatkowy. Waluty kosztu nieobecności przez endpoint nie da się rozjechać z
-  walutą kosztu bazowego: dostaje on stawki miesięcy kosztu bazowego (`MonthCostRate`,
-  `app.data.paid_absence_cost`), a koszt bazowy w kilku walutach sam jest `currency_mismatch` —
-  więc udział tego źródła w porównaniu dowodzi się tutaj, na czystej funkcji (obrona w głąb, nie
-  scenariusz osiągalny dziś).
-- **R-01, kolejność reguł**: składnik nie `calculated` → `not_applicable`, nawet gdy pozostałe mają
-  różne waluty (brak liczby wygrywa z niezgodnością walut); przez endpoint — scenariusz bez reguły
-  handlowej ma `profitability_state = not_applicable`, ten sam scenariusz z regułą — `calculated`.
-- **Pkt 5, model i baza**: zestaw nazw `CHECK` tabeli `outcome_terms` w bazie (po migracji) równy
-  zestawowi z modelu — usunięcie `ck_outcome_terms_units_given_with_unit_rate` tylko z modelu albo
-  tylko z migracji jest widoczne.
-- **R-04, `revenue_max` w odczycie**: reguła z górną granicą, bez dolnej — lustro testu dewelopera.
+- **R-01, each cost source separately**: `scenario_profitability` with four `calculated`
+  components, of which **exactly one** has a different currency — in turn revenue, base cost,
+  paid-absence cost, additional cost → `currency_mismatch`; the same four in one currency →
+  numbers. The endpoint tests (`tests/test_profitability_currency.py`) only vary revenue and
+  additional cost. The absence cost's currency cannot be made to diverge from the base cost's
+  currency through the endpoint: it takes its rates from the base cost's monthly rates
+  (`MonthCostRate`, `app.data.paid_absence_cost`), and a base cost in several currencies is itself
+  `currency_mismatch` — so this source's share of the comparison is proved here, on the pure
+  function (defence in depth, not a scenario reachable today).
+- **R-01, rule order**: a component that is not `calculated` → `not_applicable`, even when the
+  others have different currencies (the absence of a figure wins over a currency mismatch);
+  through the endpoint — a scenario without a commercial rule has `profitability_state =
+  not_applicable`, the same scenario with a rule — `calculated`.
+- **Point 5, model and database**: the set of `CHECK` names on the `outcome_terms` table in the
+  database (after migration) equals the set from the model — dropping
+  `ck_outcome_terms_units_given_with_unit_rate` from only the model or only the migration is
+  visible.
+- **R-04, `revenue_max` on read**: a rule with an upper bound, without a lower one — the mirror of
+  the developer's test.
 """
 
 from decimal import Decimal
@@ -43,14 +46,15 @@ from tests.test_scenario_results import (
 )
 
 _ASSUMPTIONS: object = object()
-"""`scenario_profitability` nie czyta `assumptions_used` — zaślepka, nie zmyślone założenia."""
+"""`scenario_profitability` does not read `assumptions_used` — a stand-in, not made-up
+assumptions."""
 
 _SOURCES = ("revenue", "base_cost", "paid_absence", "additional_cost")
 
 
 def _components(**currencies: str) -> dict[str, object]:
-    """Cztery `calculated` składniki: przychód 20000, koszt bazowy 12000, nieobecności 500, koszt
-    dodatkowy 1500 — każdy w PLN, chyba że `currencies` mówi inaczej."""
+    """Four `calculated` components: revenue 20000, base cost 12000, absences 500, additional
+    cost 1500 — each in PLN unless `currencies` says otherwise."""
     currency = {source: currencies.get(source, "PLN") for source in _SOURCES}
     return {
         "revenue": RevenueResult(
@@ -88,17 +92,17 @@ WITHHELD_MISMATCH = ("n/a", "n/a", "n/a", "n/a", "currency_mismatch")
 def test_r_01_one_source_in_another_currency_is_currency_mismatch_whichever_it_is(
     odd_source: str,
 ) -> None:
-    """R-01 — dokładnie jedno z czterech źródeł w EUR, pozostałe w PLN → `currency_mismatch` i
-    `"n/a"` na czterech polach. Mutacje: pominięcie w porównaniu waluty którego­kolwiek źródła
-    (np. tylko przychód vs koszt bazowy) — parametr dla tego źródła daje liczbę."""
+    """R-01 — exactly one of the four sources in EUR, the rest in PLN → `currency_mismatch` and
+    `"n/a"` on four fields. Mutations: omitting any one source's currency from the comparison
+    (e.g. only revenue vs base cost) — the parameter for that source gives a number."""
     result = scenario_profitability(**_components(**{odd_source: "EUR"}))  # type: ignore[arg-type]
 
     assert _four(result) == WITHHELD_MISMATCH
 
 
 def test_r_01_contrast_the_same_four_sources_in_one_currency_give_numbers() -> None:
-    """R-01, kontrast — te same kwoty, wszystkie w PLN (albo wszystkie w EUR): liczby i
-    `calculated`. Koszt włączony 14000.00, zysk 6000.00, marża 30.00, narzut 42.86."""
+    """R-01, contrast — the same amounts, all in PLN (or all in EUR): numbers and
+    `calculated`. Included cost 14000.00, profit 6000.00, margin 30.00, markup 42.86."""
     for currency in ("PLN", "EUR"):
         result = scenario_profitability(
             **_components(**dict.fromkeys(_SOURCES, currency))  # type: ignore[arg-type]
@@ -113,10 +117,10 @@ def test_r_01_contrast_the_same_four_sources_in_one_currency_give_numbers() -> N
 
 
 def test_r_01_a_component_not_calculated_is_not_applicable_even_beside_mixed_currencies() -> None:
-    """R-01, kolejność reguł — koszt nieobecności nie `calculated`, a przychód w EUR obok kosztów w
-    PLN: stan `not_applicable`, nie `currency_mismatch` — nie da się mówić o walucie liczby, której
-    nie ma. Mutacja: sprawdzenie walut przed bramką `calculated` (albo stała `currency_mismatch` w
-    gałęzi "nie calculated") → `currency_mismatch`."""
+    """R-01, rule order — the absence cost not `calculated`, and revenue in EUR beside costs in
+    PLN: state `not_applicable`, not `currency_mismatch` — you cannot speak of the currency of a
+    figure that does not exist. Mutation: checking currencies before the `calculated` gate (or a
+    constant `currency_mismatch` in the "not calculated" branch) → `currency_mismatch`."""
     components = _components(revenue="EUR")
     components["paid_absence"] = PaidAbsenceCostUnavailable(
         reason="no_cost_rate",
@@ -131,12 +135,13 @@ def test_r_01_a_component_not_calculated_is_not_applicable_even_beside_mixed_cur
 def test_r_01_a_scenario_without_a_commercial_rule_reads_profitability_state_not_applicable(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 przez endpoint — scenariusz w PLN bez reguły handlowej: przychód `no_commercial_terms`,
-    cztery pola `"n/a"`, `profitability_state = not_applicable`. Kontrast w tym samym teście: ten
-    sam scenariusz **z** regułą T&M → `calculated`. Jedyna różnica to istnienie reguły.
+    """R-01 through the endpoint — a scenario in PLN without a commercial rule: revenue
+    `no_commercial_terms`, four fields `"n/a"`, `profitability_state = not_applicable`. Contrast in
+    the same test: the same scenario **with** a T&M rule → `calculated`. The only difference is
+    whether the rule exists.
 
-    Pierwsza wersja dowodu (testy dewelopera) nie sprawdzała wartości `not_applicable` nigdzie —
-    mutacja "każde wstrzymanie opisane jako `currency_mismatch`" przeżywała."""
+    The first version of the proof (the developer's tests) never checked the `not_applicable`
+    value anywhere — the mutation "every withholding described as `currency_mismatch`" survived."""
     _ensure_statutory_bypass(db_session)
     without, without_rule, _ = _full_scenario(
         db_session, name="R01 QA no rule", create_commercial_terms=False
@@ -165,11 +170,12 @@ def test_r_01_a_scenario_without_a_commercial_rule_reads_profitability_state_not
 def test_units_check_the_database_and_the_model_declare_the_same_outcome_terms_checks(
     db_session: Session,
 ) -> None:
-    """Pkt 5 — nazwy `CHECK` tabeli `outcome_terms` w bazie po migracji to dokładnie nazwy z modelu
-    (`OutcomeTerms.__table__`), w tym `ck_outcome_terms_units_given_with_unit_rate`. Test równości
-    wyrażeń (`test_the_model_and_the_outcome_migration_agree_on_every_sql_expression`) porównuje
-    stałe, nie to, czy model i migracja w ogóle deklarują `CHECK` — usunięcie deklaracji z samego
-    modelu przeżywało."""
+    """Point 5 — the `CHECK` names on the `outcome_terms` table in the database after migration
+    are exactly the names from the model (`OutcomeTerms.__table__`), including
+    `ck_outcome_terms_units_given_with_unit_rate`. The expression-equality test
+    (`test_the_model_and_the_outcome_migration_agree_on_every_sql_expression`) compares the
+    constants, not whether the model and the migration declare a `CHECK` at all — dropping the
+    declaration from just the model survived."""
     in_database = set(
         db_session.execute(
             sa.text(
@@ -191,11 +197,11 @@ def test_units_check_the_database_and_the_model_declare_the_same_outcome_terms_c
 def test_r_04_the_read_carries_revenue_max_when_it_was_written(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-04, lustro `test_r_04_the_read_carries_the_outcome_rule_parameters_as_written` — tamten
-    zapisuje `revenue_min` bez `revenue_max`, więc `null` w `revenue_max` był tam wynikiem
-    oczekiwanym i mutacja "odczyt zawsze `revenue_max = null`" przeżywała. Tutaj odwrotnie:
-    `revenue_max` podane, `revenue_min` pominięte → `"25000.0000"` i `null`. Jedyna zmiana względem
-    tamtego testu to to, która granica jest podana."""
+    """R-04, the mirror of `test_r_04_the_read_carries_the_outcome_rule_parameters_as_written` —
+    that one writes `revenue_min` without `revenue_max`, so `null` in `revenue_max` was the
+    expected result there and the mutation "read always returns `revenue_max = null`" survived.
+    Here it is the other way round: `revenue_max` given, `revenue_min` omitted →
+    `"25000.0000"` and `null`. The only change from that test is which bound is given."""
     project, scenario = _scenario(db_session, "Outcome read max")
 
     written = _post(client, project, scenario, outcome_payload(revenue_max="25000"))

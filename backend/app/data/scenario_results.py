@@ -1,5 +1,5 @@
 """The only path by which a scenario's whole-life profit, margin and markup are read (F-10; SC-7-01,
-Issue #12; ADR-0004 "fits", ADR-0005 aneks 2026-09-24).
+Issue #12; ADR-0004 "fits", ADR-0005 addendum 2026-09-24).
 
 **This module calls three already-proven reads and computes nothing of its own.** No `select`, no
 scope predicate and no cost/revenue formula of its own:
@@ -14,9 +14,10 @@ scope predicate and no cost/revenue formula of its own:
   view object it was written for, rather than a second view type this task would have to prove the
   gate against again;
 - `app.data.additional_cost.additional_costs_for_caller` — the additional-cost sum (SC-5-05). It
-  always reads live rows, whatever the scenario's status (ADR-0004, aneks SC-5-05, point 1 — group
-  2, no snapshot), but it refreshes the same `Scenario` a third time, so its frozen status is part
-  of the race below all the same (SC-7-03, reviewer R-01; ADR-0015, aneks SC-7-03, point 8).
+  always reads live rows, whatever the scenario's status (ADR-0004, addendum SC-5-05, point 1 —
+  group 2, no snapshot), but it refreshes the same `Scenario` a third time, so its frozen status
+  is part of the race below all the same (SC-7-03, reviewer R-01; ADR-0015, addendum SC-7-03,
+  point 8).
 
 Each of the three already resolves scope through `project_for_caller` (ADR-0001, addendum
 2026-09-19) and already chooses the live catalogue or the approval snapshot by the scenario's own
@@ -47,7 +48,7 @@ endpoint code runs, and PostgreSQL refuses to change isolation level once a tran
 statement). Comparing the reads' statuses after the fact needs neither.
 
 **What is compared: the scenario's status as each of the three reads saw it** (SC-7-03, Issue
-#118; ADR-0015, aneks SC-7-03, points 1–3 and 8). `commercial.status_at_read` (`s_P`),
+#118; ADR-0015, addendum SC-7-03, points 1–3 and 8). `commercial.status_at_read` (`s_P`),
 `cost_view.status_at_read` (`s_K`) and `additional.status_at_read` (`s_D`) are each copied into an
 immutable `ScenarioStatus` inside their own call, right after that call's own `session.refresh`.
 `refuse_a_status_race` — the **one** place the rule lives, called here and by
@@ -64,7 +65,7 @@ fixed in SC-4-03):
 
 A revenue that does not depend on the status (Story Points `story_points_terms`, Outcome-based
 `not_applicable`) reads only the scenario's own write-guarded rows, so it is the same before and
-after an approval; its `s_P` records no moment the number depends on (ADR-0003, aneks SC-4-03,
+after an approval; its `s_P` records no moment the number depends on (ADR-0003, addendum SC-4-03,
 points 8 and 12b). **No statement after the third read refreshes the scenario** — the only
 `session.refresh(scenario)` calls on this path are the three frozen ones, and no later statement
 loads `Scenario` with `populate_existing` — so every `.status` read after the guard is `s_D`, which
@@ -77,7 +78,7 @@ rule (point 8).
   sound (point 3 of that addendum; `tests/test_scenario_results_status_guard.py` kills exactly this
   mutation).
 - **Never the revenue's `rate_source` against the cost's.** They are two separate vocabularies that
-  happen to share two values (ADR-0003, aneks SC-7-03). The revenue's `rate_source` only
+  happen to share two values (ADR-0003, addendum SC-7-03). The revenue's `rate_source` only
   *classifies* the revenue as status-dependent or not (a membership test in one vocabulary); the
   cost's plays no role in the guard at all.
 
@@ -144,9 +145,9 @@ class ScenarioResultsRaceDetected(RuntimeError):
     it would reach a caller who may not see this scenario's personnel costs at all — a
     second, ungated channel for the exact fact `SCENARIO_COST_FIELDS` withholds on the ordinary
     `200` path. `revenue_status`, `cost_status` and `additional_cost_status` are kept as plain
-    in-process attributes instead (ADR-0015, aneks SC-7-03, points 4 and 8), for a server-side log
-    statement this repository does not yet have — read them, never `str(exc)`, if that log is ever
-    added.
+    in-process attributes instead (ADR-0015, addendum SC-7-03, points 4 and 8), for a server-side
+    log statement this repository does not yet have — read them, never `str(exc)`, if that log is
+    ever added.
     """
 
     def __init__(
@@ -173,24 +174,25 @@ def refuse_a_status_race(
     additional_cost_status: ScenarioStatus,
 ) -> None:
     """Raise `ScenarioResultsRaceDetected` when the composed read saw the scenario at two statuses
-    that matter (ADR-0015, aneks SC-7-03, point 2 — Q4/B).
+    that matter (ADR-0015, addendum SC-7-03, point 2 — Q4/B).
 
     `revenue_status`, `cost_status`, `additional_cost_status` are the `status_at_read` values each
     read froze right after its own `session.refresh` (`s_P`, `s_K`, `s_D`). Refuses when:
 
-    - **(a)** `revenue_source` ∈ `STATUS_DEPENDENT_SOURCES` **and** `s_P ≠ s_K`. **Porównuje status
-      przychodu wyłącznie dla przychodu zależnego od statusu** (`live_catalog`,
-      `approved_snapshot`; ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8). Przychód modelu bez katalogu
-      (`not_applicable` — Outcome-based; `story_points_terms` — Story Points) czyta wyłącznie własne
-      wiersze scenariusza, więc jest ten sam przed i po zatwierdzeniu — jego status nie jest
-      dowodem ani braku, ani wystąpienia wyścigu (`tests/test_story_points_scenario_results.py`,
-      `tests/test_outcome_scenario_results.py`). `revenue_source` jest tu wyłącznie klasyfikatorem
-      (test przynależności do jednego słownika) — nigdy nie jest porównywany z `rate_source` kosztu,
-      który do strażnika w ogóle nie wchodzi. Odpowiedź bez reguły (`no_commercial_terms`) niesie
-      `rate_source` wybrane ze statusu, więc zostaje w porównaniu (kontrola A15-9). **Warunek
-      ważności zwolnienia** (reviewer R-06): wiersze `story_points_terms`/`outcome_terms` nie mają
-      ścieżki edycji w wersji roboczej — zadanie, które ją doda, musi przywrócić ten przychód do (a)
-      albo dostarczyć inny dowód (ADR-0015, aneks SC-7-03, pkt 2). Fixed Price is that task
+    - **(a)** `revenue_source` ∈ `STATUS_DEPENDENT_SOURCES` **and** `s_P ≠ s_K`. **Compares the
+      revenue's status only for a revenue that depends on the status** (`live_catalog`,
+      `approved_snapshot`; ADR-0003, addendum 2026-09-25 SC-4-03, point 8). The revenue of a model
+      with no catalogue (`not_applicable` — Outcome-based; `story_points_terms` — Story Points)
+      reads only the scenario's own rows, so it is the same before and after an approval — its
+      status is proof of neither the absence nor the occurrence of a race
+      (`tests/test_story_points_scenario_results.py`, `tests/test_outcome_scenario_results.py`).
+      `revenue_source` is here only a classifier (a membership test in one vocabulary) — it is never
+      compared with the cost's `rate_source`, which never enters the guard at all. An answer with no
+      rule (`no_commercial_terms`) carries a `rate_source` chosen from the status, so it stays in
+      the comparison (control A15-9). **The condition for this exemption to hold**
+      (reviewer R-06): the `story_points_terms`/`outcome_terms` rows have no draft edit path — the
+      task that adds one must restore this revenue to (a) or supply a different proof (ADR-0015,
+      addendum SC-7-03, point 2). Fixed Price is that task
       (SC-4-02, `PATCH …/commercial-terms`): its `fixed_price_terms` revenue is in
       `DRAFT_EDITABLE_RULE_SOURCES` and is therefore compared under (a) like a status-dependent one
       (ADR-0015, addendum 2026-09-28 (SC-4-02); `tests/test_fixed_price_race.py`);
@@ -198,8 +200,9 @@ def refuse_a_status_race(
       the last refresh (`scenario_status`, what-if's `draft` check and `_worked_months`), and the
       personnel cost always depends on the status (reviewer R-01 of SC-7-03, point 8).
 
-    Jedna funkcja dla `/results`/`/compare` i dla what-if (`app.data.scenario_what_if`), wołana po
-    trzecim odczycie — dwie kopie porównania już raz się rozjechały (Issue #118).
+    One function for `/results`/`/compare` and for what-if (`app.data.scenario_what_if`), called
+    after the third read — two copies of the comparison have already drifted apart once
+    (Issue #118).
     """
     revenue_is_status_compared = (
         revenue_source in STATUS_DEPENDENT_SOURCES or revenue_source in DRAFT_EDITABLE_RULE_SOURCES
@@ -270,7 +273,7 @@ def scenario_results_for_caller(
     if additional is None:  # pragma: no cover — scope agrees with the two calls above
         return None
     # After the third read: the status each call froze right after its own refresh — never
-    # `.status` of the shared, thrice-refreshed `Scenario` (ADR-0015, aneks SC-7-03, points 2, 3
+    # `.status` of the shared, thrice-refreshed `Scenario` (ADR-0015, addendum SC-7-03, points 2, 3
     # and 8). Nothing below refreshes the scenario again.
     refuse_a_status_race(
         revenue_source=commercial.revenue.assumptions_used.rate_source,

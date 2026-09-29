@@ -8,7 +8,7 @@ against the new schema.
 here, by name and date). SC-8-01 (Issue #14) is the first and only writer, at
 `POST /projects/{project_id}/scenarios/{scenario_id}/approve`.
 
-**Shape (ADR-0004, aneks 2026-09-27 SC-8-01):**
+**Shape (ADR-0004, addendum 2026-09-27 SC-8-01):**
 
 1. Dedicated to scenario lifecycle events, not a generic system-wide table: real foreign keys
    (`scenario_id`, `project_id`), and `action_type` a closed enum with exactly one member today
