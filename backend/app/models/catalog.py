@@ -78,12 +78,21 @@ from app.db.base import Base
 from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
 RATE_UNIT_HOUR = "hour"
-"""The only unit a rate row may carry today (gate-1 decision 4).
+"""The only unit the **selling** rate (`unit`) may carry (gate-1 decision 4; ADR-0002, addendum
+2026-09-29 SC-5-08, which keeps it pinned to `hour`).
 
-A constant, not an enum with one member: F-07 adds daily and monthly units, and an enum with one
-member invites reading "unit" as decoration. The refusal lives in the database (`unit_is_hour`
-below), because a Pydantic `Literal` only ever sees requests (criterion K-07 requires the path that
-does not go through the request schema to be refused as well)."""
+A constant, not an enum with one member. The refusal lives in the database (`unit_is_hour` below),
+because a Pydantic `Literal` only ever sees requests (criterion K-07 requires the path that does not
+go through the request schema to be refused as well). The unit of the **cost** rate is a separate
+column, `cost_rate_unit` (`COST_RATE_UNITS`), added by SC-5-08."""
+
+COST_RATE_UNIT_HOUR = "hour"
+COST_RATE_UNIT_DAY = "day"
+COST_RATE_UNIT_MONTH = "month"
+COST_RATE_UNITS: tuple[str, ...] = (COST_RATE_UNIT_HOUR, COST_RATE_UNIT_DAY, COST_RATE_UNIT_MONTH)
+"""The three units `default_cost_rate` may be stated in (F-07; SC-5-08, ADR-0013 addendum
+2026-09-29). Enforced by the CHECK `cost_rate_unit_is_known` in the database, and refused with a
+`422` at the API boundary."""
 
 RATE_PRECISION = 14
 RATE_SCALE = 4
@@ -482,6 +491,22 @@ class CatalogDefaultRate(Base):
         String(20), nullable=False, server_default=RATE_UNIT_HOUR, default=RATE_UNIT_HOUR
     )
 
+    cost_rate_unit: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=COST_RATE_UNIT_HOUR,
+        default=COST_RATE_UNIT_HOUR,
+    )
+    """The unit `default_cost_rate` is stated in: `hour`, `day` or `month` (SC-5-08, F-07; ADR-0013,
+    addendum 2026-09-29). **Not `unit`**: that column is the unit of the *selling* rate and stays
+    pinned to `hour`. The cost path never reads `unit` and the revenue path never reads this column.
+
+    A personnel cost, gated with `default_cost_rate` (`CATALOG_PERSONNEL_COST_FIELDS`, ADR-0005
+    addendum 2026-09-29): "5 000 per month" and "5 000 per hour" are two different facts about
+    what a person costs. `NOT NULL DEFAULT 'hour'` — every row that existed before this column was
+    hourly (the `unit_is_hour` CHECK admitted nothing else), so the default is a fact, not a
+    guess."""
+
     surcharge_percent: Mapped[Decimal] = mapped_column(
         Numeric(PERCENT_PRECISION, PERCENT_SCALE),
         nullable=False,
@@ -571,6 +596,14 @@ class CatalogDefaultRate(Base):
     # dependency grew with the fifth element and is still unproven on any target environment).
     __table_args__ = (
         CheckConstraint(f"unit = '{RATE_UNIT_HOUR}'", name="unit_is_hour"),
+        # SC-5-08 (F-07): the cost rate's own unit — three known values, refused in the database
+        # for the path that never sees the request schema (same reasoning as `unit_is_hour`).
+        CheckConstraint(
+            "cost_rate_unit IN ("
+            + ", ".join(f"'{unit}'" for unit in COST_RATE_UNITS)
+            + ")",
+            name="cost_rate_unit_is_known",
+        ),
         CheckConstraint("char_length(currency) = 3", name="currency_iso4217"),
         # ISO 4217 codes are upper-case by definition; same class of defect as `unit` above —
         # `"eur"` written through a path that skips `Iso4217Code` must not create a second

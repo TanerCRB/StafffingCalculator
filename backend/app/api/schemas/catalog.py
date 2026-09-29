@@ -82,12 +82,18 @@ a sign error, not a discount — and exactly as precise as `NUMERIC(6, 3)` is, f
 silently rounded at write time instead of refused at the boundary."""
 
 RateUnit = str
-"""The unit as it crosses the boundary: a plain string, validated against `RATE_UNIT_HOUR` below.
+"""The **selling** rate's unit as it crosses the boundary: a plain string, validated against
+`RATE_UNIT_HOUR` below (it stays pinned to `hour`, ADR-0002 addendum 2026-09-29 SC-5-08).
 
-Deliberately not `Literal["hour"]`: F-07 adds daily and monthly units, and the request schema is not
-where that list belongs (the database CHECK constraint is — see `app.models.catalog`). A `Literal`
-here would also make it tempting to treat the schema as the guarantee, which criterion K-07 exists
-to refute."""
+Deliberately not a `Literal`: the request schema is not where the list of units belongs (the
+database CHECK constraint is — see `app.models.catalog`), and a `Literal` would make it tempting to
+treat the schema as the guarantee, which criterion K-07 exists to refute."""
+
+CostRateUnit = Literal["hour", "day", "month"]
+"""The **cost** rate's unit on the way in (SC-5-08, ADR-0005 addendum 2026-09-29, point 5): a value
+outside the three is a `422` at the boundary, not the `500` of a violated `cost_rate_unit_is_known`
+CHECK, which stays the guarantee for a path that never sees this schema. The three literals are the
+members of `app.models.catalog.COST_RATE_UNITS` (pinned together by a test)."""
 
 
 class DimensionEntry(BaseModel):
@@ -183,6 +189,13 @@ class CatalogRate(BaseModel):
     default_selling_rate: DecimalString
     currency: str
     unit: str
+    """The **selling** rate's unit — always `hour`, never gated. Not the cost rate's unit
+    (`cost_rate_unit` below)."""
+
+    cost_rate_unit: CostRateUnit | None = None
+    """The unit `default_cost_rate` is stated in (SC-5-08). Gated with it: `None` means "removed for
+    this caller" — the column is `NOT NULL`, so that is the only reason it can be `None`
+    (`CATALOG_PERSONNEL_COST_FIELDS`, ADR-0005 addendum 2026-09-29, point 1)."""
 
     surcharge_percent: DecimalString
     """The personnel-cost surcharge as a percentage of `default_cost_rate` (SC-5-02, F-07; ADR-0013,
@@ -250,6 +263,9 @@ class CatalogRateCreateRequest(BaseModel):
 
     currency: Iso4217Code
     unit: RateUnit = RATE_UNIT_HOUR
+    cost_rate_unit: CostRateUnit = "hour"
+    """The unit of `default_cost_rate` (SC-5-08). Omitted stores `hour` — what every rate written
+    before this field existed was. A value outside `hour`/`day`/`month` is a `422`."""
 
     surcharge_percent: SurchargePercent = Decimal("0")
     """Defaults to `0` — the same "no surcharge configured" a request that predates SC-5-02 would
@@ -435,8 +451,9 @@ class AbsenceTypeList(BaseModel):
 # The eighth catalogue table, gated by `CATALOG_READ`/`CATALOG_WRITE` and by nothing else (ADR-0005,
 # addendum 2026-09-22 SC-3-03, points 2-3). **No field here is a personnel cost**: a budget is a
 # number of days, not an amount, and the one multiplier that would make it money — a cost rate — is
-# gated separately and is not in this payload. `CATALOG_PERSONNEL_COST_FIELDS` therefore stays
-# one-element, and adding a field of this payload to it is the mutation point 3 of that addendum
+# gated separately and is not in this payload. `CATALOG_PERSONNEL_COST_FIELDS` therefore does not
+# grow with this payload (it holds the cost rate and, since SC-5-08, its unit — both rate columns),
+# and adding a field of this payload to it is the mutation point 3 of that addendum
 # rejects by name (it would give "personnel costs" a third meaning and, in today's system, make the
 # whole feature unreachable — `PERSONNEL_COSTS_READ` is not in the placeholder's set).
 
@@ -652,6 +669,13 @@ class CatalogRateEditRequest(BaseModel):
     deliberately at gate 1 (ADR-0005 addendum — "you write a cost you cannot read back"). What is
     gated is the response, in one place, by the shaping layer."""
 
+    cost_rate_unit: CostRateUnit | None = None
+    """Omitted = unchanged — but only together with `default_cost_rate`: the amount and its unit
+    are one datum (ADR-0005, addendum 2026-09-29, point 7, Q-B), see
+    `_cost_rate_and_its_unit_travel_together`. A caller without `PERSONNEL_COSTS_READ` cannot read
+    the stored unit, so an amount sent alone could be stored against a monthly row instead of an
+    hourly one — a silent re-pricing with no error."""
+
     default_selling_rate: RateAmount | None = None
     currency: Iso4217Code | None = None
 
@@ -688,6 +712,21 @@ class CatalogRateEditRequest(BaseModel):
         )
         if nulled:
             raise ValueError(f"These fields cannot be set to null: {', '.join(nulled)}")
+        return self
+
+    @model_validator(mode="after")
+    def _cost_rate_and_its_unit_travel_together(self) -> Self:
+        """A request carrying exactly one of `default_cost_rate` / `cost_rate_unit` is a `422` and
+        writes nothing; carrying both or neither is fine (ADR-0005, addendum 2026-09-29, point 7,
+        Q-B). Decided from `model_fields_set` — an explicit `null` counts as "named" here and is
+        refused by the validator above anyway, so the message never depends on which of the two
+        refusals fires first."""
+        named = self.__pydantic_fields_set__
+        if ("default_cost_rate" in named) != ("cost_rate_unit" in named):
+            raise ValueError(
+                "default_cost_rate and cost_rate_unit must be edited together: send both or "
+                "neither."
+            )
         return self
 
     @model_validator(mode="after")

@@ -170,8 +170,17 @@ from app.models.staffing import StaffingPositionAbsence
 PERSONNEL_COST_FIELDS: frozenset[str] = frozenset()
 """Response fields carrying individual personnel costs. Empty until plan block 5 adds them."""
 
-CATALOG_PERSONNEL_COST_FIELDS: frozenset[str] = frozenset({"default_cost_rate"})
-"""Catalogue response fields carrying a personnel cost — one, and it is a real column (SC-2-01).
+CATALOG_PERSONNEL_COST_FIELDS: frozenset[str] = frozenset({"default_cost_rate", "cost_rate_unit"})
+"""Catalogue response fields carrying a personnel cost — two, and both are real columns.
+
+`default_cost_rate` since SC-2-01; **`cost_rate_unit` since SC-5-08** (ADR-0005, addendum
+2026-09-29, point 1, which supersedes the "one-element set" sentence of the SC-5-02 addendum,
+for the unit only). The unit is half of the rate's own definition — "5 000" per month and per
+hour are two different facts about what a person costs — so it is withheld with the rate, by the
+same removal of a field (`200`, never `403`). **Never `unit`**: that is the *selling* rate's unit,
+ungated and pinned to `hour` (point 2 of the same addendum); the two columns must not be confused
+here. `cost_rate_unit` is not in `SCENARIO_COST_FIELDS`: no scenario cost response carries a
+top-level unit field (point 3; a test asserts it).
 
 Unlike `PERSONNEL_COST_FIELDS` above, this set is **not** empty, so the catalogue gate removes
 something today and the criterion tests need no stand-in field (the substitution SC-1-08 had to make
@@ -643,9 +652,14 @@ def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> Cata
             # reason (SC-5-02, criterion K-04): a percentage/flag that only multiplies an
             # already-gated `default_cost_rate` is an organisational parameter classified under
             # `CATALOG_READ` alone (ADR-0005, addendum 2026-09-25, Q4) — never added to
-            # `CATALOG_PERSONNEL_COST_FIELDS`, which stays the one-element set it always was.
+            # `CATALOG_PERSONNEL_COST_FIELDS` (which since SC-5-08 holds the cost rate and its
+            # unit, and nothing that is a percentage).
             surcharge_percent=rate.surcharge_percent,
             includes_surcharge=rate.includes_surcharge,
+            # Gated with `default_cost_rate` (SC-5-08; ADR-0005, addendum 2026-09-29, point 1): the
+            # unit is half of the rate's definition. Built here for everybody and removed below by
+            # `_without_catalog_personnel_costs` — never `rate.unit`, the selling rate's unit.
+            cost_rate_unit=rate.cost_rate_unit,
             effective_from=rate.effective_from,
             effective_to=rate.effective_to,
             # ADR-0007's concurrency marker (SC-2-04), on every representation of the row and for

@@ -251,7 +251,9 @@ def test_k_03_the_gated_field_set_is_not_empty_so_the_denials_above_are_not_vacu
     everything."""
     dimensions = _rate_for_one_tuple(db_session)
 
-    assert response_shaping.CATALOG_PERSONNEL_COST_FIELDS == frozenset({"default_cost_rate"}), (
+    assert response_shaping.CATALOG_PERSONNEL_COST_FIELDS == frozenset(
+        {"default_cost_rate", "cost_rate_unit"}
+    ), (
         "the catalogue cost gate has nothing to remove — every denial in this file is vacuous"
     )
 

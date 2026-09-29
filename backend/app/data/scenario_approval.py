@@ -332,8 +332,12 @@ def _copy_calendars(scenario_id: uuid.UUID) -> sa.Insert:
     of a draft with nothing planned in it.
 
     A location whose `calendar_id` is `NULL` contributes nothing either: there is no calendar to
-    freeze, and the named `no_calendar` state is derived at read time from the live schema rather
-    than stored (criterion K-23).
+    freeze, and the named `no_calendar` state is derived at read time from the **absence of a frozen
+    key** (`app.data.working_calendar.frozen_basis_by_location`, "never a lookup in the live
+    catalogue") rather than stored (criterion K-23; ADR-0004, addendum 2026-09-29 SC-5-08, point 5b
+    — the earlier wording "from the live schema" was stale). Consequence, named and not repaired: a
+    location that had no calendar at approval froze none, so an approved scenario with a day/month
+    cost-rate position there is `no_calendar` for ever.
     """
     scenario_source = unapproved_scenario(scenario_id).subquery("open_scenario")
     # Two positions in one location are one calendar to freeze, not two identical rows — and two
@@ -809,6 +813,11 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
             # one already-copied row.
             CatalogDefaultRate.surcharge_percent,
             CatalogDefaultRate.includes_surcharge,
+            # SC-5-08 (Issue #80; ADR-0004, addendum 2026-09-29, points 1-2): the unit of the cost
+            # rate, frozen on the same row. Named explicitly on purpose: the snapshot column's
+            # `DEFAULT 'hour'` would fill a missing one without a word, and an approved scenario
+            # would be priced hourly for ever from a monthly catalogue rate.
+            CatalogDefaultRate.cost_rate_unit,
         )
         .select_from(scenario_source)
         .join(windows_read, windows_read.c.scenario_id == scenario_source.c.id)
@@ -835,6 +844,7 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
                 "effective_to",
                 "surcharge_percent",
                 "includes_surcharge",
+                "cost_rate_unit",
             ],
             rates,
         )
