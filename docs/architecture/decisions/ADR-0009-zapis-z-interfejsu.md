@@ -191,6 +191,57 @@ niezależnie od tego, czy żądanie niosło jakiekolwiek pole.
   zapisu niosącego pole kosztowe. Pierwsze takie zadanie odtwarza pytanie punktu 3 samodzielnie i
   wraca tu własnym, datowanym wpisem, zgodnie z pkt 7 decyzji bazowej.
 
+## Addendum 2026-09-29 (Issue #164, SC-5-09 — gate 1)
+
+**Status:** Draft — pending approval
+
+The catalogue form gains the cost-rate unit (`cost_rate_unit`, ADR-0005 addendum 2026-09-29, SC-5-08).
+The backend added a third cause of `409` on the catalogue edit path, `condition=cost_rate_unit_precondition`
+(`COST_RATE_UNIT_CONDITION` and `COST_RATE_UNIT_REASON` in `backend/app/data/catalog.py`): a caller
+without `PERSONNEL_COSTS_READ` sent a unit that differs from the stored one, and nothing was written.
+Point 5 of the decision says the endings of a write are distinguishable and named, and that none is a
+substring of another; this addendum applies that point to the new cause and settles nothing else.
+
+1. **The third `409` cause is a seventh named ending.** Point 5 counts six endings, with the two
+   meanings of `409` on the catalogue path (ADR-0007, addendum 2026-09-21, point 4) already told
+   apart. A `409` whose body carries `cost_rate_unit_precondition` is a further, separate ending — not
+   a variant of the stale marker, not of "refused by the state of the data", and not `unstated`.
+2. **The wording comes from the backend's own reason.** The screen text states what
+   `COST_RATE_UNIT_REASON` states — the unit sent does not match the stored one, this caller may not
+   change it, nothing was written — and adds no cause the backend did not establish (the rule of
+   `refusalCauseOf`: a cause the answer did not name is `unstated`, never a guess). The screen does not
+   reword the reason into a cause of its own, for instance a stale row.
+3. **The text names no stored unit, no rate and no typed value** (decision point 6; NF-11; ADR-0005
+   addendum 2026-09-29, point 7, R-02). The client does not append the unit the person chose, and does
+   not derive from the refusal which unit is stored, although the status alone discloses whether the
+   guess was right (the exception recorded in ADR-0005, addendum 2026-09-29, point 7).
+4. **The text is not a substring of another message, and no other message is a substring of it.**
+   The pair check covers every message the catalogue write path can show — the stale marker, overlap,
+   duplicate value, missing reference, broken rule, unstated, and this one. The text also does not
+   carry the action of the stale-marker message ("read the row again"): re-reading shows a blind
+   caller nothing, so the two endings lead to different actions (precedent K-01..K-03, SC-2-02).
+5. **The cause is matched by the identifier the backend puts in the message**, as the marker and the
+   SQLSTATEs already are (`frontend/src/api/contracts/writeRefusals.ts`): a raw contract literal
+   mirroring `COST_RATE_UNIT_CONDITION`, not a phrase of the sentence. A body carrying
+   `updated_at_marker` keeps the stale-marker ending; the two identifiers never appear in one message.
+6. **`RefusalCause` and `CONFLICT_MESSAGES` stay exhaustive.** The cause is a member of `RefusalCause`,
+   and the message table stays a `Record` over that whole type, so a cause added to the contract and
+   not worded on screen fails the build (the mechanism already in `writeOutcome.ts`).
+7. **What this addendum does not decide.** It offers no blind-writer control to change a cost amount:
+   a blind create supplies the amount and the unit together (explicit, required unit choice), and an
+   edit of a row with the pair withheld sends neither (ADR-0005, addendum 2026-09-29, Q-B; decision
+   of gate 1, SC-5-09, Q-1). The scenario cost response (`assumptions_used`) is Issue #172. The
+   client still does not check the unit against stored state before the write (point 4 of the
+   decision).
+
+| Control | Acceptance criterion |
+|---|---|
+| A9-164-1 | A `409` whose body carries `cost_rate_unit_precondition` reaches the screen as its own named ending, distinct from the stale-marker ending and from `unstated`; removing the cause match leaves a failing test. |
+| A9-164-2 | The text of that ending contains no stored unit, no rate and no value typed into the form (fixture with a distinctive typed amount and unit, neither present in the rendered text). |
+| A9-164-3 | For every pair of catalogue write-refusal messages, including this one, neither text is a substring of the other. |
+| A9-164-4 | A `409` carrying `updated_at_marker` keeps the stale-marker message (contrast). |
+| A9-164-5 | Every member of `RefusalCause` has an entry in `CONFLICT_MESSAGES`; a member added without an entry fails the type check. |
+
 ## Powiązane wymagania
 
 NF-05, NF-07, NF-08, NF-11, AC-06, F-03, NF-10; ADR-0002 (kierunek wejścia kwoty — aneks SC-2-04),

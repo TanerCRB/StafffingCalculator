@@ -1,5 +1,6 @@
 import {
   BUDGET_REGIME_NOT_APPLICABLE,
+  COST_RATE_UNITS,
   STATUTORY_LEAVE_STATES,
   type AbsenceBudgetCreateRequest,
   type AbsenceBudgetEntry,
@@ -469,9 +470,25 @@ function isCatalogRateShape(value: unknown): value is CatalogRate {
     requiredStrings.every((field) => typeof value[field] === "string") &&
     isRequiredNullableString(value.vendor_id) &&
     isOptionalString(value.default_cost_rate) &&
+    isCostRatePairShape(value.default_cost_rate, value.cost_rate_unit) &&
     isOptionalString(value.effective_to) &&
     isConcurrencyMarker(value.updated_at)
   );
+}
+
+/**
+ * The cost rate and its unit are gated together (SC-5-08): both present, the unit one of
+ * `COST_RATE_UNITS`, or both null/absent. One without the other is a payload this client cannot
+ * read — a rate with no unit would have to be given one to render, and a unit with no rate says a
+ * cost exists that the caller may not see. Checked as a pair, on reads and write responses alike.
+ */
+function isCostRatePairShape(rate: unknown, unit: unknown): boolean {
+  const rateAbsent = rate === undefined || rate === null;
+  const unitAbsent = unit === undefined || unit === null;
+  if (rateAbsent || unitAbsent) {
+    return rateAbsent && unitAbsent;
+  }
+  return isOneOf(unit, COST_RATE_UNITS);
 }
 
 /**

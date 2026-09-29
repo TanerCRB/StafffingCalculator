@@ -76,6 +76,7 @@ const EXISTING_RATE: CatalogRate = {
   engagement_type_id: ENGAGEMENT_TYPES[0].id,
   vendor_id: null,
   default_cost_rate: "99.9999",
+  cost_rate_unit: "hour",
   default_selling_rate: "150.0055",
   currency: "EUR",
   unit: "hour",
@@ -85,12 +86,13 @@ const EXISTING_RATE: CatalogRate = {
 };
 
 /** The same row as the caller without `PERSONNEL_COSTS_READ` receives it: the field is `null`. */
-const RATE_COST_WITHHELD: CatalogRate = { ...EXISTING_RATE, default_cost_rate: null };
+const RATE_COST_WITHHELD: CatalogRate = { ...EXISTING_RATE, default_cost_rate: null, cost_rate_unit: null };
 
 /** And as `response_shaping` actually sends it — the key removed, not nulled. */
 const RATE_COST_KEY_ABSENT: CatalogRate = (() => {
   const rate: CatalogRate = { ...EXISTING_RATE };
   delete rate.default_cost_rate;
+  delete rate.cost_rate_unit;
   return rate;
 })();
 
@@ -103,6 +105,7 @@ const WRITE_ECHO: CatalogRate = {
   ...EXISTING_RATE,
   id: "e0000000-0000-0000-0000-0000000000ff",
   default_cost_rate: null,
+  cost_rate_unit: null,
   default_selling_rate: "999.9900",
   currency: "USD",
   effective_from: "2001-01-01",
@@ -311,6 +314,8 @@ interface RateValues {
   engagement?: string;
   vendor?: string;
   cost?: string;
+  /** A contract value (`hour`/`day`/`month`). The form has no default, so the helper picks one. */
+  costUnit?: string;
   selling?: string;
   currency?: string;
   from?: string;
@@ -327,6 +332,7 @@ function fillNewRate(form: HTMLElement, values: RateValues = {}): void {
     set(form, "Vendor", values.vendor);
   }
   set(form, "Default cost rate", values.cost ?? "60.0050");
+  set(form, "Cost rate unit", values.costUnit ?? "hour");
   set(form, "Default selling rate", values.selling ?? "100.0050");
   set(form, "Currency", values.currency ?? "EUR");
   set(form, "Effective from", values.from ?? "2027-01-01");
@@ -579,10 +585,12 @@ describe("writing to the catalogue", () => {
     expect(writes(second)[0].raw).not.toContain("2026-12-31");
   });
 
-  it("does not offer the unit as a choice, and does not send one", async () => {
-    // The database pins `unit` to 'hour'. A control offering a choice would promise a capability
-    // that does not exist (ADR-0002, addendum 2026-09-21, point 4); the unit is *stated* instead, so
-    // NF-07 is satisfied by naming it rather than by faking a decision.
+  it("does not offer the selling unit as a choice, and does not send one", async () => {
+    // The database pins the selling rate's `unit` to 'hour'. A control offering a choice would
+    // promise a capability that does not exist (ADR-0002, addendum 2026-09-21, point 4); the unit is
+    // *stated* instead, so NF-07 is satisfied by naming it rather than by faking a decision. The
+    // cost rate's unit is a real choice since SC-5-08 and is proved in CatalogCostRateUnit.test.tsx
+    // (SC-5-09, K-04) — this test keeps only the selling half.
     const calls = stubCatalog();
     render(<CatalogScreen />);
     await mounted();
@@ -590,7 +598,7 @@ describe("writing to the catalogue", () => {
     const form = await openAddRateForm();
     expect(within(form).queryByLabelText("Unit")).toBeNull();
     expect(within(form).getByText("Unit")).toBeVisible();
-    expect(within(form).getByText(/priced per hour/i)).toBeVisible();
+    expect(within(form).getByText(/Every selling rate is priced per hour/i)).toBeVisible();
 
     fillNewRate(form);
     await press(within(form).getByRole("button", { name: "Save new rate" }));

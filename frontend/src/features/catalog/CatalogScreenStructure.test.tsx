@@ -61,6 +61,7 @@ const RATE_INTERNAL: CatalogRate = {
   engagement_type_id: "d0000000-0000-0000-0000-000000000001",
   vendor_id: null,
   default_cost_rate: null,
+  cost_rate_unit: null,
   default_selling_rate: "260.00",
   currency: "PLN",
   unit: "hour",
@@ -76,6 +77,7 @@ const RATE_VENDOR: CatalogRate = {
   role_id: "a0000000-0000-0000-0000-000000000002",
   vendor_id: "f0000000-0000-0000-0000-000000000001",
   default_cost_rate: "180.00",
+  cost_rate_unit: "hour",
   default_selling_rate: "280.00",
   effective_to: null,
 };
@@ -257,7 +259,7 @@ const READY_TREE: readonly string[] = [
 const READY_TEXT: readonly string[] = [
   "Roles & rates",
   // G-2
-  "Manage default hourly rates and the shared dictionaries used across staffing plans.",
+  "Manage default rates and the shared dictionaries used across staffing plans.",
   "Default rates",
   // G-2
   "Rates are matched by role, seniority, location, engagement type and vendor.",
@@ -345,6 +347,7 @@ const RATE_FORM_TREE: readonly string[] = [
   "combobox | Engagement type",
   "combobox | Vendor",
   "textbox | Default cost rate",
+  "combobox | Cost rate unit",
   "textbox | Default selling rate",
   "textbox | Currency",
   // G-9: Cancel before Save (gate-1). The one change of order this task makes.
@@ -373,13 +376,19 @@ const RATE_FORM_TEXT: readonly string[] = [
   '"Internal" is the organisation\'s own rate — a choice, not an empty field.',
   "Default cost rate",
   "A decimal amount, up to four decimal places. It is sent exactly as typed — nothing here rounds it. The catalogue returns personnel costs only to callers permitted to read them. If yours is not, this value will read \"Restricted\" after saving — to you as well.",
+  "Cost rate unit",
+  "Choose a unit",
+  "hour",
+  "day",
+  "month",
+  "The default cost rate above is an amount per this unit.",
   "Default selling rate",
   "A decimal amount, up to four decimal places. It is sent exactly as typed — nothing here rounds it.",
   "Currency",
   "An ISO-4217 code in capitals, for example EUR or PLN. The server decides which codes it accepts; this form keeps no list of its own.",
   "Unit",
   "hour",
-  "Every catalogue rate is priced per hour. The unit is not a choice.",
+  "Every selling rate is priced per hour. The unit is not a choice.",
   "Effective from",
   "The first day this rate applies.",
   "Effective to",

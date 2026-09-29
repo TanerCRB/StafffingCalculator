@@ -16,9 +16,12 @@
 //     never a far-future sentinel a client would have to recognise.
 //   * amounts cross the boundary as fixed-point decimal strings, never JSON floats (NF-01,
 //     ADR-0002). They stay strings all the way to `lib/money.ts`.
-//   * `currency` and `unit` travel per row. `unit` is a plain string, not a literal union: the
-//     database's CHECK constraint is what limits it to "hour" today, and F-07 adds more (see the
-//     `RateUnit` docstring in the backend schema).
+//   * `currency` and `unit` travel per row. `unit` is the *selling* rate's unit, a plain string: the
+//     database's CHECK constraint limits it to "hour" and it is not a choice on this screen.
+//   * `cost_rate_unit` is the *cost* rate's unit, a closed set (`COST_RATE_UNITS`) that travels and
+//     is withheld together with `default_cost_rate` — both present, or both null/absent, never one
+//     without the other (SC-5-08; ADR-0002 addendum 2026-09-29). The cost is never read through
+//     `unit`, and a withheld unit is never defaulted to "hour".
 
 /** ISO-8601 calendar date, e.g. "2026-01-01". Rendered literally — see lib/dates.ts for why it is
  * never routed through `new Date(...)`. */
@@ -49,6 +52,15 @@ export interface DimensionEntryList {
   entries: DimensionEntry[];
 }
 
+/**
+ * The units a cost rate can be priced per — exactly the backend's closed set (`COST_RATE_UNITS`,
+ * SC-5-08). The response shape check and the create form's control both read this one list, so a
+ * fourth unit is added here or nowhere.
+ */
+export const COST_RATE_UNITS = ["hour", "day", "month"] as const;
+
+export type CostRateUnit = (typeof COST_RATE_UNITS)[number];
+
 export interface CatalogRate {
   id: string;
 
@@ -68,9 +80,13 @@ export interface CatalogRate {
 
   /** Fixed-point decimal string, or null/absent when this caller may not read personnel costs. */
   default_cost_rate?: string | null;
+  /** The unit `default_cost_rate` is an amount per. Gated together with `default_cost_rate`: null or
+   * absent exactly when it is, and the client refuses a payload where only one of the two is. */
+  cost_rate_unit?: CostRateUnit | null;
   /** Fixed-point decimal string. Never null: it is not behind the personnel-cost gate. */
   default_selling_rate: string;
   currency: string;
+  /** The *selling* rate's unit. Never the cost rate's — that is `cost_rate_unit`. */
   unit: string;
 
   effective_from: CalendarDate;
@@ -291,10 +307,10 @@ export interface DimensionEntryEditRequest {
 /**
  * The body of `POST /catalog/rates`.
  *
- * `unit` is deliberately **not** a member. The database pins it to `hour` and the backend request
- * model defaults to it, so a client field would offer a choice that does not exist (ADR-0002,
- * addendum 2026-09-21, point 4). `RATE_UNIT_HOUR` below is for *saying* what the unit is, never for
- * asking.
+ * `unit` (the selling rate's) is deliberately **not** a member. The database pins it to `hour` and
+ * the backend request model defaults to it, so a client field would offer a choice that does not
+ * exist (ADR-0002, addendum 2026-09-21, point 4). `RATE_UNIT_HOUR` below is for *saying* what that
+ * unit is, never for asking. The cost rate's unit is a member, and a real choice (SC-5-09).
  */
 export interface CatalogRateCreateRequest {
   role_id: string;
@@ -311,6 +327,10 @@ export interface CatalogRateCreateRequest {
    * `422`, and a client that rounded would silently change somebody's cost rate (ADR-0002,
    * addendum 2026-09-21, points 1-2). */
   default_cost_rate: string;
+  /** What `default_cost_rate` is an amount per. Required: the backend defaults it to "hour", and the
+   * form asks for an explicit choice instead of inheriting that default (SC-5-09). The selling
+   * rate's `unit` is not sent — it is not a choice. */
+  cost_rate_unit: CostRateUnit;
   default_selling_rate: string;
 
   /** ISO-4217, uppercase. Not normalised here: the backend rejects `eur` rather than upper-casing
@@ -342,7 +362,10 @@ export interface CatalogRateCreateRequest {
 export interface CatalogRateEditRequest {
   updated_at: ConcurrencyMarker;
 
+  /** `default_cost_rate` and `cost_rate_unit` go together or not at all: the backend answers `422`
+   * to exactly one of them. A caller who never received either sends neither. */
   default_cost_rate?: string;
+  cost_rate_unit?: CostRateUnit;
   default_selling_rate?: string;
   currency?: string;
 
@@ -351,11 +374,10 @@ export interface CatalogRateEditRequest {
 }
 
 /**
- * The unit every catalogue rate is priced in, as the database's CHECK constraint enforces it.
+ * The unit every catalogue *selling* rate is priced in, as the database's CHECK constraint enforces
+ * it (the cost rate's unit is `COST_RATE_UNITS`).
  *
  * Here so that a form can *state* the unit (NF-07: "forms shall explain input units") without
- * offering it as a choice, and so that the word is written once. F-07 adds daily and monthly rates;
- * when it does, the unit becomes a field of the request and this constant becomes a default — which
- * is a decision, not a detail of a form.
+ * offering it as a choice, and so that the word is written once.
  */
 export const RATE_UNIT_HOUR = "hour";

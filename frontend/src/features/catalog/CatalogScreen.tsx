@@ -314,8 +314,8 @@ export function CatalogScreen() {
           Roles &amp; rates
         </h2>
         {/* SC-2-05, gate-1 decision G-2: static text from the mockup, true of the screen as built
-            — every catalogue rate is hourly (`RATE_UNIT_HOUR`), and the five dictionaries are what
-            a staffing line is keyed by. Only once the catalogue is on screen: the loading and the
+            — a selling rate is hourly (`RATE_UNIT_HOUR`) while a cost rate carries its own unit
+            (`cost_rate_unit`), and the five dictionaries are what a staffing line is keyed by. Only once the catalogue is on screen: the loading and the
             three failure states have no mockup (Issue #59, out of scope 7), so their content
             stays exactly what it was. */}
         {state.kind === "ready" && <p className="catalog__description">{SCREEN_DESCRIPTION}</p>}
@@ -463,14 +463,14 @@ function emptyPageLabel(total: number): string {
 
 /*
  * SC-2-05, gate-1 decision G-2: the static sentences the mockup (`15-catalog.png`) adds around the
- * data. Each one is true of the screen as built — hourly rates, matching over the five dimensions
+ * data. Each one is true of the screen as built — default rates, matching over the five dimensions
  * (SC-2-03), a cost column the server may withhold (ADR-0005) — and none of them states anything
  * about the data a particular response carried. The mockup's "Amounts and dates are examples." is
  * deliberately not here: it describes the prototype's sample data, not this product (Issue #59,
  * out of scope 6).
  */
 const SCREEN_DESCRIPTION =
-  "Manage default hourly rates and the shared dictionaries used across staffing plans.";
+  "Manage default rates and the shared dictionaries used across staffing plans.";
 const RATES_DESCRIPTION =
   "Rates are matched by role, seniority, location, engagement type and vendor.";
 const DIMENSIONS_HEADING = "Dimensions";
@@ -657,10 +657,16 @@ function RatesTable({
               {formatRatePerUnit(rate.default_selling_rate, rate.currency, rate.unit)}
             </td>
             <td className="catalog__cell-amount">
-              {rate.default_cost_rate === null || rate.default_cost_rate === undefined ? (
+              {/* The cost is priced in `cost_rate_unit`, never in the selling rate's `unit`, and a
+                  row whose cost the server withheld carries no unit either — the shape check
+                  refuses a half of the pair, so there is no unit here to default. */}
+              {rate.default_cost_rate === null ||
+              rate.default_cost_rate === undefined ||
+              rate.cost_rate_unit === null ||
+              rate.cost_rate_unit === undefined ? (
                 <span className="catalog__restricted">{RESTRICTED_COST_RATE}</span>
               ) : (
-                formatRatePerUnit(rate.default_cost_rate, rate.currency, rate.unit)
+                formatRatePerUnit(rate.default_cost_rate, rate.currency, rate.cost_rate_unit)
               )}
             </td>
             <td className="catalog__cell-actions">
