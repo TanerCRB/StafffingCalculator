@@ -24,7 +24,8 @@ the first calculation that reads `default_cost_rate`:
 2. **Cost-rate resolution by the whole month, in SQL, with one predicate for the live catalogue,
    the approval freeze and the snapshot reader** (ADR-0013, points 1 and 6; ADR-0004, addendum
    2026-09-23 SC-5-01, point 4). `month_has_cost_rate` is that predicate — "the internal windows
-   overlapping the month cover every day of it and share one (`default_cost_rate`, `currency`)" —
+   overlapping the month cover every day of it and share one (`default_cost_rate`, `currency`,
+   `cost_rate_unit`, surcharge pair)" —
    and `costed_month_windows` is the one statement shape that applies it. The approval's copier
    (`app.data.scenario_approval._copy_catalog_default_rates`) and the reader below both use it.
 3. **The source is chosen by the scenario's status, and only by it**: a draft reads the live
@@ -47,6 +48,7 @@ caller's id; the conjunction `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_cost
 """
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 
@@ -61,6 +63,8 @@ from app.data.rate_windows import (
     internal_catalog_windows_overlapping,
 )
 from app.data.staffing import scenario_view_in_scope
+from app.data.working_calendar import basis_by_location, frozen_basis_by_location
+from app.domain.capacity import CalendarBasis
 from app.domain.fixed_amount_cost import (
     FixedAmountCostAnswer,
     FixedAmountLine,
@@ -74,6 +78,7 @@ from app.domain.paid_absence_cost import (
 )
 from app.domain.personnel_cost import (
     APPROVED_SNAPSHOT,
+    COST_RATE_UNIT_HOUR,
     LIVE_CATALOG,
     CostRateWindow,
     FullyLoadedPersonnelCostAnswer,
@@ -97,7 +102,7 @@ from app.models.staffing import (
 #     a (position, month) has a cost rate  <=>  the internal windows of its tuple overlapping the
 #         month (a) together cover every day of it, and
 #                (b) all carry the same (`default_cost_rate`, `currency`, `surcharge_percent`,
-#                    `includes_surcharge`)
+#                    `includes_surcharge`, `cost_rate_unit`)
 #
 # and it is then costed at that one cost rate. A cost-rate change inside the month breaks (b), a
 # currency change inside the month breaks (b), a gap breaks (a), and — since SC-5-02, closing the
@@ -105,7 +110,10 @@ from app.models.staffing import (
 # month breaks (b) exactly the same way: all four are `no_cost_rate`. A window boundary that moves
 # only the surcharge is not a smaller problem than one that moves the cost rate — both leave the
 # month with more than one candidate answer, and SC-5-01 already drew the line that such a month
-# gets the named state, never a silently-picked "first window" answer. Where the *selling*
+# gets the named state, never a silently-picked "first window" answer. Since SC-5-08 the unit of the
+# cost rate is a fifth value: a boundary that moves only `cost_rate_unit` (same amount, same
+# currency) is `no_cost_rate` too — "5 000 per hour" and "5 000 per month" are two answers, never
+# one picked by position (ADR-0013, addendum 2026-09-29, point 2). Where the *selling*
 # boundaries fall still does not matter — the mirror of ADR-0003's addendum R-01.
 #
 # **One predicate, three callers** (ADR-0013, point 6; ADR-0004, addendum 2026-09-23 SC-5-01, point
@@ -122,6 +130,7 @@ def month_has_cost_rate(
     currency: sa.ColumnElement[str],
     surcharge_percent: sa.ColumnElement[object],
     includes_surcharge: sa.ColumnElement[bool],
+    cost_rate_unit: sa.ColumnElement[str],
 ) -> sa.ColumnElement[bool]:
     """The cost predicate itself, as window functions over the windows overlapping one month.
 
@@ -131,10 +140,11 @@ def month_has_cost_rate(
     - **covered** — `app.data.rate_windows.days_covered_in_month` (never `NULL`: a month with no
       window is "0 days covered", so `false`, and `false AND NULL` is `false`);
     - **one cost rate** — `min = max` of the cost rate, of the currency and (SC-5-02) of the
-      surcharge percentage, plus `bool_and = bool_or` of the "already includes it" flag — the
-      boolean equivalent of `min = max` (PostgreSQL has no `min`/`max` aggregate for `boolean`) —
-      across the month's windows. Four values, one predicate: a month answers with exactly one
-      cost rate, one currency, one surcharge percentage and one flag, or it does not answer at all.
+      surcharge percentage and (SC-5-08) of the cost-rate unit, plus `bool_and = bool_or` of the
+      "already includes it" flag — the boolean equivalent of `min = max` (PostgreSQL has no
+      `min`/`max` aggregate for `boolean`) — across the month's windows. Five values, one
+      predicate: a month answers with exactly one cost rate, one currency, one surcharge
+      percentage, one flag and one unit, or it does not answer at all.
 
     Not built from `app.data.commercial_terms.month_is_priced` and never reading the selling rate:
     a separate function in a separate module (ADR-0013, point 1).
@@ -149,6 +159,8 @@ def month_has_cost_rate(
         == sa.func.max(surcharge_percent).over(partition_by=allocation_id),
         sa.func.bool_and(includes_surcharge).over(partition_by=allocation_id)
         == sa.func.bool_or(includes_surcharge).over(partition_by=allocation_id),
+        sa.func.min(cost_rate_unit).over(partition_by=allocation_id)
+        == sa.func.max(cost_rate_unit).over(partition_by=allocation_id),
     )
     return sa.and_(covered, one_cost_rate)
 
@@ -157,10 +169,15 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
     """Every (allocation, overlapping window) row of one scenario, each carrying
     `month_has_cost_rate`.
 
-    Columns: `scenario_id`, `position_id`, `allocation_id`, `period_month`,
+    Columns: `scenario_id`, `position_id`, `position_location_id`, `allocation_id`, `period_month`,
     `planned_allocation_hours`, `window_id` (the catalogue row's id — on the snapshot, the frozen
     `source_rate_id`), `effective_from`, `effective_to`, `cost_rate`, `currency`,
-    `surcharge_percent`, `includes_surcharge`, `month_has_cost_rate`.
+    `surcharge_percent`, `includes_surcharge`, `cost_rate_unit`, `month_has_cost_rate`.
+
+    **`cost_rate_unit` is read symmetrically from both branches (SC-5-08)** — the live column for a
+    draft, the frozen column of `approved_snapshot_catalog_default_rate` for an approved scenario,
+    never the live catalogue's for the latter (ADR-0004, addendum 2026-09-29, point 4; the unit
+    rides the same predicate as the rate it qualifies).
 
     A `LEFT JOIN`, so a month with no overlapping window still yields one row (window columns
     `NULL`, `month_has_cost_rate` false) — which is what makes `no_cost_rate` a value the formula
@@ -198,6 +215,7 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
         sa.select(
             StaffingPosition.scenario_id.label("scenario_id"),
             StaffingPosition.id.label("position_id"),
+            StaffingPosition.location_id.label("position_location_id"),
             StaffingPositionAllocation.id.label("allocation_id"),
             StaffingPositionAllocation.period_month.label("period_month"),
             StaffingPositionAllocation.planned_allocation_hours.label("planned_allocation_hours"),
@@ -208,6 +226,7 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
             window.currency.label("currency"),
             window.surcharge_percent.label("surcharge_percent"),
             window.includes_surcharge.label("includes_surcharge"),
+            window.cost_rate_unit.label("cost_rate_unit"),
             month_has_cost_rate(
                 StaffingPositionAllocation.id,
                 StaffingPositionAllocation.period_month,
@@ -216,6 +235,7 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
                 window.currency,
                 window.surcharge_percent,
                 window.includes_surcharge,
+                window.cost_rate_unit,
             ).label("month_has_cost_rate"),
         )
         .select_from(StaffingPosition)
@@ -242,7 +262,13 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
     the cost rate, never a silently-picked "first window" answer). Reading
     `first.surcharge_percent`/`first.includes_surcharge` below is therefore exactly as safe as
     reading `first.cost_rate`/`first.currency` already was — the predicate guarantees every window
-    of a resolved month agrees.
+    of a resolved month agrees. Since SC-5-08 the same holds for `first.cost_rate_unit`.
+
+    **The calendar is read only when some resolved month is not hourly** (ADR-0013, addendum
+    2026-09-29, points 4 and 5): a scenario of `hour` positions never touches a calendar table, and
+    the source follows the rate's — `basis_by_location` for a draft, `frozen_basis_by_location` for
+    an approved scenario, never a live lookup to fill a key the snapshot lacks (absence of a key is
+    the `no_calendar` state).
     """
     approved = scenario.status == ScenarioStatus.APPROVED
     source = APPROVED_SNAPSHOT if approved else LIVE_CATALOG
@@ -255,6 +281,18 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
     grouped: dict[uuid.UUID, list[sa.Row]] = {}
     for row in session.execute(statement).all():
         grouped.setdefault(row.allocation_id, []).append(row)
+    needs_calendar = any(
+        month_rows[0].month_has_cost_rate and month_rows[0].cost_rate_unit != COST_RATE_UNIT_HOUR
+        for month_rows in grouped.values()
+    )
+    bases: Mapping[uuid.UUID, CalendarBasis] = {}
+    if needs_calendar:
+        if approved:
+            bases = frozen_basis_by_location(session, scenario.id)
+        else:
+            bases = basis_by_location(
+                session, sorted({rows[0].position_location_id for rows in grouped.values()})
+            )
     months = []
     for month_rows in grouped.values():
         first = month_rows[0]
@@ -265,6 +303,7 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
                 currency=first.currency,
                 surcharge_percent=first.surcharge_percent,
                 includes_surcharge=first.includes_surcharge,
+                cost_rate_unit=first.cost_rate_unit,
                 windows=tuple(
                     CostRateWindow(
                         source_rate_id=row.window_id,
@@ -274,6 +313,7 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
                         currency=row.currency,
                         surcharge_percent=row.surcharge_percent,
                         includes_surcharge=row.includes_surcharge,
+                        cost_rate_unit=row.cost_rate_unit,
                     )
                     for row in month_rows
                 ),
@@ -284,6 +324,7 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
                 period_month=first.period_month,
                 planned_allocation_hours=first.planned_allocation_hours,
                 rate=rate,
+                basis=bases.get(first.position_location_id),
             )
         )
     return source, months

@@ -183,6 +183,17 @@ def create_dimension_entry(
     return entry
 
 
+COST_RATE_UNIT_CONDITION = "cost_rate_unit_precondition"
+COST_RATE_UNIT_REASON = (
+    "The cost rate unit sent does not match the one stored, and this caller may not change it. "
+    "Nothing was written."
+)
+"""The refusal of a blind writer (no `PERSONNEL_COSTS_READ`) whose `cost_rate_unit` differs from the
+stored one (SC-5-08, reviewer R-02; ADR-0005 addendum 2026-09-29, point 7, Q-B). The refusal body
+names neither the stored unit nor any rate; the status still tells whether the guess was right (so
+the unit is recoverable by probing, see the addendum)."""
+
+
 def _marker_conflict(*, subject: str) -> CatalogConcurrentEditConflict:
     """The refusal a conditional `UPDATE` that matched no row means — built in one place.
 
@@ -207,8 +218,15 @@ def _apply_marked_update(
     expected_updated_at: datetime,
     changes: Mapping[str, Any],
     subject: str,
+    must_equal: Mapping[str, Any] | None = None,
 ) -> bool:
     """Run one `UPDATE … WHERE id = :id AND updated_at = :expected` and say whether it landed.
+
+    `must_equal` (SC-5-08, R-02) adds `column = value` conditions to the same `WHERE`: a
+    precondition
+    the database evaluates in the same statement and snapshot as the write, never a Python check on
+    a
+    row read a moment earlier.
 
     **The whole mechanism of ADR-0007 is the `WHERE` clause of this one statement.** The marker is
     compared by the database, in the same statement and the same snapshot as the write — never in
@@ -235,6 +253,7 @@ def _apply_marked_update(
         .where(
             table.c.id == row_id,
             table.c.updated_at == expected_updated_at,
+            *(table.c[column] == value for column, value in (must_equal or {}).items()),
         )
         .values(**dict(changes))
         .returning(table.c.updated_at)
@@ -310,6 +329,10 @@ EDITABLE_RATE_FIELDS: frozenset[str] = frozenset(
         # no second edit path for two columns of one row already being edited here.
         "surcharge_percent",
         "includes_surcharge",
+        # SC-5-08 (F-07): the unit of `default_cost_rate` — half of the rate's definition, edited
+        # through the same allow-list and **as a pair with the amount** (the request schema refuses
+        # exactly one of the two, ADR-0005 addendum 2026-09-29, Q-B).
+        "cost_rate_unit",
     }
 )
 """Every column `update_rate` will ever write — an allow-list, never "whatever was sent".
@@ -321,8 +344,9 @@ What is deliberately absent, and why:
   of an existing window onto another tuple, which is a decision nobody has taken (Issue #49 scopes
   this task to adding and editing, not re-keying). A caller who priced the wrong tuple adds the
   right one — the row they meant to write is a different row.
-- `unit`: the database admits exactly `'hour'` today (`ck_catalog_default_rates_unit_is_hour`), so
-  an editable field would be one whose every value but the current one is refused.
+- `unit` (the **selling** rate's unit): the database admits exactly `'hour'`
+  (`ck_catalog_default_rates_unit_is_hour`), so an editable field would be one whose every value but
+  the current one is refused. Not to be confused with `cost_rate_unit`, which is editable above.
 - `id`, `created_at`, `updated_at`, `valid_period`: not user input at all. `valid_period` in
   particular is generated, and naming it here would be the second place a window's boundary is
   decided (ADR-0008, point 3).
@@ -346,6 +370,7 @@ def update_rate(
     *,
     expected_updated_at: datetime,
     changes: Mapping[str, Any],
+    stored_cost_rate_unit_must_be: str | None = None,
 ) -> CatalogDefaultRate | None:
     """Edit one rate window — `None` if no such rate, a refusal if the marker or the data says no.
 
@@ -394,7 +419,28 @@ def update_rate(
         expected_updated_at=expected_updated_at,
         changes=changes,
         subject="catalogue rate",
+        must_equal=(
+            None
+            if stored_cost_rate_unit_must_be is None
+            else {"cost_rate_unit": stored_cost_rate_unit_must_be}
+        ),
     ):
+        if stored_cost_rate_unit_must_be is not None:
+            # Which condition failed is told apart **after** the fact, from a fresh read — the
+            # guard itself was the `WHERE`. The refusal body names the condition, neither the
+            # stored unit nor any rate; the status still tells whether the guess was right
+            # (ADR-0005 addendum 2026-09-29, point 7, Q-B).
+            session.refresh(rate)
+            if (
+                rate.updated_at == expected_updated_at
+                and rate.cost_rate_unit != stored_cost_rate_unit_must_be
+            ):
+                raise refusal_by_condition(
+                    subject="catalogue rate",
+                    condition=COST_RATE_UNIT_CONDITION,
+                    reason=COST_RATE_UNIT_REASON,
+                    refused=CatalogWriteRefused,
+                )
         raise _marker_conflict(subject="catalogue rate")
     # Re-read after the commit, for the reason `create_rate` gives: the columns are `NUMERIC(14,4)`
     # and `valid_period` is generated, so the row the response describes must be the row the
@@ -680,8 +726,13 @@ def create_rate(
     effective_to: date | None,
     surcharge_percent: Decimal = Decimal("0"),
     includes_surcharge: bool = False,
+    cost_rate_unit: str = "hour",
 ) -> CatalogDefaultRate:
     """Insert one rate row and commit it — or raise `CatalogWriteFailed` if the database refuses.
+
+    `cost_rate_unit` (SC-5-08) is the unit `default_cost_rate` is stated in and defaults to `hour`,
+    what every rate before it was; the accepted values are enforced by the database
+    (`ck_catalog_default_rates_cost_rate_unit_is_known`) and, for the API, by the request schema.
 
     `surcharge_percent`/`includes_surcharge` default to `0`/`False` (SC-5-02) — the same "no
     surcharge configured" a tuple written before this task existed carries, never an unanswered
@@ -733,6 +784,7 @@ def create_rate(
         effective_to=effective_to,
         surcharge_percent=surcharge_percent,
         includes_surcharge=includes_surcharge,
+        cost_rate_unit=cost_rate_unit,
     )
     try:
         session.add(rate)

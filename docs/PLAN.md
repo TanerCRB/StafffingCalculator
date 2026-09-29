@@ -1812,6 +1812,52 @@ history / this file's own change log, not as tracked product work.
   siatki w jednym `GET` szkicu, przejściowy rozjazd przy współbieżnej edycji, nie dotyczy
   zatwierdzonych scenariuszy). Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-5-08** — Daily and monthly cost rates (F-07): a catalogue default rate carries its cost
+  rate unit (`cost_rate_unit` in `hour`/`day`/`month`), and the personnel cost of a scenario is
+  computed from the planned allocation hours by that unit's rule (Issue #80). The selling-rate
+  `unit` stays pinned to `hour` (capabilities.md, K-07 of SC-2-01); T&M revenue is untouched.
+  *Done when:* `backend/tests` prove criteria K-01..K-07 (analyst, 2026-09-29):
+  1. (K-01) The three units price the same hours by their own rule: hour = hours x rate; day =
+     hours / `standard_hours_per_day` x rate; month = rate x hours / (`working_days_in_month` x
+     `standard_hours_per_day`), one final `round_money`, no intermediate rounding. Full-capacity
+     month costs exactly the monthly rate; overtime costs more (known, not repaired); a zero-hour
+     month is a legal `0.00`, not `no_cost_rate`. Mutations: unit ignored, day/month formulas
+     swapped, per-day figure rounded before multiplying, hours capped at capacity.
+  2. (K-02) A day/month-rate position whose location has no calendar withholds the whole scenario
+     cost as `no_calendar` (ADR-0013 pt 2, no partial sum, hourly positions included); a scenario
+     with hourly positions only never needs a calendar. A zero-hour day/month position without a
+     calendar is `no_calendar`, not `0.00`; a month-rate position in a month with zero working days
+     is the named state `no_working_days` (day rate never); `currency_mismatch` takes precedence
+     over `no_calendar`. Mutations: missing calendar yields `0`/skip; calendar required for hour
+     rows; zero working days divides or yields `0`.
+  3. (K-03) `cost_rate_unit` joins `month_has_cost_rate` in all three places (live query, snapshot
+     copier, snapshot reader); a unit change inside a month is `no_cost_rate`; an approved scenario
+     costs from its frozen unit, not the live catalogue. Mutations: unit dropped from the copier /
+     from the reader only, each killed separately.
+  4. (K-04) Fully loaded cost, paid-absence cost and the what-if raise all apply the unit.
+     Mutations: hour hard-coded in the paid-absence path alone, then in the what-if path alone.
+  5. (K-05) Revenue and the selling-rate `unit` are untouched: existing T&M tests unedited; a
+     month-cost-rate position with an hourly selling rate yields the same revenue as with an hour
+     cost rate; a structural test forbids revenue modules referencing `cost_rate_unit` and cost
+     modules importing revenue modules.
+  6. (K-06) The API accepts and returns `cost_rate_unit`, gated like every cost field (ADR-0005):
+     absent from the payload without the cost permission, invalid value rejected, omitted value
+     stores `hour`; a `PATCH` sending exactly one of `default_cost_rate` / `cost_rate_unit` is a
+     `422` with no write (ADR-0005 addendum, pair rule). Mutations: permission check for the field
+     removed from response shaping; pair rule removed.
+  7. (K-07) The migration is expand-safe on real PostgreSQL: existing catalogue and snapshot rows
+     get `hour`, CHECK admits only `hour`/`day`/`month`, and the downgrade refuses (no row values
+     echoed) while a non-hour row exists, succeeds otherwise. Mutations: downgrade guard removed;
+     `NOT NULL DEFAULT 'hour'` removed.
+
+  **Out of scope (explicit):** frontend (`RateForm.tsx` "unit is not a choice" text and the cost
+  cell reading `rate.unit` become stale; follow-up Issue); selling-rate units other than `hour` and
+  any change to T&M/Fixed Price revenue; repairing month-rate overtime; changing the `unit` column
+  or the capabilities row for it; the contract step of the expand/contract migration; overheads
+  (SC-5-02), fixed amount (SC-5-03), FTE (SC-5-04, Issue #79).
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-07; ADR-0013, ADR-0004 and ADR-0002 (addenda
+  required), ADR-0008, ADR-0006; `docs/PLAN.md` SC-2-01, SC-5-01, SC-5-02, SC-5-06.
+
 - [x] **SC-6-01** — Duplikuj scenariusz niezależnie od źródła (F-09 pkt 1, AC-02). Nowy entry point
   do istniejącego mechanizmu kopiowania (`copy_scenario`/`SCENARIO_CHILD_COPIERS`, ADR-0004) —
   `into_project=source.project` zamiast nowego projektu (SC-1-03 zawsze tworzył nowy).

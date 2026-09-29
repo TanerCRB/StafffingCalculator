@@ -55,7 +55,13 @@ PersonnelCostState = Literal[
     "no_cost_rate",
     "currency_mismatch",
     "no_cost_currency",
+    "no_calendar",
+    "no_working_days",
 ]
+"""The base cost's states. Since SC-5-08 (ADR-0013, addendum 2026-09-29) `no_calendar` (a day/month
+cost rate whose location has no calendar) and `no_working_days` (a month-unit rate in a month with
+zero working days) join them; both are shown to every caller, like `state` itself (ADR-0005,
+addendum 2026-09-29, point 7, Q-A)."""
 
 
 class CostRateWindowRead(BaseModel):
@@ -73,6 +79,13 @@ class CostRateWindowRead(BaseModel):
     payload as a whole sits behind the SC-1-08 conjunction: the percentage was never the gated part,
     the amount it multiplies is."""
     includes_surcharge: bool
+    # No `cost_rate_unit` here (SC-5-08): ADR-0005's addendum of 2026-09-29 (point 3) allows the
+    # unit to reach the scenario cost response only inside `assumptions_used`, but adding the key
+    # changes the pinned response bodies of existing tests (`test_personnel_cost.py` K-01/K-03 and
+    # the `1739f1e` literals of `test_scenario_results_status_guard.py`). Left out and reported to
+    # the human gate rather than editing those tests; the unit is read by the calculation from
+    # `MonthCostRate`/`CostRateWindow`, so exposing it later is one field here and one line in
+    # `app.api.response_shaping._personnel_cost_read_of`.
 
 
 class UnresolvedCostMonthRead(BaseModel):
@@ -106,9 +119,11 @@ PaidAbsenceCostState = Literal[
     "no_cost_rate",
     "currency_mismatch",
     "no_cost_currency",
+    "no_working_days",
 ]
 """The paid-absence component's states (ADR-0013, addendum 2026-09-23 SC-5-06, point 4) — the
-calendar's and the budget's own names first, then the base cost's."""
+calendar's and the budget's own names first, then the base cost's; `no_working_days` since SC-5-08
+(a month-unit rate in a month with zero working days)."""
 
 
 class PaidAbsenceMonthHoursRead(BaseModel):

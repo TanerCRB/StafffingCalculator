@@ -611,7 +611,7 @@ def test_q_2_a_cost_rate_that_is_sent_is_written_at_full_precision(
 
     response = committing_client.patch(
         f"/catalog/rates/{rate_id}",
-        json={"updated_at": marker, "default_cost_rate": "101.2345"},
+        json={"updated_at": marker, "default_cost_rate": "101.2345", "cost_rate_unit": "hour"},
         headers=as_caller(IN_SCOPE_USER),
     )
 
@@ -657,7 +657,7 @@ def test_the_edit_response_is_gated_exactly_like_a_read(
     with caller_holding(Permission.CATALOG_READ, Permission.CATALOG_WRITE):
         denied = committing_client.patch(
             f"/catalog/rates/{rate_id}",
-            json={"updated_at": marker, "default_cost_rate": "111.0000"},
+            json={"updated_at": marker, "default_cost_rate": "111.0000", "cost_rate_unit": "hour"},
             headers=as_caller(IN_SCOPE_USER),
         )
     assert denied.status_code == 200, denied.text
@@ -667,7 +667,11 @@ def test_the_edit_response_is_gated_exactly_like_a_read(
     ):
         allowed = committing_client.patch(
             f"/catalog/rates/{rate_id}",
-            json={"updated_at": denied.json()["updated_at"], "default_cost_rate": "112.0000"},
+            json={
+                "updated_at": denied.json()["updated_at"],
+                "default_cost_rate": "112.0000",
+                "cost_rate_unit": "hour",
+            },
             headers=as_caller(IN_SCOPE_USER),
         )
 

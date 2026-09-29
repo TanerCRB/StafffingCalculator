@@ -394,3 +394,27 @@ edit breaks the premise of the exemption: "the same before and after approval" h
 |---|---|
 | A15-10 | Fixed Price scenario: an approval committed by real concurrency on two connections between the revenue read and the cost read gives `409` with the unchanged generic body on `…/results` and on what-if (on what-if `409`, not `404`). A mutation that exempts `fixed_price_terms` from (a) is killed. |
 | A15-11 | `STATUS_DEPENDENT_SOURCES` equals `{live_catalog, approved_snapshot}`. Fixed Price `assumptions_used.rate_source` is `fixed_price_terms` for a draft and for an approved scenario. `…/results` and `…/compare` of a Fixed Price scenario (draft and approved) with no concurrent approval answer `200`. |
+
+### 2026-09-29 — SC-5-08 (Issue #80): the "hourly rate" wording of point 6 and of the SC-5-02 addendum is stale
+
+**Status:** Draft — pending approval
+
+> A note, not a change of decision. The text of point 6 of the Decyzja and of the addendum
+> 2026-09-25 (SC-5-02) stays unchanged; this entry says how to read two phrases of it after
+> SC-5-08 (ADR-0013, addendum 2026-09-29 SC-5-08).
+
+1. **The phrases.** Point 6 says "`default_cost_rate` to stawka godzinowa" (the reason the raise is
+   a percentage and not an amount). The SC-5-02 addendum says the surcharge is derived from "the
+   same hourly rate" that points 1–3 substitute. Both were true while the catalogue refused any unit
+   but `hour`. Since SC-5-08 the rate is expressed in `cost_rate_unit` (`hour`, `day` or `month`,
+   `hour` by default), so "hourly rate" is to be read as "the cost rate in its own unit".
+2. **The conclusions stand.** A percentage raise scales a rate of any unit by the same factor, and
+   the amount priced from it scales by that factor too, so the percentage shape of point 6 needs no
+   change; the surcharge remains a percentage of the base amount, which is derived from the same
+   substituted structure (SC-5-02 addendum, point 1 — the condition holds unchanged).
+3. **What the substitution must not do.** The resolved unit rides in the shared per-(position,
+   month) structure that point 3 substitutes once, before both consumers. The substitution changes
+   the amount only and passes the unit through unchanged; it never substitutes, defaults or drops the
+   unit, and neither consumer assumes `hour` (ADR-0013, addendum 2026-09-29 SC-5-08, point 6,
+   control U-6). A what-if run over a scenario with a monthly-rate position is the case that shows
+   whether a hard-coded `hour` survived in one consumer only.

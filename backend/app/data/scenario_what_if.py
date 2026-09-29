@@ -144,6 +144,12 @@ def _raised_rate(rate: MonthCostRate | None, multiplier: Decimal) -> MonthCostRa
     what makes the fully loaded cost's surcharge amount rise proportionally with the base, with no
     line added to this function and no new substitution path in this module (ADR-0015, addendum
     2026-09-25 SC-5-02).
+
+    **`cost_rate_unit` is carried unchanged, and never substituted** (SC-5-08; ADR-0013, addendum
+    2026-09-29, point 6). A raise is a percentage (ADR-0015, point 6), so it scales the amount
+    whatever the unit is — a 10% raise of a monthly rate is a 10% raise of the month — and `replace`
+    leaves the unit as it found it. The consumers (`base_personnel_cost`, `paid_absence_cost` and
+    their fully loaded twins) then price the raised amount by that same unit.
     """
     if rate is None:
         return None

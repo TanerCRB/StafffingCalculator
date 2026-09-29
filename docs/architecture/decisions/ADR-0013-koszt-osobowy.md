@@ -324,3 +324,102 @@ aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie za
 | F-3 | Scenariusz bez `scenarios.currency` i bez żadnej rozstrzygniętej kwoty/stawki (ani worked time, ani fixed amount) → `no_cost_currency`, bez kwoty. |
 | F-4 | `cost_basis='fixed_amount' AND fixed_amount IS NULL` odrzucone przez bazę (CHECK), nieosiągalne w aplikacji — asercja na `pg_constraint`, wzór ADR-0014 D-10. |
 | F-5 | Formuła `fixed_amount` nie importuje `app.data.commercial_terms` ani modułu rozstrzygania stawki katalogowej (test strukturalny grafu importów, mirror C-5). |
+
+### 2026-09-29 — SC-5-08 (Issue #80, daily and monthly cost rates): the cost-rate unit, the conversion rules, the `no_calendar` state
+
+**Status:** Draft — pending approval
+
+> Gate 1 of SC-5-08 (2026-09-29) resolved Q-1..Q-6 (Q-1 = B, Q-2 = A, Q-3 = A, Q-4 = named state,
+> Q-5 backend only, Q-6 downgrade refuses). This entry records the decisions that touch this
+> document. It fulfils the placeholder of "Czego ten dokument nie rozstrzyga" ("stawek kosztowych
+> dziennych/miesięcznych (katalog dziś wymusza `unit = 'hour'` w bazie)") and the F-07 sentence of
+> the Kontekst ("hourly/daily/monthly rates"). The text of the earlier sections and entries stays
+> unchanged; where it says "hourly rate" or multiplies hours by the rate, this entry narrows the
+> reading as stated below.
+
+1. **The unit of the cost rate is its own column: `cost_rate_unit` (`hour` / `day` / `month`),
+   separate from `unit`.** `catalog_default_rates.unit` stays the unit of the *selling* rate and
+   stays pinned to `hour` (ADR-0002, addendum 2026-09-21 point 4, unchanged for the selling rate).
+   `cost_rate_unit` is `NOT NULL DEFAULT 'hour'`. The cost predicate never reads `unit` and the
+   revenue predicate (ADR-0003, `app.data.commercial_terms`) never reads `cost_rate_unit` (point 1
+   of the Decyzja and ADR-0003 point 4, unchanged; a structural test forbids the reference).
+2. **The unit joins the cost predicate (point 1 of the Decyzja is widened, not replaced).** A
+   (position, month) pair has a resolved cost rate when the internal windows cover every day of
+   the month **and** share one (`default_cost_rate`, `currency`, `cost_rate_unit`) — the same "one
+   value or no answer" rule as for the surcharge percentage and its flag (SC-5-02). A unit change
+   inside a month is `no_cost_rate`, exactly like a change of the amount or the currency: the month
+   has two candidate answers, and no first-window pick is allowed. `month_has_cost_rate` carries
+   the unit in **all three places** of point 6 (the live read, the snapshot copier's per-window
+   check, the snapshot reader), and the fourth caller of ADR-0015 inherits it through the shared
+   rate structure. The unit is read from the frozen row for an approved scenario, never from the
+   live catalogue.
+3. **The conversion rules (point 3 of the Decyzja, generalised).** For one (position, month), with
+   `H = planned_allocation_hours`, `S = standard_hours_per_day` of the position's location
+   calendar and `D = working_days_in_month` of the same calendar for that month:
+   - `hour`: `H x rate` (unchanged);
+   - `day`: `H / S x rate`;
+   - `month`: `rate x H / (D x S)`.
+
+   The month amounts are summed **unrounded** and `app.core.money.round_money` is applied **once,
+   at the end** — no rounding of a per-day figure, of a per-month figure or of a per-position
+   figure before summing (point 3 of the Decyzja, unchanged in this respect). Point 3's "no
+   multiplication by `headcount`" and point 4's "worked time = `planned_allocation_hours`" are
+   unchanged.
+   Named consequences, accepted and not repaired by this task: (a) a full-capacity month costs
+   exactly the monthly rate; **hours above capacity cost more** (the month rate is a price of
+   capacity hours, and the amount is not capped at the rate); (b) a **zero-hour month with a calendar is a legal
+   `0.00`**, not `no_cost_rate` (without a calendar, point 7, Q-E) (point 4's mirror of ADR-0003 R-04 holds: the zero month is part of
+   the result, never skipped); (c) a mid-month working-day count is the calendar's, so two months
+   with equal hours cost differently when their `D` differs.
+4. **A new named state: `no_calendar`.** A position whose resolved cost-rate unit is `day` or
+   `month` in some month, and whose location has no working calendar, cannot be priced: the state
+   withholds the **whole scenario base cost** (point 2, "zakaz sumy częściowej", unchanged) —
+   positions priced per hour included, no partial sum, never `0` as a substitute, never a skipped
+   position. A scenario whose positions are all hourly never needs a calendar: the calendar is not
+   read for `hour` rows. This is a third *value* of the named state alongside `no_cost_rate`,
+   `currency_mismatch` and `no_cost_currency`, not a third *shape* of result ("dwa kształty,
+   nigdy trzeci" holds). The paid-absence component's own `no_calendar` (addendum 2026-09-23
+   SC-5-06, point 4) is a separate, component-level state and is unchanged.
+5. **The calendar basis is read from the same source as the rate.** A draft reads the live
+   calendar (`basis_by_location`); an approved scenario reads only its approval snapshot
+   (`frozen_basis_by_location`, ADR-0004, addendum 2026-09-29 SC-5-08) — never a live lookup to
+   fill a missing key. Absence of a location's key is the `no_calendar` state.
+6. **The unit reaches every consumer of the cost-rate structure.** The base cost, the fully loaded
+   cost (the surcharge percentage applies to the base amount **after** unit conversion, still one
+   final rounding), the paid-absence component and the what-if raise (ADR-0015) all price hours
+   through the resolved unit; none hard-codes `hour`. A what-if raise is a percentage (ADR-0015
+   point 6) and scales the amount irrespective of the unit; the unit travels unchanged in the
+   shared per-(position, month) structure and is never itself substituted.
+7. **Three edge cases, decided at gate 1 of SC-5-08 (2026-09-29, Q-C, Q-D, Q-E; the entry as a
+   whole stays a draft pending approval).** The criteria K-01..K-07 fixed the outcomes above but
+   not these:
+   - **Q-C — precedence: `currency_mismatch` takes precedence over `no_calendar`.** When both
+     hold, the result is `currency_mismatch`. The order of named states is therefore `no_cost_rate`
+     (which also precedes `no_calendar`, since `no_calendar` needs the resolved unit and cannot
+     arise in a month that is already unresolved), then `currency_mismatch`, then `no_calendar`.
+   - **Q-D — new named state `no_working_days`.** It applies only to a **month-unit** position in
+     a month whose calendar has **zero working days** (`D = 0`, where the `month` formula would
+     divide by zero). A **day-unit** position needs only `standard_hours_per_day` and never
+     `D`, so it is never `no_working_days`. Like every named state it withholds the whole scenario
+     base cost, is never `0`, and is never an unnamed exception; it is a fourth value of the
+     named state, not a third shape of result.
+     When positions of one scenario fail with both calendar states, `no_calendar` is reported before
+     `no_working_days` (approved by the human, 2026-09-29): the missing calendar is the one to fix first.
+   - **Q-E — a day/month position requires a calendar regardless of hours.** A **zero-hour**
+     day/month position in a location without a calendar is `no_calendar`, not `0.00`. The legal
+     `0.00` of point 3(b) is a zero-hour month **with** a calendar. Only a scenario whose
+     positions are all hourly is calendar-free (point 4).
+
+| Control | Acceptance criterion |
+|---|---|
+| U-1 | The same hours priced in the three units give three results by the rules of point 3; a full-capacity month at a monthly rate costs exactly the monthly rate; hours above capacity cost more; a zero-hour month is `0.00`, not `no_cost_rate`. |
+| U-2 | Rounding happens once, at the end of the sum: for a value where rounding a per-day or per-month figure before summing would change the result, the result carries a single rounding. |
+| U-3 | A day/month position whose location has no calendar gives `no_calendar` for the whole scenario cost, also when another position is hourly, with no amount; a scenario of hourly positions only and no calendar gives `calculated`. |
+| U-4 | A change of `cost_rate_unit` inside a month with the same amount and currency gives `no_cost_rate`. |
+| U-5 | The unit is part of `month_has_cost_rate` in the live query, in the snapshot copier and in the snapshot reader; an approved scenario is priced from the frozen unit, not the live catalogue. |
+| U-6 | The fully loaded cost, the paid-absence component and the what-if raise apply the unit; no path assumes `hour`. |
+| U-8 | When `currency_mismatch` and `no_calendar` both hold, the result is `currency_mismatch`; `no_cost_rate` precedes both. |
+| U-9 | A month-unit position in a month whose calendar has zero working days gives `no_working_days` for the whole scenario cost, with no amount and no division error; a day-unit position in the same month is priced from `standard_hours_per_day`. |
+| U-11 | When one scenario has both a position with no calendar and a month-unit position in a month with zero working days, the result is `no_calendar`. |
+| U-10 | A zero-hour day/month position in a location without a calendar gives `no_calendar`, not `0.00`; the same position with a calendar gives `0.00`. |
+| U-7 | Revenue modules do not reference `cost_rate_unit` and cost modules do not import revenue modules (structural import-graph test, mirror of C-5). A position with a monthly cost rate and an hourly selling rate yields the same revenue as with an hourly cost rate. |
