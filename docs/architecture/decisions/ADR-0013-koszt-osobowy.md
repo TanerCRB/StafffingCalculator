@@ -426,7 +426,7 @@ aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie za
 
 ### 2026-09-29 — SC-5-04 (Issue #79, `assigned_fte` cost basis): stored FTE input, third component, exact basis
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human decision 2026-09-29, by merging the ADR acceptance PR for SC-5-04; code merged in #176; open exceptions R-01 and R-02 of Issue #79 stay recorded there)
 
 > Gate 1 of SC-5-04 (2026-09-29). Human decisions on Issue #79: FTE is a **stored per-position input**;
 > it is **gross of absences**; **overheads are excluded**; FTE-6 is carried by this task; H-1..H-8 of
