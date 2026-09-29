@@ -140,9 +140,10 @@ def create_project(
 
 
 DESCRIPTIVE_FIELDS: frozenset[str] = frozenset({"name", "client", "owner", "description"})
-"""Group 1 of ADR-0004's addendum "zakres migawki wobec pól Projektu": editable whatever the
-status of the project's scenarios. They are the report *header*, they enter no calculation, and an
-approved version shows their current value — a named, accepted limit on header reproducibility."""
+"""Group 1 of ADR-0004's addendum "the scope of the snapshot with respect to Project fields":
+editable whatever the status of the project's scenarios. They are the report *header*, they enter
+no calculation, and an approved version shows their current value — a named, accepted limit on
+header reproducibility."""
 
 FROZEN_BY_APPROVED_SCENARIO: frozenset[str] = frozenset(
     {
@@ -184,8 +185,8 @@ which group it belongs to."""
 class ProjectEditRefused(RuntimeError):
     """The edit was understood, reached the data-access layer, and was refused there.
 
-    Two subclasses, two independent reasons (ADR-0007: "jedno miejsce, dwa niezależne powody
-    odmowy"). Distinct from `ProjectWriteFailed`, which means the write broke rather than that it
+    Two subclasses, two independent reasons (ADR-0007: "one place, two independent reasons for
+    refusal"). Distinct from `ProjectWriteFailed`, which means the write broke rather than that it
     was refused. Like that exception, no subclass here ever quotes a field *value* — field names
     only (NF-11).
     """
@@ -350,7 +351,7 @@ def update_project(
 
 
 # --- copying (SC-1-03) -------------------------------------------------------------------------
-# ADR-0004, addendum 2026-09-18 ("kopiowanie Projektu jako trzeci punkt wejścia"): duplicating a
+# ADR-0004, addendum 2026-09-18 ("copying a Project as a third entry point"): duplicating a
 # scenario (F-09), opening a new version of an approved one (F-12) and copying a whole project
 # (F-01) are *one* mechanism with three entry points, not three copy routines. `copy_scenario`
 # below is that mechanism; `copy_project` is the third entry point and delegates to it.
@@ -360,7 +361,7 @@ ScenarioChildCopier = Callable[[Session, Scenario, Scenario], None]
 
 SCENARIO_CHILD_COPIERS: tuple[ScenarioChildCopier, ...] = (
     copy_staffing_positions,
-    # SC-5-05 (ADR-0014, point 10, Q-6 = A; ADR-0004, aneks SC-5-05, point 4): the additional costs
+    # SC-5-05 (ADR-0014, pt 10, Q-6 = A; ADR-0004, addendum SC-5-05, pt 4): the additional costs
     # with **no position**. The costs attached to a position are not here — they are the fourth
     # pass of `copy_staffing_positions`, which holds the old-to-new position ids. Two halves, two
     # places, and a canary for each (`tests/test_additional_cost_copy.py`, criterion K-07).
@@ -415,8 +416,8 @@ table of `scenarios` whose rows are split between two copiers, by `position_id I
 Still absent, and owed by the tasks that create them: scenario-level rate overrides. The approval
 snapshot is absent on purpose — the third group, never copied. The company catalogue is **not**
 absent by omission — a catalogue row belongs to the organisation and not to a scenario, so it has no
-entry here on purpose (ADR-0004, addendum 2026-09-19 "katalog organizacyjny nie jest dzieckiem
-scenariusza").
+entry here on purpose (ADR-0004, addendum 2026-09-19 "the organisational catalogue is not a child
+of the scenario").
 """
 
 SCENARIO_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
@@ -427,8 +428,8 @@ SCENARIO_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
 - `id` — a copy is a new row, not a second name for the source one (criterion 1/2).
 - `project_id` — set from the target project, which is what makes this usable both for copying
   into another project and for duplicating inside the same one.
-- `status` — the copy is always `draft` (ADR-0004: "dalsze zmiany wymagają nowej wersji (kopii)
-  scenariusza ze statusem draft"), including when the source is `approved`.
+- `status` — the copy is always `draft` (ADR-0004: "further changes require a new version (copy)
+  of the scenario with status draft"), including when the source is `approved`.
 - `created_at` / `updated_at` — the copy is created now; inheriting the source's timestamps would
   backdate a row that did not exist.
 

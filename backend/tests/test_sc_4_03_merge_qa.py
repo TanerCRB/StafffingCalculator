@@ -1,25 +1,27 @@
-"""QA SC-4-03, runda 3 (po merge z SC-4-04 i SC-1-11) — dowody, których brakowało drzewu po merge.
+"""QA SC-4-03, round 3 (after the merge with SC-4-04 and SC-1-11) — proofs the tree was missing
+after the merge.
 
-- **Migracja `b9e3c7a1f264` w obie strony z zapisaną regułą Story Points.** Dotychczasowe próby
-  `downgrade`/`upgrade` tej migracji miały w bazie wyłącznie regułę T&M
-  (`tests/test_outcome_terms_schema.py`), a próba `d2f6a91c4b58` — żadnej
-  (`tests/test_story_points_terms.py`). `downgrade` odtwarzający listę `IN` bez `story_points`
-  przechodził więc po stronie bazy (na regule T&M) i był łapany wyłącznie porównaniem tekstu
-  `pg_get_constraintdef`. Tu reguła Story Points ze szczegółami musi przejść `downgrade` do
-  `b7e3f19a6c52` (lista `IN` z `d2f6a91c4b58`) i ponowny `upgrade` bez zmiany wartości — baza sama
-  odrzuca zawężoną listę.
-- **Kontrast: ta sama próba z zapisaną regułą Outcome-based jest odrzucona i nic nie ginie.**
-  Docstring `downgrade` obiecuje, że pozostała reguła `outcome_based` sprawi, iż odtworzenie CHECK
-  zostanie odrzucone — "celowo: downgrade nie usuwa po cichu reguł scenariuszy". Dotąd nie
-  sprawdzone. Tu: `downgrade` podnosi wyjątek, rewizja zostaje na `head`, reguła i jej wiersz
-  `outcome_terms` są nietknięte (transakcyjny DDL PostgreSQL cofa także `DROP TABLE`).
-- **Kopia projektu z trzema modelami naraz** (T&M, dwie reguły Story Points o różnych wartościach,
-  Outcome-based): każda skopiowana reguła ma szczegóły własnego modelu, wartości **swojego**
-  źródła i ten sam przychód. Dotychczasowe testy kopii mają jedną regułę jednego modelu w
-  transakcji, więc kopiujący, który szuka wiersza szczegółów bez warunku na
-  `commercial_terms_id`, znajdował jedyny wiersz tabeli — właściwy przypadkiem.
+- **Migration `b9e3c7a1f264` both ways with a saved Story Points rule.** The prior `downgrade`/
+  `upgrade` attempts on this migration had only a T&M rule in the database
+  (`tests/test_outcome_terms_schema.py`), and the `d2f6a91c4b58` attempt — none at all
+  (`tests/test_story_points_terms.py`). A `downgrade` that reconstructs the `IN` list without
+  `story_points` therefore passed on the database side (on the T&M rule) and was caught only by
+  comparing the `pg_get_constraintdef` text. Here a Story Points rule with details must survive a
+  `downgrade` to `b7e3f19a6c52` (the `IN` list from `d2f6a91c4b58`) and a subsequent `upgrade`
+  without a value change — the database itself refuses the narrowed list.
+- **Contrast: the same attempt with a saved Outcome-based rule is refused and nothing is lost.**
+  The `downgrade` docstring promises that a remaining `outcome_based` rule will make the CHECK
+  reconstruction be refused — "deliberately: downgrade does not silently delete scenario rules".
+  Not checked until now. Here: `downgrade` raises an exception, the revision stays on `head`, the
+  rule and its `outcome_terms` row are untouched (PostgreSQL's transactional DDL rolls back the
+  `DROP TABLE` too).
+- **A project copy with three models at once** (T&M, two Story Points rules with different
+  values, Outcome-based): each copied rule has its own model's details, values from **its own**
+  source, and the same revenue. The prior copy tests have one rule of one model in the
+  transaction, so a copier that looks up the details row without a condition on
+  `commercial_terms_id` would find the table's only row — correct by accident.
 
-Prawdziwy PostgreSQL; migracje na `engine` współdzielonym przez sesję, `upgrade head` w `finally`.
+Real PostgreSQL; migrations on the `engine` shared by the session, `upgrade head` in `finally`.
 """
 
 import os
@@ -51,15 +53,16 @@ from tests.test_outcome_revenue_copy import FULL_DETAILS
 
 OUTCOME_REVISION = "b9e3c7a1f264"
 PREVIOUS_REVISION = "b7e3f19a6c52"
-"""`down_revision` migracji `b9e3c7a1f264` po drugiej linearyzacji (merge SC-4-05); `b7e3f19a6c52`
-nie dotyka CHECK dyskryminatora — lista po `downgrade` to nadal lista z `d2f6a91c4b58`.
+"""The `down_revision` of migration `b9e3c7a1f264` after the second linearization (merge SC-4-05);
+`b7e3f19a6c52` does not touch the discriminator CHECK — the list after `downgrade` is still the
+list from `d2f6a91c4b58`.
 
-**`OUTCOME_REVISION` przestał być `head` po trzeciej linearyzacji** (merge SC-5-02, 2026-09-25):
-`9b3f6a1d0c47` dopięta na `b9e3c7a1f264` zamiast obok niej, więc `head` jest teraz o jeden krok
-dalej. Oba testy migracyjne poniżej badają zachowanie MIGRACJI `b9e3c7a1f264`, nie definicję
-`head` — każdy zaczyna teraz jawnym `downgrade(alembic_config, OUTCOME_REVISION)`, który odtwarza
-dokładnie ten punkt startowy, jaki miały przed tą linearyzacją. Treść żadnej asercji się nie
-zmienia."""
+**`OUTCOME_REVISION` stopped being `head` after the third linearization** (merge SC-5-02,
+2026-09-25): `9b3f6a1d0c47` was appended onto `b9e3c7a1f264` instead of beside it, so `head` is
+now one step further. Both migration tests below examine the behaviour of MIGRATION
+`b9e3c7a1f264`, not the definition of `head` — each now starts with an explicit
+`downgrade(alembic_config, OUTCOME_REVISION)`, which reproduces exactly the starting point they
+had before this linearization. No assertion's content changes."""
 
 DETAILS_BY_MODEL = {
     "time_and_material": TmTerms,
@@ -82,8 +85,8 @@ def _one(engine: Engine, sql: str, **params: object) -> object:
 
 
 def _committed_rule(engine: Engine, make, name: str, **details: object) -> tuple[uuid.UUID, ...]:
-    """Reguła zatwierdzona w bazie (nie w wycofywanej transakcji `db_session`): `alembic` otwiera
-    własne połączenie i nie widzi niezatwierdzonych wierszy."""
+    """A rule committed to the database (not in the rolled-back `db_session` transaction):
+    `alembic` opens its own connection and does not see uncommitted rows."""
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         project = make_project(setup, name=name, accessible_to=(IN_SCOPE_USER,))
         scenario = make_scenario(setup, project, name="Baseline")
@@ -112,16 +115,17 @@ def _delete_committed(engine: Engine, rule_id, scenario_id, project_id) -> None:
         connection.execute(sa.text("DELETE FROM projects WHERE id = :id"), {"id": project_id})
 
 
-# --- migracja w obie strony z regułą Story Points -------------------------------------------------
+# --- migration both ways with a Story Points rule -------------------------------------------------
 
 
 def test_merge_a_story_points_rule_survives_the_downgrade_and_the_upgrade_of_the_outcome_migration(
     engine: Engine, alembic_config: Config
 ) -> None:
-    """Reguła Story Points ze szczegółami (1000 × 25 PLN) przechodzi `downgrade` do `b7e3f19a6c52`
-    i ponowny `upgrade` bez zmiany. Mutacja "`downgrade` odtwarza listę `IN` bez `story_points`"
-    (albo `upgrade` z listą bez `story_points`): baza odrzuca odtworzenie CHECK na tej regule —
-    niezależnie od tego, czy stała w migracji i jej strażnik dryfu się zgadzają."""
+    """A Story Points rule with details (1000 × 25 PLN) survives a `downgrade` to `b7e3f19a6c52`
+    and a subsequent `upgrade` without a value change. Mutation "`downgrade` reconstructs the `IN`
+    list without `story_points`" (or `upgrade` with a list without `story_points`): the database
+    refuses the CHECK reconstruction on this rule — regardless of whether the migration's constant
+    and its drift guard agree."""
     ids = _committed_rule(
         engine, make_story_points_terms, "SP downgrade",
         price_per_point=Decimal("1000.0000"), accepted_points=25, currency="PLN",
@@ -163,11 +167,12 @@ def test_merge_a_story_points_rule_survives_the_downgrade_and_the_upgrade_of_the
 def test_merge_contrast_an_outcome_rule_makes_the_downgrade_refuse_and_loses_nothing(
     engine: Engine, alembic_config: Config
 ) -> None:
-    """Kontrast testu wyżej — jedna zmiana: reguła Outcome-based zamiast Story Points. `downgrade`
-    jest odrzucony (odtworzenie CHECK bez `outcome_based` na istniejącej regule), rewizja zostaje na
-    `b9e3c7a1f264`, a reguła i jej wiersz `outcome_terms` są nietknięte — `DROP TABLE` cofnięty
-    razem z resztą transakcji. Mutacja "downgrade najpierw usuwa reguły `outcome_based`, żeby
-    przejść": `downgrade` przechodzi i reguła znika po cichu."""
+    """Contrast to the test above — one change: an Outcome-based rule instead of Story Points.
+    `downgrade` is refused (a CHECK reconstruction without `outcome_based` against an existing
+    rule), the revision stays on `b9e3c7a1f264`, and the rule and its `outcome_terms` row are
+    untouched — `DROP TABLE` rolled back together with the rest of the transaction. Mutation
+    "downgrade first deletes `outcome_based` rules to be able to proceed": `downgrade` succeeds
+    and the rule silently disappears."""
     ids = _committed_rule(engine, make_outcome_terms, "Outcome downgrade", **FULL_DETAILS)
     rule_id = ids[0]
     # `OUTCOME_REVISION` docstring: no longer `head` after the SC-5-02 linearization — an explicit
@@ -193,7 +198,7 @@ def test_merge_contrast_an_outcome_rule_makes_the_downgrade_refuse_and_loses_not
         _delete_committed(engine, *ids)
 
 
-# --- kopia projektu z regułami trzech modeli naraz ------------------------------------------------
+# --- a project copy with three models' rules at once --------------------------------------------
 
 
 def _details(session: Session, model_type: str, rule_id: uuid.UUID) -> dict[str, object]:
@@ -212,13 +217,13 @@ def _details(session: Session, model_type: str, rule_id: uuid.UUID) -> dict[str,
 def test_merge_one_project_copy_copies_every_models_rule_with_its_own_sources_details(
     client: TestClient, db_session: Session
 ) -> None:
-    """Jedna kopia projektu z czterema scenariuszami: T&M, Story Points 1000 × 25, Story Points
-    500 × 10 (EUR) i Outcome-based. Każda reguła kopii: nowy identyfikator, model źródła, wiersz
-    szczegółów tabeli **swojego** modelu z wartościami **swojego** źródła, ten sam przychód.
+    """One project copy with four scenarios: T&M, Story Points 1000 × 25, Story Points
+    500 × 10 (EUR) and Outcome-based. Each copied rule: a new identifier, the source's model, a
+    details-table row of **its own** model with values from **its own** source, the same revenue.
 
-    Dwie reguły tego samego modelu z różnymi wartościami są tu celowo: kopiujący, który czyta
-    wiersz szczegółów bez warunku na regułę źródła, w teście jednej reguły trafia w jedyny wiersz
-    tabeli; tu trafia w cudzy albo w dwa."""
+    Two rules of the same model with different values are deliberate here: a copier that reads
+    the details row without a condition on the source rule would, in a single-rule test, hit the
+    table's only row; here it hits someone else's or two of them."""
     project = make_project(db_session, name="Mixed copy", accessible_to=(IN_SCOPE_USER,))
     sources = {
         "T&M": make_commercial_terms(db_session, make_scenario(db_session, project, name="T&M")),

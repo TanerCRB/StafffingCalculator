@@ -84,7 +84,7 @@ const FULL_DICTIONARIES: Readonly<Record<CatalogDimension, DimensionEntry[]>> = 
 /**
  * A caller who may read personnel costs. Not reachable against the running backend today —
  * `PLACEHOLDER_PERMISSIONS` holds no `PERSONNEL_COSTS_READ`, so every real response has
- * `default_cost_rate: null` (Issue #39, "Ryzyko do świadomego przyjęcia"). The branch is provable
+ * `default_cost_rate: null` (Issue #39, "Risk to knowingly accept"). The branch is provable
  * only from a stubbed response, the same way SC-1-08's positive branch is.
  *
  * "100.005" and "60.005" are deliberate: `Number("100.005")` is 100.00499999999999…, so a float

@@ -1,12 +1,13 @@
 """Reading and writing the register of named persons (F-03, SC-2-06; ADR-0019).
 
-**No guard function, like `app.data.catalog`, and for the same structural reason** (ADR-0005, aneks
-2026-09-27 SC-2-06, point 2; ADR-0001, aneks 2026-09-19 SC-2-01): a person row has no column tying
-it to a project, a user, a business unit or a tenant, so there is no per-caller predicate to forget.
+**No guard function, like `app.data.catalog`, and for the same structural reason** (ADR-0005,
+addendum 2026-09-27 SC-2-06, point 2; ADR-0001, addendum 2026-09-19 SC-2-01): a person row has no
+column tying it to a project, a user, a business unit or a tenant, so there is no per-caller
+predicate to forget.
 What protects the register is the permission pair `PEOPLE_READ`/`PEOPLE_WRITE`, declared on every
 endpoint (`app.api.people`) — a refusal of the whole resource, never a blanked field.
 
-**What this module returns: persons, and nothing else** (ADR-0019, "Decyzja" pt 3). Never the
+**What this module returns: persons, and nothing else** (ADR-0019, "Decision" pt 3). Never the
 positions, scenarios or projects a person is assigned to. The first reverse query (person →
 assignments) must go through `project_for_caller` per project and needs its own annex first.
 
@@ -132,10 +133,10 @@ def create_person(session: Session, *, person_id: uuid.UUID, full_name: str) -> 
     """Insert one person under the id the client chose, and commit — or raise a failure that quotes
     no value.
 
-    **The id comes from the client** (ADR-0019 aneks 2026-09-28, D-2 = B), so a retried request hits
-    `pk_person` and is refused (`PersonWriteRefused`, SQLSTATE `23505` → `409`) instead of creating
-    the same person twice. **Always a refusal, whatever name the retry carries**: nothing here
-    compares the sent name with the stored one — that comparison would tell a caller holding
+    **The id comes from the client** (ADR-0019 addendum 2026-09-28, D-2 = B), so a retried request
+    hits `pk_person` and is refused (`PersonWriteRefused`, SQLSTATE `23505` → `409`) instead of
+    creating the same person twice. **Always a refusal, whatever name the retry carries**: nothing
+    here compares the sent name with the stored one — that comparison would tell a caller holding
     `PEOPLE_WRITE` but not `PEOPLE_READ` what the person under that id is called. The refusal names
     the constraint only; it carries neither name, nor the stored row, nor its marker, so its text is
     identical for an identical and for a different name, and distinguishable from the canonical-form
@@ -174,9 +175,10 @@ def correct_person_name(
     """Correct one person's name (RODO art. 16) — `None` if no such person, a refusal if the
     concurrency marker moved.
 
-    **No `approved` guard, and that absence is the decision** (ADR-0004, aneks 2026-09-27 SC-2-06,
-    point 3; ADR-0019, point 7): a person row is not a child of any scenario, and a guard here would
-    block the correction of anybody ever assigned to an approved scenario. An approved scenario
+    **No `approved` guard, and that absence is the decision** (ADR-0004, addendum 2026-09-27
+    SC-2-06, point 3; ADR-0019, point 7): a person row is not a child of any scenario, and a
+    guard here would block the correction of anybody ever assigned to an approved scenario. An
+    approved scenario
     shows the corrected name — it references the person by `id` and freezes no name.
 
     `None` ("no such person") is established before the marker is looked at, so a missing row is a

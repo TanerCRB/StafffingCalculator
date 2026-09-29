@@ -229,14 +229,14 @@ def test_k_09_the_permission_vocabulary_did_not_grow_in_this_task(
         # the claim of this canary (the catalogue tables take no permission of their own) holds.
         Permission.COMMERCIAL_READ,
         Permission.COMMERCIAL_WRITE,
-        # Re-armed again in SC-7-01, not loosened: ADR-0005's aneks of 2026-09-24 adds this one for
+        # Re-armed in SC-7-01, not loosened: ADR-0005's 2026-09-24 addendum adds this one for
         # the whole-scenario result — a composition over three already-permissioned calculations,
         # not a catalogue table — so the claim of this canary holds unchanged.
         Permission.RESULTS_READ,
         # Re-armed in SC-6-01 (Issue #11, gate 1 decision 2), not loosened: `SCENARIO_COPY` is a
         # scenario action, not a catalogue table, so this canary's claim is unaffected by it.
         Permission.SCENARIO_COPY,
-        # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: ADR-0005's aneks of
+        # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: ADR-0005's addendum of
         # 2026-09-27 (point 3) adds this pair for the person register — a register of its own,
         # explicitly *not* a catalogue dictionary — so this canary's claim holds unchanged.
         Permission.PEOPLE_READ,

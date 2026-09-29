@@ -32,11 +32,11 @@ and it is repeated here because this is the file somebody will read first:
   decision that everyone holding it may approve. It is in `PLACEHOLDER_PERMISSIONS`, which is what
   makes the endpoint reachable while every caller is one fixed placeholder — the same reservation
   every other write permission in this repository carries;
-- since SC-8-01 (Issue #14, ADR-0004 aneks 2026-09-27) there **is** an audit trail: every successful
-  approval leaves exactly one `audit_log` row naming the scenario, the project, `scenario_approved`
-  and the caller identity the request carried. What it still does not carry is a *role* — the row
-  names the same placeholder string every other write path does, so "who may approve" is unanswered
-  by its presence.
+- since SC-8-01 (Issue #14, ADR-0004 addendum 2026-09-27) there **is** an audit trail: every
+  successful approval leaves exactly one `audit_log` row naming the scenario, the project,
+  `scenario_approved` and the caller identity the request carried. What it still does not carry is
+  a *role* — the row names the same placeholder string every other write path does, so "who may
+  approve" is unanswered by its presence.
 
 Closing condition, named at gate 1: the authentication ADR, for the role dimension `audit_log`
 cannot supply on its own. Until then an approval in a development or test environment can be

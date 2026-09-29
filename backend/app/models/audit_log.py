@@ -1,11 +1,11 @@
 """`audit_log` — the change history F-12 asks for: who did what, and when (ADR-0004; SC-8-01).
 
 **The first table of plan block 8.** ADR-0004's "Konsekwencje" section named it from the start
-("Historia zmian (F-12, 'change history identifying the author, time, and affected data') wymaga
-osobnej tabeli `audit_log` niezależnej od migawek") and its addendum of 2026-09-18 deferred it,
-dated and named, to this block. Nothing before this task ever wrote a row here.
+("Change history (F-12, 'change history identifying the author, time, and affected data') requires
+a separate `audit_log` table independent of the snapshots") and its addendum of 2026-09-18 deferred
+it, dated and named, to this block. Nothing before this task ever wrote a row here.
 
-**Dedicated to scenario lifecycle events, not a generic system-wide table** (ADR-0004, aneks
+**Dedicated to scenario lifecycle events, not a generic system-wide table** (ADR-0004, addendum
 2026-09-27 SC-8-01, point 1). A polymorphic `resource_type`/`resource_id` pair would let a single
 table absorb every future kind of event this repository ever grows, and that is exactly what is
 rejected: the columns below are real foreign keys (`scenario_id`, `project_id`), and `action_type`
@@ -13,8 +13,8 @@ is a **closed** vocabulary. Today it carries exactly one member, `SCENARIO_APPRO
 second is a schema change (a new enum value plus a new writer), never a free-text column that lets
 a caller invent one.
 
-**`affected_data` is a reference, never a descriptive copy** (point 2 of the same aneks). No field
-of the scenario or the project — name, owner, status — is copied into a row here: the approval
+**`affected_data` is a reference, never a descriptive copy** (point 2 of the same addendum). No
+field of the scenario or the project — name, owner, status — is copied into a row here: the approval
 snapshot (`app.models.approved_snapshot`) is already the source of truth for *what* was approved,
 and a second, independent copy of descriptive fields is the first place the two could drift apart.
 What this table records is *that* an approval happened, *who* triggered it and *when* — the
@@ -61,7 +61,7 @@ same inheritance `approved_snapshot_*` rows rely on.
   (`app.core.identity.CallerIdentity.user_id`, `PLACEHOLDER_PERMISSIONS`) — the same one every other
   write path in this repository reads from the request, and the same reservation: it says *which*
   string the request carried, not *who*, in any authenticated sense. The authentication ADR is the
-  named closing condition (ADR-0004, aneks 2026-09-27 SC-8-01).
+  named closing condition (ADR-0004, addendum 2026-09-27 SC-8-01).
 - **Any action besides approval.** Duplication, archiving, editing and copying remain unaudited
   after this task, exactly as they were before it — F-12's "change history" is proven here for one
   action, not for all of them.
@@ -81,7 +81,7 @@ from app.db.base import Base
 
 
 class AuditActionType(StrEnum):
-    """The closed vocabulary of `audit_log.action_type` (ADR-0004, aneks 2026-09-27 SC-8-01,
+    """The closed vocabulary of `audit_log.action_type` (ADR-0004, addendum 2026-09-27 SC-8-01,
     point 1). Exactly one member today — a second one is a schema change, never a free-text value
     a caller could invent."""
 
@@ -106,8 +106,8 @@ class AuditLog(Base):
     )
     """A real foreign key — unlike every `source_*_id` column of `approved_snapshot_*` — because
     this row is a reference to the scenario it is about, never a copy of anything describing it
-    (ADR-0004, aneks 2026-09-27 SC-8-01, point 2). `ON DELETE RESTRICT`, explicit: nothing in this
-    repository deletes a scenario today, and this spells out that nothing may start doing so
+    (ADR-0004, addendum 2026-09-27 SC-8-01, point 2). `ON DELETE RESTRICT`, explicit: nothing in
+    this repository deletes a scenario today, and this spells out that nothing may start doing so
     quietly out from under a history row that names it."""
 
     project_id: Mapped[uuid.UUID] = mapped_column(

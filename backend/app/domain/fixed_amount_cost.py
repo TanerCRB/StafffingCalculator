@@ -1,27 +1,28 @@
-"""The fixed-amount personnel cost basis of a scenario (F-07, SC-5-03; ADR-0013, aneks 2026-09-25).
+"""The fixed-amount personnel cost basis of a scenario
+(F-07, SC-5-03; ADR-0013, addendum 2026-09-25).
 
 A **second, independent formula** beside `app.domain.personnel_cost`'s worked-time one — not a
-branch inside it. ADR-0013's aneks names the reason directly: "Dwie podstawy... mają OSOBNE zestawy
-stanów nazwanych rozstrzygane przez OSOBNE predykaty, dispatchowane przez `cost_basis` pozycji —
-nigdy jeden wspólny predykat czytający oba źródła na raz." This module therefore:
+branch inside it. ADR-0013's addendum names the reason directly: "Two bases... have SEPARATE sets
+of named states resolved by SEPARATE predicates, dispatched by the position's `cost_basis` —
+never one shared predicate reading both sources at once." This module therefore:
 
 - **reads nothing but a position's own `fixed_amount`/`fixed_amount_currency`** — no
   `planned_allocation_hours`, no catalogue rate, no window (criterion K-01);
 - **imports nothing of the worked-time formula** (`app.domain.personnel_cost`,
   `app.data.personnel_cost`) and nothing of the revenue path (`app.data.commercial_terms`,
   `app.domain.revenue*`) — asserted structurally by `tests/test_fixed_amount_cost.py`'s mirror of
-  control C-5 (ADR-0004, aneks 2026-09-23 SC-5-01). The states below (`CURRENCY_MISMATCH`,
+  control C-5 (ADR-0004, addendum 2026-09-23 SC-5-01). The states below (`CURRENCY_MISMATCH`,
   `NO_COST_CURRENCY`) are spelled again here, as their own constants, rather than imported from the
   worked-time module — the two mean the same idea but are two independent named vocabularies, so a
   change to one cannot silently reach into the other's answer.
 
-**Two shapes, never a third** (ADR-0013, point 2; aneks 2026-09-25 SC-5-03, point 1, which applies
-"two shapes, never a third" to this basis by direct quotation of ADR-0014 point 7): a
+**Two shapes, never a third** (ADR-0013, point 2; addendum 2026-09-25 SC-5-03, point 1, which
+applies "two shapes, never a third" to this basis by direct quotation of ADR-0014 point 7): a
 `FixedAmountCostResult` (an amount, its currency, what it depends on) or a
 `FixedAmountCostUnavailable` (a named reason and what caused it). No amount lives on the second
 shape, so "no currency to state it in" can never be read as a cost of `0`.
 
-**Nothing here decides who may see the figure** (ADR-0005, aneks 2026-09-25 SC-5-03) — that is
+**Nothing here decides who may see the figure** (ADR-0005, addendum 2026-09-25 SC-5-03) — that is
 `app.api.response_shaping`'s conjunction, applied to whatever `app.data.personnel_cost` builds from
 this module's answer, identically to the worked-time amount.
 """
@@ -42,8 +43,8 @@ between them, or one other than `scenarios.currency` (when declared). No convers
 NO_COST_CURRENCY: Final = "no_cost_currency"
 """No `fixed_amount` position at all, in a scenario with no `scenarios.currency` — there is no
 figure to take a currency from and the scenario declares none, so `0.00` would be `0.00` of
-nothing, which a result may not be (ADR-0013, aneks 2026-09-25 SC-5-03, point 1, quoting ADR-0014
-point 7 and mirroring the worked-time basis's `no_cost_currency`, aneks 2026-09-23 SC-5-01)."""
+nothing, which a result may not be (ADR-0013, addendum 2026-09-25 SC-5-03, point 1, quoting ADR-0014
+point 7 and mirroring the worked-time basis's `no_cost_currency`, addendum 2026-09-23 SC-5-01)."""
 
 CALCULATED: Final = "calculated"
 """Not a named state — the label the API gives a `FixedAmountCostResult`."""
@@ -59,7 +60,7 @@ class FixedAmountLine:
     """One `fixed_amount` position's contribution, as this formula sees it — nothing more.
 
     No `headcount`, no hours, no dimension tuple: at `headcount = 1` this amount already **is**
-    the position's whole personnel cost (ADR-0005, aneks 2026-09-25 SC-5-03, point 2 — the
+    the position's whole personnel cost (ADR-0005, addendum 2026-09-25 SC-5-03, point 2 — the
     reasoning that keeps `cost_basis`/`fixed_amount` out of the dimension-only staffing-positions
     response), so nothing else may enter the sum this formula does not already read.
     """

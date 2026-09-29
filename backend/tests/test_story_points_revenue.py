@@ -254,8 +254,8 @@ def test_k_03_the_registries_are_keyed_by_exactly_the_two_real_models() -> None:
     # SC-4-02 added 'fixed_price' as a real model — the set is widened and the comparison is still
     # an equality (not `<=`), so every further model has to widen this test deliberately.
     assert set(REVENUE_BY_MODEL) == set(MODEL_TYPES) == set(DETAIL_TABLE_BY_MODEL)
-    # Rozszerzone jawnie o `outcome_based` przy merge SC-4-03 (decyzja człowieka 2026-09-25);
-    # nazwa testu zostaje, bo wiersz mutation log SC-4-04 w capabilities.md się do niej odwołuje.
+    # Widened to include `outcome_based` at the SC-4-03 merge (human decision 2026-09-25);
+    # the test name stays, because the SC-4-04 mutation-log row in capabilities.md refers to it.
     assert {"time_and_material", "story_points", "outcome_based", "fixed_price"} == set(MODEL_TYPES)
 
 
@@ -445,11 +445,12 @@ def test_r_01_end_to_end_a_story_points_rule_in_a_different_currency_than_the_sc
     )
 
 
-# --- R-01 (weryfikacja SC-4-07, runda 1): one source triple on every Story Points answer --------
+# --- R-01 (SC-4-07 verification, round 1): one source triple on every Story Points answer --------
 
 STORY_POINTS_SOURCE_TRIPLE = ("story_points_terms", "not_applicable", "not_applicable")
-"""`rate_source` / `hours_source` / `vendor_axis` of a Story Points answer (ADR-0003, aneks SC-4-07,
-pkt 5a) — the pairing the frontend renders, identical on the priced and the named-state shape."""
+"""`rate_source` / `hours_source` / `vendor_axis` of a Story Points answer (ADR-0003, addendum
+SC-4-07, point 5a) — the pairing the frontend renders, identical on the priced and the named-state
+shape."""
 
 
 def _source_triple(revenue: dict) -> tuple[str, str, str]:
@@ -460,7 +461,7 @@ def _source_triple(revenue: dict) -> tuple[str, str, str]:
 def test_r_01_sc_4_07_an_incomplete_story_points_rule_names_its_own_sources_not_tm_defaults(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 (SC-4-07, weryfikacja runda 1) — a Story Points rule **without** its
+    """R-01 (SC-4-07, verification round 1) — a Story Points rule **without** its
     `story_points_terms` row is `incomplete_commercial_terms` and still says `story_points_terms` /
     `not_applicable` / `not_applicable`, never the T&M defaults of `AssumptionsUsed`
     (`billable_hours` / `internal`).
@@ -469,7 +470,7 @@ def test_r_01_sc_4_07_an_incomplete_story_points_rule_names_its_own_sources_not_
     **the same** triple — so the assertion above is about the named-state branch, not about a triple
     this model never emits. Mutation this kills: `_story_points` building `AssumptionsUsed` with
     only `model_type`/`rate_source` again (hybrid `story_points_terms` + `billable_hours` +
-    `internal`, contradicting pkt 5a).
+    `internal`, contradicting point 5a).
     """
     project = make_project(db_session, name="Aurora", accessible_to=(IN_SCOPE_USER,))
     incomplete = make_scenario(db_session, project, name="No details", currency="PLN")

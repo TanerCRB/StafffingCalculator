@@ -6,13 +6,13 @@ snapshot. It does **not** answer whether those windows *resolve* the month: that
 separately by each calculation over its own rate column —
 
 - `app.data.commercial_terms.month_is_priced` over (`default_selling_rate`, `currency`) — revenue
-  (ADR-0003, point 5, aneks R-01);
+  (ADR-0003, point 5, addendum R-01);
 - `app.data.personnel_cost.month_has_cost_rate` over (`default_cost_rate`, `currency`) — cost
   (ADR-0013, point 1).
 
 Extracted from `app.data.commercial_terms` in SC-5-01 so the cost path could use the same spelling
 of "the month", "internal" and "the position's own snapshot" **without importing the revenue
-module** (ADR-0004, aneks 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant Guardian: cost
+module** (ADR-0004, addendum 2026-09-23 SC-5-01, point 3; rule 10 of the Invariant Guardian: cost
 and revenue never import each other). A second, local copy in the cost module would have been the
 other option, and it is the one that lets the two calculations drift apart by a clause — e.g. one
 of them losing `vendor_id IS NULL` while the other keeps it.

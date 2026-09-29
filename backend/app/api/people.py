@@ -1,11 +1,11 @@
-"""The register of named persons (F-03, SC-2-06; ADR-0019; ADR-0005, aneks 2026-09-27).
+"""The register of named persons (F-03, SC-2-06; ADR-0019; ADR-0005, addendum 2026-09-27).
 
 - `GET   /people` — one page of the register (`PEOPLE_READ`), `limit`/`offset`/`total` (ADR-0017)
 - `POST  /people` — add a person (`PEOPLE_WRITE`)
 - `PATCH /people/{person_id}` — correct a person's name, with the concurrency marker
 (`PEOPLE_WRITE`)
 
-**Refusal of the resource, not of a field** (ADR-0019, point 4; ADR-0005, aneks 2026-09-27, point
+**Refusal of the resource, not of a field** (ADR-0019, point 4; ADR-0005, addendum 2026-09-27, point
 2). Unlike the catalogue — which answers `200` with the cost rate blanked, because "the existence of
 a role is not protected data" — a caller without `PEOPLE_READ` gets `403` and no name at all: the
 existence of a person in the register *is* personal data. The permissions are declared as
@@ -21,7 +21,7 @@ response bodies, never in a path segment or a query parameter, because access lo
 (ADR-0019, point 6). Searching the register by name is out of scope for exactly that reason.
 
 **The register returns persons only** — never the positions, scenarios or projects a person is
-assigned to (ADR-0019, "Decyzja" pt 3).
+assigned to (ADR-0019, "Decision" pt 3).
 """
 
 import uuid
@@ -154,10 +154,10 @@ def correct_person(
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PEOPLE_WRITE))],
     session: Annotated[Session, Depends(get_session)],
 ) -> PersonRead:
-    """Correct one person's name (RODO art. 16).
+    """Correct one person's name (GDPR art. 16).
 
     **Succeeds for a person assigned in an approved scenario, and that is the point** (ADR-0004,
-    aneks 2026-09-27 SC-2-06, point 3): the person row is not a child of any scenario, so the
+    addendum 2026-09-27 SC-2-06, point 3): the person row is not a child of any scenario, so the
     `approved` write guard does not cover it, and the approved scenario — which references the
     person by id and freezes no name — shows the corrected name from then on.
 

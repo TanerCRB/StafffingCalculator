@@ -1,9 +1,9 @@
 """SC-7-03, Issue #118 — the race guard of `GET …/results`, `GET …/compare` and `GET …/what-if`:
 one function, `app.data.scenario_results.refuse_a_status_race`, applied to the scenario's status
 **as each of the three reads that refresh it saw it** (`status_at_read`), never to the revenue's
-`rate_source` compared with the cost's (ADR-0015, aneks SC-7-03; ADR-0003, aneks SC-7-03).
+`rate_source` compared with the cost's (ADR-0015, addendum SC-7-03; ADR-0003, addendum SC-7-03).
 
-**The rule (ADR-0015, aneks SC-7-03, point 2 — Q4/B, the semantics `main` fixed in SC-4-03).**
+**The rule (ADR-0015, addendum SC-7-03, point 2 — Q4/B, the semantics `main` fixed in SC-4-03).**
 With `s_P`, `s_K`, `s_D` the statuses frozen by the revenue, personnel-cost and additional-cost
 reads: `409` ⇔ (a) the revenue's `rate_source` ∈ `STATUS_DEPENDENT_SOURCES` and `s_P ≠ s_K`, or
 (b) `s_K ≠ s_D`, for every model. A Story Points / Outcome-based revenue reads only the scenario's
@@ -391,7 +391,7 @@ def test_a15_6_disagreeing_rate_sources_with_an_agreeing_status_are_not_a_race(
     scenario is a draft throughout (`story_points_terms` vs `live_catalog`) and once it is approved
     throughout (`story_points_terms` vs `approved_snapshot`, the cost now read from the snapshot).
     The same fact K-01 relies on, named on its own and extended to the approved side (ADR-0015,
-    aneks SC-7-03, point 5: approved through both reads is not a race on `…/results`).
+    addendum SC-7-03, point 5: approved through both reads is not a race on `…/results`).
 
     Mutation killed: any guard still keyed on `rate_source` equality, in either status."""
     _ensure_statutory_bypass(db_session)
@@ -483,7 +483,7 @@ def test_k_02_contrast_no_approval_in_flight_answers_200(
 def test_k_04_an_approval_raced_between_the_what_if_real_reads_is_a_409_not_a_404(
     committing_client: TestClient, engine: Engine, caller_permissions: frozenset[Permission]
 ) -> None:
-    """K-04 (A15-2; ADR-0015, aneks SC-7-03, point 5) with K-06 — the same T&M race on
+    """K-04 (A15-2; ADR-0015, addendum SC-7-03, point 5) with K-06 — the same T&M race on
     `GET …/what-if?salary_raise_percent=10`: `409` with the fixed message, not the `404` a scenario
     approved through every read answers (the contrasts below).
 
@@ -561,7 +561,7 @@ def test_a15_7_an_approval_raced_between_the_cost_and_additional_cost_reads_is_a
     endpoint: str,
     rule: str,
 ) -> None:
-    """A15-7 (reviewer R-01 of SC-7-03; ADR-0015, aneks SC-7-03, points 2b and 8) — the approval
+    """A15-7 (reviewer R-01 of SC-7-03; ADR-0015, addendum SC-7-03, points 2b and 8) — the approval
     commits after the personnel-cost read froze `draft` and before the additional-cost read
     refreshes the shared `Scenario`. Revenue and cost both froze `draft`; the third refresh flips
     the shared object to `approved`, which is what `…/results` serialises as `scenario_status`
@@ -596,9 +596,10 @@ def test_a15_7_an_approval_raced_between_the_cost_and_additional_cost_reads_is_a
 def test_a15_8_story_points_approval_between_revenue_and_cost_is_the_approved_answer_not_a_race(
     committing_client: TestClient, engine: Engine, endpoint: str
 ) -> None:
-    """A15-8 (ADR-0015, aneks SC-7-03, points 2a and 5) — Story Points: the approval commits after
-    the revenue read (`s_P = draft`) and before the cost read (`s_K = s_D = approved`). The revenue
-    is the same before and after an approval, so the request is the approved scenario read whole:
+    """A15-8 (ADR-0015, addendum SC-7-03, points 2a and 5) — Story Points: the approval
+    commits after the revenue read (`s_P = draft`) and before the cost read (`s_K = s_D =
+    approved`). The revenue is the same before and after an approval, so the request is the
+    approved scenario read whole:
 
     - `…/results` → `200`, cost from the snapshot (`approved_snapshot`, 12000.00), `scenario_status`
       `"Approved"`, profit 25000.00 − 12000.00 = 13000.00 — a coherent approved result;
@@ -682,7 +683,7 @@ def test_a15_9_no_commercial_terms_approval_between_revenue_and_cost_is_a_409(
     caller_permissions: frozenset[Permission],
     endpoint: str,
 ) -> None:
-    """A15-9 (ADR-0015, aneks SC-7-03, point 2(ii)) — a scenario with no commercial rule: the
+    """A15-9 (ADR-0015, addendum SC-7-03, point 2(ii)) — a scenario with no commercial rule: the
     revenue is the named `no_commercial_terms` state, `model_type = None`, but its `rate_source`
     is still chosen by the status (`live_catalog` here). The approval commits right after the
     revenue read's rule lookup found nothing (`s_P = draft`) and before the cost read

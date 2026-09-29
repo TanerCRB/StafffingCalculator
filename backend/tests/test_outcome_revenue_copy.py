@@ -1,13 +1,13 @@
-"""SC-4-03, K-06 — kopia scenariusza kopiuje regułę Outcome-based z kompletem szczegółów, a kod bez
-gałęzi dla modelu odmawia na **prawdziwym** wierszu drugiego modelu (ADR-0004, aneks 2026-09-25
-SC-4-03, pkt 3; ADR-0003, aneks SC-4-03, O-6).
+"""SC-4-03, K-06 — copying a scenario copies its Outcome-based rule with the full set of details,
+and code with no branch for the model refuses on a **real** row of the other model (ADR-0004,
+addendum 2026-09-25 SC-4-03, point 3; ADR-0003, addendum SC-4-03, O-6).
 
-- kopia przez jedyny istniejący punkt wejścia (`POST /projects/{id}/copy`): nowa reguła, nowy wiersz
-  `outcome_terms` wskazujący **tę** regułę, każda kolumna dziedzinowa identyczna, wynik identyczny;
-- `unsupported_model_type` (odczyt) i `409` bez niczego skopiowanego (kopia) — dotąd dowiedzione
-  tylko symulacją na wierszu T&M z opróżnionym rejestrem (`tests/test_commercial_revenue_gate_2.py`,
-  R-02/R-03), tu na wierszu `outcome_based` zapisanym w bazie, czytanym przez wersję kodu, która
-  zna tylko T&M — dokładnie okno mieszanych wersji ADR-0001.
+- copy through the only existing entry point (`POST /projects/{id}/copy`): a new rule, a new
+  `outcome_terms` row pointing at **this** rule, every domain column identical, an identical result;
+- `unsupported_model_type` (read) and `409` with nothing copied (copy) — proven so far only by
+  simulation on a T&M row with an emptied registry (`tests/test_commercial_revenue_gate_2.py`,
+  R-02/R-03), here on an `outcome_based` row stored in the database, read by a code version that
+  knows only T&M — exactly the mixed-version window of ADR-0001.
 """
 
 from decimal import Decimal
@@ -47,8 +47,8 @@ FULL_DETAILS = {
     "achieved_probability": Decimal("40.00"),
     "exceeded_probability": Decimal("30.00"),
 }
-"""Każda kolumna dziedzinowa ustawiona i różna od wartości domyślnej fixture'a — kopiujący, który
-pominie którąkolwiek, zmienia wynik albo porównanie wierszy."""
+"""Every domain column set and different from the fixture's default value — a copier that skips
+any of them changes the result or the row comparison."""
 
 
 def _details_of(session: Session, rule_id) -> dict[str, object]:
@@ -66,14 +66,13 @@ def _details_of(session: Session, rule_id) -> dict[str, object]:
 def test_k_06_copying_a_scenario_copies_its_outcome_rule_with_every_detail_and_new_identifiers(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-06 — kopia ma własną regułę `outcome_based`, własny wiersz `outcome_terms` wskazujący tę
-    regułę, każdą kolumnę dziedzinową równą źródłu, i odpowiada tym samym przychodem (gwarantowany,
-    oczekiwany, per kategoria). Źródło nietknięte.
+    """K-06 — the copy has its own `outcome_based` rule, its own `outcome_terms` row pointing at
+    this rule, every domain column equal to the source, and responds with the same revenue
+    (guaranteed, expected, per category). The source untouched.
 
-    Mutacje: kopiujący bez wiersza szczegółów (`incomplete_commercial_terms` na kopii); kolumna
-    dziedzinowa pominięta (np. prawdopodobieństwa → `no_probabilities`, `revenue_max` → inny
-    przychód
-    "przekroczony"); wiersz szczegółów wskazujący regułę źródła.
+    Mutations: a copier with no details row (`incomplete_commercial_terms` on the copy); a domain
+    column omitted (e.g. probabilities → `no_probabilities`, `revenue_max` → a different "exceeded"
+    revenue); a details row pointing at the source rule.
     """
     project = make_project(db_session, name="Outcome copy", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Baseline", currency="PLN")
@@ -108,23 +107,23 @@ def test_k_06_copying_a_scenario_copies_its_outcome_rule_with_every_detail_and_n
 
 
 def test_every_outcome_details_column_is_either_copied_or_explicitly_excluded() -> None:
-    """Strażnik dryfu dla nowej tabeli szczegółów — kolumna dodana później wymusza decyzję zamiast
-    zostać po cichu skopiowana albo pominięta (konwencja `TM_TERMS_COLUMNS_NOT_COPIED`)."""
+    """A drift guard for the new details table — a column added later forces a decision instead of
+    being silently copied or skipped (the `TM_TERMS_COLUMNS_NOT_COPIED` convention)."""
     columns = {attribute.key for attribute in sa.inspect(OutcomeTerms).column_attrs}
 
     assert columns == {"model_type", *FULL_DETAILS} | TM_TERMS_COLUMNS_NOT_COPIED
 
 
-# --- rejestry bez gałęzi dla prawdziwego wiersza drugiego modelu ----------------------------------
+# --- registries with no branch for a real row of the second model ---------------------------------
 
 
 def test_k_06_a_real_outcome_rule_read_by_code_without_its_branch_is_unsupported_model_type(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """K-06/O-6 — prawdziwy wiersz `outcome_based` (przyjęty przez poszerzony CHECK), czytany przez
-    dyspozytor znający tylko T&M: `200`, `unsupported_model_type`, `"n/a"`, zapisany model nazwany
-    w odpowiedzi — nigdy `KeyError`/`500`, nigdy cena policzona wzorem T&M. Kontrast: ten sam
-    odczyt z pełnym rejestrem → `calculated`."""
+    """K-06/O-6 — a real `outcome_based` row (accepted by the widened CHECK), read by a dispatcher
+    that knows only T&M: `200`, `unsupported_model_type`, `"n/a"`, the stored model named in the
+    response — never `KeyError`/`500`, never a price computed by the T&M formula. Contrast: the
+    same read with the full registry → `calculated`."""
     project = make_project(db_session, name="Outcome mixed", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Baseline", currency="PLN")
     make_outcome_terms(db_session, scenario)
@@ -156,10 +155,11 @@ def test_k_06_a_real_outcome_rule_read_by_code_without_its_branch_is_unsupported
 def test_k_06_copying_a_real_outcome_rule_with_code_that_cannot_copy_it_is_409_and_copies_nothing(
     committing_client: TestClient, engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """K-06/O-6 — prawdziwy, zatwierdzony w bazie wiersz `outcome_based`; kopiujący znający tylko
-    `tm_terms`: cała kopia projektu to `409` nazywający model, a w bazie nie przybywa nic — ani
-    projektu, ani scenariusza, ani reguły, ani wiersza szczegółów (liczone z osobnego połączenia).
-    Kontrast po przywróceniu rejestru: `201` i komplet skopiowany, łącznie z `outcome_terms`."""
+    """K-06/O-6 — a real `outcome_based` row, committed to the database; a copier that knows only
+    `tm_terms`: the whole project copy is a `409` naming the model, and nothing new lands in the
+    database — no project, no scenario, no rule, no details row (counted from a separate
+    connection). Contrast after restoring the registry: `201` and the whole set copied, including
+    `outcome_terms`."""
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         project = make_project(setup, name="Outcome copy 409", accessible_to=(IN_SCOPE_USER,))
         scenario = make_scenario(setup, project, name="Baseline", currency="PLN")

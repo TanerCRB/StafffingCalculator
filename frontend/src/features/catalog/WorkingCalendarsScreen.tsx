@@ -28,7 +28,7 @@ import {
 import "./WorkingCalendarsScreen.css";
 
 /**
- * SC-3-06 — the working calendars (odczyt) and the leave budget (odczyt + dodanie), the screen
+ * SC-3-06 — the working calendars (read) and the leave budget (read + add), the screen
  * SC-3-02/SC-3-03 deliberately left unbuilt (`AppShell.tsx`'s `RAIL_WORKSPACE`, "the screen is not
  * built"). Mounted as its own workspace-level `ScreenKey` (`"working-calendars"`), mechanically like
  * `"roles-and-rates"` — no router, no URL, no project/scenario state, because neither dictionary has

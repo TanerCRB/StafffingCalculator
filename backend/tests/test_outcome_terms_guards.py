@@ -1,17 +1,17 @@
-"""SC-4-03, K-05 — reguły Outcome-based nie da się zapisać do scenariusza `approved`, a odmowa
-należy
-do instrukcji zapisu (ADR-0004, aneks 2026-09-25 SC-4-03, pkt 2).
+"""SC-4-03, K-05 — an Outcome-based rule cannot be written to an `approved` scenario, and the
+refusal belongs
+to the write statement (ADR-0004, addendum 2026-09-25 SC-4-03, point 2).
 
-Ta sama konstrukcja co K-06 SC-4-01 (`tests/test_commercial_terms_guards.py`), zastosowana do
-ścieżki zapisu outcome, która niesie teraz kolumny dziedzinowe w tej samej instrukcji. Wszystko na
-**zatwierdzonych** transakcjach i liczone z osobnego połączenia:
+The same construction as K-06 SC-4-01 (`tests/test_commercial_terms_guards.py`), applied to the
+outcome write path, which now carries the domain columns in the same statement. Everything on
+**committed** transactions and counted from a separate connection:
 
-1. odmowa wprost na `approved`, kontrast na `draft` tego samego projektu (`201`, oba wiersze);
-2. zatwierdzenie zatwierdzone tuż przed instrukcją `INSERT` (hak `before_cursor_execute` na innym
-   połączeniu) — odczyt statusu w Pythonie przed wstawieniem by to przepuścił;
-3. wyścig dwóch połączeń z prawdziwym endpointem zatwierdzenia, który trzyma blokadę wiersza
-   scenariusza: zapis musi czekać (`blocked`), a para "scenariusz zatwierdzony" i "reguła istnieje"
-   nigdy nie zachodzi razem. Mutacja: usunięcie `FOR UPDATE` z
+1. an outright refusal on `approved`, a contrast on `draft` of the same project (`201`, both rows);
+2. an approval committed just before the `INSERT` statement (a `before_cursor_execute` hook on
+   another connection) — reading the status in Python before the insert would let this through;
+3. a race of two connections with the real approval endpoint, which holds the scenario row's lock:
+   the write must wait (`blocked`), and the pair "scenario approved" and "rule exists" never holds
+   at the same time. Mutation: dropping `FOR UPDATE` from
    `app.data.scenario_guard.unapproved_scenario`.
 """
 
@@ -52,7 +52,7 @@ def _committed_project(engine: Engine) -> dict[str, uuid.UUID]:
 
 
 def _rows_of(engine: Engine, scenario_id: uuid.UUID) -> tuple[int, int]:
-    """(reguły, wiersze `outcome_terms`) jednego scenariusza — tylko zatwierdzone wiersze."""
+    """(rules, `outcome_terms` rows) of one scenario — committed rows only."""
     with engine.connect() as connection:
         rules = connection.execute(
             sa.text("SELECT count(*) FROM commercial_terms WHERE scenario_id = :id"),
@@ -81,11 +81,11 @@ def _is_approved(engine: Engine, scenario_id: uuid.UUID) -> bool:
 def test_k_05_writing_an_outcome_rule_into_an_approved_scenario_is_refused_and_writes_nothing(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """K-05, pierwszy przebieg — `409` z "approved", zero reguł i zero wierszy `outcome_terms`.
+    """K-05, first pass — `409` with "approved", zero rules and zero `outcome_terms` rows.
 
-    Kontrast: to samo ciało do scenariusza `draft` tego samego projektu → `201` i **oba** wiersze,
-    z kolumnami dziedzinowymi (oczekiwany 23000 dowodzi, że prawdopodobieństwa zapisały się w tej
-    samej instrukcji)."""
+    Contrast: the same body to a `draft` scenario of the same project → `201` and **both** rows,
+    with the domain columns (the expected 23000 proves that the probabilities were written in the
+    same statement)."""
     state = _committed_project(engine)
 
     refused = committing_client.post(
@@ -112,12 +112,12 @@ def test_k_05_writing_an_outcome_rule_into_an_approved_scenario_is_refused_and_w
 def test_k_05_an_approval_committed_just_before_the_insert_still_refuses_the_outcome_rule(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """K-05, drugi przebieg — strażnikiem jest instrukcja, nie odczyt statusu przed wstawieniem.
+    """K-05, second pass — the guard is the statement, not a status read before the insert.
 
-    Zatwierdzenie commituje się na innym połączeniu po tym, jak zapis rozstrzygnął zasięg (widział
-    `draft`), a tuż przed instrukcją strzeżoną. Mutacja: `if scenario.status == APPROVED: raise` w
-    Pythonie + zwykły `INSERT` — przeczytał `draft`, więc wstawia regułę do zatwierdzonej
-    kalkulacji.
+    The approval commits on another connection after the write has resolved scope (it saw
+    `draft`), and just before the guarded statement. Mutation: `if scenario.status == APPROVED:
+    raise` in Python + a plain `INSERT` — it read `draft`, so it inserts the rule into the
+    calculation that has since been approved.
     """
     state = _committed_project(engine)
     fired: list[str] = []
@@ -156,11 +156,12 @@ def test_k_05_an_approval_committed_just_before_the_insert_still_refuses_the_out
 def test_k_05_an_approval_racing_the_outcome_rule_write_on_two_connections_leaves_no_rule_under_it(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """K-05, trzeci przebieg — dwa połączenia, prawdziwy endpoint zatwierdzenia, warunek parą.
+    """K-05, third pass — two connections, the real approval endpoint, the condition as a pair.
 
-    Zatwierdzenie zatrzymane tuż przed zmianą statusu (po migawce, z blokadą wiersza scenariusza);
-    wtedy startuje zapis reguły outcome w wątku, a test czeka, aż PostgreSQL sam zgłosi oczekującą
-    prośbę o blokadę. Zapis musi czekać, a po zatwierdzeniu dostać `409` i zostawić zero wierszy.
+    The approval is stopped just before the status change (after the snapshot, holding the
+    scenario row's lock); that is when the outcome rule write starts on a thread, and the test
+    waits until PostgreSQL itself reports a pending lock request. The write must wait, and after
+    the approval get a `409` and leave zero rows.
     """
     state = _committed_project(engine)
     outcome: dict[str, Any] = {}
@@ -221,10 +222,10 @@ def test_k_05_an_approval_racing_the_outcome_rule_write_on_two_connections_leave
 def test_k_05_contrast_an_outcome_rule_written_before_the_approval_is_approved_with_it(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """K-05, kontrast wyścigu — zapis zatwierdzony pierwszy należy do zatwierdzanej kalkulacji: bez
-    tego wyścig wyżej spełniłby strażnik odrzucający każdy zapis niezależnie od kolejności. Po
-    zatwierdzeniu reguła zostaje, a jej przychód jest ten sam (brak migawki — ADR-0004, aneks
-    SC-4-03, pkt 4)."""
+    """K-05, race contrast — a write committed first belongs to the calculation being approved:
+    without this, the race above would satisfy a guard that refuses every write regardless of
+    order. After the approval the rule stays, and its revenue is the same (no snapshot — ADR-0004,
+    addendum SC-4-03, point 4)."""
     state = _committed_project(engine)
     path = commercial_terms_path(state["project_id"], state["draft_id"])
 

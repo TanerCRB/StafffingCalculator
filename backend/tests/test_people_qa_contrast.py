@@ -71,9 +71,10 @@ def test_k_03_the_assignment_response_shows_the_person_only_with_staffing_read_a
     client: TestClient, db_session: Session
 ) -> None:
     """K-03 on the assignment endpoint's own answer — re-worded after D-1 = A (human decision
-    2026-09-28; ADR-0005 aneks 2026-09-28, point 1): the endpoint now *requires* `STAFFING_READ`, so
-    the caller without it is refused `403` before anything is read or written, instead of getting a
-    `200` with the person hidden. Two callers differing in `STAFFING_READ` only: the first gets a
+    2026-09-28; ADR-0005 addendum 2026-09-28, point 1): the endpoint now *requires*
+    `STAFFING_READ`, so the caller without it is refused `403` before anything is read or written,
+    instead of getting a `200` with the person hidden. Two callers differing in `STAFFING_READ`
+    only: the first gets a
     `403` naming the permission and no person id, and its position stays anonymous; the second gets
     `200` with the id. The database is checked for both."""
     project = make_project(db_session, name="Aurora", accessible_to=(IN_SCOPE_USER,))

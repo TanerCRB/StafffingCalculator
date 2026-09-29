@@ -1,13 +1,14 @@
-"""SC-4-03, runda 2 weryfikacji — parametry reguły w odczycie (R-04), jednostki opcjonalne bez
-stawki za jednostkę (pkt 5) i `_details_of` bez cichego `{}` (R-02).
+"""SC-4-03, verification round 2 — rule parameters in the read (R-04), optional units with no
+unit rate (point 5), and `_details_of` with no silent `{}` (R-02).
 
-- **R-04**: `GET …/commercial-terms` reguły Outcome-based niesie jej parametry dokładnie tak, jak je
-  zapisano (`null` za brak, nigdy `"0"`); reguła T&M ma `outcome_terms: null`.
-- **pkt 5**: bez `unit_rate` jednostki można pominąć — zapis `201`, odczyt `null`; ze stawką i bez
-  jednostek → `422` i zero wierszy; ta sama reguła w bazie jako `CHECK`
-  `ck_outcome_terms_units_given_with_unit_rate` (zapis z pominięciem API odrzucony, kontrast
-  zapisywalny).
-- **R-02**: typ ciała żądania bez gałęzi w `_details_of` → `TypeError`, nie reguła bez parametrów.
+- **R-04**: `GET …/commercial-terms` of an Outcome-based rule carries its parameters exactly as
+  written (`null` for absent, never `"0"`); a T&M rule has `outcome_terms: null`.
+- **point 5**: without `unit_rate` the units can be omitted — write `201`, read `null`; with a rate
+  and no units → `422` and zero rows; the same rule in the database as the `CHECK`
+  `ck_outcome_terms_units_given_with_unit_rate` (a write bypassing the API is refused, the contrast
+  is writable).
+- **R-02**: a request body type with no branch in `_details_of` → `TypeError`, not a rule with no
+  parameters.
 """
 
 from dataclasses import replace as dataclass_replace
@@ -62,15 +63,15 @@ def _get(client: TestClient, project, scenario) -> dict[str, Any]:
     return response.json()
 
 
-# --- R-04: parametry reguły w odczycie ------------------------------------------------------------
+# --- R-04: rule parameters in the read ------------------------------------------------------------
 
 
 def test_r_04_the_read_carries_the_outcome_rule_parameters_as_written(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-04 — każdy parametr wraca w odczycie: kwoty jako napisy stałoprzecinkowe ze skalą kolumny,
-    prawdopodobieństwa i jednostki per kategoria; nieobecne `revenue_max` to `null`, nie `"0"`.
-    Odpowiedź `POST` i `GET` mówią to samo."""
+    """R-04 — every parameter comes back in the read: amounts as fixed-point strings with the
+    column's scale, probabilities and units per category; an absent `revenue_max` is `null`, not
+    `"0"`. The `POST` and `GET` responses say the same thing."""
     project, scenario = _scenario(db_session)
     payload = outcome_payload(
         probabilities=("10", "20", "30", "40"),
@@ -104,7 +105,7 @@ def test_r_04_the_read_carries_the_outcome_rule_parameters_as_written(
 def test_r_04_contrast_a_tm_rule_reads_outcome_terms_as_null(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-04, kontrast — reguła T&M: jedyna zmiana jej kształtu to `outcome_terms: null`."""
+    """R-04, contrast — a T&M rule: the only change to its shape is `outcome_terms: null`."""
     project, scenario = _scenario(db_session, "TM read")
     make_commercial_terms(db_session, scenario)
 
@@ -117,8 +118,8 @@ def test_r_04_contrast_a_tm_rule_reads_outcome_terms_as_null(
 def test_r_04_an_outcome_rule_without_its_details_row_reads_outcome_terms_as_null(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-04 — reguła Outcome-based bez wiersza szczegółów: `outcome_terms: null` obok stanu
-    `incomplete_commercial_terms`, nigdy zmyślone parametry."""
+    """R-04 — an Outcome-based rule with no details row: `outcome_terms: null` next to the state
+    `incomplete_commercial_terms`, never made-up parameters."""
     project, scenario = _scenario(db_session, "Incomplete read")
     make_outcome_terms(db_session, scenario, with_details=False)
 
@@ -128,15 +129,16 @@ def test_r_04_an_outcome_rule_without_its_details_row_reads_outcome_terms_as_nul
     assert body["revenue"]["state"] == "incomplete_commercial_terms"
 
 
-# --- pkt 5: jednostki opcjonalne bez stawki za jednostkę -----------------------------------------
+# --- point 5: optional units with no unit rate -------------------------------------------------
 
 
 def test_units_may_be_omitted_without_a_unit_rate_and_read_back_as_null_never_0(
     client: TestClient, db_session: Session
 ) -> None:
-    """Pkt 5 — bez `unit_rate` jednostki pominięte: `201`, w bazie `NULL`, w odczycie `null` — w
-    parametrach reguły i w przychodach per kategoria; przychód AC-08 bez zmian (20000/30000).
-    Mutacja: wartość domyślna `0` dla pominiętych jednostek → `"0.0000"` zamiast `null`."""
+    """Point 5 — with `unit_rate` absent, the units omitted: `201`, `NULL` in the database, `null`
+    in the read — in the rule's parameters and in the per-category revenues; AC-08 revenue
+    unchanged (20000/30000). Mutation: a default value of `0` for omitted units → `"0.0000"` instead
+    of `null`."""
     project, scenario = _scenario(db_session, "Units omitted")
 
     written = _post(
@@ -163,8 +165,8 @@ def test_units_may_be_omitted_without_a_unit_rate_and_read_back_as_null_never_0(
 def test_units_are_required_when_a_unit_rate_is_given_422_and_no_row(
     client: TestClient, db_session: Session
 ) -> None:
-    """Pkt 5 — `unit_rate` podane, jednostki jednej kategorii pominięte → `422`, zero wierszy.
-    Kontrast: ta sama reguła z kompletem jednostek → `201`."""
+    """Point 5 — `unit_rate` given, one category's units omitted → `422`, zero rows.
+    Contrast: the same rule with a full set of units → `201`."""
     project, scenario = _scenario(db_session, "Units required")
 
     refused = _post(
@@ -184,10 +186,10 @@ def test_units_are_required_when_a_unit_rate_is_given_422_and_no_row(
 def test_the_database_refuses_a_unit_rate_without_units_and_accepts_null_units_without_one(
     db_session: Session,
 ) -> None:
-    """Pkt 5, część bazodanowa — zapis z pominięciem API: stawka za jednostkę i `NULL` w jednostkach
-    odrzucone przez `ck_outcome_terms_units_given_with_unit_rate`; kontrast: `NULL` we wszystkich
-    jednostkach bez stawki zapisywalny. Mutacja: kolumny `NOT NULL` bez `CHECK` — kontrast pada;
-    `CHECK` usunięty — odmowa nie następuje."""
+    """Point 5, the database part — a write bypassing the API: a unit rate and `NULL` in the units
+    refused by `ck_outcome_terms_units_given_with_unit_rate`; contrast: `NULL` in every unit with no
+    rate is writable. Mutation: `NOT NULL` columns with no `CHECK` — the contrast fails; `CHECK`
+    removed — the refusal does not happen."""
     _, scenario = _scenario(db_session, "Units DB")
 
     with pytest.raises(IntegrityError) as refused:
@@ -213,13 +215,13 @@ def test_the_database_refuses_a_unit_rate_without_units_and_accepts_null_units_w
     )
 
 
-# --- R-02: `_details_of` bez cichego `{}` ---------------------------------------------------------
+# --- R-02: `_details_of` with no silent `{}` ---------------------------------------------------
 
 
 def test_r_02_details_of_an_unknown_payload_type_raises_instead_of_returning_no_details() -> None:
-    """R-02 — ciało żądania modelu bez gałęzi w `_details_of` (np. model dodany do unii bez niej)
-    to błąd programisty: `TypeError`, nigdy `{}`, które zapisałoby regułę bez parametrów.
-    Kontrast: T&M jawnie `{}`."""
+    """R-02 — a model's request body with no branch in `_details_of` (e.g. a model added to the
+    union without one) is a programmer error: `TypeError`, never `{}`, which would store a rule
+    with no parameters. Contrast: T&M explicitly `{}`."""
 
     class UnknownModelTermsCreateRequest(BaseModel):
         model_type: str = "unknown_model_for_test"
@@ -231,9 +233,9 @@ def test_r_02_details_of_an_unknown_payload_type_raises_instead_of_returning_no_
 
 
 def test_the_pure_function_never_multiplies_a_unit_rate_by_missing_units() -> None:
-    """Pkt 5, warstwa dziedziny — wejście spoza bazy (stawka bez jednostek jednej kategorii) to
-    `incomplete_commercial_terms`, nigdy stawka × `0`. Kontrast: bez stawki te same `None` →
-    wynik."""
+    """Point 5, the domain layer — an input from outside the database (a rate with no units for one
+    category) is `incomplete_commercial_terms`, never rate × `0`. Contrast: with no rate, the same
+    `None` → a result."""
     categories = tuple(
         OutcomeCategoryInput(category=name, units=units, probability=None)
         for name, units in (

@@ -2,7 +2,7 @@
 
 - **K-04** the amount **and** the cost rates in `assumptions_used` are present only under the
   conjunction `PERSONNEL_COSTS_READ` ∧ `project_access.can_view_personnel_costs` **for the project
-  this scenario belongs to**; otherwise `200` with both `null` — never a `403` (ADR-0005, aneks
+  this scenario belongs to**; otherwise `200` with both `null` — never a `403` (ADR-0005, addendum
   2026-09-23 SC-5-01, points 1–2).
 - **K-05** a scenario outside the caller's scope is a `404` indistinguishable from one that does not
   exist — proven with a caller holding every permission and the cost flag on their own projects.
@@ -215,8 +215,9 @@ def test_k_04_a_named_state_and_an_approved_snapshot_are_gated_the_same_way(
     1. A named state (`no_cost_rate`): the state is shown, `assumptions_used` — which names the
        uncosted position and month **and** the cost rates of the months that did resolve — is not.
     2. An approved scenario, read from `approved_snapshot_catalog_default_rate` — the first reader
-       of that table's `default_cost_rate` (ADR-0005, aneks SC-4-01, point 7): withheld without the
-       flag, shown with it. Mutation: the snapshot path shaped by another function than the gate.
+       of that table's `default_cost_rate` (ADR-0005, addendum SC-4-01, point 7): withheld without
+       the flag, shown with it. Mutation: the snapshot path shaped by another function than the
+       gate.
     """
     project, scenario, position = _costed_scenario(db_session)
     make_allocation(db_session, position, period_month=date(2025, 12, 1))
@@ -259,26 +260,26 @@ def test_k_04_the_gate_refuses_to_shape_one_callers_view_with_another_callers_id
 
 
 def test_k_04_the_scenario_cost_fields_are_their_own_set_and_the_projects_stays_empty() -> None:
-    """K-04 — the field set the gate removes, as decided (ADR-0005, aneks 2026-09-23 SC-5-01, point
-    3): the amount and the rates, in a set of their own; `PERSONNEL_COST_FIELDS` of the project
-    payload untouched and still empty (its own canary,
+    """K-04 — the field set the gate removes, as decided (ADR-0005, addendum 2026-09-23 SC-5-01,
+    point 3): the amount and the rates, in a set of their own; `PERSONNEL_COST_FIELDS` of the
+    project payload untouched and still empty (its own canary,
     `test_project_personnel_cost_visibility.py::test_k_06_…`, stays as it was)."""
     assert SCENARIO_COST_FIELDS == frozenset(
         {
             "amount",
             "assumptions_used",
-            # SC-5-06 (gate 1, Q-1; ADR-0013 aneks 2026-09-23 SC-5-06, point 6): re-armed, still
+            # SC-5-06 (gate 1, Q-1; ADR-0013 addendum 2026-09-23 SC-5-06, point 6): re-armed, still
             # an equality — the paid-absence amount, its budget part and its assumptions.
             "paid_absence_amount",
             "paid_absence_budget_amount",
             "paid_absence_assumptions_used",
-            # SC-5-02 (Issue #77, K-01/K-03/K-05; ADR-0013 aneks 2026-09-25): re-armed again — the
-            # fully loaded cost and its surcharge, for the base component and for paid absence.
+            # SC-5-02 (Issue #77, K-01/K-03/K-05; ADR-0013 addendum 2026-09-25): re-armed again —
+            # the fully loaded cost and its surcharge, for the base component and for paid absence.
             "fully_loaded_amount",
             "surcharge_amount",
             "paid_absence_fully_loaded_amount",
             "paid_absence_surcharge_amount",
-            # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 5; ADR-0005, aneks 2026-09-25
+            # SC-5-03 (ADR-0013, addendum 2026-09-25 SC-5-03, point 5; ADR-0005, addendum 2026-09-25
             # SC-5-03, point 1): re-armed again, still an equality — the fixed-amount basis's own
             # amount and its assumptions, gated identically to the worked-time pair above (K-05).
             # No fully loaded/surcharge pair of its own (crossed with SC-5-02).
@@ -376,10 +377,11 @@ def test_k_06_the_revenue_carries_no_cost_field_even_for_a_caller_the_cost_gate_
 
 # --- SC-5-03, K-05: the fixed-amount basis under the same conjunction -----------------------------
 #
-# ADR-0005, aneks 2026-09-25 SC-5-03, point 1: "dowieść, że nowe wartości `state` same nie niosą
-# kwoty ani stawki — test kontrastowy: wołający bez koniunkcji widzi `state = currency_mismatch` dla
-# pozycji `fixed_amount`, nigdy samą kwotę ani walutę pozycji." The tests below are that contrast,
-# plus the "identically to worked time" half of K-05 (the fixed-amount amount and its assumptions
+# ADR-0005, addendum 2026-09-25 SC-5-03, point 1: "prove that the new `state` values do not
+# themselves carry an amount or a rate — a contrast test: a caller without the conjunction sees
+# `state = currency_mismatch` for a `fixed_amount` position, never the amount or currency
+# alone." The tests below are that contrast, plus the "identically to worked time" half of
+# K-05 (the fixed-amount amount and its assumptions
 # vanish and reappear exactly where the worked-time pair already does).
 
 FIXED_AMOUNT_TEXT = "999.9900"
@@ -422,7 +424,7 @@ def test_sc_5_03_k_05_the_fixed_amount_and_its_assumptions_are_gated_identically
     """SC-5-03, K-05 — the same four-corner table `test_k_04_…conjunction` proves for worked time,
     for `fixed_amount_amount`/`fixed_amount_assumptions_used`: `null` unless both halves of the
     conjunction are true, then the stated figure. `fixed_amount_state`/`fixed_amount_currency` are
-    visible throughout — never gated (ADR-0005, aneks 2026-09-25 SC-5-03, point 1).
+    visible throughout — never gated (ADR-0005, addendum 2026-09-25 SC-5-03, point 1).
     """
     project, scenario, _ = _fixed_amount_scenario(db_session)
     path = personnel_cost_path(project.id, scenario.id)
@@ -430,8 +432,8 @@ def test_sc_5_03_k_05_the_fixed_amount_and_its_assumptions_are_gated_identically
     withheld = _read(client, path, WITHOUT_COST_PERMISSION).json()["personnel_cost"]
     assert withheld["fixed_amount_state"] == "calculated"
     assert withheld["fixed_amount_amount"] is None
-    # Never gated — the same design as the worked-time `currency` field (ADR-0005, aneks 2026-09-23
-    # SC-5-01, point 7): a currency code alone names no amount.
+    # Never gated — the same design as the worked-time `currency` field (ADR-0005, addendum
+    # 2026-09-23 SC-5-01, point 7): a currency code alone names no amount.
     assert withheld["fixed_amount_currency"] == "PLN"
     assert withheld["fixed_amount_assumptions_used"] is None
     assert FIXED_AMOUNT_TEXT not in _read(client, path, WITHOUT_COST_PERMISSION).text
@@ -451,7 +453,7 @@ def test_sc_5_03_k_05_the_fixed_amount_and_its_assumptions_are_gated_identically
 def test_sc_5_03_k_05_a_named_state_is_visible_without_the_conjunction_but_never_the_amount(
     client: TestClient, db_session: Session
 ) -> None:
-    """The contrast the ADR-0005 aneks names by quotation: two `fixed_amount` positions in
+    """The contrast the ADR-0005 addendum names by quotation: two `fixed_amount` positions in
     different currencies → `currency_mismatch`, visible to a caller **without**
     `PERSONNEL_COSTS_READ` — but neither position's amount or currency (`EUR`, `123.4500`) is
     anywhere in that caller's body. The same caller **with** the conjunction sees the state and the

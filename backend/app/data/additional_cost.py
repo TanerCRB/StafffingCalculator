@@ -8,17 +8,18 @@ first table of F-08 (ADR-0014; ADR-0004, ADR-0005, ADR-0007 addenda 2026-09-23 S
 1. **Scope** — `app.data.staffing.scenario_in_scope`, i.e. `project_for_caller` plus membership of
    `Project.scenarios`. No scope function of its own and no `select(Scenario)` here: "no such
    project", "not yours" and "that scenario belongs to another project" are one `None`, for the
-   read and for every write (ADR-0005, aneks SC-5-05, point 4; criterion K-08). A cost id or a
+   read and for every write (ADR-0005, addendum SC-5-05, point 4; criterion K-08). A cost id or a
    position id of another scenario is narrowed away **inside the statement** (`scenario_id =
    :scenario_id` in every `WHERE`, the position joined only within the scenario), so a
    path-confusion request matches nothing and answers the same `404`.
 2. **The refusal of a write to an `approved` scenario, in the statement that writes** (ADR-0004,
-   aneks SC-5-05, point 3) — `app.data.scenario_guard.unapproved_scenario`, embedded as the source
-   of the `INSERT … SELECT` and as `scenario_id IN (…)` in the `UPDATE`/`DELETE`. It also takes the
-   scenario row lock that serialises the write against a concurrent approval (criterion K-06).
-3. **ADR-0007's marker per cost row** (aneks SC-5-05): `updated_at = :expected` in the same `WHERE`,
-   and `updated_at = now()` in the same `SET`. The unit of editing is one cost, not the position and
-   not the scenario — editing cost A leaves cost B's marker alone.
+   addendum SC-5-05, point 3) — `app.data.scenario_guard.unapproved_scenario`, embedded as the
+   source of the `INSERT … SELECT` and as `scenario_id IN (…)` in the `UPDATE`/`DELETE`. It also
+   takes the scenario row lock that serialises the write against a concurrent approval
+   (criterion K-06).
+3. **ADR-0007's marker per cost row** (addendum SC-5-05): `updated_at = :expected` in the same
+   `WHERE`, and `updated_at = now()` in the same `SET`. The unit of editing is one cost, not the
+   position and not the scenario — editing cost A leaves cost B's marker alone.
 4. **Two copiers for two halves** (ADR-0014, point 10, Q-6 = A): the costs attached to a position
    are copied inside `app.data.staffing.copy_staffing_positions` (it holds the old-to-new position
    ids); the costs with no position are copied by `copy_scenario_additional_costs` below, its own
@@ -28,11 +29,11 @@ first table of F-08 (ADR-0014; ADR-0004, ADR-0005, ADR-0007 addenda 2026-09-23 S
 `app.data.commercial_terms`, `app.domain.revenue*`, `app.data.personnel_cost` or
 `app.domain.personnel_cost`, and none of them imports it (ADR-0014, "Konsekwencje"; control D-8).
 
-**No cost gate.** Additional costs are read and written under `STAFFING_READ`/`STAFFING_WRITE`, with
-no `PERSONNEL_COSTS_READ` conjunction (ADR-0014, point 11, Q-7 = B; ADR-0005, aneks SC-5-05, point
-1) — which is why the view below carries no per-caller flag: a flag field would advertise a gate
-that does not exist. The named risk of that decision (a recruitment cost on a `headcount = 1`
-position points at one person) is ADR-0005's, aneks SC-5-05, point 2.
+**No cost gate.** Additional costs are read and written under `STAFFING_READ`/`STAFFING_WRITE`,
+with no `PERSONNEL_COSTS_READ` conjunction (ADR-0014, point 11, Q-7 = B; ADR-0005, addendum
+SC-5-05, point 1) — which is why the view below carries no per-caller flag: a flag field would
+advertise a gate that does not exist. The named risk of that decision (a recruitment cost on a
+`headcount = 1` position points at one person) is ADR-0005's, addendum SC-5-05, point 2.
 """
 
 import uuid
@@ -101,15 +102,15 @@ class AdditionalCostFrozen(AdditionalCostWriteRejected):
 
 
 class ConcurrentAdditionalCostEditConflict(AdditionalCostWriteRejected):
-    """The cost changed since the caller read it (ADR-0007, aneks SC-5-05) — or, on an insert, the
-    scenario changed between the scope read and the write. Resolved by re-reading. Carries nothing
-    about the competing change."""
+    """The cost changed since the caller read it (ADR-0007, addendum SC-5-05) — or, on an insert,
+    the scenario changed between the scope read and the write. Resolved by re-reading. Carries
+    nothing about the competing change."""
 
 
 class AdditionalCostNotFound(RuntimeError):
     """No such cost in this scenario, or no such position in this scenario.
 
-    Answered as the same `404` as "no such scenario" (ADR-0005, aneks SC-5-05, point 4). Raised
+    Answered as the same `404` as "no such scenario" (ADR-0005, addendum SC-5-05, point 4). Raised
     rather than returned as `None` so that "outside your scope" and "no such row here" stay two
     facts *inside* this layer while the API answers both with one body — the division
     `app.data.staffing.AbsenceNotFound` makes.
@@ -144,7 +145,7 @@ _FROZEN_MESSAGE = (
 
 @dataclass(frozen=True)
 class AdditionalCostRow:
-    """One cost row and the current name of its category — a label read live (ADR-0004, aneks
+    """One cost row and the current name of its category — a label read live (ADR-0004, addendum
     SC-5-05, point 2: group 1, no snapshot)."""
 
     cost: AdditionalCost
@@ -165,7 +166,7 @@ class ScenarioAdditionalCostView:
     total: AdditionalCostAnswer
     status_at_read: ScenarioStatus
     """The scenario's status **as this read saw it**, copied into an immutable value right after
-    this read's own `session.refresh` (SC-7-03, reviewer R-01; ADR-0015, aneks SC-7-03, point 8).
+    this read's own `session.refresh` (SC-7-03, reviewer R-01; ADR-0015, addendum SC-7-03, point 8).
     This read never branches on it — draft and approved read the same live rows — but its refresh
     moves the shared, identity-mapped `Scenario` that the composed reads
     (`app.data.scenario_results`, `app.data.scenario_what_if`) go on to branch on and serialise, so
@@ -218,7 +219,7 @@ def additional_costs_for_caller(
     list and a sum of `0.00` (or the named `no_cost_currency`), never `None`.
 
     Draft and approved scenarios read the same live rows: nothing outside the scenario can change
-    them, and after an approval the write guard keeps them as they were (ADR-0004, aneks SC-5-05,
+    them, and after an approval the write guard keeps them as they were (ADR-0004, addendum SC-5-05,
     point 1 — group 2, no snapshot).
     """
     scenario = scenario_in_scope(session, caller, project_id, scenario_id)
@@ -316,8 +317,9 @@ def create_additional_cost(
     RETURNING id
     ```
 
-    - **The `approved` refusal and the lock are inside the statement that writes** (ADR-0004, aneks
-      SC-5-05, point 3): no open parent → no row → zero rows returned, diagnosed only afterwards.
+    - **The `approved` refusal and the lock are inside the statement that writes** (ADR-0004,
+      addendum SC-5-05, point 3): no open parent → no row → zero rows returned, diagnosed only
+      afterwards.
     - **The position is taken from the scenario, not from the request**: a position id of another
       scenario — possibly of a project the caller cannot see — joins nothing, the insert writes
       nothing, and the answer is the same `404` as for a position that does not exist (K-08). The
@@ -512,11 +514,11 @@ def delete_additional_cost(
 ) -> bool | None:
     """Remove one cost, or refuse — `None` when there is no such scenario for this caller.
 
-    **Guarded exactly like a write, because it is one** (ADR-0004, aneks SC-5-05, point 3 — INSERT,
-    UPDATE *and* DELETE): the scenario's id, the row's marker and the lock against a concurrent
-    approval are all in the `WHERE` of the statement that deletes. A delete of an id that is not in
-    this scenario matches nothing and is a `404`, even under an `approved` scenario (K-06: "a
-    non-existent id under `approved` → `404`, not `409`").
+    **Guarded exactly like a write, because it is one** (ADR-0004, addendum SC-5-05, point 3 —
+    INSERT, UPDATE *and* DELETE): the scenario's id, the row's marker and the lock against a
+    concurrent approval are all in the `WHERE` of the statement that deletes. A delete of an id
+    that is not in this scenario matches nothing and is a `404`, even under an `approved` scenario
+    (K-06: "a non-existent id under `approved` → `404`, not `409`").
     """
     if scenario_in_scope(session, caller, project_id, scenario_id) is None:
         return None
@@ -575,7 +577,7 @@ def _diagnose_row_refusal(
 def copy_scenario_additional_costs(session: Session, source: Scenario, copy: Scenario) -> None:
     """Copy the source scenario's costs **with no position** onto the copy, with new identifiers.
 
-    The entry in `SCENARIO_CHILD_COPIERS` for the scenario-level half (ADR-0004, aneks SC-5-05,
+    The entry in `SCENARIO_CHILD_COPIERS` for the scenario-level half (ADR-0004, addendum SC-5-05,
     point 4). **Only `position_id IS NULL`**: the position-attached costs are copied by
     `app.data.staffing.copy_staffing_positions`, which holds the old-to-new position ids, and
     copying them here as well would count every one of them twice on the copy (or, with the

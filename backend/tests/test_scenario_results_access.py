@@ -1,5 +1,5 @@
 """SC-7-01, K-03/K-06 — who reaches a scenario's whole-life result, and who sees which of its
-fields (F-10, Issue #12; ADR-0005, aneks 2026-09-24).
+fields (F-10, Issue #12; ADR-0005, addendum 2026-09-24).
 
 - **K-03** a scenario outside the caller's scope is a `404` indistinguishable from one that does not
   exist — proven with a caller holding every permission, on a scenario that *would* answer with real

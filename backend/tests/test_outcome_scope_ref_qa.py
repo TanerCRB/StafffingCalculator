@@ -1,21 +1,23 @@
-"""SC-4-03 × SC-4-05 — QA, runda 4 (po drugim merge `origin/main`): luki w dowodzie
-`tests/test_outcome_scope_ref.py` znalezione mutacjami.
+"""SC-4-03 × SC-4-05 — QA, round 4 (after the second merge of `origin/main`): gaps in the proof of
+`tests/test_outcome_scope_ref.py` found by mutations.
 
-1. **Kopia (D-4=A) — mutacja przeżywała twierdzenie, ginęła na innym mechanizmie.** Mutacja
-   "kopia reguły `outcome_based` gubi `scope_ref` (zapisuje `NULL`)" czerwieniła
-   `test_d4_outcome_the_copy_remaps_…`, ale nie na asercji o `scope_ref`: źródło niosło też regułę
-   Story Points całego scenariusza, więc druga reguła `scope_ref IS NULL` kopii wpadała na
-   `uq_commercial_terms_scenario_id` (500 przy kopii) — test mierzył indeks bazy, nie przemapowanie.
-   Tu źródło ma **wyłącznie** regułę Outcome-based segmentu: zgubiony `scope_ref` nie koliduje z
-   niczym, więc zabija go tylko asercja o zasięgu. Kontrast (jedna zmiana — reguła bez `scope_ref`)
-   pokazuje, że `NULL` w kopii jest poprawny wtedy i tylko wtedy, gdy był w źródle.
-2. **Jedna instrukcja zapisu także z `scope_ref`.** Nazwa
+1. **Copy (D-4=A) — the mutation survived the claim, died on a different mechanism.** The mutation
+   "the copy of an `outcome_based` rule loses `scope_ref` (writes `NULL`)" reddened
+   `test_d4_outcome_the_copy_remaps_…`, but not on the assertion about `scope_ref`: the source also
+   carried a whole-scenario Story Points rule, so the copy's second rule with `scope_ref IS NULL`
+   ran into `uq_commercial_terms_scenario_id` (a 500 on copy) — the test was measuring the database
+   index, not the remapping. Here the source has **only** the segment's Outcome-based rule: a lost
+   `scope_ref` collides with nothing, so only the assertion about scope kills it. The contrast (one
+   change — a rule without `scope_ref`) shows that `NULL` in the copy is correct if and only if it
+   was in the source.
+2. **One write statement, `scope_ref` included too.** The name
    `test_k_02_outcome_a_segment_scoped_rule_is_written_with_its_details_in_one_guarded_statement`
-   obiecuje jedną instrukcję, ale test sprawdza tylko wynik. Mutacja "z `scope_ref` reguła strzeżoną
-   instrukcją, szczegóły drugą" przeżyła cały zestaw (902 zielone). Tu liczone są instrukcje
-   `INSERT` ścieżki produkcyjnej — z `scope_ref` i bez niego (kontrast), ten sam kształt.
+   promises one statement, but the test only checks the result. The mutation "the rule with
+   `scope_ref` in the guarded statement, the details in a second one" survived the whole suite (902
+   green). Here the production path's `INSERT` statements are counted — with `scope_ref` and
+   without it (contrast), the same shape.
 
-Prawdziwy PostgreSQL.
+Real PostgreSQL.
 """
 
 import uuid
@@ -54,11 +56,12 @@ def _details_row(session: Session, rule_id: uuid.UUID) -> dict[str, object]:
 def test_qa_d4_outcome_the_copy_keeps_the_scope_of_a_lone_outcome_rule(
     client: TestClient, db_session: Session, scoped: bool
 ) -> None:
-    """Jedyna reguła źródła to Outcome-based — na segmencie "Phase 1" (`segment_rule`) albo na całym
-    scenariuszu (`whole_scenario_rule`, kontrast: jedna zmiana). Segment istnieje w obu wariantach,
-    więc kopia ma swój "Phase 1" w obu. Kopia reguły wskazuje segment **kopii** o tej samej nazwie
-    wtedy i tylko wtedy, gdy źródło wskazywało segment; bez `scope_ref` w źródle — bez niego w
-    kopii. Żadna inna reguła kopii nie może tu zabić mutacji zamiast asercji o zasięgu."""
+    """The source's only rule is Outcome-based — on the "Phase 1" segment (`segment_rule`) or on the
+    whole scenario (`whole_scenario_rule`, contrast: one change). The segment exists in both
+    variants, so the copy has its own "Phase 1" in both. The copy's rule points at the **copy's**
+    segment of the same name if and only if the source pointed at a segment; no `scope_ref` in the
+    source — none in the copy. No other rule in the copy can kill the mutation here in place of the
+    assertion about scope."""
     project = make_project(db_session, name="Aurora lone", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Baseline")
     phase_1 = make_scenario_delivery_segment(db_session, scenario, name="Phase 1")
@@ -98,11 +101,11 @@ def test_qa_d4_outcome_the_copy_keeps_the_scope_of_a_lone_outcome_rule(
 def test_qa_k_02_outcome_the_rule_scope_ref_and_details_are_one_insert_statement(
     db_session: Session, scoped: bool
 ) -> None:
-    """Ścieżka produkcyjna `create_commercial_terms` dla `outcome_based` wykonuje **jedną**
-    instrukcję `INSERT`, i ta instrukcja pisze zarówno `commercial_terms` (z `scope_ref`), jak i
-    `outcome_terms` — z `scope_ref` segmentu i bez niego (kontrast), ten sam kształt. Druga
-    instrukcja dla szczegółów byłaby zapisem poza strażnikiem `approved` wbudowanym w pierwszą
-    (ADR-0003, pkt 3; ADR-0004, aneks SC-4-03, pkt 2)."""
+    """The production path `create_commercial_terms` for `outcome_based` executes **one** `INSERT`
+    statement, and that statement writes both `commercial_terms` (with `scope_ref`) and
+    `outcome_terms` — with the segment's `scope_ref` and without it (contrast), the same shape. A
+    second statement for the details would be a write outside the `approved` guard built into the
+    first (ADR-0003, point 3; ADR-0004, addendum SC-4-03, point 2)."""
     project = make_project(db_session, name="Aurora one statement", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Baseline")
     segment = make_scenario_delivery_segment(db_session, scenario, name="Phase 1")

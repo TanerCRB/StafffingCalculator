@@ -7,12 +7,12 @@ The shape is SC-1-08's, repeated one table over, with two differences that both 
    non-empty in production and these tests need no stand-in field and no monkeypatch. SC-1-08's
    proofs had to substitute `description` and then prove the substitution was load-bearing
    (`test_k_06_…`); here, emptying the gated field set is a mutation that fails the assertions below
-   directly. This is the "dowód niepusty" half of K-03.
+   directly. This is the "non-empty proof" half of K-03.
 2. **The gate has one factor, not two.** Outside a project context `project_access.can_view_
    personnel_costs` has no subject, so the catalogue's cost rate is guarded by the global
-   `PERSONNEL_COSTS_READ` alone (ADR-0005, addendum 2026-09-19 "pierwszy zbiór danych bez zasięgu
-   projektu", point 3). The addendum names this as a weakening and fixes its direction: it holds
-   only where there is no project. Nothing here asserts anything about a rate inside a project
+   `PERSONNEL_COSTS_READ` alone (ADR-0005, addendum 2026-09-19 "first dataset without project
+   scope", SC-2-01, point 3). The addendum names this as a weakening and fixes its direction: it
+   holds only where there is no project. Nothing here asserts anything about a rate inside a project
    response — that path does not exist yet, and when it does the conjunction applies to it (see the
    report's "what this does not prove").
 

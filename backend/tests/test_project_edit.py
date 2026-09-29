@@ -155,9 +155,9 @@ def test_sc_1_02_02_frozen_fields_are_refused_by_the_data_layer_once_a_scenario_
     first half.
 
     Calling `update_project` directly is the point: an API-level test could pass with the check
-    living in a FastAPI handler, which is exactly the arrangement ADR-0004 rejects ("odrzucany na
-    poziomie warstwy dostępu do danych, nie tylko w UI") — every future non-HTTP writer (import,
-    script, export tooling) would then bypass it.
+    living in a FastAPI handler, which is exactly the arrangement ADR-0004 rejects ("refused at
+    the level of the data-access layer, not only in the UI") — every future non-HTTP writer
+    (import, script, export tooling) would then bypass it.
     """
     project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Baseline", status=ScenarioStatus.DRAFT)
@@ -332,9 +332,9 @@ def test_sc_1_02_03_the_detail_read_carries_the_concurrency_token_and_the_list_d
 ) -> None:
     """Criterion 3's precondition: the token the edit requires is obtainable from the read.
 
-    ADR-0007 puts it on the read of one project ("odczyt zwraca go, zapis go wymaga"). The list
-    stays as SC-1-05/06 defined it — asserted, so the token is not added to the list contract by
-    accident.
+    ADR-0007 puts it on the read of one project ("the read returns it, the write requires it").
+    The list stays as SC-1-05/06 defined it — asserted, so the token is not added to the list
+    contract by accident.
     """
     project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
 

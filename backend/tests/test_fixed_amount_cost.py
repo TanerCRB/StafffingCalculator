@@ -1,5 +1,5 @@
-"""SC-5-03, K-01 and the fixed-amount basis's own currency states (F-07; ADR-0013, aneks 2026-09-25
-SC-5-03).
+"""SC-5-03, K-01 and the fixed-amount basis's own currency states (F-07; ADR-0013, addendum
+2026-09-25 SC-5-03).
 
 K-01 has two parts, each with its own test here:
 
@@ -12,7 +12,7 @@ K-01 has two parts, each with its own test here:
    `test_k_02_the_cost_path_and_the_revenue_path_never_import_each_other`): neither formula module
    imports the other, and neither imports the revenue path.
 
-The three currency controls (F-1/F-2/F-3 of ADR-0013's aneks) are proved twice: once directly
+The three currency controls (F-1/F-2/F-3 of ADR-0013's addendum) are proved twice: once directly
 against the pure function (fast, and immune to anything the API/data layers might get wrong), and
 once through the real endpoint (`test_personnel_cost_access.py`'s SC-5-03 section) so the wiring
 between them is not merely assumed.
@@ -94,8 +94,8 @@ def test_k_01_two_formulas_two_modules_neither_imports_the_other_or_the_revenue_
     )
 
     # The dispatcher (`app.data.personnel_cost`) is explicitly the one place allowed to import both
-    # (ADR-0013, aneks 2026-09-25 SC-5-03, point 5) — asserted as the contrast, so this test cannot
-    # pass by reading files that import nothing (mirrors `test_k_02_…`'s own contrast on
+    # (ADR-0013, addendum 2026-09-25 SC-5-03, point 5) — asserted as the contrast, so this test
+    # cannot pass by reading files that import nothing (mirrors `test_k_02_…`'s own contrast on
     # `scenario_approval.py`).
     dispatcher_imports = _imports_of("app/data/personnel_cost.py")
     assert {"app.domain.personnel_cost", "app.domain.fixed_amount_cost"} <= dispatcher_imports

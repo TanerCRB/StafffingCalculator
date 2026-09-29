@@ -1,5 +1,5 @@
 """SC-5-03, K-02 — `cost_basis` is a stored, persistent column of the position, not a parameter of
-a read (F-07; ADR-0013, aneks 2026-09-25 SC-5-03).
+a read (F-07; ADR-0013, addendum 2026-09-25 SC-5-03).
 
 Every persistence claim here is checked on a **separate connection** (the `engine`/`committing_
 client` pair `test_staffing_positions.py`'s own K-01 uses), which by definition sees committed rows
@@ -7,7 +7,7 @@ only — a claim proven only against the same session that wrote the row would s
 persistence, only about the identity map.
 
 `cost_basis`/`fixed_amount`/`fixed_amount_currency` are never part of `GET …/staffing-positions`'s
-response body (ADR-0005, aneks 2026-09-25 SC-5-03, Q4 — proved structurally in
+response body (ADR-0005, addendum 2026-09-25 SC-5-03, Q4 — proved structurally in
 `test_staffing_positions_cost_basis_hidden.py`), so every read here goes straight at the row through
 SQL, exactly as `test_staffing_positions.py`'s persistence tests already do for the dimension tuple.
 """
@@ -49,7 +49,7 @@ def _position_row(engine: Engine, position_id: uuid.UUID) -> sa.Row:
 
 
 def _dimensions_and_draft_scenario(engine: Engine):
-    """`cost_visible_to` names `IN_SCOPE_USER` (bramka 1 SC-5-03 fix 3): the cost-basis `PATCH` now
+    """`cost_visible_to` names `IN_SCOPE_USER` (gate 1 SC-5-03 fix 3): the cost-basis `PATCH` now
     needs `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` for this project, so every test in
     this file that writes through it has to run as a caller who actually holds the conjunction
     (`caller_holding`), on a project that grants the project-level half of it."""
@@ -186,7 +186,7 @@ def test_the_cost_basis_edit_endpoint_changes_the_basis_and_is_reflected_in_the_
     position_id = created["id"]
     token = created["updated_at"]
 
-    # Fix 3 (Security-Auditor, bramka 1 SC-5-03): the write needs the same conjunction the
+    # Fix 3 (Security-Auditor, gate 1 SC-5-03): the write needs the same conjunction the
     # personnel-cost read does, not just `STAFFING_WRITE`.
     with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
         edited = committing_client.patch(
@@ -217,7 +217,7 @@ def test_the_cost_basis_edit_endpoint_changes_the_basis_and_is_reflected_in_the_
     assert stale.status_code == 409, stale.text
 
 
-# --- bramka 1 SC-5-03, fix 1 (Guardian): an amount cannot land on a `worked_time` row without ----
+# --- gate 1 SC-5-03, fix 1 (Guardian): an amount cannot land on a `worked_time` row without ----
 # also naming `cost_basis` in the same request -----------------------------------------------------
 #
 # The schema validator (`StaffingPositionCostBasisEditRequest._at_least_one_field_and_consistent_
@@ -230,7 +230,7 @@ def test_the_cost_basis_edit_endpoint_changes_the_basis_and_is_reflected_in_the_
 def test_fix_1_an_amount_without_cost_basis_is_refused_on_a_worked_time_position(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """Guardian finding, bramka 1 SC-5-03 — `PATCH {"fixed_amount": ..., "fixed_amount_currency":
+    """Guardian finding, gate 1 SC-5-03 — `PATCH {"fixed_amount": ..., "fixed_amount_currency":
     ...}` with no `cost_basis` on a position whose stored basis is (still) `worked_time` is refused
     with a `409` naming the mismatch, and the row is untouched: neither the amount nor the currency
     is written, and the ADR-0007 token does not rotate. Before this fix the same request passed
@@ -317,13 +317,13 @@ def test_fix_1_an_amount_alone_still_edits_an_already_fixed_amount_position(
     )
 
 
-# --- bramka 1 SC-5-03, fix 3 (Security-Auditor): the write needs the read side's own conjunction -
+# --- gate 1 SC-5-03, fix 3 (Security-Auditor): the write needs the read side's own conjunction -
 
 
 def test_fix_3_the_cost_basis_write_is_denied_without_personnel_cost_visibility(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """Security-Auditor finding, bramka 1 SC-5-03 — a caller holding `STAFFING_WRITE` but neither
+    """Security-Auditor finding, gate 1 SC-5-03 — a caller holding `STAFFING_WRITE` but neither
     `PERSONNEL_COSTS_READ` nor this project's `can_view_personnel_costs` gets a `403` on the
     cost-basis `PATCH`, and the row is untouched. Before this fix the same caller could set
     `fixed_amount` — a personnel-cost figure — without ever being allowed to read it back.
@@ -377,7 +377,7 @@ def test_fix_3_the_cost_basis_write_is_denied_without_personnel_cost_visibility(
     )
 
 
-# --- bramka 1 SC-5-03, fix 3 extended to POST (human follow-up, 2026-09-25): `create_position` ---
+# --- gate 1 SC-5-03, fix 3 extended to POST (human follow-up, 2026-09-25): `create_position` ---
 # has the identical gap the PATCH endpoint had — a caller holding only `STAFFING_WRITE` could create
 # a `fixed_amount` position, without ever holding the SC-1-08 conjunction. A `worked_time` create
 # (the default, and every request this repository's tests sent before SC-5-03) writes no
@@ -413,7 +413,7 @@ def test_fix_3_creating_a_worked_time_position_needs_no_personnel_cost_conjuncti
 def test_fix_3_creating_a_fixed_amount_position_is_denied_without_personnel_cost_visibility(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """Security-Auditor finding, bramka 1 SC-5-03, extended to `POST` — a caller holding
+    """Security-Auditor finding, gate 1 SC-5-03, extended to `POST` — a caller holding
     `STAFFING_WRITE` but neither `PERSONNEL_COSTS_READ` nor this project's `can_view_personnel_
     costs` gets a `403` when the request's `cost_basis` is `fixed_amount`, and nothing is written.
     The contrast is the identical request with the full conjunction, which succeeds.

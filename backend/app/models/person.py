@@ -18,12 +18,12 @@ never loosened, column-set test): e-mail, phone, note/comment, job title, depart
 **No uniqueness on `full_name`.** Two people with the same name are legal; they are told apart by
 `id` alone (ADR-0019, point 3, PD-3).
 
-**Organisational data with no project scope** (ADR-0019, "Decyzja" pt 1; ADR-0005, aneks 2026-09-27,
-point 2): no column ties a row to a project, a user, a business unit or a tenant, so there is no
-scope function for this table. The protection is the permission pair `PEOPLE_READ`/`PEOPLE_WRITE`,
-refused as a whole resource (`403`), never a blanked field.
+**Organisational data with no project scope** (ADR-0019, "Decision" pt 1; ADR-0005, addendum
+2026-09-27, point 2): no column ties a row to a project, a user, a business unit or a tenant, so
+there is no scope function for this table. The protection is the permission pair
+`PEOPLE_READ`/`PEOPLE_WRITE`, refused as a whole resource (`403`), never a blanked field.
 
-**Outside the approval snapshot, on purpose** (ADR-0004, aneks 2026-09-27 SC-2-06, point 1): the
+**Outside the approval snapshot, on purpose** (ADR-0004, addendum 2026-09-27 SC-2-06, point 1): the
 name enters no calculation, and a snapshot has no `UPDATE` path, so a name frozen there could be
 neither corrected nor erased. An approved scenario shows the *current* name. Not a scenario child
 either — there is no entry for this table in `SCENARIO_CHILD_COPIERS`, and a copied position points
@@ -48,7 +48,7 @@ FULL_NAME_MAX_LENGTH = 200
 FULL_NAME_CANONICAL_EXPRESSION = (
     "full_name !~ '^[[:space:]]' AND full_name !~ '[[:space:]]$' AND char_length(full_name) > 0"
 )
-"""ADR-0019, point 3 and aneks 2026-09-28 (D-3 = A): the name in canonical form — not empty, no
+"""ADR-0019, point 3 and addendum 2026-09-28 (D-3 = A): the name in canonical form — not empty, no
 whitespace character (`[[:space:]]`) at either end. The ASCII whitespace (space, tab, LF, CR, VT,
 FF) is the guarantee; which non-ASCII characters the class covers depends on the database's
 ctype — a named limit, and the request schema trims by Python's wider rule anyway.
@@ -90,6 +90,6 @@ class Person(Base):
     )
     """ADR-0007's concurrency token for the correction of a name — the database's clock, never this
     process's. The same pattern as the catalogue dictionaries (SC-2-04), not a new mechanism
-    (ADR-0004, aneks 2026-09-27 SC-2-06, point 5)."""
+    (ADR-0004, addendum 2026-09-27 SC-2-06, point 5)."""
 
     __table_args__ = (CheckConstraint(FULL_NAME_CANONICAL_EXPRESSION, name="full_name_canonical"),)

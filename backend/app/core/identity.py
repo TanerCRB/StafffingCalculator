@@ -22,7 +22,7 @@ class Permission(StrEnum):
     PROJECT_READ = "project:read"
     PROJECT_CREATE = "project:create"
     """Creating a project is an *action*, not a read. ADR-0005 splits the permission model by
-    role precisely along this line ("rola określa czynności: tworzenie/edycja vs. tylko odczyt"),
+    role precisely along this line ("the role determines the actions: create/edit vs. read-only"),
     so a viewer holding `PROJECT_READ` must not be able to create — hence a separate permission
     rather than an overloaded one. Project *scope* stays out of this enum: a project that does
     not exist yet cannot be scoped, and scope for existing rows is a database filter
@@ -32,15 +32,15 @@ class Permission(StrEnum):
 
     PROJECT_EDIT = "project:edit"
     """Editing an existing project (SC-1-02) — separate from `PROJECT_CREATE` and from
-    `PROJECT_READ`, per ADR-0005's addendum 2026-09-18 ("uprawnienia akcji zapisu"): the
+    `PROJECT_READ`, per ADR-0005's addendum 2026-09-18 SC-1-02..04 ("write-action permissions"): the
     granularity is there because archiving, copying and editing are plausibly different people's
     rights. Holding this permission says nothing about *which* projects may be edited: scope stays
     a database filter (`app.data.project_reads`), so an edit of a project outside the caller's
     `project_access` is not a forbidden edit but an invisible one (404, not 403)."""
 
     PROJECT_COPY = "project:copy"
-    """Copying a project is its own action permission (ADR-0005, addendum 2026-09-18 "uprawnienia
-    akcji zapisu", point 1): the addendum keeps `PROJECT_EDIT`, `PROJECT_COPY` and
+    """Copying a project is its own action permission (ADR-0005, addendum 2026-09-18 SC-1-02..04
+    "write-action permissions", point 1): the addendum keeps `PROJECT_EDIT`, `PROJECT_COPY` and
     `PROJECT_ARCHIVE` separate rather than folding them into one write permission, because the
     person allowed to archive is not necessarily the person allowed to edit or duplicate. A copy
     also writes a *new* `project_access` grant, so it is not covered by `PROJECT_CREATE` either —
@@ -59,8 +59,8 @@ class Permission(StrEnum):
     CATALOG_READ = "catalog:read"
     """Reading the organisational catalogue — role dimensions and default rates (F-03, SC-2-01).
 
-    A new permission rather than a widened `PROJECT_READ` (ADR-0005, addendum 2026-09-19 "pierwszy
-    zbiór danych bez zasięgu projektu", point 2): a catalogue row belongs to no project, so a
+    A new permission rather than a widened `PROJECT_READ` (ADR-0005, addendum 2026-09-19 SC-2-01
+    "first dataset without project scope", point 2): a catalogue row belongs to no project, so a
     permission whose *name* says "project" opening a table that has no project would be exactly
     the drift between name and mechanism the SC-1-08 addendum had just closed. It also carries no
     scope — unlike `PROJECT_READ`, which is paired with the `project_access` filter, there is no
@@ -127,7 +127,7 @@ class Permission(StrEnum):
 
     RESULTS_READ = "results:read"
     """Reading a scenario's whole-scenario profit, margin and markup (F-10, SC-7-01; ADR-0005,
-    aneks 2026-09-24).
+    addendum 2026-09-24 SC-7-01).
 
     New, for the reason `COMMERCIAL_READ` and `STAFFING_READ` are new: the result is a composition
     over revenue, personnel cost and additional cost, each already read under its own permission,
@@ -158,7 +158,7 @@ class Permission(StrEnum):
     practice this also reads it."""
 
     PEOPLE_READ = "people:read"
-    """Reading the register of named persons (F-03, SC-2-06; ADR-0019; ADR-0005, aneks 2026-09-27
+    """Reading the register of named persons (F-03, SC-2-06; ADR-0019; ADR-0005, addendum 2026-09-27
     SC-2-06, point 3) — and seeing *which* person a staffing position is assigned to.
 
     New, and **not** a reuse of `CATALOG_READ`: the register is not "one more catalogue dictionary".
@@ -169,17 +169,17 @@ class Permission(StrEnum):
 
     Global, not per project (Q-3 = a): the register has no project column, and whether it stays
     global or is derived from project assignments is left to the authentication/roles ADR (ADR-0005,
-    aneks 2026-09-27, point 11). **Not granted by the placeholder identity** (point 4): in the
+    addendum 2026-09-27, point 11). **Not granted by the placeholder identity** (point 4): in the
     running system nobody reads a name through the API; the positive branch is reachable from a test
     only, through `dependency_overrides`."""
 
     PEOPLE_WRITE = "people:write"
-    """Adding a person to the register and correcting a person's name (RODO art. 16) — SC-2-06.
+    """Adding a person to the register and correcting a person's name (GDPR art. 16) — SC-2-06.
 
     Split from `PEOPLE_READ` like every other read/write pair here, each with its own refusal test.
     **Not** the permission for assigning a person to a staffing position: that is a planner's act
-    and needs `STAFFING_WRITE` ∧ `PEOPLE_READ` (ADR-0005, aneks 2026-09-27, point 5). Not granted by
-    the placeholder identity either (point 4)."""
+    and needs `STAFFING_WRITE` ∧ `PEOPLE_READ` (ADR-0005, addendum 2026-09-27, point 5). Not
+    granted by the placeholder identity either (point 4)."""
 
 
 @dataclass(frozen=True)

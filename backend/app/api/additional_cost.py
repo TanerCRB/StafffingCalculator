@@ -8,18 +8,18 @@ Under `/projects/{project_id}/scenarios/{scenario_id}/additional-costs`:
 - `DELETE "/{cost_id}"` — remove one cost, with its marker (`STAFFING_WRITE`).
 
 **`STAFFING_READ`/`STAFFING_WRITE`, no new permission and no cost conjunction** (ADR-0014, point 11,
-Q-7 = B; ADR-0005, aneks 2026-09-23 SC-5-05, point 1) — the argument SC-3-02 made for absences
+Q-7 = B; ADR-0005, addendum 2026-09-23 SC-5-05, point 1) — the argument SC-3-02 made for absences
 (point 5 of its addendum): a separate `ADDITIONAL_COST_*` would be granularity with no subject to
 exercise it. **A router of its own** anyway, for the reason every nested scenario path has one: a
 verb on the staffing router would put a money figure under a module that promises none.
 
-**The address carries both identifiers** (ADR-0001, aneks 2026-09-19): the scope predicate lives on
-the project and `project_for_caller` is its only entry point.
+**The address carries both identifiers** (ADR-0001, addendum 2026-09-19): the scope predicate
+lives on the project and `project_for_caller` is its only entry point.
 
 **Every "nothing here for you" answers with one body** (`ADDITIONAL_COST_NOT_FOUND_DETAIL`): a
 project outside the caller's scope, a project that does not exist, a scenario of another project, a
 cost of another scenario and a position of another scenario are five facts and one `404` — on the
-read and on every write, and before any `409` can be reached (ADR-0005, aneks SC-5-05, point 4;
+read and on every write, and before any `409` can be reached (ADR-0005, addendum SC-5-05, point 4;
 criterion K-08).
 """
 
@@ -223,7 +223,8 @@ def delete_scenario_additional_cost(
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_WRITE))],
     session: Annotated[Session, Depends(get_session)],
 ) -> Response:
-    """Remove one cost — guarded exactly like every other write (ADR-0004, aneks SC-5-05, point 3).
+    """Remove one cost — guarded exactly like every other write
+    (ADR-0004, addendum SC-5-05, point 3).
 
     `204`, with no body: the marker is per cost row, so no other row's marker moved and there is
     no new token a client needs back (unlike an absence, whose delete rotates the position's token).

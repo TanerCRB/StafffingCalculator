@@ -12,7 +12,7 @@ Four properties, each of them a decision with a mutation attached:
    generic blob is the shortcut the next implementer reaches for.
 2. **Keyed by `scenario_id`; the id of the source row is stored as a plain `uuid` value, never as a
    foreign key.** "A snapshot is a separate set of rows, not a reference to the organisation's
-   current values" (ADR-0004, "Decyzja"). A foreign key *is* a reference: it would let the source
+   current values" (ADR-0004, "Decision"). A foreign key *is* a reference: it would let the source
    block a delete or cascade a change into a frozen copy. `tests/test_scenario_approval_snapshot.py`
    asserts that by introspecting `pg_constraint`, because the mutation "store the id as an FK and
    read through a join" is invisible to any behavioural test that never changes the source.
@@ -213,7 +213,7 @@ class ApprovedSnapshotAbsenceType(_ApprovedSnapshotRow):
     approval, which is exactly the class of value AC-04/AC-10 require to be frozen.
 
     **The contract a reader of this table relies on** (S-02, invariant-guardian, SC-3-03; amended by
-    ADR-0004, aneks 2026-09-23 SC-5-06, point 5): for one scenario, *a row with
+    ADR-0004, addendum 2026-09-23 SC-5-06, point 5): for one scenario, *a row with
     `is_statutory_leave = true` is present* **if and only if** *a type was named when the scenario
     was approved and the scenario has an allocation row in a location with a calendar* —
     independently of whether any budget was frozen and of whether the scenario booked the type.
@@ -227,9 +227,10 @@ class ApprovedSnapshotAbsenceType(_ApprovedSnapshotRow):
     type was named".
 
     The SC-3-03 wording ("present ⇔ the frozen budgets apply") was right while the capacity was the
-    only reader; it is superseded, not extended. Scenarios approved before the aneks keep the rows
-    they got — a named, non-costing type without a frozen budget is absent from their snapshot for
-    ever (no `UPDATE` path), named in the aneks rather than repaired. The writer that keeps this
+    only reader; it is superseded, not extended. Scenarios approved before the addendum keep the
+    rows they got — a named, non-costing type without a frozen budget is absent from their snapshot
+    for ever (no `UPDATE` path), named in the addendum rather than repaired. The writer that keeps
+    this
     contract is `app.data.scenario_approval._copy_absence_types`, which carries the full reasoning.
     """
 
@@ -436,9 +437,9 @@ class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
        personnel cost**, every future reader of its rows is subject to the SC-1-08 conjunction
        (ADR-0005, addendum 2026-09-23 SC-4-01, point 7), and SC-4-01 exposes no path that returns
        them — the revenue reader selects the selling-rate columns only. **SC-5-01 is its first
-       reader** (`app.data.personnel_cost`), behind the cost gate (ADR-0005, aneks 2026-09-23
+       reader** (`app.data.personnel_cost`), behind the cost gate (ADR-0005, addendum 2026-09-23
        SC-5-01), and widens point 1: the windows of a month the *cost* predicate resolves are
-       frozen too, whether or not the selling predicate prices it (ADR-0004, aneks 2026-09-23
+       frozen too, whether or not the selling predicate prices it (ADR-0004, addendum 2026-09-23
        SC-5-01, point 1).
     3. **`valid_period` is generated from the same expression as the source's**
        (`app.models.catalog.VALID_PERIOD_EXPRESSION`), so the reader asks the frozen rows the exact
@@ -500,10 +501,10 @@ class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
         Numeric(PERCENT_PRECISION, PERCENT_SCALE), nullable=False
     )
     includes_surcharge: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    """The two new columns of SC-5-02 (ADR-0004, aneks 2026-09-25 SC-5-02; ADR-0013/ADR-0005, same
-    date): frozen on the **same row**, in the **same transaction**, as `default_cost_rate` — one
-    decision to freeze, not a second bramka for a second column of one source row (point 2 of that
-    aneks). `NOT NULL` with **no default here** on the model, unlike the source column
+    """The two new columns of SC-5-02 (ADR-0004, addendum 2026-09-25 SC-5-02; ADR-0013/ADR-0005,
+    same date): frozen on the **same row**, in the **same transaction**, as `default_cost_rate` —
+    one decision to freeze, not a second gate for a second column of one source row (point 2 of that
+    addendum). `NOT NULL` with **no default here** on the model, unlike the source column
     (`app.models.catalog.CatalogDefaultRate`): the migration backfills a scenario approved before
     this column existed with the honest value for it (`0`/`false` — no surcharge concept existed at
     the moment of that approval, the same reasoning `a7c2e5f81b94` used for
@@ -514,8 +515,9 @@ class ApprovedSnapshotCatalogDefaultRate(_ApprovedSnapshotRow):
     **Read back by the existing reader, symmetrically with `default_cost_rate`** — corrected during
     SC-5-02's own QA review, 2026-09-25: an earlier version of this task named a literal `0`/`false`
     in `app.data.personnel_cost.costed_month_windows`'s approval-snapshot branch instead of this
-    column, reading the ADR-0013 aneks's "SC-5-02 sam nie musi wystawiać żadnej ścieżki, która
-    zwraca tę kolumnę" (SC-5-02 does not *have to* expose a path returning it) as "must not". That
+    column, reading the ADR-0013 addendum's "SC-5-02 does not itself have to expose any path that
+    returns this column" (the Polish original's "nie musi" — "does not have to," not "must not") as
+    "must not". That
     left an approved scenario's fully loaded cost frozen at "no surcharge" regardless of what was
     configured at the moment of approval — a silent regression on approval with no catalogue edit
     involved, not a deferred feature. `costed_month_windows` is the *existing* reader of this table

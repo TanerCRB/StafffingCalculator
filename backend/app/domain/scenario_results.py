@@ -19,7 +19,7 @@ Invariant Guardian; the structural test of this task extends the existing ones i
 
 **Never a number where a component is unavailable.** If any of the four answers is not its
 `*Result` shape, the whole aggregate is `NOT_APPLICABLE` — never a partial sum and never `0`
-(ADR-0002, aneks SC-7-01). *Which* component and *why* is not repeated here: each answer already
+(ADR-0002, addendum SC-7-01). *Which* component and *why* is not repeated here: each answer already
 carries its own named state, and the API layer reports each one's `state` on its own payload
 (`app.api.response_shaping.shape_scenario_results`) rather than folding four reasons into one.
 

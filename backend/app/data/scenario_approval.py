@@ -45,7 +45,7 @@ snapshot that describes no state the catalogue was ever in:
   freezes calendar A with the days of calendar B;
 - **calendar ↔ budgets** (SC-3-02's pair, point 2 of the SC-3-03 addendum) — the same re-pointing
   freezes calendar A with the budget windows of calendar B;
-- **statutory type ↔ location calendar** (ADR-0004, aneks 2026-09-23 SC-5-06, point 5, replacing
+- **statutory type ↔ location calendar** (ADR-0004, addendum 2026-09-23 SC-5-06, point 5, replacing
   SC-3-03's "statutory type ↔ budgets") — a location re-pointed from `NULL` to a calendar between
   the two inserts freezes the calendar while the type flagged `is_statutory_leave` is not, which
   the snapshot's own contract reads as "nobody had named a statutory type"
@@ -94,7 +94,7 @@ always empty, written without an error.
   distinguishes "may plan" from "may approve". The endpoint declares a permission so that the
   deny-by-default rule holds at all, and that is the whole of the authorisation on this path. The
   risk was accepted at gate 1 with a named closing condition — the authentication ADR. Since SC-8-01
-  (Issue #14, ADR-0004 aneks 2026-09-27) an approval **does** leave exactly one `audit_log` row
+  (Issue #14, ADR-0004 addendum 2026-09-27) an approval **does** leave exactly one `audit_log` row
   naming the scenario, the project, `scenario_approved` and the placeholder identity the request
   carried — but that row carries the same placeholder string every other write path does, not an
   authenticated identity, so the closing condition for "who may approve" remains the authentication
@@ -110,9 +110,9 @@ always empty, written without an error.
   approved scenario's T&M revenue from the frozen windows, per month, with the same whole-month
   predicate the live read uses (ADR-0004, addendum 2026-09-23 SC-4-01, point 2e) — and, since
   SC-5-01, by `app.data.personnel_cost` too, which costs an approved scenario from the frozen
-  `default_cost_rate` with the cost predicate (aneks 2026-09-23 SC-5-01, point 4). Since SC-5-06
+  `default_cost_rate` with the cost predicate (addendum 2026-09-23 SC-5-01, point 4). Since SC-5-06
   the calendar, calendar-day, absence-type and absence-budget tables are read by
-  `app.data.paid_absence_cost` (ADR-0004, aneks 2026-09-23 SC-5-06, point 1) — the staffing
+  `app.data.paid_absence_cost` (ADR-0004, addendum 2026-09-23 SC-5-06, point 1) — the staffing
   grid's capacity still reads the live calendar (point 4, named, not repaired). This module proves
   the rows are written and that editing the source afterwards does not move them (K-16).
 """
@@ -244,10 +244,11 @@ class ApprovalResult:
     """The sixth counter (SC-4-01, ADR-0004 addendum 2026-09-23 SC-4-01, point 2): how many
     catalogue rate windows this scenario's calculations read and this approval froze — every window
     of every month priced by the selling predicate (`month_is_priced`) **or**, since SC-5-01,
-    costed by the cost predicate (`month_has_cost_rate`; ADR-0004, aneks 2026-09-23 SC-5-01, point
-    6), so one month may contribute more than one. Zero is again two facts — "no position-month was
-    priced or costed" (legal: those months stay without a rate) or "windows existed and were not
-    copied" — so it is read against a contrast (criterion K-08), never on its own. The same
+    costed by the cost predicate (`month_has_cost_rate`; ADR-0004, addendum 2026-09-23 SC-5-01,
+    point 6), so one month may contribute more than one. Zero is again two facts — "no
+    position-month was priced or costed" (legal: those months stay without a rate) or "windows
+    existed and were not copied" — so it is read against a contrast (criterion K-08), never on its
+    own. The same
     deliberate canary growth as the fourth and fifth."""
 
     @property
@@ -420,10 +421,11 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
     is where it would go.
 
     **The second source is the type flagged `is_statutory_leave`, copied whenever the scenario has
-    an allocation row in a location with a calendar — whether or not this approval freezes a budget,
-    and whether or not the scenario booked anything against the type** (ADR-0004, aneks 2026-09-23
-    SC-5-06, point 5, which replaced the SC-3-03 condition "whenever a budget is frozen"). The
-    SC-3-03 version (reviewer, second round, High) closed a gap the first version of the R-02 fix
+    an allocation row in a location with a calendar — whether or not this approval freezes a
+    budget, and whether or not the scenario booked anything against the type** (ADR-0004, addendum
+    2026-09-23 SC-5-06, point 5, which replaced the SC-3-03 condition "whenever a budget is
+    frozen"). The SC-3-03 version (reviewer, second round, High) closed a gap the first version of
+    the R-02 fix
     opened, and the gap was in the *data* rather than in any behaviour a live read could show:
 
     - **no type is flagged anywhere in the catalogue** → the budget is not applied at all, because
@@ -438,7 +440,7 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
     repository's own green tests documented the contradiction side by side before anyone noticed it.
 
     With the second source, the presence of a row carrying `is_statutory_leave = true` **is** the
-    fact (contract S-02 as amended by ADR-0004, aneks 2026-09-23 SC-5-06, point 5): **present ⇔
+    fact (contract S-02 as amended by ADR-0004, addendum 2026-09-23 SC-5-06, point 5): **present ⇔
     the type was named at approval and the scenario has an allocation in a location with a
     calendar**. Present → the type was named; any frozen budget applies against it, and the
     paid-absence cost reads its frozen `generates_cost` in every month with a calendar. Absent while
@@ -458,7 +460,7 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
     with no allocation row in a location with a calendar — no calendar, or no month rows — reads no
     month the flag could qualify, and copying a dictionary entry it never reads would grow the
     snapshot with the organisation instead of with the calculation (point 3). Scenarios approved
-    before the aneks keep the snapshot they got (no `UPDATE` path) — named, not repaired.
+    before the addendum keep the snapshot they got (no `UPDATE` path) — named, not repaired.
 
     **The second source and `_copy_calendars` must read the same catalogue**, or the contract
     above breaks: a location re-pointed from `NULL` to a calendar between the two reads freezes the
@@ -492,9 +494,9 @@ def _copy_absence_types(scenario_id: uuid.UUID) -> sa.Insert:
 
     statutory_source = unapproved_scenario(scenario_id).subquery("open_scenario_statutory")
     # Positions, their months, the location of each and **the calendar that location points at** —
-    # an allocation row in a location with a calendar is exactly a month the paid-absence cost reads
-    # (ADR-0004, aneks 2026-09-23 SC-5-06, point 5) — and then the flagged type, joined on the flag
-    # alone. No budget in the chain: the budget window is a subset of these months, so the budget
+    # an allocation row in a location with a calendar is exactly a month the paid-absence cost
+    # reads (ADR-0004, addendum 2026-09-23 SC-5-06, point 5) — and then the flagged type, joined on
+    # the flag alone. No budget in the chain: the budget window is a subset of these months, so the
     # chain this replaced is subsumed rather than kept beside it. The inner join on
     # `working_calendar` is what drops a location whose `calendar_id` is `NULL` (control M-3,
     # contrast). At most one row can carry the flag (`uq_absence_type_statutory_leave`), so this
@@ -739,12 +741,13 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     **`default_cost_rate` is copied** (point 2b): the snapshot has no UPDATE path, and a cost not
     frozen now is a cost an approved scenario never recovers. It makes the table a carrier of
     personnel cost (ADR-0005, addendum SC-4-01, point 7). Since SC-5-01 it has a reader —
-    `app.data.personnel_cost` — whose rows go out only through the cost gate (ADR-0005, aneks
+    `app.data.personnel_cost` — whose rows go out only through the cost gate (ADR-0005, addendum
     2026-09-23 SC-5-01).
 
-    **Since SC-5-01 the scope is "priced OR costed"** (ADR-0004, aneks 2026-09-23 SC-5-01, point 1):
-    every window of a month the selling predicate prices (`month_is_priced`) **or** the cost
-    predicate costs (`app.data.personnel_cost.month_has_cost_rate`). Without the second half, a
+    **Since SC-5-01 the scope is "priced OR costed"** (ADR-0004, addendum 2026-09-23 SC-5-01,
+    point 1): every window of a month the selling predicate prices (`month_is_priced`) **or** the
+    cost predicate costs (`app.data.personnel_cost.month_has_cost_rate`). Without the second half,
+    a
     month whose windows cover it with one cost rate while the *selling* rate changes inside it had
     a cost on the live path and froze nothing — the approved scenario then read "no cost rate" for
     it for ever (criterion K-07 of SC-5-01). Two independent predicates, never one built from the
@@ -757,7 +760,7 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     for them", because both are read from the one snapshot of the database this statement takes.
 
     **Since SC-5-02, two more columns travel with every row**: `surcharge_percent` and
-    `includes_surcharge` (ADR-0004, aneks 2026-09-25 SC-5-02, point 2) — the same row, the same
+    `includes_surcharge` (ADR-0004, addendum 2026-09-25 SC-5-02, point 2) — the same row, the same
     `INSERT … SELECT`, the same transaction as `default_cost_rate`, because Q5 of that task's gate 1
     put them on the identical `catalog_default_rates` row. `app.data.personnel_cost.
     costed_month_windows` reads both columns back from this table symmetrically with
@@ -772,7 +775,7 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     costed = costed_month_windows(from_snapshot=False, scenario_id=scenario_id).subquery(
         "costed_catalog_months"
     )
-    # The windows **either** calculation reads (ADR-0004, aneks 2026-09-23 SC-5-01, point 1): of
+    # The windows **either** calculation reads (ADR-0004, addendum 2026-09-23 SC-5-01, point 1): of
     # every month priced by the selling predicate, and of every month costed by the cost predicate
     # — the alternative of two independent predicates, and this copier is the only place that knows
     # both (point 3). Each filter sits outside the subquery computing its predicate, for the reason
@@ -800,10 +803,10 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
             CatalogDefaultRate.unit,
             CatalogDefaultRate.effective_from,
             CatalogDefaultRate.effective_to,
-            # SC-5-02 (Issue #77, criterion K-06; ADR-0004, aneks 2026-09-25 SC-5-02, point 2): the
-            # surcharge percentage and its flag, frozen on the same row, in the same transaction, as
-            # `default_cost_rate` — not a second bramka for a second column of one already-copied
-            # row.
+            # SC-5-02 (Issue #77, criterion K-06; ADR-0004, addendum 2026-09-25 SC-5-02, point 2):
+            # the surcharge percentage and its flag, frozen on the same row, in the same
+            # transaction, as `default_cost_rate` — not a second gate check for a second column of
+            # one already-copied row.
             CatalogDefaultRate.surcharge_percent,
             CatalogDefaultRate.includes_surcharge,
         )
@@ -956,7 +959,7 @@ def approve_scenario(
                 "be frozen."
             )
 
-        # The history row (F-12; ADR-0004, aneks 2026-09-27 SC-8-01, point 3): after the status
+        # The history row (F-12; ADR-0004, addendum 2026-09-27 SC-8-01, point 3): after the status
         # update is confirmed, before the commit — not a fifth CTE of `_snapshot_statement`. The
         # snapshot answers "what was approved"; this answers "who approved it and when", and it may
         # only be written once the first question's answer is irreversibly true. `caller.user_id`

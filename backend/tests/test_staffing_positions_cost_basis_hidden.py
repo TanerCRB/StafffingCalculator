@@ -1,8 +1,8 @@
 """SC-5-03, K-05 (Q4) — `cost_basis`/`fixed_amount`/`fixed_amount_currency` are never part of
-`GET …/staffing-positions`'s response schema (ADR-0005, aneks 2026-09-25 SC-5-03).
+`GET …/staffing-positions`'s response schema (ADR-0005, addendum 2026-09-25 SC-5-03).
 
-**Structural proof: the response's field set, by equality** (the wording the aneks requires —
-"zbiór pól odpowiedzi… identyczny przed/po tym zadaniu", the same construction as
+**Structural proof: the response's field set, by equality** (the wording the addendum requires —
+"the response's field set… identical before/after this task", the same construction as
 `test_commercial_terms_access.py::_assert_field_sets` and `test_personnel_cost.py::
 _assert_field_sets`), not a `"cost_basis" not in body` assertion that a field renamed to
 `personnel_cost_basis` would quietly slip past.
@@ -73,7 +73,7 @@ def test_k_05_the_staffing_positions_response_field_set_excludes_the_cost_basis_
     and (the contrast direction) nothing *missing* either, which a schema quietly narrowed to hide
     the new columns would produce just as wrongly.
     """
-    # `cost_visible_to` (bramka 1 SC-5-03, fix 3 extended to POST): creating a `fixed_amount`
+    # `cost_visible_to` (gate 1 SC-5-03, fix 3 extended to POST): creating a `fixed_amount`
     # position now needs the SC-1-08 conjunction.
     project = make_project(
         db_session,

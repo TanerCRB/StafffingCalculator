@@ -1,20 +1,23 @@
-"""SC-4-03 — testy kontrastowe dopisane przez QA tam, gdzie mutacja przeżyła pierwszą wersję
-zestawu (K-02, K-03, K-04; ADR-0003, aneks 2026-09-25 SC-4-03, pkt 1, 2, 4, 5b).
+"""SC-4-03 — contrast tests added by QA where a mutation survived the first version of the suite
+(K-02, K-03, K-04; ADR-0003, addendum 2026-09-25 SC-4-03, points 1, 2, 4, 5b).
 
-Każdy test nazywa mutację, która przeżyła bez niego, i powód, dla którego przeżyła:
+Every test names the mutation that survived without it, and the reason it survived:
 
-- **K-02** — "oczekiwany zaokrąglany raz, na końcu": zaokrąglenie każdego składnika `p_k · r_k`
-  osobno przeżywało, bo w istniejącym przypadku tylko jeden składnik ma ułamek poniżej grosza.
-- **K-03** — trzecie miejsce po przecinku: istniejący przypadek (33.333/33.333/33.334) po cichym
-  zaokrągleniu `NUMERIC(5,2)` sumuje się do 99.99, więc odmawiał go także `CHECK` bazy — test
-  mierzył szerszą granicę (baza), a nie węższą (schemat API). Tu wartości po zaokrągleniu dają
-  dokładnie 100.00, więc bez reguły schematu baza przyjęłaby inne liczby niż wpisane.
-- **K-04** — `0` wpisane przez użytkownika to wartość, nie brak składnika: ani zapis `0` jako
-  `NULL`, ani odczyt maksimum `0` jako "bez maksimum" nie miały testu (istniejący test sprawdza
-  tylko drugą stronę: pominięty → `NULL`).
-- reguła Outcome-based bez wiersza szczegółów → `incomplete_commercial_terms`, nigdy kwota (pkt 1).
+- **K-02** — "the expected value is rounded once, at the end": rounding each `p_k · r_k` term
+  separately used to survive, because in the existing case only one term has a fraction below a
+  cent.
+- **K-03** — a third decimal place: the existing case (33.333/33.333/33.334), after the
+  `NUMERIC(5,2)` column's silent rounding, sums to 99.99, so the database's `CHECK` also refused
+  it — the test measured the wider boundary (the database), not the narrower one (the API schema).
+  Here the values, after rounding, sum to exactly 100.00, so without the schema rule the database
+  would accept numbers other than the ones entered.
+- **K-04** — a `0` entered by the user is a value, not the absence of a component: neither storing
+  `0` as `NULL`, nor reading a maximum of `0` as "no maximum", had a test (the existing test checks
+  only the other side: omitted → `NULL`).
+- an Outcome-based rule with no details row → `incomplete_commercial_terms`, never an amount
+  (point 1).
 
-Prawdziwy PostgreSQL, prawdziwa migracja; zapis przez `POST`, odczyt przez `GET`.
+Real PostgreSQL, a real migration; a write through `POST`, a read through `GET`.
 """
 
 from typing import Any
@@ -63,13 +66,13 @@ def _by_category(revenue: dict[str, Any]) -> dict[str, str]:
 def test_k_02_the_expected_revenue_is_not_a_sum_of_separately_rounded_terms(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-02 — opłata 100, 0.001 PLN/j., bez premii; "nieosiągnięty" i "osiągnięty" po 5 j. → oba
-    r = 100.005; prawdopodobieństwa 50/0/50/0.
+    """K-02 — a fee of 100, 0.001 PLN/unit, no bonus; "not achieved" and "achieved" at 5 units
+    each → both r = 100.005; probabilities 50/0/50/0.
 
-    Jedno zaokrąglenie na końcu: 50.0025 + 50.0025 = 100.005 → **100.01**. Mutacja "zaokrąglij każdy
-    składnik `p_k · r_k`" (druga reguła zaokrąglenia): 50.00 + 50.00 → 100.00. Przeżywała test
-    `test_k_02_the_expected_revenue_is_rounded_once_from_unrounded_category_revenues`, gdzie ułamek
-    poniżej grosza ma tylko jeden składnik.
+    One rounding at the end: 50.0025 + 50.0025 = 100.005 → **100.01**. The mutation "round each
+    `p_k · r_k` term" (the second rounding rule): 50.00 + 50.00 → 100.00. It used to survive
+    `test_k_02_the_expected_revenue_is_rounded_once_from_unrounded_category_revenues`, where only
+    one term has a fraction below a cent.
     """
     project, scenario = _scenario(db_session)
     payload = outcome_payload(
@@ -97,16 +100,17 @@ def test_k_02_the_expected_revenue_is_not_a_sum_of_separately_rounded_terms(
 def test_k_03_a_third_decimal_place_that_the_database_would_round_to_exactly_100_is_still_422(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-03 — 25.001/25.001/24.999/24.999: suma wpisana to dokładnie 100.000, a po cichym
-    zaokrągleniu kolumny `NUMERIC(5,2)` każda wartość to 25.00 — suma znowu 100.00, więc `CHECK`
-    bazy **przyjąłby** wiersz. Odmawiać może tylko reguła "najwyżej dwa miejsca po przecinku" w
-    schemacie API: `422`, zero wierszy w obu tabelach.
+    """K-03 — 25.001/25.001/24.999/24.999: the entered sum is exactly 100.000, and after the
+    `NUMERIC(5,2)` column's silent rounding each value is 25.00 — the sum is 100.00 again, so the
+    database's `CHECK` **would accept** the row. Only the "at most two decimal places" rule in the
+    API schema can refuse it: `422`, zero rows in both tables.
 
-    Kontrast, jedna zmieniona rzecz (precyzja wpisu): 25/25/25/25 → `201`, zapisane 25.00.
+    Contrast, one thing changed (the entry's precision): 25/25/25/25 → `201`, stored as 25.00.
 
-    Mutacja: `decimal_places` usunięte z `Probability` — tu `201` z prawdopodobieństwami innymi niż
-    wpisane. Przeżywała przypadek `third_decimal_place` w `test_outcome_revenue.py` w tym sensie, że
-    tamten test czerwieniał dopiero na `409` z `CHECK` bazy, nie na regule, której dotyczy K-03.
+    Mutation: `decimal_places` removed from `Probability` — here `201` with probabilities other
+    than the ones entered. It used to survive the `third_decimal_place` case in
+    `test_outcome_revenue.py`, in the sense that that test only turned red on the database's `409`
+    from `CHECK`, not on the rule K-03 is about.
     """
     project, scenario = _scenario(db_session)
     before = count_outcome_rows(db_session)
@@ -134,16 +138,16 @@ def test_k_03_a_third_decimal_place_that_the_database_would_round_to_exactly_100
 def test_k_04_an_explicit_0_is_stored_as_0_and_a_maximum_of_0_bounds_the_revenue(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-04 / ADR-0003 aneks SC-4-03 pkt 2 — druga strona testu
-    `test_k_04_an_absent_optional_component_is_stored_as_null_never_0`: `0` wpisane przez
-    użytkownika jest w bazie `0`, nie `NULL`, a maksimum `0` ogranicza cały przychód (i
-    gwarantowany) do 0.00 — nie jest "brakiem maksimum".
+    """K-04 / ADR-0003 addendum SC-4-03 point 2 — the other side of the test
+    `test_k_04_an_absent_optional_component_is_stored_as_null_never_0`: a `0` entered by the user
+    is `0` in the database, not `NULL`, and a maximum of `0` bounds the whole revenue (and the
+    guaranteed one) to 0.00 — it is not "no maximum".
 
-    Kontrast, jedna zmieniona rzecz (maksimum pominięte zamiast `0`): gwarantowany 20000.00.
+    Contrast, one thing changed (the maximum omitted instead of `0`): guaranteed value 20000.00.
 
-    Mutacje, które bez tego testu przeżywały: `if terms.revenue_max and …` w `_bounded`
-    (prawdziwość `Decimal("0")` to fałsz) → 20000.00; `payload.revenue_max or None` /
-    `payload.success_bonus or None` przy zapisie → `NULL` w wierszu i 20000.00.
+    Mutations that used to survive without this test: `if terms.revenue_max and …` in `_bounded`
+    (the truthiness of `Decimal("0")` is false) → 20000.00; `payload.revenue_max or None` /
+    `payload.success_bonus or None` on write → `NULL` in the row and 20000.00.
     """
     zeros = {"success_bonus": "0", "unit_rate": "0", "revenue_min": "0", "revenue_max": "0"}
     project, scenario = _scenario(db_session)
@@ -175,12 +179,13 @@ def test_k_04_an_explicit_0_is_stored_as_0_and_a_maximum_of_0_bounds_the_revenue
 def test_an_outcome_rule_without_its_details_row_is_incomplete_never_an_amount(
     client: TestClient, db_session: Session
 ) -> None:
-    """ADR-0003 aneks SC-4-03 pkt 1 — reguła `outcome_based` bez wiersza `outcome_terms` (baza
-    pilnuje typu wiersza szczegółów, nie jego istnienia): `incomplete_commercial_terms`, `"n/a"` w
-    obu kwotach, żadnych przychodów kategorii. Kontrast: ta sama reguła z wierszem → `calculated`.
+    """ADR-0003 addendum SC-4-03 point 1 — an `outcome_based` rule with no `outcome_terms` row (the
+    database guards the details row's type, not its existence): `incomplete_commercial_terms`,
+    `"n/a"` in both amounts, no category revenues. Contrast: the same rule with a row →
+    `calculated`.
 
-    Mutacja: gałąź `details is None` usunięta z `_outcome_based` (odczyt przez `scalar_one`) →
-    `NoResultFound`, czyli `500` zamiast nazwanego stanu.
+    Mutation: the `details is None` branch removed from `_outcome_based` (a read through
+    `scalar_one`) → `NoResultFound`, i.e. `500` instead of a named state.
     """
     project, scenario = _scenario(db_session)
     make_outcome_terms(db_session, scenario, with_details=False)

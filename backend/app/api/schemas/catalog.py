@@ -185,10 +185,10 @@ class CatalogRate(BaseModel):
     unit: str
 
     surcharge_percent: DecimalString
-    """The personnel-cost surcharge as a percentage of `default_cost_rate` (SC-5-02, F-07;
-    ADR-0013, aneks 2026-09-25, Q4). **Never gated**, unlike `default_cost_rate` above: a percentage
-    that only multiplies an already-gated figure is an organisational parameter, not a personnel
-    cost of its own (ADR-0005, aneks 2026-09-25, Q4 — mirrors the leave budget of SC-3-03, not
+    """The personnel-cost surcharge as a percentage of `default_cost_rate` (SC-5-02, F-07; ADR-0013,
+    addendum 2026-09-25, Q4). **Never gated**, unlike `default_cost_rate` above: a percentage that
+    only multiplies an already-gated figure is an organisational parameter, not a personnel cost of
+    its own (ADR-0005, addendum 2026-09-25, Q4 — mirrors the leave budget of SC-3-03, not
     `default_cost_rate`), so it is present for every caller who holds `CATALOG_READ`, gated by
     nothing more (criterion K-04)."""
 

@@ -1,14 +1,14 @@
 """The only path by which a scenario's base personnel cost is read (F-07, SC-5-01; ADR-0013).
 
-**Since SC-5-03, also the one dispatcher between the two cost bases** (ADR-0013, aneks 2026-09-25
-SC-5-03, point 5 of the "Decyzja" section it adds: "Dispatch po `cost_basis` żyje w jednej, wspólnej
-funkcji wywołującej (nowej albo istniejącej w `app.data.personnel_cost`/`app.domain.personnel_
+**Since SC-5-03, also the one dispatcher between the two cost bases** (ADR-0013, addendum 2026-09-25
+SC-5-03, point 5 of the "Decision" section it adds: "Dispatch by `cost_basis` lives in one, shared
+calling function (new or existing, in `app.data.personnel_cost`/`app.domain.personnel_
 cost`)"). This module is explicitly named as an allowed home for it, and it is the only module
 allowed to import *both* formulas — `app.domain.personnel_cost.base_personnel_cost` (worked time)
 and `app.domain.fixed_amount_cost.fixed_amount_cost` (fixed amount) — because dispatching between
-two independent formulas is a different thing from being either of them (K-01: "same dwie formuły są
-dwiema niezależnymi funkcjami"). Neither formula module imports the other, and neither imports this
-one; the structural test proving that lives beside each formula's own module
+two independent formulas is a different thing from being either of them (K-01: "the two formulas
+themselves are two independent functions"). Neither formula module imports the other, and neither
+imports this one; the structural test proving that lives beside each formula's own module
 (`tests/test_personnel_cost.py`'s C-5 mirror, `tests/test_fixed_amount_cost.py`'s).
 
 Three mechanisms, none of them new — each is an existing mechanism of this repository applied to
@@ -17,12 +17,12 @@ the first calculation that reads `default_cost_rate`:
 1. **Scope** — `app.data.staffing.scenario_view_in_scope`, i.e. `project_for_caller` plus membership
    of `Project.scenarios`, returning the scenario **together with the caller's project view**. The
    view carries `project_access.can_view_personnel_costs` for the project **this scenario belongs
-   to**, resolved in the same statement that decided the caller may see it (ADR-0005, aneks
-   2026-09-19, point 6; aneks 2026-09-23 SC-5-01, point 2). No scope function of its own, no
+   to**, resolved in the same statement that decided the caller may see it (ADR-0005, addendum
+   2026-09-19, point 6; addendum 2026-09-23 SC-5-01, point 2). No scope function of its own, no
    `select(Scenario)` and no second read of `project_access` here: "no such project", "not yours"
    and "that scenario belongs to another project" are one `None` (criterion K-05).
 2. **Cost-rate resolution by the whole month, in SQL, with one predicate for the live catalogue,
-   the approval freeze and the snapshot reader** (ADR-0013, points 1 and 6; ADR-0004, aneks
+   the approval freeze and the snapshot reader** (ADR-0013, points 1 and 6; ADR-0004, addendum
    2026-09-23 SC-5-01, point 4). `month_has_cost_rate` is that predicate — "the internal windows
    overlapping the month cover every day of it and share one (`default_cost_rate`, `currency`)" —
    and `costed_month_windows` is the one statement shape that applies it. The approval's copier
@@ -32,7 +32,7 @@ the first calculation that reads `default_cost_rate`:
    K-07).
 
 **Independent of the revenue path** (F-06; rule 10 of the Invariant Guardian; ADR-0013, point 1;
-ADR-0004, aneks 2026-09-23 SC-5-01, point 3). This module never imports
+ADR-0004, addendum 2026-09-23 SC-5-01, point 3). This module never imports
 `app.data.commercial_terms` or `app.domain.revenue*`, and neither of them imports it. What the two
 share is geometry only — `app.data.rate_windows`: the month as a range, the day count, "the windows
 cover the month", the two overlap joins. Whether the windows *resolve* the month is asked here of
@@ -43,7 +43,7 @@ does not uncost a month, and a mid-month change of the cost rate does not unpric
 
 **What this module does not decide: who may see the figure.** The view carries the flag and the
 caller's id; the conjunction `PERSONNEL_COSTS_READ` ∧ `can_view_personnel_costs` is applied by
-`app.api.response_shaping` (ADR-0005, aneks 2026-09-23 SC-5-01, point 2), never here.
+`app.api.response_shaping` (ADR-0005, addendum 2026-09-23 SC-5-01, point 2), never here.
 """
 
 import uuid
@@ -106,9 +106,9 @@ from app.models.staffing import (
 # only the surcharge is not a smaller problem than one that moves the cost rate — both leave the
 # month with more than one candidate answer, and SC-5-01 already drew the line that such a month
 # gets the named state, never a silently-picked "first window" answer. Where the *selling*
-# boundaries fall still does not matter — the mirror of ADR-0003's aneks R-01.
+# boundaries fall still does not matter — the mirror of ADR-0003's addendum R-01.
 #
-# **One predicate, three callers** (ADR-0013, point 6; ADR-0004, aneks 2026-09-23 SC-5-01, point
+# **One predicate, three callers** (ADR-0013, point 6; ADR-0004, addendum 2026-09-23 SC-5-01, point
 # 4): the live read below, the approval's freeze and the snapshot reader below all build their
 # statement with `costed_month_windows`, so what is frozen for the cost, what a draft reads and what
 # an approved scenario reads cannot differ by a clause.
@@ -188,7 +188,7 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
         window = ApprovedSnapshotCatalogDefaultRate
         window_id = window.source_rate_id
         # The scenario's **own** frozen rows, re-asked the same predicate per month rather than
-        # trusted as "whatever was frozen" (ADR-0004, aneks 2026-09-23 SC-5-01, point 4).
+        # trusted as "whatever was frozen" (ADR-0004, addendum 2026-09-23 SC-5-01, point 4).
         condition = frozen_windows_overlapping()
     else:
         window = CatalogDefaultRate
@@ -289,7 +289,7 @@ def _worked_months(session: Session, scenario: Scenario) -> tuple[str, list[Work
     return source, months
 
 
-# --- the fixed-amount basis (SC-5-03; ADR-0013, aneks 2026-09-25) --------------------------------
+# --- the fixed-amount basis (SC-5-03; ADR-0013, addendum 2026-09-25) ------------------------------
 
 
 def _fixed_amount_lines(session: Session, scenario: Scenario) -> list[FixedAmountLine]:
@@ -297,7 +297,7 @@ def _fixed_amount_lines(session: Session, scenario: Scenario) -> list[FixedAmoun
 
     **No catalogue join, no allocation join, no snapshot branch.** Unlike `_worked_months`, this
     query has nothing to resolve *for a month*: `fixed_amount`/`fixed_amount_currency` are a
-    position's own columns, read live before and after approval alike (ADR-0004, aneks 2026-09-25
+    position's own columns, read live before and after approval alike (ADR-0004, addendum 2026-09-25
     SC-5-03, point 2 — "brak trzeciego miejsca migawkowego": the write guard protects an approved
     scenario's row, not a copy of it). Rows are ordered by `id` for a deterministic
     `assumptions_used.lines`, the same reason `_distinct_windows` sorts the worked-time windows.
@@ -343,13 +343,13 @@ class ScenarioCostView:
     can_view_personnel_costs: bool
     cost: PersonnelCostAnswer
     paid_absence: PaidAbsenceCostAnswer
-    """The paid-absence component (SC-5-06; ADR-0013, aneks 2026-09-23 SC-5-06) — beside `cost`,
+    """The paid-absence component (SC-5-06; ADR-0013, addendum 2026-09-23 SC-5-06) — beside `cost`,
     never added to it. Carried on the same view so the same conjunction gates it (point 6)."""
     fixed_amount: FixedAmountCostAnswer
-    """The fixed-amount basis's own component (SC-5-03; ADR-0013, aneks 2026-09-25 SC-5-03) — a
+    """The fixed-amount basis's own component (SC-5-03; ADR-0013, addendum 2026-09-25 SC-5-03) — a
     **third**, independent figure beside `cost` (worked time) and `paid_absence`, never summed
-    with either (Out of scope of SC-5-03: "suma kosztu scenariusza łącząca podstawy"). Carried on
-    the same view for the same reason `paid_absence` is: one conjunction, one place it is
+    with either (Out of scope of SC-5-03: "a sum of the scenario's cost combining the bases").
+    Carried on the same view for the same reason `paid_absence` is: one conjunction, one place it is
     decided. **Never carries a surcharge** (SC-5-02): `fixed_amount_cost` takes no rate at all to
     apply one to (K-01 of both tasks — the fixed-amount formula does not import the worked-time
     formula, the surcharge formula, or anything the surcharge is computed from); a fixed amount is
@@ -358,7 +358,7 @@ class ScenarioCostView:
     status_at_read: ScenarioStatus
     """The scenario's status **as this read saw it** — the status that chose live catalogue versus
     snapshot for `cost` — copied into an immutable value right after this read's own
-    `session.refresh` (SC-7-03, Issue #118; ADR-0015, aneks SC-7-03, point 3). Never
+    `session.refresh` (SC-7-03, Issue #118; ADR-0015, addendum SC-7-03, point 3). Never
     `scenario.status` read later: `scenario` is an identity-mapped object another read in the same
     session may refresh again. Compared against `app.data.commercial_terms.ScenarioCommercialView.
     status_at_read` by the race guard in `app.data.scenario_results`/`app.data.scenario_what_if`.
@@ -392,7 +392,7 @@ def scenario_cost_for_caller(
     source, months = _worked_months(session, scenario)
     # The paid-absence component is costed at **these** rates — the base cost's resolution of each
     # (position, month), live or frozen by the same status — and asks no predicate of its own
-    # (ADR-0013, aneks 2026-09-23 SC-5-06, point 3). Its hours are read from a different source,
+    # (ADR-0013, addendum 2026-09-23 SC-5-06, point 3). Its hours are read from a different source,
     # and its amount is never added to the base amount (point 4).
     rates = {(month.position_id, month.period_month): month.rate for month in months}
     absence_months = paid_absence_months(session, scenario, rates)

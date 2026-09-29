@@ -2,7 +2,7 @@
 ADR-0015).
 
 **The response reuses `ScenarioResults` by inheritance, never a parallel type** (ADR-0015, point 4:
-"zachowuje kształt odpowiedzi zbliżony do GET …/results"). The fields `GET …/results` answers
+"keeps a response shape close to GET …/results"). The fields `GET …/results` answers
 (since SC-4-03 including `profitability_state`) are exactly the fields here, so a client already
 rendering that endpoint renders this one with one added field (`salary_raise_percent`) and one
 different value inside `personnel_cost.assumptions_used.rate_source` — never a second response
@@ -75,7 +75,7 @@ class ScenarioWhatIfSalaryRaiseResults(ScenarioResults):
     `assumptions_used.rate_source` is exactly what `GET …/results` reports for it: one of the two
     real catalogue sources for a model priced from the catalogue (T&M), or the model's own
     non-catalogue source — `story_points_terms` (Story Points) or `not_applicable` (Outcome-based,
-    ADR-0003 aneks 2026-09-25 SC-4-03, pkt 8 i 12) — never
+    ADR-0003 addendum 2026-09-25 SC-4-03, points 8 and 12) — never
     `what_if_hypothetical`: the raise never touches revenue (F-06, rule 10 of the Invariant
     Guardian).
     """

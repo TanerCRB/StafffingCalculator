@@ -1,5 +1,5 @@
 """SC-5-05, K-07 — a copy of a scenario carries both halves of its additional costs (ADR-0014,
-point 10, Q-6 = A; ADR-0004, aneks SC-5-05, point 4; AC-02).
+point 10, Q-6 = A; ADR-0004, addendum SC-5-05, point 4; AC-02).
 
 The two halves live in two places, and each has a canary that fails **on its own**:
 
@@ -258,7 +258,7 @@ def test_k_07_a_copy_of_an_approved_scenario_is_a_draft_with_the_costs_and_the_s
 
 
 def test_the_scenario_level_copier_is_a_registered_entry_of_the_cascade() -> None:
-    """ADR-0004, aneks SC-5-05, point 4 — registered once, as its own entry."""
+    """ADR-0004, addendum SC-5-05, point 4 — registered once, as its own entry."""
     assert SCENARIO_CHILD_COPIERS.count(copy_scenario_additional_costs) == 1
 
 

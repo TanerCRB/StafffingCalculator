@@ -12,7 +12,7 @@
 // scope — monthly/period breakdown), and a field this client never reads is a field this contract
 // does not need to promise a shape for.
 //
-// **Four fields are gated as one group, never split** (ADR-0005, aneks 2026-09-24): `included_cost`,
+// **Four fields are gated as one group, never split** (ADR-0005, addendum 2026-09-24): `included_cost`,
 // `profit`, `margin`, `markup` are `null` when the caller may not see personnel costs of this
 // project — never inferred from `personnel_cost.state`, which is never gated further than its own
 // endpoint already gates it (SC-5-01/SC-5-06). `personnel_cost.amount`/`currency` carry that very
@@ -77,7 +77,7 @@ export interface AdditionalCostSource {
   currency: string | null;
 }
 
-/** One of the four fields gated as a group (ADR-0005, aneks 2026-09-24): a fixed-point decimal
+/** One of the four fields gated as a group (ADR-0005, addendum 2026-09-24): a fixed-point decimal
  * string when computable and visible, the literal `"n/a"` when open but not computable, `null` when
  * the caller may not see personnel costs of this project. */
 export type GatedResultField = string | typeof RESULTS_NOT_APPLICABLE | null;
@@ -88,7 +88,7 @@ export interface ScenarioResults {
   scenario_status: "Draft" | "Approved";
   revenue: RevenueRead;
   personnel_cost: PersonnelCostSource;
-  /** Never gated (ADR-0014, point 11; ADR-0005, aneks 2026-09-23 SC-5-05) — visible exactly as its
+  /** Never gated (ADR-0014, point 11; ADR-0005, addendum 2026-09-23 SC-5-05) — visible exactly as its
    * own endpoint shows it, even when the four aggregate fields below are withheld. */
   additional_cost: AdditionalCostSource;
   /** `base` personnel cost + paid-absence cost + additional cost, all three already stated. */

@@ -47,10 +47,10 @@ statement that writes, the same `staffing_position.updated_at` token (ADR-0007, 
 `cost_basis`/`fixed_amount`/`fixed_amount_currency` — columns of the position row itself — in one
 `UPDATE staffing_position SET updated_at = now(), <changes> WHERE …` that carries the same
 concurrency token and the same `unapproved_scenario` guard as every write above (criterion K-03).
-**Bramka 1 fix (Guardian, 2026-09-25):** that same `WHERE` also carries `cost_basis =
+**Gate 1 fix (Guardian, 2026-09-25):** that same `WHERE` also carries `cost_basis =
 'fixed_amount'` whenever `changes` would otherwise let an amount land on a row without also
 switching its basis — `CostBasisMismatch`, a third state-refusal beside `ApprovedScenarioFrozen`
-and `ConcurrentStaffingEditConflict`, not a fourth mechanism. **Bramka 1 fix, R-02 (Reviewer,
+and `ConcurrentStaffingEditConflict`, not a fourth mechanism. **Gate 1 fix, R-02 (Reviewer,
 2026-09-26):** `_diagnose_position_refusal` checks the token *before* `CostBasisMismatch`, not
 after — `cost_basis`, unlike `approved`, toggles both ways, so a stale token must win the diagnosis
 every time, or a race lets one caller's stale retry silently overwrite another's fresh, deliberate
@@ -60,12 +60,12 @@ switch with no warning to either side.
 optional named person of the position (F-03; ADR-0019) — in the same single-`UPDATE` shape as the
 cost-basis edit and under the same `unapproved_scenario` guard, plus "the person exists" in the same
 `WHERE`, but against its **own** marker, `person_assignment_updated_at`, leaving the position's
-`updated_at` untouched (D-4 = B; ADR-0007 aneks 2026-09-28): two markers on one row, disjoint
+`updated_at` untouched (D-4 = B; ADR-0007 addendum 2026-09-28): two markers on one row, disjoint
 columns, exactly one marker per write path. It is the **only** function that writes that column:
 every other write here names its columns explicitly and none of them names `person_id`, so omitting
-the person from any other request means "unchanged", never "removed" (ADR-0005, aneks 2026-09-27,
+the person from any other request means "unchanged", never "removed" (ADR-0005, addendum 2026-09-27,
 point 6). The copy cascade carries `person_id` by reflection — the copy points at the same person
-(ADR-0004, aneks 2026-09-27, point 4). Nothing in this module reads a person's *name*: the name
+(ADR-0004, addendum 2026-09-27, point 4). Nothing in this module reads a person's *name*: the name
 lives in the register (`app.data.people`), and a position response carries at most the id, gated in
 response shaping.
 
@@ -142,7 +142,7 @@ not user input at all, and there is no `updated_at` on this table to write (ADR-
 EDITABLE_POSITION_FIELDS: frozenset[str] = frozenset(
     {"cost_basis", "fixed_amount", "fixed_amount_currency"}
 )
-"""Everything `update_position_cost_basis` will ever write (SC-5-03; ADR-0013, aneks 2026-09-25
+"""Everything `update_position_cost_basis` will ever write (SC-5-03; ADR-0013, addendum 2026-09-25
 SC-5-03): the personnel-cost basis of the position itself. An allow-list, for the same reason
 `EDITABLE_ALLOCATION_FIELDS` is one — the four dimension ids, `headcount` and the two dates have no
 edit path at all yet, and this set must not silently grow to include them."""
@@ -170,9 +170,9 @@ class StaffingWriteRejected(RuntimeError):
     """The write was understood, reached this layer, and was refused *by state* — a `409`.
 
     Distinct from `StaffingWriteFailed`, which means the statement broke. Two subclasses, two
-    independent reasons, exactly as `ProjectEditRefused` splits them (ADR-0007: "jedno miejsce, dwa
-    niezależne powody odmowy"). No subclass ever quotes a field value — NF-11 applies to a refusal
-    as much as to a failure.
+    independent reasons, exactly as `ProjectEditRefused` splits them (ADR-0007: "one place, two
+    independent reasons for refusal"). No subclass ever quotes a field value — NF-11 applies to a
+    refusal as much as to a failure.
     """
 
 
@@ -197,7 +197,7 @@ class ConcurrentStaffingEditConflict(StaffingWriteRejected):
 
 class CostBasisMismatch(StaffingWriteRejected):
     """`fixed_amount`/`fixed_amount_currency` were named without also naming `cost_basis`, and the
-    position's *current, stored* basis is not `fixed_amount` (bramka 1 SC-5-03, Guardian finding).
+    position's *current, stored* basis is not `fixed_amount` (gate 1 SC-5-03, Guardian finding).
 
     The model's invariant is "`fixed_amount`/`fixed_amount_currency` are `NULL` for the default
     basis" (`app.models.staffing`) — a `PATCH` that writes an amount onto a `worked_time` row would
@@ -289,9 +289,10 @@ def scenario_view_in_scope(
     view dropped. It exists because the first path gated on personnel costs inside a scenario
     (`app.data.personnel_cost`) needs `project_access.can_view_personnel_costs` for **the project
     the scenario belongs to**, and the one place that flag may come from is the statement that
-    decided the caller may see that project (ADR-0005, aneks 2026-09-19, point 6; aneks 2026-09-23
-    SC-5-01, point 2). Reading it again afterwards would be a second query deciding a per-caller
-    fact, and reading it from "any assignment of the caller" would be the per-subject answer to a
+    decided the caller may see that project (ADR-0005, addendum 2026-09-19, point 6; addendum
+    2026-09-23 SC-5-01, point 2). Reading it again afterwards would be a second query deciding a
+    per-caller fact, and reading it from "any assignment of the caller" would be the per-subject
+    answer to a
     per-assignment question (criterion K-04).
     """
     view = project_for_caller(session, caller, project_id)
@@ -390,8 +391,8 @@ def position_view(
 
     **A pure function of what it is handed** — no `Session`, no query — and public since SC-5-06:
     the paid-absence cost reads each month's `MonthCapacity.budget` from here, so the budget top-up
-    it costs is by construction the one the capacity subtracts (ADR-0013, aneks 2026-09-23 SC-5-06,
-    point 2b). For an approved scenario the inputs come from the approval snapshot
+    it costs is by construction the one the capacity subtracts (ADR-0013, addendum 2026-09-23
+    SC-5-06, point 2b). For an approved scenario the inputs come from the approval snapshot
     (`app.data.paid_absence_cost`); the rule applied to them is this one, not a copy.
 
     **Which absences count against the budget is decided here, once, from the flagged type** — the
@@ -688,7 +689,7 @@ def create_position(
 ) -> StaffingPositionView | None:
     """Insert one position, with the month rows given for it — or refuse, or answer `None`.
 
-    `cost_basis`/`fixed_amount`/`fixed_amount_currency` (SC-5-03; ADR-0013, aneks 2026-09-25
+    `cost_basis`/`fixed_amount`/`fixed_amount_currency` (SC-5-03; ADR-0013, addendum 2026-09-25
     SC-5-03) default to the backward-compatible worked-time basis with no stated amount — the same
     guarantee the column's own `server_default` gives a row written outside this function. They
     travel through the **same** `INSERT ... SELECT ... WHERE status <> 'approved'` as every other
@@ -1065,14 +1066,14 @@ def _diagnose_allocation_refusal(
     )
 
 
-# --- the personnel-cost basis (F-07, SC-5-03; ADR-0013, aneks 2026-09-25) ------------------------
+# --- the personnel-cost basis (F-07, SC-5-03; ADR-0013, addendum 2026-09-25) ----------------------
 #
 # One more write path, and it introduces no mechanism either: the same shape `update_allocation`
 # already has, except the guard and the write land on the **same** table (`staffing_position`
 # itself, not a child of it), so the CTE that shape needs to bridge two tables collapses into one
 # `UPDATE` — the guard, the token rotation and the write to `cost_basis`/`fixed_amount`/
-# `fixed_amount_currency` are the same statement (criterion K-03, "TEJ SAMEJ instrukcji zapisu co
-# pozostałe kolumny staffing_position").
+# `fixed_amount_currency` are the same statement (criterion K-03, "the SAME write statement as
+# the rest of staffing_position's columns").
 
 
 def update_position_cost_basis(
@@ -1101,15 +1102,15 @@ def update_position_cost_basis(
     One statement, not two: unlike the allocation edit (a grandchild row reached through a CTE on
     the position), `cost_basis`/`fixed_amount`/`fixed_amount_currency` are columns of the position
     row itself, so the guard, the token rotation and the write are one `UPDATE` — the construction
-    ADR-0004's aneks of this date names as the property this task must prove, not assume ("żaden
-    nowy kształt strażnika, żaden nowy token współpieżności").
+    ADR-0004's addendum of this date names as the property this task must prove, not assume ("no
+    new shape of the guard, no new concurrency token").
 
     The database's own `fixed_amount_required_for_its_basis`/`fixed_amount_positive`/currency CHECKs
     are what refuse an inconsistent combination (e.g. `cost_basis = 'fixed_amount'` with no amount)
     — this function performs no such check itself and passes `changes` straight into the `UPDATE`,
     exactly as `update_allocation` does for the hours fields.
 
-    **One guard those CHECKs do not cover, added to the same `WHERE`** (bramka 1 SC-5-03, Guardian
+    **One guard those CHECKs do not cover, added to the same `WHERE`** (gate 1 SC-5-03, Guardian
     finding): a request naming `fixed_amount`/`fixed_amount_currency` without also naming
     `cost_basis` (the one combination `StaffingPositionCostBasisEditRequest`'s own validator cannot
     refuse, having no view of the row) must not silently land on a `worked_time` row — the database
@@ -1245,10 +1246,10 @@ def _diagnose_position_refusal(
     )
 
 
-# --- the named person of a position (F-03, SC-2-06; ADR-0019; ADR-0004/0005 aneksy 2026-09-27) ---
+# --- the named person of a position (F-03, SC-2-06; ADR-0019; ADR-0004/0005 addendumy 2026-09-27) -
 #
-# One more write path, and the only one that writes `person_id` (ADR-0005, aneks 2026-09-27, point
-# 3 of gate 1: "jedna ścieżka zapisu przypisania"). The same single-`UPDATE` shape as
+# One more write path, and the only one that writes `person_id` (ADR-0005, addendum 2026-09-27,
+# point 3 of gate 1: "one write path for the assignment"). The same single-`UPDATE` shape as
 # `update_position_cost_basis`: `person_id` is a column of the position row itself, so the guard,
 # the token rotation and the write are one statement — no new guard shape, no new token.
 
@@ -1263,7 +1264,7 @@ class AssignedPersonNotFound(StaffingWriteRejected):
 
     Reached only by a caller holding `STAFFING_WRITE` ∧ `PEOPLE_READ` (the endpoint's dependency),
     i.e. one who may read the whole register anyway — so this is not an existence oracle
-    (ADR-0005, aneks 2026-09-27, point 5b)."""
+    (ADR-0005, addendum 2026-09-27, point 5b)."""
 
 
 def assign_person(
@@ -1285,7 +1286,7 @@ def assign_person(
            person_assignment_updated_at = now(),
            updated_at = updated_at                         -- unchanged, and said so (see below)
      WHERE id = :position_id AND scenario_id = :scenario_id
-       AND person_assignment_updated_at = :expected        -- ADR-0007 aneks 2026-09-28
+       AND person_assignment_updated_at = :expected        -- ADR-0007 addendum 2026-09-28
        AND scenario_id IN (SELECT id FROM scenarios
                             WHERE id = :scenario_id AND status <> 'approved'
                               FOR UPDATE)                    -- ADR-0004, and the lock (K-20)
@@ -1293,7 +1294,7 @@ def assign_person(
      RETURNING id
     ```
 
-    One statement: the `approved` guard is **in** the write (ADR-0004, aneks 2026-09-27 SC-2-06,
+    One statement: the `approved` guard is **in** the write (ADR-0004, addendum 2026-09-27 SC-2-06,
     point 2 — criterion K-06), never a status read followed by an `UPDATE`. The database's own
     `ck_staffing_position_person_requires_single_headcount` refuses a person on a position whose
     `headcount` is not 1 (Q-7 = a, criterion K-05c) and `fk_staffing_position_person_id` a person
@@ -1310,9 +1311,9 @@ def assign_person(
     `None` for `person_id` removes the assignment through the same statement and the same guard: an
     approved scenario refuses the removal exactly as it refuses the assignment (A4-31-2). Every
     *other* write of this row leaves `person_id` untouched — none of them names the column
-    (ADR-0005, aneks 2026-09-27, point 6).
+    (ADR-0005, addendum 2026-09-27, point 6).
 
-    **Does not move the position's `updated_at`** (D-4 = B; ADR-0007 aneks 2026-09-28 — this
+    **Does not move the position's `updated_at`** (D-4 = B; ADR-0007 addendum 2026-09-28 — this
     replaces gate 1's decision 8). The assignment has its own marker,
     `person_assignment_updated_at`, compared and rotated here and nowhere else; `updated_at` is
     visible without `PEOPLE_READ`, so moving it would tell such a caller that the position was
@@ -1377,11 +1378,11 @@ def _diagnose_assignment_refusal(
 
     Gate 1's order (decision 3): the position first (`PositionNotFound` → `404`), then the person
     (`AssignedPersonNotFound`), then the permanent reason (`approved`), and only then the
-    assignment's own marker (`person_assignment_updated_at`, ADR-0007 aneks 2026-09-28) — which,
+    assignment's own marker (`person_assignment_updated_at`, ADR-0007 addendum 2026-09-28) — which,
     once every other condition of the `WHERE` is ruled out, is the one left, so it is named by
     elimination, as `_diagnose_absence_refusal` names it. Its message is distinct from the grid's
-    stale-`updated_at` message (point 4 of that aneks: a different marker to re-read) and carries no
-    value. Every branch is reached only for a
+    stale-`updated_at` message (point 4 of that addendum: a different marker to re-read) and
+    carries no value. Every branch is reached only for a
     scenario `scenario_in_scope` has already returned, and the position lookup is narrowed to that
     scenario, so nothing here answers about a row the caller cannot see. Persons are never deleted
     by this system (ADR-0019, point 7), so "the person was missing" cannot become untrue between the
@@ -1793,7 +1794,7 @@ POSITION_COLUMNS_NOT_COPIED: frozenset[str] = frozenset(
   version).
 - `created_at` / `updated_at` — the copy is created now, and its ADR-0007 token is its own.
   Inheriting the source's token would hand a caller a token issued for a different row.
-- `person_assignment_updated_at` (SC-2-06; ADR-0007 aneks 2026-09-28, point 5) — the same reason,
+- `person_assignment_updated_at` (SC-2-06; ADR-0007 addendum 2026-09-28, point 5) — the same reason,
   for the assignment's own marker: the copy gets the database's `now()`. `person_id` itself *is*
   copied (the same person, never a copy of one).
 
@@ -1938,9 +1939,9 @@ def copy_staffing_positions(session: Session, source: Scenario, copy: Scenario) 
 
     # Fourth pass: the additional costs attached to a position (F-08, SC-5-05). Here and not in a
     # registry entry of their own, because this is the one place holding `new_position_ids`
-    # (ADR-0014, point 10, Q-6 = A; ADR-0004, aneks SC-5-05, point 4). `position_id` comes from the
-    # mapping, never from the source row — a copied cost pointing at the *source's* position would
-    # be refused by `fk_additional_cost_position_same_scenario` anyway, and pointing it at another
+    # (ADR-0014, point 10, Q-6 = A; ADR-0004, addendum SC-5-05, point 4). `position_id` comes from
+    # the mapping, never from the source row — a copied cost pointing at the *source's* position is
+    # refused by `fk_additional_cost_position_same_scenario` anyway, and pointing it at another
     # position of the copy would silently move the cost. The costs **without** a position are the
     # other half, copied by `app.data.additional_cost.copy_scenario_additional_costs` through its
     # own entry in `SCENARIO_CHILD_COPIERS`; neither pass touches the other's rows.

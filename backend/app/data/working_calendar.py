@@ -95,7 +95,7 @@ def frozen_basis_by_location(
 ) -> Mapping[uuid.UUID, CalendarBasis]:
     """The calendar basis of each location **as one approved scenario froze it** — the snapshot's
     counterpart of `basis_by_location`, and the first reader of `approved_snapshot_working_calendar`
-    and `approved_snapshot_working_calendar_day` (ADR-0004, aneks 2026-09-23 SC-5-06, point 1).
+    and `approved_snapshot_working_calendar_day` (ADR-0004, addendum 2026-09-23 SC-5-06, point 1).
 
     The same return shape as the live function, for the same reason: a location that had no
     calendar at approval froze no row, so it is absent here and the caller produces the named

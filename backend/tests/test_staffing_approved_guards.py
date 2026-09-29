@@ -154,7 +154,7 @@ def _committing_a_competing_cost_basis_switch_before(
 ) -> Listener:
     """A hook that performs *another editor's* switch back to `worked_time`, committed on another
     connection, just before the guarded statement of the edit under test runs (Reviewer R-02,
-    bramka 1 SC-5-03).
+    gate 1 SC-5-03).
 
     The competitor does exactly what a second `PATCH` naming `cost_basis='worked_time'` does: it
     clears `fixed_amount`/`fixed_amount_currency` and rotates the position's `updated_at`. It
@@ -199,7 +199,7 @@ def _committed_project_with_two_scenarios(engine: Engine) -> dict[str, Any]:
     limit of the proof, and it is the one the plan entry names as "fundament nieudowodniony".
     """
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
-        # `cost_visible_to` (bramka 1 SC-5-03, fix 3): the cost-basis PATCH tests below (K-03) need
+        # `cost_visible_to` (gate 1 SC-5-03, fix 3): the cost-basis PATCH tests below (K-03) need
         # `can_view_personnel_costs` for this project; harmless to every other test sharing this
         # fixture, none of which reads a personnel-cost field.
         project = make_project(
@@ -813,7 +813,7 @@ def _k20_state(engine: Engine) -> dict[str, Any]:
         calendar = make_working_calendar(
             setup, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
         )
-        # `cost_visible_to` (bramka 1 SC-5-03, fix 3): needed by the K-20 cost-basis race test
+        # `cost_visible_to` (gate 1 SC-5-03, fix 3): needed by the K-20 cost-basis race test
         # below; harmless to the other two K-20 tests sharing this fixture.
         project = make_project(
             setup,
@@ -1190,7 +1190,7 @@ def test_a_refused_insert_leaves_the_transaction_usable_for_the_next_request(
 # token and change are ONE statement (`UPDATE staffing_position SET updated_at = now(),
 # <changes> WHERE …`), unlike the allocation edit's CTE bridging two tables. The two runs below
 # (plain refusal, then the race) mirror K-07's, and the third — two real connections — is the
-# one criterion K-03 asks for by name ("jak dla każdej pozostałej kolumny tej tabeli"),
+# one criterion K-03 asks for by name ("the same as for every other column of this table"),
 # mirroring K-20's allocation-edit run.
 
 
@@ -1213,7 +1213,7 @@ def test_k_03_editing_the_cost_basis_of_an_approved_scenario_is_refused_and_chan
     state = _committed_project_with_two_scenarios(engine)
     token = _token_of(committing_client, state["project_id"], state["approved_id"])
 
-    # Fix 3 (Security-Auditor, bramka 1 SC-5-03): the cost-basis write needs the read side's own
+    # Fix 3 (Security-Auditor, gate 1 SC-5-03): the cost-basis write needs the read side's own
     # conjunction (`STAFFING_WRITE` no longer suffices on its own).
     with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
         refused = committing_client.patch(
@@ -1259,7 +1259,7 @@ def test_k_03_an_approval_committed_just_before_the_cost_basis_edit_still_refuse
 
     event.listen(Engine, "before_cursor_execute", interleave)
     try:
-        # Fix 3 (Security-Auditor, bramka 1 SC-5-03): the same conjunction the read side needs.
+        # Fix 3 (Security-Auditor, gate 1 SC-5-03): the same conjunction the read side needs.
         with caller_holding(Permission.STAFFING_WRITE, Permission.PERSONNEL_COSTS_READ):
             response = committing_client.patch(
                 f"{staffing_path(state['project_id'], state['draft_id'])}"
@@ -1283,7 +1283,7 @@ def test_k_03_an_approval_committing_concurrently_with_a_cost_basis_edit_changes
     committing_client: TestClient, engine: Engine
 ) -> None:
     """K-03, the third run — two **real** connections, the run the criterion names explicitly
-    ("dowiedziony na dwóch połączeniach jak dla każdej pozostałej kolumny tej tabeli"), mirroring
+    ("proven on two connections the same as for every other column of this table"), mirroring
     `test_k_20_an_approval_committing_concurrently_with_an_allocation_edit_changes_nothing`.
 
     The approval holds the scenario row's lock (`app.data.scenario_guard`) from its first statement;
@@ -1294,7 +1294,7 @@ def test_k_03_an_approval_committing_concurrently_with_a_cost_basis_edit_changes
     token = _token(committing_client, state)
 
     def edit_the_basis() -> Any:
-        # Fix 3 (Security-Auditor, bramka 1 SC-5-03): the same conjunction the read side needs.
+        # Fix 3 (Security-Auditor, gate 1 SC-5-03): the same conjunction the read side needs.
         # Set only around this one call, on the background thread that issues it — the approval
         # request's own identity is already resolved by the time this runs (see the fixture's
         # docstring: the hook fires after the approval holds its lock, mid-request).
@@ -1336,7 +1336,7 @@ def test_k_03_an_approval_committing_concurrently_with_a_cost_basis_edit_changes
 def test_r_02_a_stale_token_beats_a_racing_cost_basis_switch(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """Reviewer R-02, bramka 1 SC-5-03 — the exact scenario named in the finding: position P is
+    """Reviewer R-02, gate 1 SC-5-03 — the exact scenario named in the finding: position P is
     `fixed_amount`, caller A reads its token and asks to change only the amount (a legal request,
     the contrast `test_fix_1_an_amount_alone_still_edits_an_already_fixed_amount_position` needs);
     caller B commits a switch to `worked_time` first, on a separate connection, in the window

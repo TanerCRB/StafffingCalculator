@@ -1,7 +1,7 @@
 """add scope_ref to commercial_terms
 
 SC-4-05 (F-06, F-06.5; Issue #69; `ADR-0003-model-modeli-komercyjnych.md`, addendum 2026-09-25
-"impact mapa bramki 1 dla SC-4-05" and its closing "bramka 1 SC-4-05 — decyzja człowieka" of the
+"impact map for gate 1 of SC-4-05" and its closing "gate 1 SC-4-05 — human decision" of the
 same date; `ADR-0016-segment-dostawy-scenariusza.md`). Expand only (ADR-0001, expand -> deploy ->
 contract): one nullable column added, one foreign key added, one UNIQUE constraint replaced by two
 partial unique indexes that together admit strictly more rows than it did — no existing column is
@@ -32,7 +32,7 @@ phase to pair with it.
    `uq_commercial_terms_scenario_id_scope_ref`, adds: one row per (scenario, segment) — no segment
    carries two rules. Together the two admit what the single, non-partial constraint could not: a
    whole-scenario rule and any number of distinct-segment rules coexisting under one scenario (the
-   "reguła łączona" of D-3=A — a scenario-wide default plus segment overrides), while still refusing
+   "combined rule" of D-3=A — a scenario-wide default plus segment overrides), while still refusing
    a second rule of the *same* scope, whichever scope that is.
 
 **What is deliberately not here:** any predicate connecting two *different* scope values (whether

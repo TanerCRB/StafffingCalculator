@@ -1,44 +1,47 @@
 """create outcome_terms and widen the commercial model discriminator
 
-SC-4-03 (F-06.3, Issue #67; ADR-0003 aneks 2026-09-25 SC-4-03, ADR-0004 aneks 2026-09-25 SC-4-03).
-Tylko expand (ADR-0001, expand → deploy → contract): jedna nowa tabela i jedno poszerzone
-ograniczenie. Żadna kolumna istniejącej tabeli nie dochodzi, nie znika ani się nie zmienia, żaden
-wiersz nie jest zapisywany — kod wdrożony przed tą migracją działa dalej na nowym schemacie. W oknie
-mieszanych wersji instancja starszego kodu, która spotka regułę `outcome_based`, odpowiada nazwanym
-stanem `unsupported_model_type` (odczyt) i `409` (kopia), nigdy połową agregatu (SC-4-01,
+SC-4-03 (F-06.3, Issue #67; ADR-0003 addendum 2026-09-25 SC-4-03, ADR-0004 addendum 2026-09-25
+SC-4-03). Expand only (ADR-0001, expand → deploy → contract): one new table and one widened
+constraint. No column of an existing table is added, dropped or altered, no row is written — the
+code deployed before this migration keeps working on the new schema. In the mixed-version window,
+an instance of the older code that meets an `outcome_based` rule responds with the named state
+`unsupported_model_type` (read) and `409` (copy), never half of the aggregate (SC-4-01,
 R-02/R-03).
 
-**Jedyna instrukcja dotykająca istniejącej tabeli**: `ck_commercial_terms_model_type_known` jest
-usuwane i odtwarzane z **pełną listą `IN`** — `time_and_material`, `story_points` i `outcome_based`
-(ADR-0003, aneks SC-4-03, pkt 10c). Migracja niosąca tylko własną wartość po cichu unieważniłaby
-zapisane reguły T&M i Story Points przy walidacji ograniczenia; `downgrade` odtwarza listę sprzed
-migracji (`time_and_material`, `story_points` — dokładnie wyrażenie z `d2f6a91c4b58`, którego
-nie zmienia `b7e3f19a6c52`), nie listę pustą ani jednoelementową z nową wartością. Odtworzenie
-waliduje istniejące wiersze pod blokadą `ACCESS EXCLUSIVE` na `commercial_terms` — tabela jest mała
-(reguła całego scenariusza i co najwyżej jedna na segment, SC-4-05), a `lock_timeout` niżej
-ogranicza czekanie.
+**The only statement touching an existing table**: `ck_commercial_terms_model_type_known` is
+dropped and recreated with the **full `IN` list** — `time_and_material`, `story_points` and
+`outcome_based` (ADR-0003, addendum SC-4-03, point 10c). A migration carrying only its own value
+would silently invalidate the recorded T&M and Story Points rules when the constraint is
+validated; `downgrade` recreates the list from before this migration (`time_and_material`,
+`story_points` — exactly the expression from `d2f6a91c4b58`, unchanged by `b7e3f19a6c52`), not an
+empty or single-value list with the new value. Recreating it validates the existing rows under an
+`ACCESS EXCLUSIVE` lock on `commercial_terms` — the table is small (one whole-scenario rule and at
+most one per segment, SC-4-05), and `lock_timeout` below bounds the wait.
 
-**Linearyzacja (decyzja człowieka 2026-09-25):** migracja powstała równolegle z SC-4-04 na
-`a3d9e6f20c71`; przy merge z `main` jej `down_revision` przepięto na `d2f6a91c4b58` (Story Points),
-żeby historia miała jedną głowę, a lista `IN` objęła oba wcześniejsze modele. Przy drugim merge z
-`main` (SC-4-05, `scope_ref`) przepięto ją ponownie, na `b7e3f19a6c52` — ta migracja nie dotyka
-`ck_commercial_terms_model_type_known`, więc lista sprzed tej migracji pozostaje listą z
-`d2f6a91c4b58`.
+**Linearisation (human decision 2026-09-25):** this migration was created in parallel with SC-4-04
+on `a3d9e6f20c71`; when merging `main`, its `down_revision` was repointed to `d2f6a91c4b58` (Story
+Points), so the history has one head, and the `IN` list covers both earlier models. On the second
+merge from `main` (SC-4-05, `scope_ref`), it was repointed again, to `b7e3f19a6c52` — that
+migration does not touch `ck_commercial_terms_model_type_known`, so the list from before this
+migration remains the list from `d2f6a91c4b58`.
 
-**Co baza egzekwuje w `outcome_terms`** (fixture, skrypt ani import nie przechodzą przez Pydantic):
+**What the database enforces in `outcome_terms`** (a fixture, a seed script or an import
+never passes through Pydantic):
 
-1. zgodność typu złożonym kluczem obcym `(commercial_terms_id, model_type) → commercial_terms (id,
-   model_type)` i `CHECK (model_type = 'outcome_based')` — wzorzec `tm_terms` bez zmian (pkt 1);
-2. opłata stała `NOT NULL`, składniki opcjonalne `NULL` — nigdy `0` za brak (pkt 2); wszystkie
-   kwoty, stawka i liczby jednostek nieujemne; `revenue_min <= revenue_max`, gdy oba ustawione;
-3. cztery kategorie jako kolumny, prawdopodobieństwa `NUMERIC(5,2)`, "wszystkie `NULL` albo suma
-   dokładnie 100" jako `CHECK` jednego wiersza (pkt 3-4); liczby jednostek `NULL` dozwolone tylko
-   bez stawki za jednostkę — ze stawką wszystkie cztery `NOT NULL` (`CHECK` jednego wiersza);
-4. waluta reguły: te same dwa `CHECK` co w katalogu (pkt 7).
+1. type agreement through the composite foreign key `(commercial_terms_id, model_type) →
+   commercial_terms (id, model_type)` and `CHECK (model_type = 'outcome_based')` — the `tm_terms`
+   pattern, unchanged (point 1);
+2. the fixed fee `NOT NULL`, the optional components `NULL` — never `0` for absence (point 2); all
+   amounts, the rate and the unit counts non-negative; `revenue_min <= revenue_max` when both
+   are set;
+3. four categories as columns, probabilities `NUMERIC(5,2)`, "all `NULL` or the sum exactly 100" as
+   a single-row `CHECK` (points 3-4); unit counts `NULL` allowed only without a unit rate — with a
+   rate all four `NOT NULL` (a single-row `CHECK`);
+4. the rule's currency: the same two `CHECK`s as in the catalogue (point 7).
 
-**Czego tu świadomie nie ma:** `ON DELETE` na kluczu obcym (kaskada byłaby drugą, niestrzeżoną drogą
-zniknięcia wiersza zatwierdzonego scenariusza), `updated_at` (znacznik należy do reguły), tabeli
-migawki (ADR-0004, aneks SC-4-03, pkt 4 — nic spoza scenariusza).
+**What is deliberately not here:** an `ON DELETE` on the foreign key (a cascade would be a second,
+unguarded way for an approved scenario's row to disappear), `updated_at` (the marker belongs to the
+rule), a snapshot table (ADR-0004, addendum SC-4-03, point 4 — nothing outside the scenario).
 
 Revision ID: b9e3c7a1f264
 Revises: b7e3f19a6c52
@@ -56,23 +59,23 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _LOCK_TIMEOUT = "3s"
-"""To samo ograniczenie co w każdej migracji od `d5e94a1c6b73` (R-06): odtworzenie CHECK na
-`commercial_terms` i klucz obcy do niej czekają na blokady tabeli czytanej przez inne sesje."""
+"""The same bound as every migration since `d5e94a1c6b73` (R-06): recreating the CHECK on
+`commercial_terms` and the foreign key to it wait for locks on a table read by other sessions."""
 
-# Zapisane tu, a nie importowane z modelu: migracja musi dalej opisywać schemat, który wytworzyła,
-# także gdy model pójdzie dalej (zasada `f3a1d0c58b27`). `tests/test_outcome_terms_schema.py`
-# pilnuje zgodności kopii.
+# Spelled here, not imported from the model: a migration must keep describing the schema it
+# produced even when the model moves on (the rule of `f3a1d0c58b27`).
+# `tests/test_outcome_terms_schema.py` keeps the copies honest.
 _MODEL_TYPE_OUTCOME_BASED = "outcome_based"
 
 _MODEL_TYPE_KNOWN_EXPRESSION = (
     "model_type IN ('time_and_material', 'story_points', 'outcome_based')"
 )
-"""Pełna lista `IN` — wartości wcześniejszych modeli razem z nową (ADR-0003, aneks SC-4-03,
-pkt 10c)."""
+"""The full `IN` list — the earlier models' values together with the new one (ADR-0003, addendum
+SC-4-03, point 10c)."""
 
 _PREVIOUS_MODEL_TYPE_KNOWN_EXPRESSION = "model_type IN ('time_and_material', 'story_points')"
-"""Lista sprzed tej migracji — dokładnie wyrażenie z `d2f6a91c4b58` (SC-4-04), niezmienione przez
-`b7e3f19a6c52` (SC-4-05); odtwarza ją `downgrade`."""
+"""The list from before this migration — exactly the expression from `d2f6a91c4b58` (SC-4-04),
+unchanged by `b7e3f19a6c52` (SC-4-05); `downgrade` recreates it."""
 
 _MODEL_TYPE_KNOWN = "ck_commercial_terms_model_type_known"
 
@@ -108,13 +111,13 @@ _PROBABILITY = sa.Numeric(precision=5, scale=2)
 def upgrade() -> None:
     op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
 
-    # --- dyskryminator: pełna lista `IN` (ADR-0003, aneks SC-4-03, pkt 1 i 10c) ------------------
+    # --- discriminator: full `IN` list (ADR-0003, addendum SC-4-03, points 1 and 10c) -------------
     op.drop_constraint(op.f(_MODEL_TYPE_KNOWN), "commercial_terms", type_="check")
     op.create_check_constraint(
         op.f(_MODEL_TYPE_KNOWN), "commercial_terms", sa.text(_MODEL_TYPE_KNOWN_EXPRESSION)
     )
 
-    # --- szczegóły reguły Outcome-based, 1:1, zgodność typu w bazie ------------------------------
+    # --- Outcome-based rule details, 1:1, type agreement in the database --------------------------
     category_columns: list[sa.Column] = []
     category_checks: list[sa.CheckConstraint] = []
     for category in _CATEGORIES:
@@ -195,12 +198,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Odwrotność `upgrade`: tabela szczegółów, potem lista `IN` sprzed migracji.
+    """Reverse of `upgrade`: the details table, then the `IN` list from before this migration.
 
-    Utrata danych z definicji, jak w każdym downgrade migracji expand — istnieje, żeby migrację
-    dało się przetestować w obie strony. Reguły T&M i Story Points przechodzą bez zmian. Pozostała
-    reguła `outcome_based` (bez szczegółów po usunięciu tabeli) sprawi, że odtworzenie CHECK
-    zostanie odrzucone przez bazę — celowo: downgrade nie usuwa po cichu reguł scenariuszy.
+    Data loss by definition, like every downgrade of an expand migration — it exists so the
+    migration can be tested both ways. The T&M and Story Points rules pass through unchanged. A
+    remaining `outcome_based` rule (with no details left once the table is dropped) will make
+    recreating the CHECK be refused by the database — deliberately: downgrade does not silently
+    delete scenario rules.
     """
     op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
     op.drop_table("outcome_terms")

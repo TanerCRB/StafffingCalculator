@@ -1,4 +1,4 @@
-"""SC-8-01 (Issue #14, F-12 block 8) — the change history one approval writes (ADR-0004, aneks
+"""SC-8-01 (Issue #14, F-12 block 8) — the change history one approval writes (ADR-0004, addendum
 2026-09-27).
 
 Four criteria:
@@ -12,7 +12,7 @@ Four criteria:
   `CallerIdentity.user_id`, resolved per request, never a constant — proven by substituting two
   different identities for two separate approvals (the `dependency_overrides` pattern
   `test_staffing_approved_guards.py` already uses for the same purpose, SC-1-08 K-06).
-- **The mandatory canary** (ADR-0004, aneks 2026-09-27 SC-8-01, point 4) — duplicating a scenario
+- **The mandatory canary** (ADR-0004, addendum 2026-09-27 SC-8-01, point 4) — duplicating a scenario
   must never duplicate its history: a copy is a new, unapproved draft, and a history row pointing at
   it would say the copy itself had been approved.
 
@@ -150,9 +150,9 @@ def test_k_03_performed_by_carries_the_identity_the_request_context_carried(
     (`dependency_overrides`, the same pattern `test_staffing_approved_guards.py` uses for SC-1-08
     K-06), and the audit row's `performed_by` must follow the substitution rather than stay fixed.
 
-    **Named, permanent limit (ADR-0004, aneks 2026-09-27 SC-8-01):** this proves the field is wired
-    to the request's own context, not that it carries a real, authenticated identity — that waits
-    on the authentication ADR, which does not exist yet.
+    **Named, permanent limit (ADR-0004, addendum 2026-09-27 SC-8-01):** this proves the field is
+    wired to the request's own context, not that it carries a real, authenticated identity —
+    that waits on the authentication ADR, which does not exist yet.
     """
     project_a, scenario_a = _draft_scenario(
         db_session, name="Aurora migration", accessible_to=("alice",)
@@ -191,7 +191,7 @@ def test_k_03_performed_by_carries_the_identity_the_request_context_carried(
 def test_a_duplicated_scenario_carries_zero_audit_log_rows_of_its_own(
     client: TestClient, db_session: Session
 ) -> None:
-    """ADR-0004, aneks 2026-09-27 SC-8-01, point 4 — `audit_log` is absent from
+    """ADR-0004, addendum 2026-09-27 SC-8-01, point 4 — `audit_log` is absent from
     `SCENARIO_CHILD_COPIERS` by requirement, and this is the canary that requirement needs: the
     registry is silent about omissions, so a future entry copying history rows onto a duplicate
     would pass every other test in this file and only fail here.

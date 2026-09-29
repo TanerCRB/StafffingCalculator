@@ -1,5 +1,5 @@
-"""Reading what the paid-absence cost of one scenario needs (F-07, F-05; SC-5-06; ADR-0013, aneks
-2026-09-23 SC-5-06; ADR-0004, aneks 2026-09-23 SC-5-06).
+"""Reading what the paid-absence cost of one scenario needs (F-07, F-05; SC-5-06; ADR-0013, addendum
+2026-09-23 SC-5-06; ADR-0004, addendum 2026-09-23 SC-5-06).
 
 Called by `app.data.personnel_cost.scenario_cost_for_caller` **after** that function has decided the
 scope and resolved the cost rates, so there is no scope decision here and no second cost-rate
@@ -15,9 +15,9 @@ and is gated by `app.api.response_shaping` with the rest of the payload.
   (`approved_snapshot_working_calendar(_day)`), `frozen_budgets_for_months`
   (`approved_snapshot_absence_budget`, per month, the live predicate's expression),
   `frozen_statutory_leave_type` and the frozen flags (`approved_snapshot_absence_type`). Never a
-  live table (aneks SC-5-06, point 1; control M-1). The scenario's own absence instances are read
+  live table (addendum SC-5-06, point 1; control M-1). The scenario's own absence instances are read
   from `staffing_position_absence` in both cases: they are group 2, frozen by the write guard, and
-  the snapshot deliberately does not copy them (ADR-0004, aneks 2026-09-22 SC-3-02, point 1).
+  the snapshot deliberately does not copy them (ADR-0004, addendum 2026-09-22 SC-3-02, point 1).
 
 **The budget share is the capacity's, not a copy of it**: each month's `BudgetShare` comes from
 `app.data.staffing.position_view`, the function the staffing grid uses, fed with whichever inputs
@@ -110,7 +110,7 @@ def paid_absence_months(
     """One `PaidAbsenceMonth` per allocation row of the scenario, live or frozen by its status.
 
     `rates` is keyed by (position, month) and holds the base cost's resolution of every allocation
-    row — the component uses **that** rate and asks no predicate of its own (aneks SC-5-06,
+    row — the component uses **that** rate and asks no predicate of its own (addendum SC-5-06,
     point 3).
     """
     positions = list(

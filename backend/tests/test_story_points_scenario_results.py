@@ -1,22 +1,23 @@
-"""Merge SC-4-03 z SC-4-04 — `/results`, what-if i porównanie dla scenariusza Story Points po
-zawężeniu strażnika wyścigu do źródeł zależnych od statusu (decyzja człowieka 2026-09-25, pkt 2;
-ADR-0003, aneks 2026-09-25 SC-4-03, pkt 8).
+"""Merge of SC-4-03 with SC-4-04 — `/results`, what-if and comparison for a Story Points scenario
+after narrowing the race guard to the status-dependent sources (human decision 2026-09-25, point 2;
+ADR-0003, addendum 2026-09-25 SC-4-03, point 8).
 
-Na `main` przed tym merge `refuse_a_status_race` porównywał `rate_source` przez samą równość, więc
-przychód Story Points (`story_points_terms`) i koszt (`live_catalog`/`approved_snapshot`) zawsze
-się różniły — każdy odczyt `/results`, what-if i porównania scenariusza Story Points kończył się
-stałym `409` (defekt na `main`). Po merge:
+On `main` before this merge, `refuse_a_status_race` compared `rate_source` by plain equality, so
+Story Points revenue (`story_points_terms`) and cost (`live_catalog`/`approved_snapshot`) always
+differed — every read of `/results`, what-if and comparison for a Story Points scenario ended in a
+constant `409` (a defect on `main`). After the merge:
 
-- zatwierdzony scenariusz Story Points → `200`, zysk od jego przychodu (25 × 1000 = 25000);
-- szkic Story Points → `200` na `/results`, what-if i porównaniu;
-- zatwierdzenie wpadające między odczyt przychodu Story Points a odczyt kosztu → `200`, spójny zysk;
-- **prawdziwy wyścig zatwierdzenia scenariusza T&M nadal daje `409`** — strażnik nie został
-  osłabiony dla `live_catalog`/`approved_snapshot`;
-- reguła Story Points w EUR + koszty w PLN (scenariusz bez waluty) → `profitability_state =
-  currency_mismatch`; kontrast w PLN → liczby.
+- an approved Story Points scenario → `200`, profit from its revenue (25 × 1000 = 25000);
+- a Story Points draft → `200` on `/results`, what-if and comparison;
+- an approval landing between the Story Points revenue read and the cost read → `200`, a
+  consistent profit;
+- **a real approval race on a T&M scenario still gives `409`** — the guard has not been weakened
+  for `live_catalog`/`approved_snapshot`;
+- a Story Points rule in EUR + costs in PLN (a scenario without a currency) →
+  `profitability_state = currency_mismatch`; the contrast in PLN → numbers.
 
-Prawdziwy PostgreSQL, prawdziwe endpointy; wyścigi na dwóch połączeniach i osobnym wątku, jak w
-`tests/test_scenario_results_race.py` i `tests/test_outcome_scenario_results.py`.
+Real PostgreSQL, real endpoints; races on two connections and a separate thread, as in
+`tests/test_scenario_results_race.py` and `tests/test_outcome_scenario_results.py`.
 """
 
 import uuid
@@ -58,8 +59,8 @@ from tests.test_scenario_what_if import what_if_path
 
 MAR = date(2026, 3, 1)
 
-# 25 punktów × 1000 = 25000 przychodu Story Points; 100 h × 120 = 12000 kosztu osobowego, 2000
-# kosztu dodatkowego, 0 nieobecności → 14000; zysk 11000; marża 44.00%; narzut 78.57%.
+# 25 points × 1000 = 25000 Story Points revenue; 100 h × 120 = 12000 personnel cost, 2000
+# additional cost, 0 absences → 14000; profit 11000; margin 44.00%; markup 78.57%.
 SP_CALCULATED = {
     "included_cost": "14000.00",
     "profit": "11000.00",
@@ -75,7 +76,7 @@ def _results(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID):
 
 
 def _story_points_scenario(session: Session, *, name: str):
-    """`_full_scenario` (stawka PLN, koszt dodatkowy 2000) z regułą Story Points zamiast T&M."""
+    """`_full_scenario` (PLN rate, additional cost 2000) with a Story Points rule instead of T&M."""
     _ensure_statutory_bypass(session)
     project, scenario, _ = _full_scenario(session, name=name, create_commercial_terms=False)
     make_story_points_terms(session, scenario)
@@ -85,11 +86,11 @@ def _story_points_scenario(session: Session, *, name: str):
 def test_merge_an_approved_story_points_scenario_answers_200_with_profit_from_its_revenue(
     client: TestClient, db_session: Session
 ) -> None:
-    """Zatwierdzony scenariusz Story Points: przychód 25000.00 (`story_points_terms`), koszt z
-    migawki (`approved_snapshot`) → `200`, zysk 11000.00.
+    """An approved Story Points scenario: revenue 25000.00 (`story_points_terms`), cost from the
+    snapshot (`approved_snapshot`) → `200`, profit 11000.00.
 
-    Mutacja: strażnik porównujący `rate_source` przez samą równość (stan `main` sprzed merge) →
-    `409` zamiast `200`."""
+    Mutation: a guard comparing `rate_source` by plain equality (the state of `main` before the
+    merge) → `409` instead of `200`."""
     project, scenario = _story_points_scenario(db_session, name="SP results approved")
     approval = client.post(approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
     assert approval.status_code == 200, approval.text
@@ -108,10 +109,11 @@ def test_merge_an_approved_story_points_scenario_answers_200_with_profit_from_it
 def test_merge_a_story_points_draft_answers_200_on_results_what_if_and_comparison(
     client: TestClient, db_session: Session
 ) -> None:
-    """Szkic Story Points: przychód `story_points_terms`, koszt `live_catalog` — `/results`,
-    what-if (`+10%`: 12000 → 13200) i porównanie (SC-6-02) odpowiadają `200` z liczbami, nie `409`.
+    """A Story Points draft: revenue `story_points_terms`, cost `live_catalog` — `/results`,
+    what-if (`+10%`: 12000 → 13200) and comparison (SC-6-02) all answer `200` with numbers, not
+    `409`.
 
-    Mutacja: dowolne z trzech miejsc porównujące `rate_source` przez samą równość → `409`."""
+    Mutation: any of the three places comparing `rate_source` by plain equality → `409`."""
     project, scenario = _story_points_scenario(db_session, name="SP results draft")
 
     with caller_holding(*EVERYTHING, Permission.PERSONNEL_COSTS_READ):
@@ -130,9 +132,10 @@ def test_merge_a_story_points_draft_answers_200_on_results_what_if_and_compariso
 
 
 def _committed_story_points_scenario(engine: Engine) -> dict[str, uuid.UUID]:
-    """Zatwierdzony w bazie szkic Story Points z kosztem: 100 godzin planu po 120 (12000), reguła
-    25 × 1000 (25000), bez kosztu dodatkowego — zysk 13000. Kształt `_committed_scenario` z
-    `tests/test_scenario_results_race.py`, z regułą Story Points zamiast T&M."""
+    """A Story Points draft committed to the database with cost: 100 planned hours at 120 (12000),
+    the rule 25 × 1000 (25000), no additional cost — profit 13000. The shape of
+    `_committed_scenario` from `tests/test_scenario_results_race.py`, with a Story Points rule
+    instead of T&M."""
     with Session(bind=engine, expire_on_commit=False, future=True) as setup:
         project = make_project(
             setup,
@@ -175,9 +178,9 @@ def _committed_story_points_scenario(engine: Engine) -> dict[str, uuid.UUID]:
 def test_merge_an_approval_between_the_story_points_revenue_and_the_cost_read_is_not_a_race(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """Zatwierdzenie commitowane po zapytaniu o `story_points_terms` (odczyt przychodu), a przed
-    odczytem kosztu: `200`, zysk 13000 spójny. Przychód Story Points czyta wyłącznie własny,
-    strzeżony wiersz scenariusza, więc jest ten sam przed i po zatwierdzeniu."""
+    """An approval committed after the query for `story_points_terms` (the revenue read), and
+    before the cost read: `200`, a consistent profit of 13000. Story Points revenue reads only its
+    own, guarded scenario row, so it is the same before and after the approval."""
     state = _committed_story_points_scenario(engine)
 
     response, _, _ = _results_with_an_approval_after(
@@ -198,10 +201,10 @@ def test_merge_an_approval_between_the_story_points_revenue_and_the_cost_read_is
 def test_merge_a_real_tm_approval_race_between_the_two_reads_is_still_409(
     committing_client: TestClient, engine: Engine
 ) -> None:
-    """Kontrast — prawdziwy wyścig zatwierdzenia scenariusza T&M (przychód z żywego katalogu, koszt
-    z migawki) nadal `409` i żadna z liczb 20000/12000/8000. Mutacja: strażnik, który przestaje
-    porównywać, gdy którekolwiek źródło spoza `STATUS_DEPENDENT_SOURCES` jest znane w systemie (albo
-    wcale) → `200` z pomieszanymi połówkami."""
+    """Contrast — a real approval race on a T&M scenario (revenue from the live catalogue, cost
+    from the snapshot) still `409` and none of the figures 20000/12000/8000. Mutation: a guard
+    that stops comparing once any source outside `STATUS_DEPENDENT_SOURCES` is known to the
+    system (or not known at all) → `200` with mismatched halves."""
     state = _committed_scenario(engine)
 
     response, _, _ = _results_with_an_approval_after(
@@ -216,9 +219,10 @@ def test_merge_a_real_tm_approval_race_between_the_two_reads_is_still_409(
 def test_merge_an_eur_story_points_rule_with_pln_costs_is_currency_mismatch(
     client: TestClient, db_session: Session
 ) -> None:
-    """Reguła Story Points w EUR, koszty w PLN, scenariusz bez waluty: przychód 25000.00 EUR
-    `calculated`, a zysk, marża, narzut i koszt włączony `"n/a"` ze stanem `currency_mismatch`.
-    Mutacja: usunięcie porównania walut w `scenario_profitability` → zysk `11000.00`."""
+    """A Story Points rule in EUR, costs in PLN, a scenario without a currency: revenue 25000.00
+    EUR `calculated`, and profit, margin, markup and included cost `"n/a"` with state
+    `currency_mismatch`. Mutation: dropping the currency comparison in `scenario_profitability` →
+    profit `11000.00`."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="SP currency EUR", create_commercial_terms=False
@@ -237,8 +241,9 @@ def test_merge_an_eur_story_points_rule_with_pln_costs_is_currency_mismatch(
 def test_merge_contrast_the_same_story_points_rule_in_pln_gives_numbers(
     client: TestClient, db_session: Session
 ) -> None:
-    """Kontrast — ta sama reguła w PLN, te same koszty, scenariusz bez waluty: liczby. Dowodzi, że
-    stan wyżej pochodzi z waluty reguły, nie z braku waluty scenariusza ani z modelu."""
+    """Contrast — the same rule in PLN, the same costs, a scenario without a currency: numbers.
+    Proves that the state above comes from the rule's currency, not from the scenario's lack of a
+    currency nor from the model."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="SP currency PLN", create_commercial_terms=False

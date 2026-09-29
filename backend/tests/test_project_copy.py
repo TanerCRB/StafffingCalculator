@@ -474,7 +474,7 @@ def test_project_copy_denies_a_caller_without_any_identity(
 def test_copy_of_an_archived_project_is_active_and_leaves_the_source_archived(
     client: TestClient, db_session: Session
 ) -> None:
-    """Archiving is a visibility state of the *source* (ADR-0004, addendum "archiwizacja").
+    """Archiving is a visibility state of the *source* (ADR-0004, addendum "archiving").
 
     Not an acceptance criterion — a decision written down in `PROJECT_COLUMNS_NOT_COPIED` and
     pinned here so it cannot drift silently. Copying an archived project is how a closed piece of
@@ -625,10 +625,11 @@ def test_k_15_copying_a_project_copies_no_organisational_calendar_row(
     # (3) the registry is unchanged by the copy. Two entries since SC-4-01 — re-armed, not loosened:
     # the second is the commercial-rule aggregate (ADR-0004, addendum 2026-09-23 SC-4-01, point 1b),
     # a scenario-owned table, and still no calendar copier. Three since SC-5-05 — re-armed, not
-    # loosened: the third is `copy_scenario_additional_costs` (ADR-0004, aneks SC-5-05, point 4),
-    # the scenario-level additional costs, again scenario-owned. Four since SC-1-11 — re-armed, not
-    # loosened: the fourth is `copy_scenario_delivery_segments` (ADR-0004, addendum 2026-09-25
-    # SC-1-11, point 4), the delivery segments/workstreams, again scenario-owned. Still no calendar
+    # loosened: the third is `copy_scenario_additional_costs` (ADR-0004, addendum SC-5-05, point
+    # 4), the scenario-level additional costs, again scenario-owned. Four since SC-1-11 —
+    # re-armed, not loosened: the fourth is `copy_scenario_delivery_segments` (ADR-0004, addendum
+    # 2026-09-25 SC-1-11, point 4), the delivery segments/workstreams, again scenario-owned.
+    # Still no calendar
     # copier.
     assert len(project_writes.SCENARIO_CHILD_COPIERS) == copiers_before == 4
 

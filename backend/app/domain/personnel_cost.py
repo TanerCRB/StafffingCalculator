@@ -82,8 +82,8 @@ structure substituted by a hypothetical salary raise and never persisted. Closed
 equality has been audited so this third value is never mistaken for either real source — in
 particular `app.data.scenario_results.ScenarioResultsRaceDetected`'s guard, which the what-if path
 (`app.data.scenario_what_if`) never feeds a substituted view: it compares the two **real** sources
-before applying any raise, exactly as `scenario_results_for_caller` does (ADR-0013, aneks
-2026-09-24 "granica reużycia dla przeliczenia bez zapisu")."""
+before applying any raise, exactly as `scenario_results_for_caller` does (ADR-0013, addendum
+2026-09-24 "reuse boundary for a recalculation without persisting")."""
 
 HOURS_SOURCE_PLANNED: Final = "planned_allocation_hours"
 """The one source of hours of the worked-time basis (ADR-0013, point 4): the plan, non-billable
@@ -101,13 +101,14 @@ class CostRateWindow:
     The cost rate only: nothing on this type carries `default_selling_rate`, so the cost path
     cannot read the revenue's column by accident (ADR-0013, point 1).
 
-    **`surcharge_percent`/`includes_surcharge` since SC-5-02** (ADR-0013, aneks 2026-09-25, Q4/Q5):
-    the two new columns of `catalog_default_rates`, on the same row and therefore in every window
-    this type already carries — no second window type, no second predicate. The SQL predicate that
-    produces `WorkedMonth.rate` (`app.data.personnel_cost.month_has_cost_rate`) requires these two
-    to agree across the windows of one month exactly as it already required `cost_rate`/`currency`
-    to (closing the gap Guardian/Reviewer named at gate 2 review, 2026-09-25): a boundary that moves
-    only the surcharge or its flag is exactly as disqualifying as one that moves the cost rate."""
+    **`surcharge_percent`/`includes_surcharge` since SC-5-02** (ADR-0013, addendum 2026-09-25,
+    Q4/Q5): the two new columns of `catalog_default_rates`, on the same row and therefore in every
+    window this type already carries — no second window type, no second predicate. The SQL
+    predicate that produces `WorkedMonth.rate` (`app.data.personnel_cost.month_has_cost_rate`)
+    requires these two to agree across the windows of one month exactly as it already required
+    `cost_rate`/`currency` to (closing the gap Guardian/Reviewer named at gate 2 review,
+    2026-09-25): a boundary that moves only the surcharge or its flag is exactly as disqualifying
+    as one that moves the cost rate."""
 
     source_rate_id: uuid.UUID
     effective_from: date
@@ -168,7 +169,7 @@ class CostAssumptionsUsed:
     """What a cost figure — or its absence — depends on (F-06.5 applied to the cost).
 
     Present on both shapes of the answer. It names the cost rates used, so it **is** a personnel
-    cost itself and is gated with the amount (ADR-0005, aneks 2026-09-23 SC-5-01, point 2).
+    cost itself and is gated with the amount (ADR-0005, addendum 2026-09-23 SC-5-01, point 2).
     """
 
     rate_source: str
@@ -280,10 +281,10 @@ def base_personnel_cost(
     )
 
 
-# --- the fully loaded personnel cost (SC-5-02, F-07; ADR-0013, aneks 2026-09-25) ------------------
+# --- the fully loaded personnel cost (SC-5-02, F-07; ADR-0013, addendum 2026-09-25) -------------
 
 COST_BASIS_FULLY_LOADED: Final = "fully_loaded"
-"""The fully loaded cost: `default_cost_rate` **plus** its surcharge (ADR-0013, aneks 2026-09-25
+"""The fully loaded cost: `default_cost_rate` **plus** its surcharge (ADR-0013, addendum 2026-09-25
 SC-5-02, Q4). A field of its own, never `COST_BASIS_BASE` widened — criterion K-01: the base cost
 stays exactly the figure SC-5-01 proved, and the fully loaded cost is a second, named field beside
 it, never a silent replacement."""
@@ -293,11 +294,11 @@ def surcharge_fraction(rate: MonthCostRate) -> Decimal:
     """The fraction of `rate.cost_rate` this month's surcharge adds — `0` when the row already
     carries it (criterion K-02).
 
-    The one place `surcharge_percent` and `includes_surcharge` are read together: they share one row
-    of `catalog_default_rates` (ADR-0013, aneks 2026-09-25 SC-5-02, Q5), so a formula that read one
-    without the other could double the surcharge on a tuple whose base rate already includes it. A
-    flag read here and a percent read elsewhere is exactly the shape the mutation "delete the
-    `includes_surcharge` branch, always add the percent" would produce undetected.
+    The one place `surcharge_percent` and `includes_surcharge` are read together: they share one
+    row of `catalog_default_rates` (ADR-0013, addendum 2026-09-25 SC-5-02, Q5), so a formula that
+    read one without the other could double the surcharge on a tuple whose base rate already
+    includes it. A flag read here and a percent read elsewhere is exactly the shape the mutation
+    "delete the `includes_surcharge` branch, always add the percent" would produce undetected.
     """
     if rate.includes_surcharge:
         return Decimal("0")
@@ -319,7 +320,7 @@ class FullyLoadedPersonnelCostResult:
     assumptions_used: CostAssumptionsUsed
     """The same rate windows `base_personnel_cost` names for the identical months — not a second,
     parallel list: the fully loaded cost is a second consumer of the same resolved rates, never a
-    second resolution of them (ADR-0013, aneks 2026-09-24 "granica reużycia", applied one task
+    second resolution of them (ADR-0013, addendum 2026-09-24 "reuse boundary", applied one task
     over)."""
     basis: str = COST_BASIS_FULLY_LOADED
 

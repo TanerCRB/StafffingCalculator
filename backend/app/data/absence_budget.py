@@ -181,10 +181,10 @@ def frozen_statutory_leave_type(
     session: Session, scenario_id: uuid.UUID
 ) -> StatutoryLeaveType | None:
     """The statutory type **as one approved scenario froze it** — the snapshot's counterpart of
-    `statutory_leave_type` (ADR-0004, aneks 2026-09-23 SC-5-06, point 1).
+    `statutory_leave_type` (ADR-0004, addendum 2026-09-23 SC-5-06, point 1).
 
     The snapshot's own contract (`app.models.approved_snapshot.ApprovedSnapshotAbsenceType`, S-02 of
-    SC-3-03 as amended by ADR-0004, aneks 2026-09-23 SC-5-06, point 5): a frozen row with
+    SC-3-03 as amended by ADR-0004, addendum 2026-09-23 SC-5-06, point 5): a frozen row with
     `is_statutory_leave = true` is present **iff** a type was named when the scenario was approved
     and the scenario has an allocation row in a location with a calendar — budget or no budget.
     Every month this answer is consulted for with a calendar therefore sees the named type if there
@@ -192,8 +192,8 @@ def frozen_statutory_leave_type(
     not frozen" (control M-3). It stays that answer whatever the catalogue flags later — moving the
     flag to another type after the approval moves nothing here (control M-1). The flags returned
     (`generates_cost` included) are the frozen values, never the live ones. The one exception is
-    historical and named in the aneks: a scenario approved before it, with a named non-costing type
-    and no frozen budget, reads `None` here for ever.
+    historical and named in the addendum: a scenario approved before it, with a named non-costing
+    type and no frozen budget, reads `None` here for ever.
 
     `one_or_none()` holds because the approval copies the type from one snapshot of a catalogue in
     which a partial unique index allows one flagged row, and deduplicates the copy.
@@ -218,8 +218,8 @@ def frozen_budgets_for_months(
     session: Session, scenario_id: uuid.UUID, keys: Sequence[BudgetKey], months: Sequence[date]
 ) -> Mapping[tuple[BudgetKey, date], BudgetValue]:
     """The frozen budget in force for each (key, month) — the snapshot's counterpart of
-    `budgets_for_months`, **resolved per month by the same predicate** (ADR-0004, aneks 2026-09-22
-    SC-3-03, point 7c; aneks 2026-09-23 SC-5-06, point 2).
+    `budgets_for_months`, **resolved per month by the same predicate** (ADR-0004,
+    addendum 2026-09-22 SC-3-03, point 7c; addendum 2026-09-23 SC-5-06, point 2).
 
     The live read asks `valid_period @> month` of the generated column; the frozen table has no
     generated column (its column set is fixed by SC-3-03 K-07), so the window's range is built here

@@ -74,16 +74,17 @@ COPIED_POSITION_FIELDS: tuple[str, ...] = (
     "headcount",
     "start_date",
     "end_date",
-    # SC-5-03 (ADR-0013, aneks 2026-09-25 SC-5-03, point 3; ADR-0004, aneks of the same date, point
-    # 3): the personnel-cost basis travels with the position row the existing copier already copies
-    # by reflection — no new entry in `SCENARIO_CHILD_COPIERS`, and this drift guard is what proves
-    # it rather than assumes it.
+    # SC-5-03 (ADR-0013, addendum 2026-09-25 SC-5-03, point 3; ADR-0004, addendum of the same
+    # date, point 3): the personnel-cost basis travels with the position row the existing copier
+    # already copies by reflection — no new entry in `SCENARIO_CHILD_COPIERS`, and this drift
+    # guard is what proves it rather than assumes it.
     "cost_basis",
     "fixed_amount",
     "fixed_amount_currency",
     # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: the named person travels
     # with the position the existing copier copies by reflection — the copy points at the *same*
-    # person (ADR-0004, aneks 2026-09-27 SC-2-06, point 4), no new `SCENARIO_CHILD_COPIERS` entry.
+    # person (ADR-0004, addendum 2026-09-27 SC-2-06, point 4), no new `SCENARIO_CHILD_COPIERS`
+    # entry.
     "person_id",
 )
 """Position attributes the copy must carry over, written out by hand on purpose.
@@ -420,7 +421,7 @@ def test_k_04_a_fixed_amount_positions_basis_and_amount_copy_onto_an_independent
     explicitly_excluded`) proves the *columns* are not silently dropped from the copy; every
     other copy test in this file uses positions whose `cost_basis` is the default
     (`worked_time`, `fixed_amount NULL`), so none of them would notice a copier that returned
-    `cost_basis`'s **default** regardless of the source (ADR-0004, aneks 2026-09-25 SC-5-03,
+    `cost_basis`'s **default** regardless of the source (ADR-0004, addendum 2026-09-25 SC-5-03,
     point 3's own named mutation). This test's fixture is built so that mutation fails it
     specifically.
     """

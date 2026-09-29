@@ -1,6 +1,6 @@
 """create the person register and the optional person on staffing_position
 
-SC-2-06 (F-03, Issue #31; ADR-0019 — personal data; ADR-0004, ADR-0005 and ADR-0007 aneksy
+SC-2-06 (F-03, Issue #31; ADR-0019 — personal data; ADR-0004, ADR-0005 and ADR-0007 addenda
 2026-09-27 and 2026-09-28; gate 1 decisions 2 and 5, 2026-09-27; human decisions D-3 = A and
 D-4 = B, 2026-09-28). Expand only (ADR-0001, expand -> deploy -> contract): one new table, two new
 columns on an existing table (`person_id`, nullable with no default; `person_assignment_updated_at`,
@@ -9,7 +9,7 @@ and no existing value is rewritten (every position gets `person_id = NULL`, i.e.
 so the code deployed before this migration keeps reading and writing `staffing_position` exactly as
 it did, and there is no contract phase to pair with it.
 
-**Edited in place on 2026-09-28, not superseded by a new revision** (ADR-0019 aneks 2026-09-28,
+**Edited in place on 2026-09-28, not superseded by a new revision** (ADR-0019 addendum 2026-09-28,
 D-3): this migration has never left the task branch, and ADR-0001's expand/contract governs deployed
 migrations.
 
@@ -28,17 +28,17 @@ import never passes through a Pydantic model — ADR-0001):
    foreign key of that table: a person assigned to a position cannot be physically deleted
    (ADR-0019, point 7 — the deletion Story anonymises in place instead).
 3. `staffing_position.person_assignment_updated_at` — the assignment's **own** concurrency marker
-   (ADR-0007 aneks 2026-09-28, D-4 = B), so an assignment never moves the position's `updated_at`,
-   which is visible without `PEOPLE_READ`. No `ON UPDATE` behaviour anywhere: only the assignment
-   path writes it.
+   (ADR-0007 addendum 2026-09-28, D-4 = B), so an assignment never moves the position's
+   `updated_at`, which is visible without `PEOPLE_READ`. No `ON UPDATE` behaviour anywhere: only
+   the assignment path writes it.
 4. `ck_staffing_position_person_requires_single_headcount` (`person_id IS NULL OR headcount = 1`,
    decision Q-7 = a): holds for every existing row by construction (`person_id` is `NULL` on all of
    them), so adding it can never fail on data.
 
-**What is deliberately not here:** a snapshot table for the register (ADR-0004, aneks 2026-09-27,
+**What is deliberately not here:** a snapshot table for the register (ADR-0004, addendum 2026-09-27,
 point 1 — the name enters no calculation and must stay correctable); an index on
 `staffing_position.person_id` (no query reads positions by person — the register returns persons
-only, ADR-0019 "Decyzja" pt 3 — and nothing deletes a person; the first reverse query or the
+only, ADR-0019 "Decision" point 3 — and nothing deletes a person; the first reverse query or the
 deletion Story adds it together with its own reason); any row in `person` (fictitious data only, and
 never through a migration — ADR-0019, point 8).
 
@@ -98,10 +98,10 @@ def upgrade() -> None:
     )
 
     op.add_column(_POSITION, sa.Column("person_id", sa.UUID(), nullable=True))
-    # ADR-0007 aneks 2026-09-28 (D-4 = B): the assignment's own concurrency marker. `NOT NULL` with
-    # a server default, so every existing row gets `now()` in the same statement (a constant-ish
-    # default on PostgreSQL 11+: no table rewrite); no `ON UPDATE` anywhere — only the assignment
-    # path moves it.
+    # ADR-0007 addendum 2026-09-28 (D-4 = B): the assignment's own concurrency marker.
+    # `NOT NULL` with a server default, so every existing row gets `now()` in the same statement
+    # (a constant-ish default on PostgreSQL 11+: no table rewrite); no `ON UPDATE` anywhere —
+    # only the assignment path moves it.
     op.add_column(
         _POSITION,
         sa.Column(

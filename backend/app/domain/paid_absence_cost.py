@@ -1,5 +1,5 @@
 """The cost of paid absences — a named component beside the base personnel cost (F-07, F-05;
-SC-5-06; ADR-0013, aneks 2026-09-23 SC-5-06).
+SC-5-06; ADR-0013, addendum 2026-09-23 SC-5-06).
 
     paid absence cost = Σ over (position, allocation month) of
                         (manual paid-absence hours + leave-budget top-up hours) × cost rate
@@ -8,12 +8,12 @@ A pure function of what the data layer read — no `Session`, no clock, no catal
 shape of input comes from the live catalogue (a draft) and from the approval snapshot (an approved
 scenario); which one it was is decided in `app.data.paid_absence_cost`, never here.
 
-**A component of its own, beside the base cost and never inside it** (aneks SC-5-06, points 1 and
+**A component of its own, beside the base cost and never inside it** (addendum SC-5-06, points 1 and
 4). The base cost's hours are `planned_allocation_hours` (ADR-0013, point 4, unchanged); this
 component's hours come from a different, separately named source, and its amount is never added to
 the base amount here or anywhere else in this task — a total personnel cost is plan block 7's.
 
-**Where the hours come from** (aneks SC-5-06, point 2):
+**Where the hours come from** (addendum SC-5-06, point 2):
 
 - **(a) manual absences whose type has `generates_cost = true`**, counted exactly as the capacity
   counts them (SC-3-02, `app.domain.capacity.absence_day_equivalents_in_month`): the working days of
@@ -34,9 +34,9 @@ the base amount here or anywhere else in this task — a total personnel cost is
 decided answer, not a missing one — the budget contributes `0` hours because the type's flag says a
 day of that leave costs nothing extra. When the budget *cannot* be applied (no row covers the month,
 or no type is flagged statutory, so nobody can say whether its days cost anything) the answer is a
-named state, never a silent `0` (aneks SC-5-06, point 4; criterion K-03).
+named state, never a silent `0` (addendum SC-5-06, point 4; criterion K-03).
 
-**The same cost rate as the base cost** (aneks SC-5-06, point 3): the rate resolved for the
+**The same cost rate as the base cost** (addendum SC-5-06, point 3): the rate resolved for the
 (position, month) by ADR-0013's predicate (`app.data.personnel_cost.month_has_cost_rate`), handed
 in as the same `MonthCostRate`. The component is costed only in months with an allocation row,
 whatever `planned_allocation_hours` is — no proportion to the plan, no floor at zero planned hours.
@@ -48,7 +48,7 @@ costed twice, once as worked time and once here; named, not repaired.
 withholds the **whole component** — never the sum of the months that did resolve, never `0`, and
 never a reason to touch the base amount (criterion K-04).
 
-**Independent of every revenue calculation** (F-06; rule 10 of the Invariant Guardian; aneks
+**Independent of every revenue calculation** (F-06; rule 10 of the Invariant Guardian; addendum
 SC-5-06, control N-4). Nothing here imports `app.domain.revenue*` or `app.data.commercial_terms`,
 and none of them imports this module. `generates_revenue` is not read by anything in this component.
 """
@@ -79,7 +79,7 @@ from app.domain.personnel_cost import (
     surcharge_fraction,
 )
 
-# --- the named states of the component (aneks SC-5-06, point 4) ---------------------------------
+# --- the named states of the component (addendum SC-5-06, point 4) -----------------------------
 
 HOURS_STATES: Final = (NO_CALENDAR, NO_STATUTORY_LEAVE_TYPE, NO_BUDGET)
 """The states in which a month's paid-absence **hours** cannot be established, in the order the
@@ -185,8 +185,8 @@ class PaidAbsenceAssumptionsUsed:
 
     It carries hours per month and no rate: the cost rates are the base cost's
     (`CostAssumptionsUsed.rate_windows`), and repeating them here would be a second list of one
-    fact. Gated with the amount all the same (aneks SC-5-06, point 6): hours times the base cost's
-    rates is the amount, one multiplication away.
+    fact. Gated with the amount all the same (addendum SC-5-06, point 6): hours times the base
+    cost's rates is the amount, one multiplication away.
     """
 
     hours_source: str = HOURS_SOURCE_PAID_ABSENCES
@@ -205,7 +205,7 @@ class PaidAbsenceCostResult:
     currency: str
     assumptions_used: PaidAbsenceAssumptionsUsed
     basis: str = COST_BASIS_BASE
-    """`base` — the base cost rate, before overheads (aneks SC-5-06, point 5)."""
+    """`base` — the base cost rate, before overheads (addendum SC-5-06, point 5)."""
 
 
 @dataclass(frozen=True)
@@ -236,7 +236,7 @@ def month_paid_absence_hours(month: PaidAbsenceMonth) -> PaidAbsenceMonthHours |
        decision. Otherwise the budget must be applied (`BudgetShare.state == resolved`) and its
        month's top-up (`BudgetShare.hours`) is the part; any other budget state (`no_budget`,
        `no_statutory_leave_type`) names the month. The top-up already subtracts the booked
-       statutory days over the window (`max` first, proration second — ADR-0008 aneks SC-3-03,
+       statutory days over the window (`max` first, proration second — ADR-0008 addendum SC-3-03,
        points 9 and 10), which is why adding it to the manual statutory rows of (2) is never the
        whole entitlement twice.
     """
@@ -364,7 +364,7 @@ def paid_absence_cost(
     )
 
 
-# --- the fully loaded paid-absence cost (SC-5-02, F-07; ADR-0013, aneks 2026-09-25 pt 5) ---------
+# --- the fully loaded paid-absence cost (SC-5-02, F-07; ADR-0013, addendum 2026-09-25 pt 5) -----
 
 
 @dataclass(frozen=True)
@@ -397,8 +397,8 @@ FullyLoadedPaidAbsenceCostAnswer = (
 def fully_loaded_paid_absence_cost(
     months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
 ) -> FullyLoadedPaidAbsenceCostAnswer:
-    """The paid-absence component's fully loaded cost (ADR-0013, aneks 2026-09-23 SC-5-06 pt 5,
-    applied by SC-5-02's aneks of 2026-09-25): "the paid-absence component gets the surcharge the
+    """The paid-absence component's fully loaded cost (ADR-0013, addendum 2026-09-23 SC-5-06 pt 5,
+    applied by SC-5-02's addendum of 2026-09-25): "the paid-absence component gets the surcharge the
     same way the base cost does" — the same `surcharge_fraction` of the same `MonthCostRate`, the
     same (manual + budget) hours `paid_absence_cost` already sums, never a fraction of a different
     figure.
