@@ -1148,10 +1148,15 @@ deferred list together with those of SC-6-01 point 5 and SC-2-06 point 7. The ap
    `SNAPSHOT_TABLES`, none to `SCENARIO_CHILD_COPIERS`; the canary "a copy of an approved scenario
    has zero snapshot rows" is unchanged.
 2. **The snapshot copier lists its columns explicitly** (`_copy_catalog_default_rates`: one select
-   list and one `from_select` column list). A column missing from the list does not fail: the
-   snapshot column's `DEFAULT 'hour'` fills it, and an approved scenario is priced hourly for ever
-   from a monthly catalogue rate — a silent AC-10 regression with no catalogue edit involved (the
-   class of the SC-5-02 and SC-5-03 warnings about closed column lists). Required proof: a
+   list and one `from_select` column list). A column missing from the list must not be filled
+   silently: with a `DEFAULT 'hour'` on the snapshot column it would be, and an approved scenario
+   would be priced hourly for ever from a monthly catalogue rate — a silent AC-10 regression with no
+   catalogue edit involved (the class of the SC-5-02 and SC-5-03 warnings about closed column
+   lists). **Decided at verification (reviewer R-01, human 2026-09-29): the migration adds the
+   snapshot column with `DEFAULT 'hour'` only to backfill existing rows and drops the default in the
+   same revision** (`ALTER COLUMN … DROP DEFAULT`), like the SC-5-02 pair; an insert that omits the
+   column fails on `NOT NULL`. The live catalogue column keeps `NOT NULL DEFAULT 'hour'`. Required
+   proof: a
    `month`-rate window frozen by the approval carries `month` on the snapshot row, and a later
    edit of the catalogue unit moves nothing on it. The mutation "unit dropped from the copier" and
    the mutation "unit dropped from the snapshot reader" are killed separately.
@@ -1204,7 +1209,7 @@ deferred list together with those of SC-6-01 point 5 and SC-2-06 point 7. The ap
 | Control | Acceptance criterion |
 |---|---|
 | SU-1 | An approval freezes the `cost_rate_unit` of every cost window it reads on the snapshot row; a later edit of the catalogue unit changes no snapshot value; an approved scenario is priced from the frozen unit. |
-| SU-2 | Existing catalogue and snapshot rows carry `hour` after the migration; the column is `NOT NULL DEFAULT 'hour'`; a `CHECK` admits only `hour`, `day`, `month`. |
+| SU-2 | Existing catalogue and snapshot rows carry `hour` after the migration; the live column is `NOT NULL DEFAULT 'hour'`, the snapshot column `NOT NULL` with no default; a `CHECK` admits only `hour`, `day`, `month` on the live table. |
 | SU-3 | The migration's downgrade refuses, echoing no row values, while a non-`hour` row exists in the catalogue or in the snapshot table, and succeeds otherwise. |
 | SU-4 | An approved day/month-rate scenario is priced from `approved_snapshot_working_calendar` and its days: editing the source calendar, its days or the location's `calendar_id` after the approval changes no figure of the cost. |
 | SU-5 | A copy of an approved scenario has zero snapshot rows, the new column included in what is not copied. |

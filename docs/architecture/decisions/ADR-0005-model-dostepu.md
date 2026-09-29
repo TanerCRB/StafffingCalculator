@@ -1267,6 +1267,18 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
      named:** the two gated fields differ formally from the other partial fields, and a blind
      caller who wants to change the amount must state the unit they intend — a deliberate act, not
      a guess about a value they cannot read.
+   - **Precondition on the unit (verification R-02, option C, human 2026-09-29).** The pair rule is
+     kept, and for a caller **without `PERSONNEL_COSTS_READ`** (the single factor the catalogue gate
+     uses) the stated `cost_rate_unit` is also a **precondition of the write**: it is added to the
+     `WHERE` of the same conditional `UPDATE` as the concurrency marker, so a unit that differs from
+     the stored one writes nothing and answers `409` (`condition=cost_rate_unit_precondition`), with
+     a message that names neither the stored unit nor any rate. A caller **with** the permission may
+     change the unit freely, since they can read it. A stale marker stays the marker's own `409`
+     (`condition=updated_at_marker`). Consequence named, accurately: the refusal *body* names neither the
+     stored unit nor any rate, but the *status* tells whether the guess was right, so a blind caller
+     recovers the stored unit in at most two probes (`409` versus `200`); the `200` branch also
+     overwrites the amount, which the caller is entitled to write. Impact low (the unit alone is a
+     weak cost fact); acceptance pending human recording.
 
 | Control | Acceptance criterion |
 |---|---|
@@ -1276,3 +1288,4 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
 | CG-4 | A value of `cost_rate_unit` outside `hour`/`day`/`month` is refused with `422`; an omitted value on create stores `hour`. |
 | CG-5 | A `PATCH` carrying `default_cost_rate` without `cost_rate_unit`, or `cost_rate_unit` without `default_cost_rate`, is refused with `422` and writes nothing; a `PATCH` carrying both, and one carrying neither (editing another field), succeed and leave the stored pair as sent / unchanged respectively. |
 | CG-6 | A caller without the conjunction receives the named states `no_calendar` and `no_working_days` in `state` on the scenario cost response, with `amount` and `assumptions_used` withheld (contrast: a caller with the conjunction sees the same `state`). |
+| CG-7 | A caller without `PERSONNEL_COSTS_READ` sending `default_cost_rate` with a `cost_rate_unit` that differs from the stored one receives `409`, nothing is written and the body names no stored unit or rate (the status still discloses whether the guess was right: the unit is recoverable in at most two probes, impact low, acceptance pending human recording); with the stored unit, `200`; a caller with `PERSONNEL_COSTS_READ` sending the identical request changes the unit (`200`). |

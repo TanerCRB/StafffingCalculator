@@ -403,6 +403,8 @@ aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie za
      `D`, so it is never `no_working_days`. Like every named state it withholds the whole scenario
      base cost, is never `0`, and is never an unnamed exception; it is a fourth value of the
      named state, not a third shape of result.
+     When positions of one scenario fail with both calendar states, `no_calendar` is reported before
+     `no_working_days` (approved by the human, 2026-09-29): the missing calendar is the one to fix first.
    - **Q-E — a day/month position requires a calendar regardless of hours.** A **zero-hour**
      day/month position in a location without a calendar is `no_calendar`, not `0.00`. The legal
      `0.00` of point 3(b) is a zero-hour month **with** a calendar. Only a scenario whose
@@ -418,5 +420,6 @@ aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie za
 | U-6 | The fully loaded cost, the paid-absence component and the what-if raise apply the unit; no path assumes `hour`. |
 | U-8 | When `currency_mismatch` and `no_calendar` both hold, the result is `currency_mismatch`; `no_cost_rate` precedes both. |
 | U-9 | A month-unit position in a month whose calendar has zero working days gives `no_working_days` for the whole scenario cost, with no amount and no division error; a day-unit position in the same month is priced from `standard_hours_per_day`. |
+| U-11 | When one scenario has both a position with no calendar and a month-unit position in a month with zero working days, the result is `no_calendar`. |
 | U-10 | A zero-hour day/month position in a location without a calendar gives `no_calendar`, not `0.00`; the same position with a calendar gives `0.00`. |
 | U-7 | Revenue modules do not reference `cost_rate_unit` and cost modules do not import revenue modules (structural import-graph test, mirror of C-5). A position with a monthly cost rate and an hourly selling rate yields the same revenue as with an hourly cost rate. |
