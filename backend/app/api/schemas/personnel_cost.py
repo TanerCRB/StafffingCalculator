@@ -38,6 +38,12 @@ currency of any line that produced it). **Carries no fully loaded/surcharge pair
 (SC-5-02 crossed with SC-5-03): a fixed amount is not a rate a surcharge multiplies, so there is
 no second figure to gate beside `fixed_amount_amount` the way `paid_absence` and the base cost
 each gained one.
+
+**Since SC-5-04 a fifth, named component** — the assigned-FTE basis's own cost (`assigned_fte_*`,
+ADR-0013 addendum 2026-09-29 SC-5-04), mirroring `fixed_amount_*` field for field: the amount and
+the assumptions (which name every stored FTE and every cost rate used) join `SCENARIO_COST_FIELDS`;
+the state and the currency do not. No fully loaded/surcharge pair (point 7), and never summed with
+any other component (the total belongs to the F-10 block).
 """
 
 import uuid
@@ -171,6 +177,46 @@ class FixedAmountAssumptionsRead(BaseModel):
     currencies: list[str]
 
 
+AssignedFteCostState = Literal[
+    "calculated",
+    "no_cost_rate",
+    "currency_mismatch",
+    "no_calendar",
+    "no_working_days",
+    "no_planned_months",
+    "no_cost_currency",
+]
+"""The assigned-FTE basis's own states (ADR-0013, addendum 2026-09-29 SC-5-04, point 5) — its own
+vocabulary, independent of `PersonnelCostState` and `FixedAmountCostState` (three formulas, three
+predicates). Shown to every caller, like `state`: naming why a figure cannot be stated carries no
+amount by itself."""
+
+
+class AssignedFteLineRead(BaseModel):
+    """One `assigned_fte` position's stored FTE — a fraction (`1` = one FTE of the position)."""
+
+    position_id: uuid.UUID
+    assigned_fte: DecimalString
+
+
+class AssignedFteAssumptionsRead(BaseModel):
+    """What the assigned-FTE component — or its absence — depends on, gated with its amount exactly
+    as `FixedAmountAssumptionsRead` is: it names a stored FTE and the cost rates, one
+    `headcount = 1` position away from naming what one person costs (ADR-0005, addendum
+    2026-09-29 SC-5-04)."""
+
+    hours_source: Literal["assigned_fte_x_calendar_basis_hours"]
+    vendor_axis: Literal["internal"]
+    # No `rate_source` here: the payload's own `assumptions_used.rate_source` already says whether
+    # this scenario was read live, from its snapshot or under a what-if, and the FTE component is
+    # read at the same status by the same call (one statement of the truth, not two that could
+    # drift).
+    lines: list[AssignedFteLineRead]
+    rate_windows: list[CostRateWindowRead]
+    unresolved_months: list[UnresolvedCostMonthRead]
+    currencies: list[str]
+
+
 class PaidAbsenceAssumptionsRead(BaseModel):
     """What the paid-absence component depends on — gated with its amount. No cost rate here: the
     rates are the base cost's, in `assumptions_used.rate_windows`."""
@@ -239,6 +285,17 @@ class PersonnelCostRead(BaseModel):
     scenario's project."""
     fixed_amount_currency: str | None
     fixed_amount_assumptions_used: FixedAmountAssumptionsRead | None
+    """`null` when the caller may not see personnel costs of this scenario's project."""
+
+    assigned_fte_state: AssignedFteCostState
+    """The assigned-FTE basis's own state (SC-5-04) — independent of every other state on this
+    payload and shown to every caller, like `fixed_amount_state`."""
+    assigned_fte_amount: DecimalString | Literal[NOT_APPLICABLE] | None
+    """The scenario's `assigned_fte` positions, summed — a **fifth**, independent figure, never
+    added to `amount`, `paid_absence_amount` or `fixed_amount_amount`. `"n/a"` for a named state;
+    `null` when the caller may not see personnel costs of this scenario's project."""
+    assigned_fte_currency: str | None
+    assigned_fte_assumptions_used: AssignedFteAssumptionsRead | None
     """`null` when the caller may not see personnel costs of this scenario's project."""
 
 
