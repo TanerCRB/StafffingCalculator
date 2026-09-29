@@ -261,3 +261,31 @@ nieodróżnialna od anonimowej „brak flagi »przypisano« — na każdej ście
 | A7-31-2 | Przypisanie z nieaktualnym znacznikiem przypisania → `409` bez zapisu; konkurent commitujący przypisanie w okno między odczytem a zapisem → drugi zapis odmówiony (test dwóch połączeń); z aktualnym → sukces (kontrast). |
 | A7-31-3 | Zapis alokacji, podstawy kosztu, dodania i usunięcia nieobecności nie zmienia znacznika przypisania ani `person_id`; zapis siatki z `updated_at` odczytanym przed cudzym przypisaniem kończy się sukcesem, a po nim w bazie są oba zapisy. |
 | A7-31-4 | Kopia pozycji ma ten sam `person_id` co źródło i własny znacznik przypisania (równy chwili utworzenia kopii, nie wartości źródła); test dryfu kolumn pozycji nazywa znacznik po stronie „niekopiowane". |
+
+### 2026-09-29 — a third meaning of `409` on the catalogue edit path (Issue #164, SC-5-09)
+
+**Status:** Draft — pending approval
+
+Point 4 of the addendum 2026-09-21 says `409` on the catalogue path has two meanings — a stale marker
+and a refusal from the state of the data — and that their messages stay distinguishable, neither a
+substring of the other. Point 7 of that addendum said deletion stays out of scope, so `409` gains no
+third meaning. Deletion is still out of scope; the third meaning comes from elsewhere.
+
+1. **`409` on the catalogue edit path now has three meanings.** Added: a caller without
+   `PERSONNEL_COSTS_READ` sent a `cost_rate_unit` that differs from the stored one, and the unit
+   precondition in the `WHERE` of the same conditional `UPDATE` matched no row
+   (`condition=cost_rate_unit_precondition`; ADR-0005, addendum 2026-09-29, point 7, R-02). It is not a
+   stale marker: the marker matched, and the unit is the second condition of the same statement.
+   Telling the person to re-read the row would be wrong — a blind caller cannot read the unit.
+2. **The pattern of point 4 is unchanged, extended by one member.** The three messages stay
+   distinguishable and none is a substring of another; none carries a row value (NF-11). How the client
+   names the third ending is settled in ADR-0009, addendum 2026-09-29 (Issue #164), not here.
+3. **Order of diagnosis.** A stale marker keeps its own `409` (`condition=updated_at_marker`); a message
+   carries one identifier, never two. The `404`-before-`409` order of point 5 is unchanged.
+4. **Not changed.** The marker mechanism, its granularity and the race-test obligation of point 3
+   apply to the unit precondition as they do to the marker — it is evaluated in the same statement.
+
+| Control | Acceptance criterion |
+|---|---|
+| A7-164-1 | On the catalogue edit path, a stale marker, a state-of-data refusal and a unit-precondition refusal each answer `409` with a message that names its own cause; no message is a substring of another. |
+| A7-164-2 | A request with a stale marker and a matching unit answers the marker's `409`; a request with the current marker and a differing unit (caller without `PERSONNEL_COSTS_READ`) answers the unit precondition's `409` and writes nothing (contrast). |
