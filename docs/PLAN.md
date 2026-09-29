@@ -1882,14 +1882,15 @@ history / this file's own change log, not as tracked product work.
   fixed except three human-recorded exceptions (owner TanerCRB): the blind-writer unit oracle
   (expiry: authentication ADR, #150), downgrade lock order vs a concurrent approval (expiry: first
   persistent environment), `cost_rate_unit` absent from `assumptions_used` and the frontend
-  (expiry: closure of #164).
+  (expiry: closure of #164; the frontend half was met by SC-5-09, the `assumptions_used` half is
+  re-dated at gate 3 of SC-5-09 to Issue #172).
   **Accepted, not repaired:** overtime on a month rate costs more than one month; a location with no
   calendar at approval stays `no_calendar` on that approved scenario for ever; the addenda of
   ADR-0013, ADR-0004, ADR-0002, ADR-0005 and ADR-0015 (2026-09-29) remain "Draft — pending
   approval"; frontend stale (`RateForm.tsx` "unit is not a choice", cost cell reads `rate.unit`),
   tracked in Issue #164.
 
-- [ ] **SC-5-09** — Catalogue screen: cost rate unit selector and display (F-07, frontend),
+- [x] **SC-5-09** — Catalogue screen: cost rate unit selector and display (F-07, frontend),
   follow-up of SC-5-08 (Issue #164). The screen offers the cost rate unit as a choice
   (`hour`/`day`/`month`, taken from the API contract's closed set) and shows every cost rate with
   the unit the API returned for that row, never the selling-rate `unit`.
@@ -1937,6 +1938,25 @@ history / this file's own change log, not as tracked product work.
   **Basis:** `Wymagania/Requirements_EN.md` §4 F-07, NF-07; ADR-0002 addendum 2026-09-29, ADR-0005
   addenda 2026-09-21 (SC-2-04) and 2026-09-29, ADR-0009 and ADR-0007 (addenda required), ADR-0008
   addendum 2026-09-19 pt 2, ADR-0010; `docs/PLAN.md` SC-5-08.
+  **Done 2026-09-29:** PR #173 merged; frontend 414 tests green, `pnpm lint` and `pnpm build`
+  clean, CI green. K-01..K-07: `frontend/src/features/catalog/CatalogCostRateUnit.test.tsx`
+  (`K-01: …` x3, `K-02: …` x2, `K-03: …`, `K-04: …` x3, `K-05: …` x7 incl. the unit-change warning
+  and the edit/create options, `K-06: …`, `K-07: …`); the closed set and the condition identifier
+  against the backend source: `frontend/src/api/contracts/writeRefusals.test.ts`. Guardian PASS,
+  Security-Auditor PASS, Reviewer PASS after re-review, QA: proof holds after two tests killed five
+  first-suite survivors (mutation log in `docs/architecture/capabilities.md`). Existing tests
+  changed by decision: `CatalogWrite.test.tsx` K-14 (cost-unit half moved to K-04), two pins in
+  `CatalogScreenStructure.test.tsx`, fixtures.
+  **Recorded exception (owner TanerCRB):** the strict pair check refuses the whole catalogue read
+  when a frontend with this change is served by a backend that does not return `cost_rate_unit`
+  (rule: deploy the backend before the frontend, roll back the frontend first; expiry: first
+  persistent environment). The `assumptions_used` half of the SC-5-08 exception (3) is re-dated to
+  Issue #172.
+  **Accepted, not repaired:** the positive branch of the cost gate is fixture-only (no
+  `PERSONNEL_COSTS_READ` in the placeholder set); the blind-writer `409` ending is reachable only in
+  a race or from a non-UI client and is proven by a stubbed `409`; a blind writer is offered no
+  cost-amount edit; an empty `role="status"` element leaves a small layout gap; the ADR-0009 and
+  ADR-0007 addenda of 2026-09-29 (third `409` cause) remain "Draft — pending approval".
 
 - [x] **SC-6-01** — Duplikuj scenariusz niezależnie od źródła (F-09 pkt 1, AC-02). Nowy entry point
   do istniejącego mechanizmu kopiowania (`copy_scenario`/`SCENARIO_CHILD_COPIERS`, ADR-0004) —
