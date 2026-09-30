@@ -113,15 +113,15 @@ function revenueWithheld(state: WithheldRevenueState): RevenueRead {
 }
 
 function personnelCostCalculated(amount: string, currency: string): PersonnelCostSource {
-  return { state: "calculated", amount, currency };
+  return { state: "calculated", amount, currency, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: currency };
 }
 
 function personnelCostWithheld(state: Exclude<PersonnelCostState, "calculated">): PersonnelCostSource {
-  return { state, amount: "n/a", currency: null };
+  return { state, amount: "n/a", currency: null, paid_absence_state: state, paid_absence_amount: "n/a", paid_absence_currency: null };
 }
 
 function personnelCostGated(): PersonnelCostSource {
-  return { state: "calculated", amount: null, currency: null };
+  return { state: "calculated", amount: null, currency: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null };
 }
 
 function additionalCostCalculated(amount: string, currency: string): AdditionalCostSource {
@@ -350,7 +350,7 @@ describe("K-01 — no mixing of data between rows", () => {
             baseResults(ALPHA),
             // A malformed second row: `personnel_cost.state` is not one of PERSONNEL_COST_STATES.
             // A first-row-only shape check would let this through; a per-element one must not.
-            { ...baseResults(BETA), personnel_cost: { state: "not_a_real_state", amount: "n/a", currency: null } },
+            { ...baseResults(BETA), personnel_cost: { state: "not_a_real_state", amount: "n/a", currency: null, paid_absence_state: "calculated", paid_absence_amount: "10.00", paid_absence_currency: "PLN" } },
           ],
         },
       },

@@ -5,6 +5,8 @@ import {
   RESULTS_NOT_APPLICABLE,
   type AdditionalCostSource,
   type GatedResultField,
+  type PaidAbsenceCostState,
+  type PersonnelCostState,
   type PersonnelCostSource,
   type ScenarioResults,
 } from "../../api/contracts/scenarioResults";
@@ -23,6 +25,8 @@ import {
   MARKUP_LABEL,
   NEGATIVE_PROFIT_INDICATOR,
   PERSONNEL_COST_LABEL,
+  PAID_ABSENCE_COST_LABEL,
+  PAID_ABSENCE_COST_STATE_MESSAGES,
   PERSONNEL_COST_STATE_MESSAGES,
   PROFIT_LABEL,
   PROFITABILITY_CURRENCY_MISMATCH,
@@ -205,7 +209,8 @@ export function ScenarioResultsSection({
             {PROFITABILITY_CURRENCY_MISMATCH}
           </p>
         )}
-        <PersonnelCostLine source={results.personnel_cost} />
+        <PersonnelCostLine source={results.personnel_cost} component="base" />
+        <PersonnelCostLine source={results.personnel_cost} component="paid_absence" />
         <AdditionalCostLine source={results.additional_cost} />
         <GatedMoneyLine label={INCLUDED_COST_LABEL} value={results.included_cost} currency={revenueCurrency} />
         <GatedMoneyLine label={PROFIT_LABEL} value={results.profit} currency={revenueCurrency} />
@@ -258,24 +263,32 @@ function RevenueLine({ revenue }: { revenue: RevenueRead }) {
  * gate that is open but a `state` naming a cause renders that cause, never the generic sentence
  * (K-03).
  */
-function PersonnelCostLine({ source }: { source: PersonnelCostSource }) {
-  if (source.amount === null) {
+function PersonnelCostLine({ source, component }: { source: PersonnelCostSource; component: "base" | "paid_absence" }) {
+  const isBase = component === "base";
+  const state = isBase ? source.state : source.paid_absence_state;
+  const amount = isBase ? source.amount : source.paid_absence_amount;
+  const currency = isBase ? source.currency : source.paid_absence_currency;
+  const label = isBase ? PERSONNEL_COST_LABEL : PAID_ABSENCE_COST_LABEL;
+  if (amount === null) {
     return (
-      <p className="scenario-card__gaps" data-personnel-cost-state="unavailable">
-        {PERSONNEL_COST_LABEL} {RESULTS_FIELD_UNAVAILABLE}
+      <p className="scenario-card__gaps" data-personnel-cost-state="unavailable" data-cost-component={component}>
+        {label} {RESULTS_FIELD_UNAVAILABLE}
       </p>
     );
   }
-  if (source.state !== "calculated") {
+  if (state !== "calculated") {
+    const message = isBase
+      ? PERSONNEL_COST_STATE_MESSAGES[state as Exclude<PersonnelCostState, "calculated">]
+      : PAID_ABSENCE_COST_STATE_MESSAGES[state as Exclude<PaidAbsenceCostState, "calculated">];
     return (
-      <p className="scenario-card__gaps" data-personnel-cost-state={source.state}>
-        {PERSONNEL_COST_STATE_MESSAGES[source.state]}
+      <p className="scenario-card__gaps" data-personnel-cost-state={state} data-cost-component={component}>
+        {message}
       </p>
     );
   }
   return (
-    <p className="scenario-card__metric" data-personnel-cost-state="calculated">
-      {PERSONNEL_COST_LABEL} {formatMoneyString(source.amount, source.currency ?? "")}
+    <p className="scenario-card__metric" data-personnel-cost-state="calculated" data-cost-component={component}>
+      {label} {formatMoneyString(amount, currency ?? "")}
     </p>
   );
 }
