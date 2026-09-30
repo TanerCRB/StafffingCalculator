@@ -1127,6 +1127,13 @@ def _without_scenario_personnel_costs(
     silently. Raised explicitly, so `python -O` cannot remove it, and before the conjunction reads
     a flag that may belong to somebody else.
     """
+    if _may_view_scenario_costs(view, caller):
+        return item
+    return item.model_copy(update=dict.fromkeys(SCENARIO_COST_FIELDS))
+
+
+def _may_view_scenario_costs(view: ScenarioCostView, caller: CallerIdentity) -> bool:
+    """Apply the scenario's existing per-caller cost conjunction (ADR-0005)."""
     if view.user_id != caller.user_id:
         raise AssertionError(
             "A scenario cost view built for one user is being shaped with another user's "
@@ -1134,9 +1141,7 @@ def _without_scenario_personnel_costs(
             "another caller's permission set. Build the view through app.data.personnel_cost for "
             "the caller the response is for."
         )
-    if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
-        return item
-    return item.model_copy(update=dict.fromkeys(SCENARIO_COST_FIELDS))
+    return caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs
 
 
 def _paid_absence_fields(answer: PaidAbsenceCostAnswer) -> dict[str, Any]:
@@ -1536,14 +1541,7 @@ def _without_scenario_profitability(
     set would widen the gate silently. Raised explicitly, so `python -O` cannot remove it, and
     before the conjunction reads a flag that may belong to somebody else.
     """
-    if view.user_id != caller.user_id:
-        raise AssertionError(
-            "A scenario cost view built for one user is being shaped with another user's "
-            "identity: the profitability gate would combine one caller's assignment flag with "
-            "another caller's permission set. Build the view through app.data.scenario_results "
-            "for the caller the response is for."
-        )
-    if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
+    if _may_view_scenario_costs(view, caller):
         return item
     return item.model_copy(update=dict.fromkeys(SCENARIO_PROFITABILITY_FIELDS))
 
@@ -1583,6 +1581,25 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
         profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)
+
+
+def shape_scenario_results_for_export(
+    view: ScenarioResultsView, caller: CallerIdentity
+) -> dict[str, Any]:
+    """Return the existing result shape, omitting gated fields from downloadable artifacts.
+
+    Calculation and access decisions remain in the normal response-shaping path. Files omit the
+    gated paths (instead of serializing the API's null placeholders) while retaining genuine nulls
+    on every ungated field.
+    """
+    result = shape_scenario_results(view, caller).model_dump(mode="json")
+    if not _may_view_scenario_costs(view.cost_view, caller):
+        personnel = result["personnel_cost"]
+        for field in SCENARIO_COST_FIELDS:
+            personnel.pop(field, None)
+        for field in SCENARIO_PROFITABILITY_FIELDS:
+            result.pop(field, None)
+    return result
 
 
 def shape_scenario_what_if_billable_utilization(
