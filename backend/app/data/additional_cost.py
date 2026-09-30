@@ -215,7 +215,12 @@ def _line_of(row: AdditionalCostRow) -> CostLine:
 
 
 def additional_costs_for_caller(
-    session: Session, caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    allow_exchange_rates: bool = False,
 ) -> ScenarioAdditionalCostView | None:
     """The costs and their sum for one scenario — or `None`, with no way to tell why (K-08).
 
@@ -233,12 +238,15 @@ def additional_costs_for_caller(
     # the object was loaded earlier in the same session.
     session.refresh(scenario)
     status_at_read = scenario.status
+    allow_exchange_rates = allow_exchange_rates and scenario.currency is not None
     rows = _rows(session, scenario.id)
     return ScenarioAdditionalCostView(
         scenario=scenario,
         costs=rows,
         total=additional_cost_total(
-            [_line_of(row) for row in rows], scenario_currency=scenario.currency
+            [_line_of(row) for row in rows],
+            scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         status_at_read=status_at_read,
     )
@@ -259,9 +267,7 @@ def _row_by_id(session: Session, cost_id: uuid.UUID) -> AdditionalCostRow:
 # --- writing -------------------------------------------------------------------------------------
 
 
-def _position_in_scenario(
-    session: Session, scenario_id: uuid.UUID, position_id: uuid.UUID
-) -> bool:
+def _position_in_scenario(session: Session, scenario_id: uuid.UUID, position_id: uuid.UUID) -> bool:
     """Is there such a position *inside this scenario*? Reached only after `scenario_in_scope`, so
     it can never answer about a project the caller cannot see."""
     return session.execute(

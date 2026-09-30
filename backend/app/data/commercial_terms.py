@@ -287,9 +287,7 @@ def priced_month_windows(
     ]
     if include_planned_allocation_hours:
         selected_columns.append(
-            StaffingPositionAllocation.planned_allocation_hours.label(
-                "planned_allocation_hours"
-            )
+            StaffingPositionAllocation.planned_allocation_hours.label("planned_allocation_hours")
         )
     return (
         sa.select(*selected_columns)
@@ -384,25 +382,30 @@ class _Rule:
     has_details: bool
 
 
-RevenueCalculator = Callable[[Session, Scenario, _Rule], RevenueAnswer]
+RevenueCalculator = Callable[[Session, Scenario, _Rule, bool], RevenueAnswer]
 
 
-def _time_and_material(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+def _time_and_material(
+    session: Session, scenario: Scenario, rule: _Rule, allow_exchange_rates: bool = False
+) -> RevenueAnswer:
     """T&M: a rule without its `tm_terms` row is `incomplete_commercial_terms`, never priced."""
     source, months = _billable_months(session, scenario)
     if not rule.has_details:
         return RevenueUnavailable(
             reason=INCOMPLETE_COMMERCIAL_TERMS,
-            assumptions_used=AssumptionsUsed(
-                model_type=rule.terms.model_type, rate_source=source
-            ),
+            assumptions_used=AssumptionsUsed(model_type=rule.terms.model_type, rate_source=source),
         )
     return time_and_material_revenue(
-        months, rate_source=source, scenario_currency=scenario.currency
+        months,
+        rate_source=source,
+        scenario_currency=scenario.currency,
+        allow_currency_mismatch=allow_exchange_rates,
     )
 
 
-def _outcome_based(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+def _outcome_based(
+    session: Session, scenario: Scenario, rule: _Rule, allow_exchange_rates: bool = False
+) -> RevenueAnswer:
     """Outcome-based (F-06.3; ADR-0003, addendum 2026-09-25 SC-4-03): reads **only** the
     `outcome_terms` row of this rule — no staffing, no allocation, no catalogue, no snapshot.
 
@@ -416,7 +419,11 @@ def _outcome_based(session: Session, scenario: Scenario, rule: _Rule) -> Revenue
         return RevenueUnavailable(
             reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=outcome_assumptions()
         )
-    return outcome_based_revenue(_outcome_input(details), scenario_currency=scenario.currency)
+    return outcome_based_revenue(
+        _outcome_input(details),
+        scenario_currency=scenario.currency,
+        allow_currency_mismatch=allow_exchange_rates,
+    )
 
 
 def _outcome_details_of(session: Session, rule: _Rule) -> OutcomeTerms | None:
@@ -451,7 +458,9 @@ def _outcome_input(details: OutcomeTerms) -> OutcomeTermsInput:
     )
 
 
-def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+def _story_points(
+    session: Session, scenario: Scenario, rule: _Rule, allow_exchange_rates: bool = False
+) -> RevenueAnswer:
     """Story Points (F-06.4, SC-4-04): a rule without its `story_points_terms` row is
     `incomplete_commercial_terms`, never priced — the same named state T&M uses for the same reason
     (ADR-0003, point 3).
@@ -468,19 +477,20 @@ def _story_points(session: Session, scenario: Scenario, rule: _Rule) -> RevenueA
             reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=story_points_assumptions()
         )
     details = session.execute(
-        sa.select(StoryPointsTerms).where(
-            StoryPointsTerms.commercial_terms_id == rule.terms.id
-        )
+        sa.select(StoryPointsTerms).where(StoryPointsTerms.commercial_terms_id == rule.terms.id)
     ).scalar_one()
     return story_points_revenue(
         price_per_point=details.price_per_point,
         accepted_points=details.accepted_points,
         currency=details.currency,
         scenario_currency=scenario.currency,
+        allow_currency_mismatch=allow_exchange_rates,
     )
 
 
-def _fixed_price(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAnswer:
+def _fixed_price(
+    session: Session, scenario: Scenario, rule: _Rule, allow_exchange_rates: bool = False
+) -> RevenueAnswer:
     """Fixed Price: the agreed price of the rule's own details row — and nothing else is read.
 
     **No `_billable_months`, no catalogue, no snapshot, no allocation** (ADR-0003, addendum
@@ -490,10 +500,14 @@ def _fixed_price(session: Session, scenario: Scenario, rule: _Rule) -> RevenueAn
     A rule without its details row is `incomplete_commercial_terms` (`fixed_price_revenue(None)`),
     never a revenue of `0`.
     """
-    return _fixed_price_answer(_fixed_price_details_of(session, rule), scenario)
+    return _fixed_price_answer(
+        _fixed_price_details_of(session, rule), scenario, allow_exchange_rates=allow_exchange_rates
+    )
 
 
-def _fixed_price_answer(price: AgreedPrice | None, scenario: Scenario) -> RevenueAnswer:
+def _fixed_price_answer(
+    price: AgreedPrice | None, scenario: Scenario, *, allow_exchange_rates: bool = False
+) -> RevenueAnswer:
     """The Fixed Price answer — result or named state, with its `assumptions_used` — for a price
     already read (`_fixed_price_details_of`) and the scenario's currency.
 
@@ -502,7 +516,9 @@ def _fixed_price_answer(price: AgreedPrice | None, scenario: Scenario) -> Revenu
     passes the same value here and to `ScenarioCommercialView.agreed_price` (R-01 of the SC-4-02
     review, 2026-09-28; QA round 2: two calls of the formula could drift apart untested). Reads
     nothing."""
-    return fixed_price_revenue(price, scenario_currency=scenario.currency)
+    return fixed_price_revenue(
+        price, scenario_currency=scenario.currency, allow_currency_mismatch=allow_exchange_rates
+    )
 
 
 def _fixed_price_details_of(session: Session, rule: _Rule) -> AgreedPrice | None:
@@ -585,11 +601,15 @@ def _rule_of(session: Session, scenario_id: uuid.UUID) -> _Rule | None:
     # rotates `updated_at` in SQL, so a `CommercialTerms` already in the identity map — loaded
     # earlier in the same session — would otherwise answer with the marker it had before the edit,
     # and the client's next edit would be refused as stale.
-    rows = session.execute(
-        sa.select(CommercialTerms)
-        .where(CommercialTerms.scenario_id == scenario_id)
-        .execution_options(populate_existing=True)
-    ).scalars().all()
+    rows = (
+        session.execute(
+            sa.select(CommercialTerms)
+            .where(CommercialTerms.scenario_id == scenario_id)
+            .execution_options(populate_existing=True)
+        )
+        .scalars()
+        .all()
+    )
     if not rows:
         return None
     if len(rows) > 1:
@@ -599,9 +619,12 @@ def _rule_of(session: Session, scenario_id: uuid.UUID) -> _Rule | None:
         )
     terms = rows[0]
     detail_table = DETAIL_TABLE_BY_MODEL.get(terms.model_type)
-    has_details = detail_table is not None and session.execute(
-        sa.select(sa.exists().where(detail_table.c.commercial_terms_id == terms.id))
-    ).scalar_one()
+    has_details = (
+        detail_table is not None
+        and session.execute(
+            sa.select(sa.exists().where(detail_table.c.commercial_terms_id == terms.id))
+        ).scalar_one()
+    )
     return _Rule(terms=terms, has_details=has_details)
 
 
@@ -615,17 +638,24 @@ def rules_of_scenario(session: Session, scenario_id: uuid.UUID) -> list[_Rule]:
     for a given unit of work, because nothing here knows which unit of work belongs to which
     segment (F-04, out of scope of SC-4-05).
     """
-    rows = session.execute(
-        sa.select(CommercialTerms)
-        .where(CommercialTerms.scenario_id == scenario_id)
-        .order_by(CommercialTerms.scope_ref.is_(None).desc(), CommercialTerms.scope_ref)
-    ).scalars().all()
+    rows = (
+        session.execute(
+            sa.select(CommercialTerms)
+            .where(CommercialTerms.scenario_id == scenario_id)
+            .order_by(CommercialTerms.scope_ref.is_(None).desc(), CommercialTerms.scope_ref)
+        )
+        .scalars()
+        .all()
+    )
     rules: list[_Rule] = []
     for terms in rows:
         detail_table = DETAIL_TABLE_BY_MODEL.get(terms.model_type)
-        has_details = detail_table is not None and session.execute(
-            sa.select(sa.exists().where(detail_table.c.commercial_terms_id == terms.id))
-        ).scalar_one()
+        has_details = (
+            detail_table is not None
+            and session.execute(
+                sa.select(sa.exists().where(detail_table.c.commercial_terms_id == terms.id))
+            ).scalar_one()
+        )
         rules.append(_Rule(terms=terms, has_details=has_details))
     return rules
 
@@ -707,7 +737,9 @@ def revenue_by_model_type(
     return answers
 
 
-def revenue_of(session: Session, scenario: Scenario, rule: _Rule | None) -> RevenueAnswer:
+def revenue_of(
+    session: Session, scenario: Scenario, rule: _Rule | None, *, allow_exchange_rates: bool = False
+) -> RevenueAnswer:
     """Price one scenario — or name why it cannot be priced. Never `0` for a missing input.
 
     `scenario` must be one `scenario_in_scope` returned: this function decides no access.
@@ -730,11 +762,9 @@ def revenue_of(session: Session, scenario: Scenario, rule: _Rule | None) -> Reve
     if calculator is None:
         return RevenueUnavailable(
             reason=UNSUPPORTED_MODEL_TYPE,
-            assumptions_used=AssumptionsUsed(
-                model_type=rule.terms.model_type, rate_source=source
-            ),
+            assumptions_used=AssumptionsUsed(model_type=rule.terms.model_type, rate_source=source),
         )
-    return calculator(session, scenario, rule)
+    return calculator(session, scenario, rule, allow_exchange_rates)
 
 
 @dataclass(frozen=True)
@@ -772,7 +802,6 @@ class ScenarioCommercialView:
     at full stored precision: this is the input a client edits, not the rounded revenue."""
     story_points_terms: StoryPointsTerms | None = None
 
-
     billable_months: tuple[BillableMonth, ...] | None = None
     """Temporary T&M inputs, included only when a what-if needs a substitution."""
 
@@ -782,12 +811,14 @@ def _view_of(
     scenario: Scenario,
     *,
     include_billable_months: bool = False,
+    allow_exchange_rates: bool = False,
     period_shift_months: int = 0,
 ) -> ScenarioCommercialView:
     # Refreshed, not trusted from the identity map: the status decides live-versus-snapshot, and an
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
     status_at_read = scenario.status
+    allow_exchange_rates = allow_exchange_rates and scenario.currency is not None
     rule = _rule_of(session, scenario.id)
     agreed_price: AgreedPrice | None = None
     story_points_terms: StoryPointsTerms | None = None
@@ -797,7 +828,9 @@ def _view_of(
         # the very value the answer states as `agreed_price`, never from a second read of the row.
         # The same helper the `REVENUE_BY_MODEL` entry (`_fixed_price`) calls.
         agreed_price = _fixed_price_details_of(session, rule)
-        revenue = _fixed_price_answer(agreed_price, scenario)
+        revenue = _fixed_price_answer(
+            agreed_price, scenario, allow_exchange_rates=allow_exchange_rates
+        )
     elif rule is not None and rule.terms.model_type == MODEL_TYPE_STORY_POINTS and rule.has_details:
         story_points_terms = session.execute(sa.select(StoryPointsTerms).where(
             StoryPointsTerms.commercial_terms_id == rule.terms.id
@@ -817,10 +850,13 @@ def _view_of(
         )
         billable_months = tuple(months)
         revenue = time_and_material_revenue(
-            months, rate_source=source, scenario_currency=scenario.currency
+            months,
+            rate_source=source,
+            scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         )
     else:
-        revenue = revenue_of(session, scenario, rule)
+        revenue = revenue_of(session, scenario, rule, allow_exchange_rates=allow_exchange_rates)
     return ScenarioCommercialView(
         scenario=scenario,
         terms=None if rule is None else rule.terms,
@@ -844,6 +880,7 @@ def commercial_terms_for_caller(
     scenario_id: uuid.UUID,
     *,
     include_billable_months: bool = False,
+    allow_exchange_rates: bool = False,
     lock_draft_scenario_for_composition: bool = False,
     period_shift_months: int = 0,
 ) -> ScenarioCommercialView | None:
@@ -865,6 +902,7 @@ def commercial_terms_for_caller(
         session,
         scenario,
         include_billable_months=include_billable_months,
+        allow_exchange_rates=allow_exchange_rates,
         period_shift_months=period_shift_months,
     )
 
@@ -1002,12 +1040,8 @@ def create_commercial_terms(
             sa.select(
                 sa.literal(uuid.uuid4(), type_=_TERMS_TABLE.c.id.type).label("id"),
                 open_scenario.c.id.label("scenario_id"),
-                sa.literal(model_type, type_=_TERMS_TABLE.c.model_type.type).label(
-                    "model_type"
-                ),
-                sa.literal(scope_ref, type_=_TERMS_TABLE.c.scope_ref.type).label(
-                    "scope_ref"
-                ),
+                sa.literal(model_type, type_=_TERMS_TABLE.c.model_type.type).label("model_type"),
+                sa.literal(scope_ref, type_=_TERMS_TABLE.c.scope_ref.type).label("scope_ref"),
             ).select_from(open_scenario),
         )
         .returning(_TERMS_TABLE.c.id, _TERMS_TABLE.c.model_type)
@@ -1017,10 +1051,14 @@ def create_commercial_terms(
     # columns: a price is written by the statement that is guarded, never by a second one that
     # could run against a scenario approved in between.
     detail_columns = ["commercial_terms_id", "model_type", *domain_values]
-    detail_select_columns = [new_terms.c.id, new_terms.c.model_type, *(
-        sa.literal(value, type_=detail_table.c[column].type).label(column)
-        for column, value in domain_values.items()
-    )]
+    detail_select_columns = [
+        new_terms.c.id,
+        new_terms.c.model_type,
+        *(
+            sa.literal(value, type_=detail_table.c[column].type).label(column)
+            for column, value in domain_values.items()
+        ),
+    ]
     statement = (
         sa.insert(detail_table)
         .add_cte(new_terms)

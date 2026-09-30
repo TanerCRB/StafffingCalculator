@@ -76,6 +76,7 @@ from app.api.schemas.catalog import (
     DimensionEntryList,
     WorkingCalendarList,
 )
+from app.api.schemas.exchange_rate import ExchangeRateCreate, ExchangeRateRead
 from app.core.identity import CallerIdentity, Permission
 from app.data.absence_budget import (
     AbsenceBudgetWriteRefused,
@@ -96,6 +97,11 @@ from app.data.catalog import (
     resolve_rate,
     update_dimension_entry,
     update_rate,
+)
+from app.data.exchange_rates import (
+    ExchangeRateWriteRefused,
+    create_exchange_rate,
+    list_exchange_rates,
 )
 from app.data.working_calendar import list_absence_types, list_calendars
 from app.db.session import get_session
@@ -272,9 +278,7 @@ def edit_dimension(
             detail=f"{_REFUSED_BY_THE_DATABASE} {refusal}",
         ) from None
     if entry is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND_DETAIL)
     return shape_dimension_entry(entry)
 
 
@@ -575,6 +579,54 @@ def read_effective_rate(
     return shape_catalog_rate(rate, caller)
 
 
+@router.get("/exchange-rates", response_model=list[ExchangeRateRead])
+def read_exchange_rates(
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_READ))],
+    session: Annotated[Session, Depends(get_session)],
+    project_id: Annotated[uuid.UUID | None, Query()] = None,
+    scenario_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> list[ExchangeRateRead]:
+    """Read organization defaults or rates visible inside the requested project scope."""
+    rates = list_exchange_rates(session, caller, project_id=project_id, scenario_id=scenario_id)
+    if rates is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario not found.")
+    return [ExchangeRateRead.model_validate(rate) for rate in rates]
+
+
+@router.post("/exchange-rates", response_model=ExchangeRateRead, status_code=201)
+def add_exchange_rate(
+    payload: ExchangeRateCreate,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.CATALOG_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ExchangeRateRead:
+    """Add an organization default or scoped project/scenario override."""
+    if payload.source_currency == payload.target_currency:
+        raise HTTPException(status_code=422, detail="Currency pair must contain two currencies.")
+    try:
+        rate = create_exchange_rate(
+            session,
+            caller,
+            source_currency=payload.source_currency,
+            target_currency=payload.target_currency,
+            effective_from=payload.effective_from,
+            effective_to=payload.effective_to,
+            rate=payload.rate,
+            source=payload.source,
+            project_id=payload.project_id,
+            scenario_id=payload.scenario_id,
+        )
+    except ExchangeRateWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Refused by the database. {refusal}",
+        ) from None
+    if rate is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project or scenario not found."
+        )
+    return ExchangeRateRead.model_validate(rate)
+
+
 @router.post(
     "/rates",
     response_model=CatalogRate,
@@ -721,7 +773,5 @@ def edit_catalog_rate(
             detail=f"{_REFUSED_BY_THE_DATABASE} {refusal}",
         ) from None
     if rate is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_RATE_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_RATE_NOT_FOUND_DETAIL)
     return shape_catalog_rate(rate, caller)

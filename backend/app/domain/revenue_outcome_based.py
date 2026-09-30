@@ -105,7 +105,10 @@ def _category_revenue(terms: OutcomeTermsInput, category: OutcomeCategoryInput) 
 
 
 def outcome_based_revenue(
-    terms: OutcomeTermsInput, *, scenario_currency: str | None
+    terms: OutcomeTermsInput,
+    *,
+    scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> RevenueAnswer:
     """The guaranteed revenue (as `revenue`), the expected one and per category — or a named state.
 
@@ -123,14 +126,14 @@ def outcome_based_revenue(
        `no_probabilities`, never `0` and never a copy of the guaranteed one (point 5c).
     """
     assumptions = outcome_assumptions((terms.currency,))
-    if scenario_currency is not None and terms.currency != scenario_currency:
-        return RevenueUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
-    if terms.unit_rate is not None and any(
-        category.units is None for category in terms.categories
+    if (
+        not allow_currency_mismatch
+        and scenario_currency is not None
+        and terms.currency != scenario_currency
     ):
-        return RevenueUnavailable(
-            reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=assumptions
-        )
+        return RevenueUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
+    if terms.unit_rate is not None and any(category.units is None for category in terms.categories):
+        return RevenueUnavailable(reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=assumptions)
 
     unrounded = [(category, _category_revenue(terms, category)) for category in terms.categories]
     guaranteed = round_money(_bounded(terms.fixed_fee, terms))
@@ -150,6 +153,7 @@ def outcome_based_revenue(
             assumptions_used=assumptions,
             expected_state=NO_PROBABILITIES,
             category_revenues=category_revenues,
+            period_amounts=((None, guaranteed, terms.currency),),
         )
     expected = sum(
         (
@@ -166,4 +170,5 @@ def outcome_based_revenue(
         expected_revenue=round_money(expected),
         expected_state=EXPECTED_CALCULATED,
         category_revenues=category_revenues,
+        period_amounts=((None, guaranteed, terms.currency),),
     )
