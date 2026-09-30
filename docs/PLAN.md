@@ -2937,4 +2937,8 @@ history / this file's own change log, not as tracked product work.
   concurrent segment-rule write (R-07); the frontend (#113); a multi-step downgrade across
   `b9e3c7a1f264`. See `docs/architecture/capabilities.md`.
 
+- [ ] **SC-4-09** — Include approved price adjustments in Fixed Price revenue (F-06.2, Issue #112).
+  *Done when:* mutation-checked backend tests prove that only approved adjustments affect Fixed Price revenue by their kind-defined signed amount; pending writes and approval decisions enforce their separate permissions; terminal states and corrections follow the approved lifecycle; adjustment currency matches the Fixed Price rule currency; scenario copies create new pending adjustments; and revenue remains independent of staffing, effort, and cost.
+  **Out of scope (explicit):** Milestones and revenue-period allocation (SC-4-05); profit and margin (block 7); adjustments for other commercial models; currency conversion; real-user role assignment.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
