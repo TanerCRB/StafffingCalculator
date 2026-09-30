@@ -69,9 +69,17 @@ def _edit_price(
     client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID, **changes: str
 ) -> dict:
     marker = _read(client, project_id, scenario_id)["commercial_terms"]["updated_at"]
+    terms = _read(client, project_id, scenario_id)["commercial_terms"]
+    payload = {
+        "model_type": "fixed_price",
+        "agreed_price": terms["agreed_price"],
+        "currency": terms["currency"],
+        "updated_at": marker,
+        **changes,
+    }
     response = client.patch(
         commercial_terms_path(project_id, scenario_id),
-        json={"updated_at": marker, **changes},
+        json=payload,
         headers=as_caller(IN_SCOPE_USER),
     )
     assert response.status_code == 200, response.text
