@@ -52,6 +52,26 @@ def whole_month(period_month: sa.ColumnElement[date]) -> sa.ColumnElement[object
     )
 
 
+def shifted_calendar_month(
+    period_month: sa.ColumnElement[date], months: int
+) -> sa.ColumnElement[date]:
+    """Shift a first-of-month date by whole calendar months."""
+    if months < 0:
+        raise ValueError("A delayed-start shift must be non-negative.")
+    if months == 0:
+        return period_month
+    month_interval = sa.literal(months) * sa.literal_column("interval '1 month'", sa.Interval)
+    return sa.cast(period_month + month_interval, sa.Date)
+
+
+def shift_calendar_month_date(period_month: date, months: int) -> date:
+    """Shift a first-of-month Python date by whole calendar months."""
+    if months < 0:
+        raise ValueError("A delayed-start shift must be non-negative.")
+    month_index = period_month.year * 12 + period_month.month - 1 + months
+    return date(month_index // 12, month_index % 12 + 1, 1)
+
+
 def days_of(range_expression: sa.ColumnElement[object]) -> sa.ColumnElement[int]:
     """`upper(r) - lower(r)` — the number of days in a bounded, half-open date range.
 
@@ -92,7 +112,9 @@ def days_covered_in_month(
     return covered == days_of(month)
 
 
-def internal_catalog_windows_overlapping() -> sa.ColumnElement[bool]:
+def internal_catalog_windows_overlapping(
+    period_month: sa.ColumnElement[date] | None = None,
+) -> sa.ColumnElement[bool]:
     """The join condition "an internal catalogue window of the position's tuple overlapping the
     month".
 
@@ -102,17 +124,24 @@ def internal_catalog_windows_overlapping() -> sa.ColumnElement[bool]:
     calculation's own question.
     """
     rate = CatalogDefaultRate
+    selected_month = (
+        StaffingPositionAllocation.period_month if period_month is None else period_month
+    )
     return sa.and_(
         rate.role_id == StaffingPosition.role_id,
         rate.seniority_id == StaffingPosition.seniority_id,
         rate.location_id == StaffingPosition.location_id,
         rate.engagement_type_id == StaffingPosition.engagement_type_id,
         rate.vendor_id.is_(None),
-        rate.valid_period.bool_op("&&")(whole_month(StaffingPositionAllocation.period_month)),
+        rate.valid_period.bool_op("&&")(
+            whole_month(selected_month)
+        ),
     )
 
 
-def frozen_windows_overlapping() -> sa.ColumnElement[bool]:
+def frozen_windows_overlapping(
+    period_month: sa.ColumnElement[date] | None = None,
+) -> sa.ColumnElement[bool]:
     """The same condition asked of the approval snapshot of the position's own scenario.
 
     The same tuple, the same vendor axis, the same overlap with the month — against the snapshot's
@@ -121,6 +150,9 @@ def frozen_windows_overlapping() -> sa.ColumnElement[bool]:
     position.scenario_id`).
     """
     frozen = ApprovedSnapshotCatalogDefaultRate
+    selected_month = (
+        StaffingPositionAllocation.period_month if period_month is None else period_month
+    )
     return sa.and_(
         frozen.scenario_id == StaffingPosition.scenario_id,
         frozen.source_role_id == StaffingPosition.role_id,
@@ -128,5 +160,7 @@ def frozen_windows_overlapping() -> sa.ColumnElement[bool]:
         frozen.source_location_id == StaffingPosition.location_id,
         frozen.source_engagement_type_id == StaffingPosition.engagement_type_id,
         frozen.source_vendor_id.is_(None),
-        frozen.valid_period.bool_op("&&")(whole_month(StaffingPositionAllocation.period_month)),
+        frozen.valid_period.bool_op("&&")(
+            whole_month(selected_month)
+        ),
     )

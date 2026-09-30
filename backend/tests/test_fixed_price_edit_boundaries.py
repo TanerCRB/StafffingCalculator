@@ -54,7 +54,12 @@ def _patch_price(
 ) -> Any:
     return client.patch(
         commercial_terms_path(project_id, scenario_id),
-        json={"updated_at": marker, "agreed_price": price},
+        json={
+            "model_type": "fixed_price",
+            "updated_at": marker,
+            "agreed_price": price,
+            "currency": "PLN",
+        },
         headers=as_caller(IN_SCOPE_USER),
     )
 

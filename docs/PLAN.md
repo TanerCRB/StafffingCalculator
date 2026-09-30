@@ -2239,6 +2239,60 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, S-01, R-01 — 12 testów) — 749 testów backendowych zielono, 262 frontendowych bez
   zmian. Zob. `docs/architecture/capabilities.md`.
 
+- [x] **SC-6-06** — Show the impact of delaying a project start on scenario profitability (F-09
+  point 3, backend). Applies one forward calendar-month shift to every staffing allocation month
+  and evaluates staffing-linked inputs at the destination month; it does not move independently
+  dated additional-cost rows.
+  *Done when:* `backend/tests` prove criteria K-01..K-06 (analyst, 2026-09-30; gate 1 decisions
+  confirmed 2026-09-30):
+  1. (K-01) Every staffing allocation is evaluated after the requested whole calendar-month shift;
+     N=0 reproduces the unshifted result. Contrast N=0 with N=1, including a month-end case that
+     distinguishes calendar-month from fixed-day arithmetic. Mutations: remove the shift, shift
+     only one allocation, or use a fixed-day duration.
+  2. (K-02) Under the currently supported one-commercial-rule-per-scenario model, T&M revenue uses
+     staffing-linked inputs from the applicable destination month and profitability follows
+     existing result semantics. Models whose revenue is independent of staffing retain their
+     existing revenue semantics. Combining multiple commercial models in one scenario is out of
+     scope until the data model supports it. Contrast destination months covered by different
+     rate/calendar windows. Mutations: resolve inputs at saved months, choose the latest rate
+     regardless of effective date, omit a result component, or count an applicable component more
+     than once.
+  3. (K-03) Saved absence dates remain absolute and affect shifted staffing months only where they
+     overlap. Contrast an overlapping saved absence with an otherwise equivalent non-overlapping
+     absence. Mutations: shift absence dates with staffing or skip overlap against the destination
+     month.
+  4. (K-04) Independently dated additional-cost rows keep their saved periods, and the what-if
+     changes no persisted scenario data; prove via before/after reads and direct database reads
+     outside the ORM identity map. Contrast a shifted result with unchanged cost rows and saved
+     inputs. Mutations: shift additional-cost periods or persist a shifted allocation/result.
+  5. (K-05) Missing destination-month rates or calendars preserve existing named component states
+     and dependent-metric behavior without invented or partial numeric totals. Contrast a month
+     outside coverage with one inside coverage. Mutations: substitute zero/default, skip the
+     missing-input state, or emit a partial total.
+  6. (K-06) Project access, personnel-cost field visibility, draft-only eligibility, and existing
+     scenario status/source mismatch refusal retain their boundaries. Contrast authorized and
+     out-of-scope callers, personnel-cost permission states, and consistent versus mismatched
+     scenario reads. Mutations: remove the access check, draft/status check, field gate, or status/
+     source race refusal. No stable live rate/calendar snapshot across the request is claimed.
+
+  **Gate 1 decisions (2026-09-29 and 2026-09-30, Issue #101):** `draft` only; named unavailable
+  states follow existing component/dependent-metric rules; shift staffing-linked calculations,
+  keep saved absence dates absolute and apply them where they overlap shifted staffing months,
+  and leave independently dated additional costs in their saved periods. K-06 covers existing
+  status/source mismatch handling, not a stable live rate/calendar snapshot. K-02 is limited to
+  the currently supported one-commercial-rule-per-scenario model; combined simultaneous models
+  remain out of scope until the data model supports them. ADR-0015 addenda 2026-09-29 and 2026-09-30.
+  **Unproven foundation, consciously accepted:** delayed-start substitution across rate/calendar
+  windows and its result-state behavior; SC-6-04 proves only the salary-raise what-if path.
+  **Out of scope (explicit):** backward shifts; shifting only selected staffing positions;
+  independently changing project duration; moving additional-cost periods; the other sensitivity
+  variables (utilization #100 and exchange rates #102); UI; persisting a what-if result as a new
+  scenario.
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-09 point 3; ADR-0015 (addendum 2026-09-29);
+  ADR-0002, ADR-0004, ADR-0005, ADR-0008, ADR-0013; `docs/PLAN.md` SC-3-01, SC-3-03, SC-4-01,
+  SC-5-01/05/06, SC-7-01; Issue #101.
+  **Done 2026-09-30:** PR #187 (merge commit `0739597`). Evidence: `backend/tests/test_scenario_what_if_delayed_start.py` (K-01–K-06; 10 tests), full backend suite (1,465 passed, 6 xfailed), frontend suite (414 passed), Ruff, and CI. QA mutation results are recorded in the capability registry and Issue #101 comment https://github.com/TanerCRB/StafffingCalculator/issues/101#issuecomment-5907146121.
+
 - [x] **SC-6-05** — Show the impact of a hypothetical reduction in billable utilization on scenario revenue and profit (F-09 pt. 3, sensitivity analysis variant 2/4; Issue #100).
   *Done when:* `backend/tests` prove K-01–K-07 for a draft T&M scenario: a percentage-point reduction is applied per position/month; zero-planned-allocation rows stay unchanged; a negative requested reduction or a reduction that would make any billable-hours value negative refuses the whole request with a generic `422`; a zero reduction succeeds as the baseline; revenue and profitability use the existing calculations with personnel and other costs at baseline; no scenario data is persisted; and out-of-scope or approved scenarios receive the specified indistinguishable `404`. QA records the named mutations and their results.
   **Out of scope (explicit):** Fixed Price, Outcome-based, and Story Points, whose existing revenue models do not use billable utilization; changing personnel, paid-absence, or additional costs, because the approved hypothesis changes revenue only; UI behavior or saving the hypothetical as a scenario, because this task proves the calculation path only; the remaining sensitivity variants, which have their own Issues (#101 and #102).
@@ -2624,6 +2678,11 @@ history / this file's own change log, not as tracked product work.
   zostawał aktywny mimo braku widocznego zaznaczenia w nowym projekcie), naprawiony kodem i testem.
   Zob. `docs/architecture/capabilities.md`.
 
+- [x] **SC-7-05** - Show a negative-profit indicator on the scenario results card (F-11).
+  *Done when:* frontend tests prove the indicator appears when `profit < 0` and is absent when `profit >= 0`; otherwise identical result fixtures differing only in profit sign render different indicator states. Record a named mutation result for each criterion at verification.
+  **Out of scope (explicit):** below-target-margin indicator - the API does not expose the required deviation; revisit in a separate task after that data is available. Compare view - separate scope in SC-7-04.
+  **Done 2026-09-30:** PR #190 (merged as `ac6b343`). `ScenarioResults.test.tsx` proves negative profit shows the indicator; positive, `0.00` and `-0.00` do not; and otherwise identical scenarios differing only by profit sign render opposite indicator states. Mutation `SC-7-05-M1` forced the predicate to false and was killed by the negative-profit visibility and opposite-sign contrast tests (20 passed, 2 failed); after restoration, the focused suite passed 22/22. Full frontend suite: 419/419; `pnpm lint` and `pnpm build` passed. See [PR #190](https://github.com/TanerCRB/StafffingCalculator/pull/190).
+
 - [ ] **SC-7-06** — Export whole-scenario results to PDF and spreadsheet (F-11, AC-06).
   *Done when:* backend artifact tests prove: (1) the spreadsheet preserves every field and nested
   value from the `ScenarioResults` response contract, including component states, currencies, and
@@ -2650,6 +2709,11 @@ history / this file's own change log, not as tracked product work.
   multi-scenario comparison export (separate task after SC-7-04).
   **Basis:** `Wymagania/Requirements_EN.md` §4 F-11, §7 AC-06/AC-10; ADR-0002, ADR-0003, ADR-0004,
   ADR-0005; `docs/PLAN.md` SC-7-01/02/04.
+
+- [x] **SC-7-07** — Show the scenario cost breakdown (F-11), Issue #107.
+  *Done when:* Frontend tests for K-01..K-05 prove base personnel, paid absence, and additional cost render independently from SC-7-01 results; named uncalculable components differ from zero and do not suppress other lines; the personnel-cost gate withholds personnel amounts while additional cost follows its independent visibility rule. Record the five named mutations at verification.
+  **Out of scope (explicit):** Reporting-period breakdown until source values are available by period; PDF and spreadsheet exports (SC-7-06); aggregation across scenarios (SC-6-02).
+  **Done 2026-09-30:** PR #192 (merged as `dcaa776`). `frontend/src/features/projects/ScenarioResults.test.tsx` proves K-01–K-05: independent base and paid-absence amounts; additional costs independent from personnel components; named unavailable states distinct from zero while other lines remain; and personnel-cost gating independent from additional-cost visibility. Mutations SC-7-07-M1–M5 were all killed (5, 4, 6, 2, and 3 failing tests respectively); baseline and restored focused suite passed 22/22. Frontend suite: 424/424; lint and build passed; GitHub Actions backend and frontend checks passed. See [PR #192](https://github.com/TanerCRB/StafffingCalculator/pull/192) and [Issue #107](https://github.com/TanerCRB/StafffingCalculator/issues/107).
 
 - [x] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
   F-06.4, frontend): konsument istniejącego API, zamyka ograniczenie D-9 SC-4-03 (ADR-0003 aneks
@@ -2905,5 +2969,11 @@ history / this file's own change log, not as tracked product work.
   guard as `/results`); the price-edit step of the R-06 interleaving end to end; R-03 under a
   concurrent segment-rule write (R-07); the frontend (#113); a multi-step downgrade across
   `b9e3c7a1f264`. See `docs/architecture/capabilities.md`.
+
+- [ ] **SC-4-08** — Edit and delete scenario commercial rules (backend): let project managers correct draft Fixed Price, Outcome-based, and Story Points terms, and remove a rule when needed, without changing the commercial model of an existing rule. Covers Time & Material, Fixed Price, Outcome-based, and Story Points (Issue #126; gate 1 approved 2026-09-30; Fixed Price was already merged via SC-4-02 before gate 1).
+  *Done when:* backend tests prove the approved criteria K-01..K-05 with recorded SC-4-08 mutations: (1) a valid full replacement on a draft updates the readable rule and calculated revenue for Fixed Price, Outcome-based, and Story Points; T&M edit is refused; (2) invalid/incomplete model fields, probability totals/precision/ranges, negative amounts, or a changed `model_type` are rejected without changing aggregate or detail rows; (3) stale markers and approved-scenario writes are distinct named conflicts, with exactly one winner for concurrent edits and no write during an approval race; (4) missing, foreign-project, and out-of-scope rules return indistinguishable 404s, and callers without `COMMERCIAL_WRITE` cannot edit/delete; (5) a current-marker delete atomically removes aggregate and details for all four models, GET reports `no_commercial_terms`, POST can recreate a rule, and copies preserve the edited values independently of later source edits. Existing regressions named in Issue #126 remain green. Evidence and mutation outcomes are proposed for `docs/architecture/capabilities.md` at gate 3.
+  **Gate-1 decisions (2026-09-30, approved by human):** Q1=A — include edits for Fixed Price, Outcome-based, and Story Points and deletion for all four models, reversing the D-5 premise by ADR-0003 addendum; Q2=A — expose Story Points price/accepted points from GET under `COMMERCIAL_READ`; Q3=A — allow delete/recreate using a new rule id, keeping `model_type` immutable per row; Q4=A — full replacement with the create shape plus concurrency marker; Q5=A — use `COMMERCIAL_WRITE` for edit/delete. The architecture impact map is approved. The human set `state:implementation` before code work.
+  **Out of scope (explicit):** UI; editing `scope_ref`-scoped rules; changing `model_type` in place; change history; autosave; new commercial rule components; edits to approved scenarios.
+  **Foundation risk:** `commercial_terms.updated_at` has not yet been consumed; atomic deletion of the aggregate and detail rows has no repository precedent. Basis: Issue #126; `Wymagania/Requirements_EN.md` NF-05, F-06.5, AC-04; ADR-0003, ADR-0004, ADR-0005, ADR-0007; `docs/PLAN.md` SC-4-01..SC-4-07.
 
 *(further rows are added by the Product Owner role, one per task, following gate 1)*

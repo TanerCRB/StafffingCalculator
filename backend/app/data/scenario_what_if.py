@@ -111,6 +111,7 @@ from app.data.personnel_cost import (
     scenario_cost_for_caller,
 )
 from app.data.scenario_results import refuse_a_status_race
+from app.data.staffing import ensure_allocation_months_fit_shift, scenario_view_in_scope
 from app.domain.additional_cost import AdditionalCostAnswer
 from app.domain.assigned_fte_cost import assigned_fte_cost
 from app.domain.paid_absence_cost import fully_loaded_paid_absence_cost, paid_absence_cost
@@ -127,6 +128,10 @@ from app.domain.revenue_time_and_material import (
     time_and_material_revenue,
 )
 from app.models.scenario import Scenario, ScenarioStatus
+
+
+class ScenarioWhatIfDelayOutOfRange(ValueError):
+    """A requested shift would put an allocation outside Python's supported date range."""
 
 
 @dataclass(frozen=True)
@@ -158,6 +163,15 @@ class ScenarioWhatIfBillableUtilizationView:
     cost_view: ScenarioCostView
     additional_cost: AdditionalCostAnswer
     decrease_percentage_points: Decimal
+
+
+@dataclass(frozen=True)
+class ScenarioWhatIfDelayedStartView:
+    scenario: Scenario
+    revenue: RevenueAnswer
+    cost_view: ScenarioCostView
+    additional_cost: AdditionalCostAnswer
+    delay_months: int
 
 
 def _raised_rate(rate: MonthCostRate | None, multiplier: Decimal) -> MonthCostRate | None:
@@ -380,4 +394,64 @@ def scenario_what_if_billable_utilization_for_caller(
         cost_view=cost_view,
         additional_cost=additional.total,
         decrease_percentage_points=decrease_percentage_points,
+    )
+
+
+def scenario_what_if_delayed_start_for_caller(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    delay_months: int,
+) -> ScenarioWhatIfDelayedStartView | None:
+    """Recompute staffing-linked inputs at destination calendar months without writing them."""
+    if delay_months < 0:
+        raise ValueError("delay_months must be non-negative")
+    scoped = scenario_view_in_scope(session, caller, project_id, scenario_id)
+    if scoped is None:
+        return None
+    scenario = scoped[1]
+    session.refresh(scenario)
+    if scenario.status != ScenarioStatus.DRAFT:
+        return None
+
+    try:
+        ensure_allocation_months_fit_shift(session, scenario_id, delay_months)
+    except (OverflowError, ValueError) as error:
+        raise ScenarioWhatIfDelayOutOfRange(
+            "delay_months would move a staffing allocation outside the supported date range."
+        ) from error
+
+    commercial = commercial_terms_for_caller(
+        session, caller, project_id, scenario_id, include_billable_months=True,
+        period_shift_months=delay_months,
+    )
+    if commercial is None:
+        return None
+    cost_view = scenario_cost_for_caller(
+        session,
+        caller,
+        project_id,
+        scenario_id,
+        period_shift_months=delay_months,
+    )
+    if cost_view is None:
+        return None
+    additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
+    if additional is None:
+        return None
+    refuse_a_status_race(
+        revenue_source=commercial.revenue.assumptions_used.rate_source,
+        revenue_status=commercial.status_at_read,
+        cost_status=cost_view.status_at_read,
+        additional_cost_status=additional.status_at_read,
+    )
+    scenario = cost_view.scenario
+    if scenario.status != ScenarioStatus.DRAFT:
+        return None
+
+    return ScenarioWhatIfDelayedStartView(
+        scenario=scenario, revenue=commercial.revenue, cost_view=cost_view,
+        additional_cost=additional.total, delay_months=delay_months,
     )

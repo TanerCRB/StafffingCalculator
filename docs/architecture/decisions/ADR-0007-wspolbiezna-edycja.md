@@ -293,3 +293,28 @@ third meaning. Deletion is still out of scope; the third meaning comes from else
 ### 2026-09-29 - risk and reserve markers (SC-6-08, ADR-0021)
 
 Each risk row and each reserve row carries its own `updated_at` marker; `PATCH` and `DELETE` take it and answer `409`, distinguishable from the approved-scenario `409`, on a mismatch. Editing the risk link of a cost event uses the cost row's existing marker. Proof: `backend/tests/test_risk_guards.py::test_k_05_*`.
+
+### 2026-09-30 — commercial-rule replacement and deletion (SC-4-08, Issue #126)
+
+**Draft — pending approval.** Gate 1 approved full-replacement edits with a concurrency marker
+and `COMMERCIAL_WRITE` for edit/delete. This addendum applies the accepted optimistic marker
+pattern to a commercial aggregate whose `commercial_terms.updated_at` has not previously been
+consumed.
+
+1. The marker belongs to the `commercial_terms` rule row. A full replacement supplies the
+   current marker and the create-shaped fields. Marker comparison and approved-scenario write
+   guard must hold at the write boundary; mismatch is the named stale-marker `409`. The stale
+   marker outcome remains distinct from refusal because the scenario is approved. Inaccessible
+   and out-of-scope rules retain the `404` precedence and indistinguishability of ADR-0005.
+2. A delete supplies the current marker and is guarded by the same approved-scenario and
+   optimistic-concurrency rules. Deletion of `commercial_terms` and its model detail is one
+   atomic outcome: either both rows are removed or neither is. The aggregate marker is the
+   concurrency token; detail rows do not gain independent markers.
+3. `COMMERCIAL_WRITE` authorizes edit and delete; `COMMERCIAL_READ` remains separate. The model
+   discriminator is not changed by replacement.
+
+| Control | Acceptance criterion |
+|---|---|
+| A7-126-1 | A stale marker on replacement or delete answers a named `409`; a current marker succeeds only for a draft scenario; the approved-scenario refusal is distinguishable from stale-marker conflict. |
+| A7-126-2 | Concurrent edits have one winner; a replacement racing approval writes nothing. A current-marker delete racing approval writes nothing unless the rule operation wins before approval. |
+| A7-126-3 | Delete atomically removes the commercial aggregate and its model detail, or removes neither. Out-of-scope/missing rules remain indistinguishable `404`s before marker diagnosis. |

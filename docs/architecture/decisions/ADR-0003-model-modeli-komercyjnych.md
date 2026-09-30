@@ -1077,3 +1077,31 @@ price edit targets the whole-scenario rule (`scope_ref IS NULL`).
 | T-14 | T&M revenue uses the existing calculation and rate resolution; the hypothetical does not change revenue behavior for other commercial models. |
 | T-15 | Profitability uses the existing calculation with baseline costs, and preserves the established currency and non-computable behavior. |
 | T-16 | A negative requested decrease is refused for the whole request with generic `422`; zero decrease is valid and reproduces baseline hours and T&M revenue. |
+
+### 2026-09-30 — draft commercial-rule edits and deletion (SC-4-08, Issue #126)
+
+**Draft — pending approval.** Gate 1 approved the scope on 2026-09-30. This addendum records
+the resulting exception to the accepted D-5 premise and the immutable discriminator rule; it
+does not authorize implementation beyond the approved criteria.
+
+1. **Supersede D-5 Option A for Story Points edits.** The 2026-09-25 D-5 Option A says
+   `accepted_points` has no edit path and changes require a scenario copy. For SC-4-08, a draft
+   Story Points rule may be fully replaced, including `price_per_point` and `accepted_points`.
+   The rule remains own scenario data; edits remain barred once the scenario is approved.
+2. **Draft edit scope.** Full-replacement edits apply to Fixed Price, Outcome-based, and Story
+   Points rules on draft scenarios. T&M edit remains refused. For Outcome-based and Story Points,
+   the read contract exposes their persisted rule fields; Story Points `price_per_point` and
+   `accepted_points` are visible under `COMMERCIAL_READ`. The existing create shape is the
+   replacement shape, accompanied by the concurrency marker (ADR-0007).
+3. **`model_type` remains immutable per row.** Delete of a draft rule is allowed for all four
+   models. A later create may use another model and receives a new rule id; this is replacement
+   by deletion and creation, not mutation of a row's discriminator. No edit or delete of an
+   approved scenario is allowed.
+4. The existing `scope_ref` rules are unchanged; this task does not edit segment-scoped rules.
+
+| Control | Acceptance criterion |
+|---|---|
+| C3-126-1 | Draft full-replacement edit is available for Fixed Price, Outcome-based, and Story Points; T&M edit is refused; approved-scenario edits are refused. |
+| C3-126-2 | `model_type` cannot change on an existing row; delete/recreate may choose another model and creates a new rule id. |
+| C3-126-3 | Story Points GET exposes `price_per_point` and `accepted_points` under `COMMERCIAL_READ`; rule read fields are the persisted values. |
+| C3-126-4 | Draft delete applies to each of the four models and leaves no aggregate or detail row; a recreated rule is independent and can use a different model. |
