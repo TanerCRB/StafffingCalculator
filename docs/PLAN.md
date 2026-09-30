@@ -2716,6 +2716,11 @@ history / this file's own change log, not as tracked product work.
   **Out of scope (explicit):** Reporting-period breakdown until source values are available by period; PDF and spreadsheet exports (SC-7-06); aggregation across scenarios (SC-6-02).
   **Done 2026-09-30:** PR #192 (merged as `dcaa776`). `frontend/src/features/projects/ScenarioResults.test.tsx` proves K-01–K-05: independent base and paid-absence amounts; additional costs independent from personnel components; named unavailable states distinct from zero while other lines remain; and personnel-cost gating independent from additional-cost visibility. Mutations SC-7-07-M1–M5 were all killed (5, 4, 6, 2, and 3 failing tests respectively); baseline and restored focused suite passed 22/22. Frontend suite: 424/424; lint and build passed; GitHub Actions backend and frontend checks passed. See [PR #192](https://github.com/TanerCRB/StafffingCalculator/pull/192) and [Issue #107](https://github.com/TanerCRB/StafffingCalculator/issues/107).
 
+- [x] **SC-7-08** — Update the scenario race test docstrings after the three-read status guard change (Issue #122, PR #197).
+  *Done when:* Docstrings in `backend/tests/test_scenario_results_race.py` describe the guard as comparing scenario status frozen separately by the revenue, personnel-cost, and additional-cost reads; only docstrings change.
+  **Out of scope (explicit):** Assertions, fixtures, test logic, and production behavior; the follow-up is limited to correcting test documentation.
+  **Done 2026-09-30:** PR #197 (merged as `787a211`). Artifact: the docstring-only diff in `backend/tests/test_scenario_results_race.py`. QA mutation `SC-7-08-M1` restored the obsolete two-read/rate-source wording; manual K-01 review rejected it ([Issue #122 QA record](https://github.com/TanerCRB/StafffingCalculator/issues/122#issuecomment-5916719973)). Backend: 1,490 passed, 6 xfailed; frontend: 424 passed; Ruff passed; both CI checks passed. This records documentation accuracy only and does not re-prove runtime race behavior, already evidenced by SC-7-03.
+
 - [x] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
   F-06.4, frontend): konsument istniejącego API, zamyka ograniczenie D-9 SC-4-03 (ADR-0003 aneks
   SC-4-03 pkt 8) i nienazwaną dotąd degradację po SC-4-04 — scenariusz Outcome-based i Story Points
