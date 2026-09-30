@@ -2239,6 +2239,59 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, S-01, R-01 — 12 testów) — 749 testów backendowych zielono, 262 frontendowych bez
   zmian. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-6-06** — Show the impact of delaying a project start on scenario profitability (F-09
+  point 3, backend). Applies one forward calendar-month shift to every staffing allocation month
+  and evaluates staffing-linked inputs at the destination month; it does not move independently
+  dated additional-cost rows.
+  *Done when:* `backend/tests` prove criteria K-01..K-06 (analyst, 2026-09-30; gate 1 decisions
+  confirmed 2026-09-30):
+  1. (K-01) Every staffing allocation is evaluated after the requested whole calendar-month shift;
+     N=0 reproduces the unshifted result. Contrast N=0 with N=1, including a month-end case that
+     distinguishes calendar-month from fixed-day arithmetic. Mutations: remove the shift, shift
+     only one allocation, or use a fixed-day duration.
+  2. (K-02) Under the currently supported one-commercial-rule-per-scenario model, T&M revenue uses
+     staffing-linked inputs from the applicable destination month and profitability follows
+     existing result semantics. Models whose revenue is independent of staffing retain their
+     existing revenue semantics. Combining multiple commercial models in one scenario is out of
+     scope until the data model supports it. Contrast destination months covered by different
+     rate/calendar windows. Mutations: resolve inputs at saved months, choose the latest rate
+     regardless of effective date, omit a result component, or count an applicable component more
+     than once.
+  3. (K-03) Saved absence dates remain absolute and affect shifted staffing months only where they
+     overlap. Contrast an overlapping saved absence with an otherwise equivalent non-overlapping
+     absence. Mutations: shift absence dates with staffing or skip overlap against the destination
+     month.
+  4. (K-04) Independently dated additional-cost rows keep their saved periods, and the what-if
+     changes no persisted scenario data; prove via before/after reads and direct database reads
+     outside the ORM identity map. Contrast a shifted result with unchanged cost rows and saved
+     inputs. Mutations: shift additional-cost periods or persist a shifted allocation/result.
+  5. (K-05) Missing destination-month rates or calendars preserve existing named component states
+     and dependent-metric behavior without invented or partial numeric totals. Contrast a month
+     outside coverage with one inside coverage. Mutations: substitute zero/default, skip the
+     missing-input state, or emit a partial total.
+  6. (K-06) Project access, personnel-cost field visibility, draft-only eligibility, and existing
+     scenario status/source mismatch refusal retain their boundaries. Contrast authorized and
+     out-of-scope callers, personnel-cost permission states, and consistent versus mismatched
+     scenario reads. Mutations: remove the access check, draft/status check, field gate, or status/
+     source race refusal. No stable live rate/calendar snapshot across the request is claimed.
+
+  **Gate 1 decisions (2026-09-29 and 2026-09-30, Issue #101):** `draft` only; named unavailable
+  states follow existing component/dependent-metric rules; shift staffing-linked calculations,
+  keep saved absence dates absolute and apply them where they overlap shifted staffing months,
+  and leave independently dated additional costs in their saved periods. K-06 covers existing
+  status/source mismatch handling, not a stable live rate/calendar snapshot. K-02 is limited to
+  the currently supported one-commercial-rule-per-scenario model; combined simultaneous models
+  remain out of scope until the data model supports them. ADR-0015 addenda 2026-09-29 and 2026-09-30.
+  **Unproven foundation, consciously accepted:** delayed-start substitution across rate/calendar
+  windows and its result-state behavior; SC-6-04 proves only the salary-raise what-if path.
+  **Out of scope (explicit):** backward shifts; shifting only selected staffing positions;
+  independently changing project duration; moving additional-cost periods; the other sensitivity
+  variables (utilization #100 and exchange rates #102); UI; persisting a what-if result as a new
+  scenario.
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-09 point 3; ADR-0015 (addendum 2026-09-29);
+  ADR-0002, ADR-0004, ADR-0005, ADR-0008, ADR-0013; `docs/PLAN.md` SC-3-01, SC-3-03, SC-4-01,
+  SC-5-01/05/06, SC-7-01; Issue #101.
+
 - [x] **SC-6-05** — Show the impact of a hypothetical reduction in billable utilization on scenario revenue and profit (F-09 pt. 3, sensitivity analysis variant 2/4; Issue #100).
   *Done when:* `backend/tests` prove K-01–K-07 for a draft T&M scenario: a percentage-point reduction is applied per position/month; zero-planned-allocation rows stay unchanged; a negative requested reduction or a reduction that would make any billable-hours value negative refuses the whole request with a generic `422`; a zero reduction succeeds as the baseline; revenue and profitability use the existing calculations with personnel and other costs at baseline; no scenario data is persisted; and out-of-scope or approved scenarios receive the specified indistinguishable `404`. QA records the named mutations and their results.
   **Out of scope (explicit):** Fixed Price, Outcome-based, and Story Points, whose existing revenue models do not use billable utilization; changing personnel, paid-absence, or additional costs, because the approved hypothesis changes revenue only; UI behavior or saving the hypothetical as a scenario, because this task proves the calculation path only; the remaining sensitivity variants, which have their own Issues (#101 and #102).

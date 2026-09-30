@@ -108,6 +108,7 @@ from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
 from app.api.schemas.scenario_results import ScenarioResults
 from app.api.schemas.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationResults,
+    ScenarioWhatIfDelayedStartResults,
     ScenarioWhatIfSalaryRaiseResults,
 )
 from app.api.schemas.staffing import (
@@ -134,6 +135,7 @@ from app.data.risk_reserve import ReservePage
 from app.data.scenario_results import ScenarioResultsView
 from app.data.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationView,
+    ScenarioWhatIfDelayedStartView,
     ScenarioWhatIfView,
 )
 from app.data.staffing import StaffingPositionView
@@ -1641,6 +1643,34 @@ def shape_scenario_what_if_salary_raise(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
         salary_raise_percent=view.salary_raise_percent,
+        revenue=revenue,
+        personnel_cost=personnel_cost,
+        additional_cost=additional_cost,
+        included_cost=profitability.included_cost,
+        profit=profitability.profit,
+        margin=profitability.margin,
+        markup=profitability.markup,
+        profitability_state=profitability.state,
+    )
+    return _without_scenario_profitability(result, cost_view, caller)
+
+
+def shape_scenario_what_if_delayed_start(
+    view: ScenarioWhatIfDelayedStartView, caller: CallerIdentity
+) -> ScenarioWhatIfDelayedStartResults:
+    cost_view = view.cost_view
+    revenue = _revenue_read_of(view.revenue)
+    personnel_cost = _without_scenario_personnel_costs(
+        _personnel_cost_read_of(cost_view), cost_view, caller
+    )
+    additional_cost = _additional_cost_total_read_of(view.additional_cost)
+    profitability = scenario_profitability(
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+    )
+    result = ScenarioWhatIfDelayedStartResults(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        delay_months=view.delay_months,
         revenue=revenue,
         personnel_cost=personnel_cost,
         additional_cost=additional_cost,

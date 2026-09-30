@@ -62,6 +62,7 @@ from app.data.rate_windows import (
     days_covered_in_month,
     frozen_windows_overlapping,
     internal_catalog_windows_overlapping,
+    shifted_calendar_month,
 )
 from app.data.scenario_guard import draft_scenario_read_lock, unapproved_scenario
 from app.data.staffing import scenario_in_scope
@@ -186,6 +187,7 @@ def priced_month_windows(
     from_snapshot: bool,
     scenario_id: uuid.UUID,
     include_planned_allocation_hours: bool = False,
+    period_shift_months: int = 0,
 ) -> sa.Select:
     """Every (allocation, overlapping window) row of one scenario, each carrying `month_is_priced`.
 
@@ -204,21 +206,24 @@ def priced_month_windows(
     Callers filter on `month_is_priced` **outside** this select (as a subquery), never inside it: a
     `WHERE` here would run before the window functions and change the partitions they see.
     """
+    period_month = shifted_calendar_month(
+        StaffingPositionAllocation.period_month, period_shift_months
+    )
     if from_snapshot:
         window = ApprovedSnapshotCatalogDefaultRate
         window_id = window.source_rate_id
         # Resolving per month on the frozen rows, with the same `month_is_priced`, rather than
         # trusting "whatever was frozen" is what point 2e of the addendum requires (K-09).
-        condition = frozen_windows_overlapping()
+        condition = frozen_windows_overlapping(period_month)
     else:
         window = CatalogDefaultRate
         window_id = window.id
-        condition = internal_catalog_windows_overlapping()
+        condition = internal_catalog_windows_overlapping(period_month)
     selected_columns = [
         StaffingPosition.scenario_id.label("scenario_id"),
         StaffingPosition.id.label("position_id"),
         StaffingPositionAllocation.id.label("allocation_id"),
-        StaffingPositionAllocation.period_month.label("period_month"),
+        period_month.label("period_month"),
         StaffingPositionAllocation.billable_hours.label("billable_hours"),
         window_id.label("window_id"),
         window.effective_from.label("effective_from"),
@@ -227,7 +232,7 @@ def priced_month_windows(
         window.currency.label("currency"),
         month_is_priced(
             StaffingPositionAllocation.id,
-            StaffingPositionAllocation.period_month,
+            period_month,
             window.valid_period,
             window.default_selling_rate,
             window.currency,
@@ -259,6 +264,7 @@ def _billable_months(
     scenario: Scenario,
     *,
     include_planned_allocation_hours: bool = False,
+    period_shift_months: int = 0,
 ) -> tuple[str, list[BillableMonth]]:
     """Every allocation row of the scenario with its price — live catalogue or snapshot.
 
@@ -278,6 +284,7 @@ def _billable_months(
         from_snapshot=approved,
         scenario_id=scenario.id,
         include_planned_allocation_hours=include_planned_allocation_hours,
+        period_shift_months=period_shift_months,
     ).subquery("priced_month_windows")
     statement = sa.select(rows).order_by(
         rows.c.period_month, rows.c.position_id, rows.c.effective_from, rows.c.window_id
@@ -723,7 +730,11 @@ class ScenarioCommercialView:
 
 
 def _view_of(
-    session: Session, scenario: Scenario, *, include_billable_months: bool = False
+    session: Session,
+    scenario: Scenario,
+    *,
+    include_billable_months: bool = False,
+    period_shift_months: int = 0,
 ) -> ScenarioCommercialView:
     # Refreshed, not trusted from the identity map: the status decides live-versus-snapshot, and an
     # object loaded earlier in the same session may predate an approval committed since.
@@ -745,7 +756,10 @@ def _view_of(
         and rule.has_details
     ):
         source, months = _billable_months(
-            session, scenario, include_planned_allocation_hours=True
+            session,
+            scenario,
+            include_planned_allocation_hours=True,
+            period_shift_months=period_shift_months,
         )
         billable_months = tuple(months)
         revenue = time_and_material_revenue(
@@ -772,6 +786,7 @@ def commercial_terms_for_caller(
     *,
     include_billable_months: bool = False,
     lock_draft_scenario_for_composition: bool = False,
+    period_shift_months: int = 0,
 ) -> ScenarioCommercialView | None:
     """The rule and revenue of one scenario — or `None`, with no way to tell why (criterion K-05).
 
@@ -787,7 +802,12 @@ def commercial_terms_for_caller(
         session.execute(draft_scenario_read_lock(scenario.id)).scalar_one_or_none() is None
     ):
         return None
-    return _view_of(session, scenario, include_billable_months=include_billable_months)
+    return _view_of(
+        session,
+        scenario,
+        include_billable_months=include_billable_months,
+        period_shift_months=period_shift_months,
+    )
 
 
 # --- writing the rule (ADR-0003, point 3; ADR-0004, addendum SC-4-01, point 1a) ------------------
