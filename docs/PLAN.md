@@ -2678,6 +2678,10 @@ history / this file's own change log, not as tracked product work.
   zostawał aktywny mimo braku widocznego zaznaczenia w nowym projekcie), naprawiony kodem i testem.
   Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-7-07** — Show the scenario cost breakdown (F-11), Issue #107.
+  *Done when:* Frontend tests for K-01..K-05 prove base personnel, paid absence, and additional cost render independently from SC-7-01 results; named uncalculable components differ from zero and do not suppress other lines; the personnel-cost gate withholds personnel amounts while additional cost follows its independent visibility rule. Record the five named mutations at verification.
+  **Out of scope (explicit):** Reporting-period breakdown until source values are available by period; PDF and spreadsheet exports (SC-7-06); aggregation across scenarios (SC-6-02).
+
 - [x] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
   F-06.4, frontend): konsument istniejącego API, zamyka ograniczenie D-9 SC-4-03 (ADR-0003 aneks
   SC-4-03 pkt 8) i nienazwaną dotąd degradację po SC-4-04 — scenariusz Outcome-based i Story Points
