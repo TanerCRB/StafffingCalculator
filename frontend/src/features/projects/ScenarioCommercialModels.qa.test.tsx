@@ -67,7 +67,7 @@ function resultsBody(revenue: Record<string, unknown>) {
     scenario_id: SCENARIO,
     scenario_status: "Draft",
     revenue,
-    personnel_cost: { state: "calculated", amount: "15000.00", currency: "PLN" },
+    personnel_cost: { state: "calculated", amount: "15000.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "0.00", paid_absence_currency: "PLN" },
     additional_cost: { state: "calculated", amount: "0.00", currency: "PLN" },
     included_cost: "n/a",
     profit: "n/a",
