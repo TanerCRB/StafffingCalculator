@@ -2239,7 +2239,7 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, S-01, R-01 — 12 testów) — 749 testów backendowych zielono, 262 frontendowych bez
   zmian. Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-6-06** — Show the impact of delaying a project start on scenario profitability (F-09
+- [x] **SC-6-06** — Show the impact of delaying a project start on scenario profitability (F-09
   point 3, backend). Applies one forward calendar-month shift to every staffing allocation month
   and evaluates staffing-linked inputs at the destination month; it does not move independently
   dated additional-cost rows.
@@ -2291,6 +2291,7 @@ history / this file's own change log, not as tracked product work.
   **Basis:** `Wymagania/Requirements_EN.md` §4 F-09 point 3; ADR-0015 (addendum 2026-09-29);
   ADR-0002, ADR-0004, ADR-0005, ADR-0008, ADR-0013; `docs/PLAN.md` SC-3-01, SC-3-03, SC-4-01,
   SC-5-01/05/06, SC-7-01; Issue #101.
+  **Done 2026-09-30:** PR #187 (merge commit `0739597`). Evidence: `backend/tests/test_scenario_what_if_delayed_start.py` (K-01–K-06; 10 tests), full backend suite (1,465 passed, 6 xfailed), frontend suite (414 passed), Ruff, and CI. QA mutation results are recorded in the capability registry and Issue #101 comment https://github.com/TanerCRB/StafffingCalculator/issues/101#issuecomment-5907146121.
 
 - [x] **SC-6-05** — Show the impact of a hypothetical reduction in billable utilization on scenario revenue and profit (F-09 pt. 3, sensitivity analysis variant 2/4; Issue #100).
   *Done when:* `backend/tests` prove K-01–K-07 for a draft T&M scenario: a percentage-point reduction is applied per position/month; zero-planned-allocation rows stay unchanged; a negative requested reduction or a reduction that would make any billable-hours value negative refuses the whole request with a generic `422`; a zero reduction succeeds as the baseline; revenue and profitability use the existing calculations with personnel and other costs at baseline; no scenario data is persisted; and out-of-scope or approved scenarios receive the specified indistinguishable `404`. QA records the named mutations and their results.
