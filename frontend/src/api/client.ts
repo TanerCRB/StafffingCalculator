@@ -48,6 +48,7 @@ import type {
 import {
   ADDITIONAL_COST_STATES,
   PERSONNEL_COST_STATES,
+  PAID_ABSENCE_COST_STATES,
   PROFITABILITY_STATES,
   RESULTS_NOT_APPLICABLE,
   type AdditionalCostSource,
@@ -1384,20 +1385,17 @@ function isGatedResultFieldShape(value: unknown): boolean {
  * revenue, applied here to its cost counterpart.
  */
 function isPersonnelCostSourceShape(value: unknown): value is PersonnelCostSource {
-  if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES)) {
+  if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES) || !isOneOf(value.paid_absence_state, PAID_ABSENCE_COST_STATES)) {
     return false;
   }
-  const amount = value.amount;
-  if (amount === null) {
-    return isRequiredNullableString(value.currency);
-  }
-  if (typeof amount !== "string") {
-    return false;
-  }
-  if (amount === RESULTS_NOT_APPLICABLE) {
-    return value.state !== "calculated" && isRequiredNullableString(value.currency);
-  }
-  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string";
+  const componentShape = (state: unknown, amount: unknown, currency: unknown) => {
+    if (amount === null) return isRequiredNullableString(currency);
+    if (typeof amount !== "string") return false;
+    if (amount === RESULTS_NOT_APPLICABLE) return state !== "calculated" && isRequiredNullableString(currency);
+    return state === "calculated" && isDecimalString(amount) && typeof currency === "string";
+  };
+  return componentShape(value.state, value.amount, value.currency) &&
+    componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
 }
 
 /**
