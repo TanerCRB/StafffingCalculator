@@ -2933,4 +2933,11 @@ history / this file's own change log, not as tracked product work.
   concurrent segment-rule write (R-07); the frontend (#113); a multi-step downgrade across
   `b9e3c7a1f264`. See `docs/architecture/capabilities.md`.
 
+- [ ] **SC-1-13** — Persist and apply manually entered exchange rates to scenario results (F-02; prerequisite for SC-6-07, Issue #102).
+  *Done when:* backend tests prove the accepted K-01..K-07 criteria on Issue #189: effective-dated rates resolve for ordered currency pairs; all supported result components convert into the scenario currency using Decimal and explicit rounding; organization, project, and scenario values follow the approved source hierarchy and saved rates remain reproducible; missing rates yield an explicit unavailable result without partial totals; PostgreSQL rejects overlapping windows per pair; access, personnel-cost visibility, and approved-version boundaries remain enforced. QA records the named mutations.
+  **Gate 1 decisions (2026-09-30, Issue #189):** all supported revenue and cost components are in scope; pairs are directed with no implicit reciprocal lookup; rate source hierarchy is organization default → project override → scenario override, with the selected rate copied into the saved scenario as required for reproducibility. The effective-date basis for multi-period components remains pending human clarification.
+  **Unproven foundation, knowingly accepted:** exchange-rate storage, resolution, and conversion have no implementation evidence; the accepted design is ADR-0006, with a project-level override addendum required.
+  **Out of scope (explicit):** automated rate feeds; UI; hypothetical rate-change analysis (SC-6-07); non-ISO currency identifiers.
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-02 and §6; ADR-0002, ADR-0004, ADR-0005, ADR-0006, ADR-0008; Issue #189.
+
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
