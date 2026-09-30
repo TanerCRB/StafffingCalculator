@@ -37,6 +37,7 @@ export const PAID_ABSENCE_COST_LABEL = "Paid absence cost:";
 export const ADDITIONAL_COST_LABEL = "Additional costs:";
 export const INCLUDED_COST_LABEL = "Scenario cost:";
 export const PROFIT_LABEL = "Profit:";
+export const NEGATIVE_PROFIT_INDICATOR = "Loss-making scenario";
 export const MARGIN_LABEL = "Margin:";
 export const MARKUP_LABEL = "Markup:";
 
