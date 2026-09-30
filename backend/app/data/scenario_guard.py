@@ -136,6 +136,22 @@ def draft_scenario(scenario_id: uuid.UUID) -> sa.Select[tuple[uuid.UUID]]:
     )
 
 
+def draft_scenario_read_lock(scenario_id: uuid.UUID) -> sa.Select[tuple[uuid.UUID]]:
+    """`SELECT id FROM scenarios WHERE id = :id AND status = 'draft' FOR SHARE`.
+
+    A scoped read path may take this before reading a composed draft result and hold it through
+    the request transaction. Every guarded child write and approval takes `FOR UPDATE` on this
+    same row, so either the reader sees the committed write first or the writer waits until the
+    reader has finished. The caller must resolve project scope before executing this lock, so a
+    missing row remains indistinguishable from an inaccessible scenario.
+    """
+    return (
+        sa.select(_SCENARIOS.c.id)
+        .where(_SCENARIOS.c.id == scenario_id, _SCENARIOS.c.status == ScenarioStatus.DRAFT)
+        .with_for_update(read=True)
+    )
+
+
 def copying_source_scenario(scenario_id: uuid.UUID) -> sa.Select[tuple[uuid.UUID]]:
     """`SELECT id FROM scenarios WHERE id = :id FOR SHARE` — the copy's lock on its source.
 

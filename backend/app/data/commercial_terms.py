@@ -63,7 +63,7 @@ from app.data.rate_windows import (
     frozen_windows_overlapping,
     internal_catalog_windows_overlapping,
 )
-from app.data.scenario_guard import unapproved_scenario
+from app.data.scenario_guard import draft_scenario_read_lock, unapproved_scenario
 from app.data.staffing import scenario_in_scope
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.domain.revenue import (
@@ -181,7 +181,12 @@ def month_is_priced(
     return sa.and_(covered, one_price)
 
 
-def priced_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.Select:
+def priced_month_windows(
+    *,
+    from_snapshot: bool,
+    scenario_id: uuid.UUID,
+    include_planned_allocation_hours: bool = False,
+) -> sa.Select:
     """Every (allocation, overlapping window) row of one scenario, each carrying `month_is_priced`.
 
     Columns: `scenario_id`, `position_id`, `allocation_id`, `period_month`, `billable_hours`,
@@ -209,26 +214,33 @@ def priced_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
         window = CatalogDefaultRate
         window_id = window.id
         condition = internal_catalog_windows_overlapping()
-    return (
-        sa.select(
-            StaffingPosition.scenario_id.label("scenario_id"),
-            StaffingPosition.id.label("position_id"),
-            StaffingPositionAllocation.id.label("allocation_id"),
-            StaffingPositionAllocation.period_month.label("period_month"),
-            StaffingPositionAllocation.billable_hours.label("billable_hours"),
-            window_id.label("window_id"),
-            window.effective_from.label("effective_from"),
-            window.effective_to.label("effective_to"),
-            window.default_selling_rate.label("selling_rate"),
-            window.currency.label("currency"),
-            month_is_priced(
-                StaffingPositionAllocation.id,
-                StaffingPositionAllocation.period_month,
-                window.valid_period,
-                window.default_selling_rate,
-                window.currency,
-            ).label("month_is_priced"),
+    selected_columns = [
+        StaffingPosition.scenario_id.label("scenario_id"),
+        StaffingPosition.id.label("position_id"),
+        StaffingPositionAllocation.id.label("allocation_id"),
+        StaffingPositionAllocation.period_month.label("period_month"),
+        StaffingPositionAllocation.billable_hours.label("billable_hours"),
+        window_id.label("window_id"),
+        window.effective_from.label("effective_from"),
+        window.effective_to.label("effective_to"),
+        window.default_selling_rate.label("selling_rate"),
+        window.currency.label("currency"),
+        month_is_priced(
+            StaffingPositionAllocation.id,
+            StaffingPositionAllocation.period_month,
+            window.valid_period,
+            window.default_selling_rate,
+            window.currency,
+        ).label("month_is_priced"),
+    ]
+    if include_planned_allocation_hours:
+        selected_columns.append(
+            StaffingPositionAllocation.planned_allocation_hours.label(
+                "planned_allocation_hours"
+            )
         )
+    return (
+        sa.select(*selected_columns)
         .select_from(StaffingPosition)
         .join(
             StaffingPositionAllocation,
@@ -242,7 +254,12 @@ def priced_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
 # --- reading the billable months of a scenario, priced -------------------------------------------
 
 
-def _billable_months(session: Session, scenario: Scenario) -> tuple[str, list[BillableMonth]]:
+def _billable_months(
+    session: Session,
+    scenario: Scenario,
+    *,
+    include_planned_allocation_hours: bool = False,
+) -> tuple[str, list[BillableMonth]]:
     """Every allocation row of the scenario with its price — live catalogue or snapshot.
 
     **The source is chosen by the scenario's status, and only by it** (ADR-0003, point 10): a draft
@@ -257,9 +274,11 @@ def _billable_months(session: Session, scenario: Scenario) -> tuple[str, list[Bi
     """
     approved = scenario.status == ScenarioStatus.APPROVED
     source = APPROVED_SNAPSHOT if approved else LIVE_CATALOG
-    rows = priced_month_windows(from_snapshot=approved, scenario_id=scenario.id).subquery(
-        "priced_month_windows"
-    )
+    rows = priced_month_windows(
+        from_snapshot=approved,
+        scenario_id=scenario.id,
+        include_planned_allocation_hours=include_planned_allocation_hours,
+    ).subquery("priced_month_windows")
     statement = sa.select(rows).order_by(
         rows.c.period_month, rows.c.position_id, rows.c.effective_from, rows.c.window_id
     )
@@ -291,6 +310,9 @@ def _billable_months(session: Session, scenario: Scenario) -> tuple[str, list[Bi
                 period_month=first.period_month,
                 billable_hours=first.billable_hours,
                 price=price,
+                planned_allocation_hours=(
+                    first.planned_allocation_hours if include_planned_allocation_hours else None
+                ),
             )
         )
     return source, months
@@ -696,19 +718,39 @@ class ScenarioCommercialView:
     at full stored precision: this is the input a client edits, not the rounded revenue."""
 
 
-def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
+    billable_months: tuple[BillableMonth, ...] | None = None
+    """Temporary T&M inputs, included only when a what-if needs a substitution."""
+
+
+def _view_of(
+    session: Session, scenario: Scenario, *, include_billable_months: bool = False
+) -> ScenarioCommercialView:
     # Refreshed, not trusted from the identity map: the status decides live-versus-snapshot, and an
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
     status_at_read = scenario.status
     rule = _rule_of(session, scenario.id)
     agreed_price: AgreedPrice | None = None
+    billable_months: tuple[BillableMonth, ...] | None = None
     if rule is not None and rule.terms.model_type == MODEL_TYPE_FIXED_PRICE:
         # One read of the price for the whole view (R-01, 2026-09-28): the revenue is priced from
         # the very value the answer states as `agreed_price`, never from a second read of the row.
         # The same helper the `REVENUE_BY_MODEL` entry (`_fixed_price`) calls.
         agreed_price = _fixed_price_details_of(session, rule)
         revenue = _fixed_price_answer(agreed_price, scenario)
+    elif (
+        include_billable_months
+        and rule is not None
+        and rule.terms.model_type == MODEL_TYPE_TIME_AND_MATERIAL
+        and rule.has_details
+    ):
+        source, months = _billable_months(
+            session, scenario, include_planned_allocation_hours=True
+        )
+        billable_months = tuple(months)
+        revenue = time_and_material_revenue(
+            months, rate_source=source, scenario_currency=scenario.currency
+        )
     else:
         revenue = revenue_of(session, scenario, rule)
     return ScenarioCommercialView(
@@ -718,21 +760,34 @@ def _view_of(session: Session, scenario: Scenario) -> ScenarioCommercialView:
         status_at_read=status_at_read,
         outcome_terms=None if rule is None else _outcome_details_of(session, rule),
         agreed_price=agreed_price,
+        billable_months=billable_months,
     )
 
 
 def commercial_terms_for_caller(
-    session: Session, caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    include_billable_months: bool = False,
+    lock_draft_scenario_for_composition: bool = False,
 ) -> ScenarioCommercialView | None:
     """The rule and revenue of one scenario — or `None`, with no way to tell why (criterion K-05).
 
     `None` is "no such scenario *for this caller*"; a scenario with no rule is a view whose revenue
-    is the named `no_commercial_terms` state, never `None` and never `0`.
+    is the named `no_commercial_terms` state, never `None` and never `0`. When
+    `lock_draft_scenario_for_composition` is requested, scope is resolved first and then a draft
+    scenario `FOR SHARE` lock is retained by this session through the caller's composed read.
     """
     scenario = scenario_in_scope(session, caller, project_id, scenario_id)
     if scenario is None:
         return None
-    return _view_of(session, scenario)
+    if lock_draft_scenario_for_composition and (
+        session.execute(draft_scenario_read_lock(scenario.id)).scalar_one_or_none() is None
+    ):
+        return None
+    return _view_of(session, scenario, include_billable_months=include_billable_months)
 
 
 # --- writing the rule (ADR-0003, point 3; ADR-0004, addendum SC-4-01, point 1a) ------------------

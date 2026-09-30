@@ -39,15 +39,24 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.response_shaping import shape_scenario_what_if_salary_raise
+from app.api.response_shaping import (
+    shape_scenario_what_if_billable_utilization,
+    shape_scenario_what_if_salary_raise,
+)
 from app.api.schemas.scenario_what_if import (
+    BillableUtilizationDecreaseQuery,
     SalaryRaisePercentQuery,
+    ScenarioWhatIfBillableUtilizationResults,
     ScenarioWhatIfSalaryRaiseResults,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.scenario_results import ScenarioResultsRaceDetected
-from app.data.scenario_what_if import scenario_what_if_salary_raise_for_caller
+from app.data.scenario_what_if import (
+    scenario_what_if_billable_utilization_for_caller,
+    scenario_what_if_salary_raise_for_caller,
+)
 from app.db.session import get_session
+from app.domain.revenue_time_and_material import InvalidBillableUtilizationDecrease
 
 router = APIRouter(
     prefix="/projects/{project_id}/scenarios/{scenario_id}/what-if", tags=["scenario-what-if"]
@@ -112,3 +121,43 @@ def read_scenario_what_if_salary_raise(
             status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_WHAT_IF_NOT_FOUND_DETAIL
         )
     return shape_scenario_what_if_salary_raise(view, caller)
+
+
+@router.get(
+    "/billable-utilization",
+    response_model=ScenarioWhatIfBillableUtilizationResults,
+    summary=(
+        "Recompute a draft T&M scenario's revenue and profit under reduced billable utilization, "
+        "without persisting anything"
+    ),
+    responses={
+        404: {"description": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL},
+        422: {"description": "Invalid utilization decrease."},
+    },
+)
+def read_scenario_what_if_billable_utilization(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    billable_utilization_decrease_percentage_points: BillableUtilizationDecreaseQuery,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioWhatIfBillableUtilizationResults:
+    """Return a T&M revenue substitution on a draft; non-T&M and approved scenarios share 404."""
+    try:
+        view = scenario_what_if_billable_utilization_for_caller(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            decrease_percentage_points=billable_utilization_decrease_percentage_points,
+        )
+    except InvalidBillableUtilizationDecrease:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid utilization decrease.",
+        ) from None
+    if view is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_WHAT_IF_NOT_FOUND_DETAIL
+        )
+    return shape_scenario_what_if_billable_utilization(view, caller)
