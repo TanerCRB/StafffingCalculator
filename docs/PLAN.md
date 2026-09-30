@@ -2239,6 +2239,47 @@ history / this file's own change log, not as tracked product work.
   (K-01..K-06, S-01, R-01 — 12 testów) — 749 testów backendowych zielono, 262 frontendowych bez
   zmian. Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-6-06** — Show the impact of delaying a project start on scenario profitability (F-09
+  point 3, backend). Applies one forward calendar-month shift to every staffing allocation month
+  and evaluates staffing-linked inputs at the destination month; it does not move independently
+  dated additional-cost rows.
+  *Done when:* `backend/tests` prove criteria K-01..K-06 (analyst, 2026-09-29; gate 1 approved
+  2026-09-29):
+  1. (K-01) N is a non-negative whole number of calendar months; every staffing allocation period
+     is evaluated at month+N, with N=0 identical to the unshifted result. Mutations: omit the shift,
+     shift only one allocation, or use a fixed-day duration instead of calendar months.
+  2. (K-02) The shifted staffing inputs produce revenue, cost, profit, margin, and markup with the
+     existing result semantics; independently dated additional-cost rows remain at their saved
+     periods. Mutations: use unshifted staffing, omit a result component, or shift additional-cost
+     periods.
+  3. (K-03) The what-if call changes no persisted scenario data; prove with before/after result and
+     staffing reads and direct database reads outside the ORM identity map. Mutation: persist any
+     shifted allocation or derived result.
+  4. (K-04) An out-of-scope or `approved` scenario is indistinguishable from a nonexistent scenario
+     (`404`); an authorized `draft` scenario returns the result. Preserve `RESULTS_READ` and
+     personnel-cost field gating. Mutations: remove the access check, the status check, or the
+     field-level cost gate.
+  5. (K-05) A required rate or calendar unavailable at a shifted month returns the existing named
+     unavailable state for affected components; dependent and unrelated metrics follow the
+     existing result-state rules, with no invented zero, default, or partial numeric total.
+     Contrast with a destination month inside the applicable window. Mutation: default or skip a
+     missing rate/calendar.
+  6. (K-06) Existing read-race behavior is preserved for the shifted composition; a raced status
+     or source mismatch never yields a mixed `200` result. Mutation: remove the what-if race guard.
+
+  **Gate 1 decision (2026-09-29, Issue #101):** `draft` only; named unavailable states follow the
+  existing component and dependent-metric rules; shift staffing-linked calculations only, leaving
+  independently dated additional costs in their saved periods. ADR-0015 addendum 2026-09-29.
+  **Unproven foundation, consciously accepted:** delayed-start substitution across rate/calendar
+  windows and its result-state behavior; SC-6-04 proves only the salary-raise what-if path.
+  **Out of scope (explicit):** backward shifts; shifting only selected staffing positions;
+  independently changing project duration; moving additional-cost periods; the other sensitivity
+  variables (utilization #100 and exchange rates #102); UI; persisting a what-if result as a new
+  scenario.
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-09 point 3; ADR-0015 (addendum 2026-09-29);
+  ADR-0002, ADR-0004, ADR-0005, ADR-0008, ADR-0013; `docs/PLAN.md` SC-3-01, SC-3-03, SC-4-01,
+  SC-5-01/05/06, SC-7-01; Issue #101.
+
 - [x] **SC-6-03** — Duplikuj scenariusz z interfejsu (F-09 pkt 1, frontend). Konsument API
   dostarczonego przez SC-6-01 (`POST .../scenarios/{id}/duplicate`) — ekran świadomie odłożony przy
   SC-6-01, wzorem podziału backend/frontend SC-4-01/SC-4-06 (Issue #95).
