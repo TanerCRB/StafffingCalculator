@@ -50,7 +50,7 @@ ADR-0007's marker compared in the same statement (`update_fixed_price`).
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
@@ -104,11 +104,58 @@ from app.models.commercial_terms import (
     probability_column,
     units_column,
 )
+from app.models.project_access import ProjectAccess
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.scenario_delivery_segment import ScenarioDeliverySegment
 from app.models.staffing import StaffingPosition, StaffingPositionAllocation
 
 _TERMS_TABLE = CommercialTerms.__table__
+
+
+def _caller_access_guard(
+    caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
+) -> sa.Exists:
+    """Recheck and lock the caller's project membership in the guarded write statement.
+
+    The Python scope lookup gives the API its uniform preflight 404. This SQL predicate closes the
+    gap between that lookup and the write. KEY SHARE conflicts with deleting the membership row:
+    a revocation committed before this statement makes the predicate false, while a concurrent
+    revocation waits until this write commits.
+    """
+    scenario_table = Scenario.__table__
+    access_table = ProjectAccess.__table__
+    access = (
+        sa.select(access_table.c.project_id)
+        .where(
+            access_table.c.user_id == caller.user_id,
+            access_table.c.project_id == project_id,
+            access_table.c.project_id == scenario_table.c.project_id,
+        )
+        .with_for_update(read=True, key_share=True)
+        .exists()
+    )
+    return sa.exists().where(
+        scenario_table.c.id == scenario_id,
+        scenario_table.c.project_id == project_id,
+        access,
+    )
+
+
+def _lock_scenario_for_terms_mutation(
+    session: Session, project_id: uuid.UUID, scenario_id: uuid.UUID
+) -> bool:
+    """Serialize commercial writes with every writer that takes the scenario row lock.
+
+    This is a separate statement before rule-count preflight. Under READ COMMITTED, if it waited
+    for a creator that holds the scenario lock while inserting a scoped rule, the following
+    preflight statements receive a fresh snapshot and observe that committed rule. The guarded
+    mutation still repeats its approved-status guard atomically.
+    """
+    return session.execute(
+        sa.select(Scenario.id)
+        .where(Scenario.id == scenario_id, Scenario.project_id == project_id)
+        .with_for_update()
+    ).scalar_one_or_none() is not None
 
 # --- the month-pricing predicate (ADR-0003, point 5; corrected at gate 2 of SC-4-01, R-01) --------
 #
@@ -723,6 +770,7 @@ class ScenarioCommercialView:
     """The Fixed Price details row of the rule, as stored (SC-4-02) — `None` for a rule of another
     model and for a Fixed Price rule without its details row (`incomplete_commercial_terms`). Stated
     at full stored precision: this is the input a client edits, not the rounded revenue."""
+    story_points_terms: StoryPointsTerms | None = None
 
 
     billable_months: tuple[BillableMonth, ...] | None = None
@@ -742,6 +790,7 @@ def _view_of(
     status_at_read = scenario.status
     rule = _rule_of(session, scenario.id)
     agreed_price: AgreedPrice | None = None
+    story_points_terms: StoryPointsTerms | None = None
     billable_months: tuple[BillableMonth, ...] | None = None
     if rule is not None and rule.terms.model_type == MODEL_TYPE_FIXED_PRICE:
         # One read of the price for the whole view (R-01, 2026-09-28): the revenue is priced from
@@ -749,6 +798,11 @@ def _view_of(
         # The same helper the `REVENUE_BY_MODEL` entry (`_fixed_price`) calls.
         agreed_price = _fixed_price_details_of(session, rule)
         revenue = _fixed_price_answer(agreed_price, scenario)
+    elif rule is not None and rule.terms.model_type == MODEL_TYPE_STORY_POINTS and rule.has_details:
+        story_points_terms = session.execute(sa.select(StoryPointsTerms).where(
+            StoryPointsTerms.commercial_terms_id == rule.terms.id
+        )).scalar_one_or_none()
+        revenue = revenue_of(session, scenario, rule)
     elif (
         include_billable_months
         and rule is not None
@@ -774,6 +828,11 @@ def _view_of(
         status_at_read=status_at_read,
         outcome_terms=None if rule is None else _outcome_details_of(session, rule),
         agreed_price=agreed_price,
+        story_points_terms=(
+            story_points_terms
+            if rule is not None and rule.terms.model_type == MODEL_TYPE_STORY_POINTS
+            else None
+        ),
         billable_months=billable_months,
     )
 
@@ -1044,6 +1103,95 @@ class CommercialTermsEditConflict(CommercialTermsWriteRejected):
     one by its message. Transient: re-read and apply again (the `approved` refusal is permanent)."""
 
 
+class CommercialTermsModelTypeMismatch(ValueError):
+    """An edit attempted to change the discriminator of an existing rule."""
+
+
+def delete_commercial_terms(session: Session, caller: CallerIdentity, project_id: uuid.UUID,
+                            scenario_id: uuid.UUID, *, expected_updated_at: datetime
+                            ) -> ScenarioCommercialView | None:
+    """Delete a whole-scenario rule and its details, guarded by status and marker."""
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+        return None
+    if not _lock_scenario_for_terms_mutation(session, project_id, scenario_id):
+        return None
+    row = session.execute(sa.select(_TERMS_TABLE.c.id, _TERMS_TABLE.c.model_type).where(
+        _TERMS_TABLE.c.scenario_id == scenario_id, _TERMS_TABLE.c.scope_ref.is_(None)
+    )).one_or_none()
+    if row is None:
+        raise CommercialTermsNotFound("This scenario has no commercial terms to delete.")
+    rule_count = session.execute(
+        sa.select(sa.func.count()).where(_TERMS_TABLE.c.scenario_id == scenario_id)
+    ).scalar_one()
+    if rule_count > 1:
+        raise CommercialTermsEditAmbiguous(
+            "This scenario has more than one set of commercial terms, so its rule cannot be "
+            "deleted here."
+        )
+    table = DETAIL_TABLE_BY_MODEL.get(row.model_type)
+    if table is None:
+        raise CommercialTermsWriteRejected("This commercial model cannot be deleted here.")
+    guarded = (
+        sa.select(_TERMS_TABLE.c.id)
+        .where(
+            _TERMS_TABLE.c.id == row.id,
+            _TERMS_TABLE.c.updated_at == expected_updated_at,
+            _TERMS_TABLE.c.scenario_id.in_(unapproved_scenario(scenario_id)),
+            _caller_access_guard(caller, project_id, scenario_id),
+            sa.exists().where(table.c.commercial_terms_id == _TERMS_TABLE.c.id),
+            ~sa.exists().where(
+                _OTHER_TERMS.c.scenario_id == scenario_id,
+                _OTHER_TERMS.c.id != _TERMS_TABLE.c.id,
+            ),
+        )
+        .with_for_update(of=_TERMS_TABLE)
+        .cte("guarded_commercial_terms")
+    )
+    deleted_details = (
+        sa.delete(table)
+        .where(table.c.commercial_terms_id == guarded.c.id)
+        .returning(table.c.commercial_terms_id)
+        .cte("deleted_commercial_details")
+    )
+    statement = (
+        sa.delete(_TERMS_TABLE)
+        .where(_TERMS_TABLE.c.id.in_(sa.select(deleted_details.c.commercial_terms_id)))
+        .returning(_TERMS_TABLE.c.id)
+        .add_cte(guarded)
+    )
+    try:
+        deleted = session.execute(statement).scalar_one_or_none()
+        if deleted is None:
+            session.rollback()
+            if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+                return None
+            raise _diagnose_delete_refusal(session, scenario_id, row.id, expected_updated_at)
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    scenario = scenario_in_scope(session, caller, project_id, scenario_id)
+    return None if scenario is None else _view_of(session, scenario)
+
+
+def _diagnose_delete_refusal(session: Session, scenario_id: uuid.UUID, rule_id: uuid.UUID,
+                             marker: datetime) -> CommercialTermsWriteRejected:
+    rule_count = session.execute(
+        sa.select(sa.func.count()).where(_TERMS_TABLE.c.scenario_id == scenario_id)
+    ).scalar_one()
+    if rule_count > 1:
+        return CommercialTermsEditAmbiguous(
+            "This scenario has more than one set of commercial terms, so its rule cannot be "
+            "deleted here."
+        )
+    refusal = _diagnose_refusal(session, scenario_id)
+    if isinstance(refusal, CommercialTermsFrozen):
+        return refusal
+    return CommercialTermsEditConflict(
+        "The commercial terms changed since they were read (concurrency marker)."
+    )
+
+
 EDITABLE_FIXED_PRICE_FIELDS: frozenset[str] = frozenset({"agreed_price", "currency"})
 """What the price edit may change: the price pair and nothing else — never `model_type` (ADR-0003,
 point 2: immutable after the write)."""
@@ -1114,7 +1262,9 @@ def update_fixed_price(
     A price below zero is refused by `ck_fixed_price_terms_agreed_price_non_negative` inside the
     `UPDATE` — a `409` naming the constraint (`app.data.write_errors`) for a caller that got
     past the schema's own bound.
-    """
+"""
+
+
     forbidden = sorted(set(changes) - EDITABLE_FIXED_PRICE_FIELDS)
     if forbidden or not changes:
         raise ValueError(
@@ -1168,6 +1318,113 @@ def update_fixed_price(
     if scenario is None:  # pragma: no cover — the scenario was in scope a statement ago
         return None
     return _view_of(session, scenario)
+
+
+def replace_commercial_terms(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    model_type: str,
+    expected_updated_at: datetime,
+    domain_values: Mapping[str, object],
+) -> ScenarioCommercialView | None:
+    """Replace all details of a supported draft rule while preserving its immutable model type."""
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+        return None
+    if model_type == MODEL_TYPE_TIME_AND_MATERIAL:
+        raise CommercialTermsWriteRejected("Time & Material terms cannot be edited.")
+    if not _lock_scenario_for_terms_mutation(session, project_id, scenario_id):
+        return None
+    target = DETAIL_TABLE_BY_MODEL[model_type]
+    guarded = (
+        sa.update(_TERMS_TABLE)
+        .where(
+            _TERMS_TABLE.c.scenario_id == scenario_id,
+            _TERMS_TABLE.c.scope_ref.is_(None),
+            _TERMS_TABLE.c.model_type == model_type,
+            _TERMS_TABLE.c.updated_at == expected_updated_at,
+            _TERMS_TABLE.c.scenario_id.in_(unapproved_scenario(scenario_id)),
+            _caller_access_guard(caller, project_id, scenario_id),
+            sa.exists().where(target.c.commercial_terms_id == _TERMS_TABLE.c.id),
+            ~sa.exists().where(
+                _OTHER_TERMS.c.scenario_id == scenario_id,
+                _OTHER_TERMS.c.id != _TERMS_TABLE.c.id,
+            ),
+        )
+        .values(
+            updated_at=sa.func.greatest(
+                sa.func.clock_timestamp(), _TERMS_TABLE.c.updated_at + timedelta(microseconds=1)
+            )
+        )
+        .returning(_TERMS_TABLE.c.id)
+        .cte("guarded_commercial_terms")
+    )
+    statement = (
+        sa.update(target)
+        .add_cte(guarded)
+        .where(target.c.commercial_terms_id == guarded.c.id)
+        .values(**dict(domain_values))
+        .returning(target.c.commercial_terms_id)
+    )
+    try:
+        applied = session.execute(statement).scalar_one_or_none()
+        if applied is not None:
+            session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    if applied is None:
+        if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+            session.rollback()
+            return None
+        target_exists = session.execute(
+            sa.select(sa.exists().where(
+                _TERMS_TABLE.c.scenario_id == scenario_id,
+                _TERMS_TABLE.c.scope_ref.is_(None),
+                _TERMS_TABLE.c.model_type == model_type,
+            ))
+        ).scalar_one()
+        display_model = model_type.replace("_", " ").title()
+        if not target_exists:
+            has_rule = session.execute(sa.select(sa.exists().where(
+                _TERMS_TABLE.c.scenario_id == scenario_id,
+                _TERMS_TABLE.c.scope_ref.is_(None),
+            ))).scalar_one()
+            if has_rule:
+                raise CommercialTermsModelTypeMismatch(
+                    "model_type cannot be changed by editing commercial terms."
+                )
+            raise CommercialTermsNotFound(
+                f"This scenario has no matching {display_model} commercial terms to edit."
+            )
+        has_details = session.execute(sa.select(sa.exists().where(
+            target.c.commercial_terms_id == _TERMS_TABLE.c.id,
+            _TERMS_TABLE.c.scenario_id == scenario_id,
+            _TERMS_TABLE.c.scope_ref.is_(None),
+            _TERMS_TABLE.c.model_type == model_type,
+        ))).scalar_one()
+        if not has_details:
+            raise CommercialTermsNotFound(
+                f"This scenario has no complete {display_model} commercial terms to edit."
+            )
+        count = session.execute(
+            sa.select(sa.func.count()).where(_TERMS_TABLE.c.scenario_id == scenario_id)
+        ).scalar_one()
+        if count > 1:
+            raise CommercialTermsEditAmbiguous(
+                "This scenario has more than one set of commercial terms, so its rule cannot be "
+                "edited here."
+            )
+        refusal = _diagnose_refusal(session, scenario_id)
+        if isinstance(refusal, CommercialTermsFrozen):
+            raise refusal
+        raise CommercialTermsEditConflict(
+            "The commercial terms changed since they were read (concurrency marker)."
+        )
+    scenario = scenario_in_scope(session, caller, project_id, scenario_id)
+    return None if scenario is None else _view_of(session, scenario)
 
 
 def _diagnose_edit_refusal(session: Session, scenario_id: uuid.UUID) -> Exception:

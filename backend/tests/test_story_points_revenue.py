@@ -348,13 +348,14 @@ def test_k_05_the_story_points_response_carries_the_same_field_set_as_time_and_m
     created = _set_sp_rule(client, project.id, scenario.id)
 
     assert set(created) == RESPONSE_FIELDS
-    assert set(created["commercial_terms"]) == TERMS_FIELDS
+    assert set(created["commercial_terms"]) == TERMS_FIELDS | {
+        "price_per_point", "accepted_points", "currency",
+    }
     assert set(created["revenue"]) == REVENUE_FIELDS
     assert set(created["revenue"]["assumptions_used"]) == ASSUMPTIONS_FIELDS
     assert "price_per_point" not in created["revenue"]["assumptions_used"]
-    assert "1000.0000" not in client.get(
-        commercial_terms_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
-    ).text
+    assert created["commercial_terms"]["price_per_point"] == "1000.0000"
+    assert created["commercial_terms"]["accepted_points"] == 25
 
 
 # --- R-01: a currency other than the scenario's own is `currency_mismatch` (reviewer, gate 2) ----

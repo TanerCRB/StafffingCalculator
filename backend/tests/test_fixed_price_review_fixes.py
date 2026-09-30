@@ -150,7 +150,12 @@ def test_r_03_the_price_edit_of_a_scenario_with_a_second_segment_rule_is_refused
 
     response = client.patch(
         commercial_terms_path(project.id, scenario.id),
-        json={"updated_at": whole.updated_at.isoformat(), "agreed_price": "175000"},
+        json={
+            "model_type": "fixed_price",
+            "updated_at": whole.updated_at.isoformat(),
+            "agreed_price": "175000",
+            "currency": "PLN",
+        },
         headers=as_caller(IN_SCOPE_USER),
     )
 
