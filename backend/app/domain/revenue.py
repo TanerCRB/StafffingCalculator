@@ -279,6 +279,8 @@ class RevenueResult:
     `NOT_APPLICABLE` (`"n/a"`) — never `0` and never `None`."""
     expected_state: str = EXPECTED_NOT_APPLICABLE
     category_revenues: tuple[CategoryRevenue, ...] = ()
+    period_amounts: tuple[tuple[date | None, Decimal, str], ...] = ()
+    """Unrounded amounts by source currency and period, used only by result FX composition."""
 
 
 @dataclass(frozen=True)

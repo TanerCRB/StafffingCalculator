@@ -86,6 +86,7 @@ class FixedAmountCostResult:
     cost: Decimal
     currency: str
     assumptions_used: FixedAmountAssumptionsUsed
+    period_amounts: tuple[tuple[None, Decimal, str], ...] = ()
     basis: str = COST_BASIS_FIXED_AMOUNT
 
 
@@ -102,7 +103,8 @@ FixedAmountCostAnswer = FixedAmountCostResult | FixedAmountCostUnavailable
 
 
 def fixed_amount_cost(
-    lines: Sequence[FixedAmountLine], *, scenario_currency: str | None
+    lines: Sequence[FixedAmountLine], *, scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> FixedAmountCostAnswer:
     """The sum of a scenario's `fixed_amount` positions, or the named state that withholds it.
 
@@ -122,9 +124,9 @@ def fixed_amount_cost(
     currencies = tuple(sorted({line.currency for line in lines}))
     assumptions = FixedAmountAssumptionsUsed(lines=tuple(lines), currencies=currencies)
 
-    if len(currencies) > 1 or (
+    if not allow_currency_mismatch and (len(currencies) > 1 or (
         scenario_currency is not None and currencies and currencies != (scenario_currency,)
-    ):
+    )):
         return FixedAmountCostUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
 
     currency = currencies[0] if currencies else scenario_currency
@@ -133,5 +135,7 @@ def fixed_amount_cost(
 
     total = sum((line.amount for line in lines), Decimal("0"))
     return FixedAmountCostResult(
-        cost=round_money(total), currency=currency, assumptions_used=assumptions
+        cost=round_money(total), currency=scenario_currency or currency,
+        assumptions_used=assumptions,
+        period_amounts=tuple((None, line.amount, line.currency) for line in lines),
     )

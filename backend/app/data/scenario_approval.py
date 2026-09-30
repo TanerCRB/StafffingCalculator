@@ -138,6 +138,7 @@ from app.models.approved_snapshot import (
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
     ApprovedSnapshotCatalogDefaultRate,
+    ApprovedSnapshotExchangeRate,
     ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
@@ -151,6 +152,7 @@ from app.models.catalog import (
     WorkingCalendar,
     WorkingCalendarDay,
 )
+from app.models.exchange_rate import ExchangeRate
 from app.models.organization_defaults import OrganizationDefaults
 from app.models.scenario import Scenario, ScenarioStatus
 from app.models.staffing import (
@@ -251,6 +253,9 @@ class ApprovalResult:
     own. The same
     deliberate canary growth as the fourth and fifth."""
 
+    exchange_rates: int
+    """Manual exchange-rate windows frozen for this scenario (SC-1-13)."""
+
     @property
     def snapshot_rows(self) -> int:
         """Every snapshot row this approval wrote — what criterion K-18's contrast counts."""
@@ -261,6 +266,7 @@ class ApprovalResult:
             + self.absence_budgets
             + self.organization_defaults
             + self.catalog_default_rates
+            + self.exchange_rates
         )
 
 
@@ -646,9 +652,7 @@ def _copy_absence_budgets(scenario_id: uuid.UUID) -> sa.Insert:
                 # The one way this codebase asks "which window covers this month" — the generated
                 # column the `EXCLUDE` constraint reads, never a rebuilt `daterange(...)`
                 # (ADR-0008, point 3), and the same predicate the live read uses.
-                AbsenceBudget.valid_period.bool_op("@>")(
-                    StaffingPositionAllocation.period_month
-                ),
+                AbsenceBudget.valid_period.bool_op("@>")(StaffingPositionAllocation.period_month),
             ),
         ),
         "copied_budgets",
@@ -788,9 +792,7 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     # thirty-six months, one frozen row.
     windows_read = sa.union(
         sa.select(priced.c.scenario_id, priced.c.window_id).where(priced.c.month_is_priced),
-        sa.select(costed.c.scenario_id, costed.c.window_id).where(
-            costed.c.month_has_cost_rate
-        ),
+        sa.select(costed.c.scenario_id, costed.c.window_id).where(costed.c.month_has_cost_rate),
     ).subquery("windows_read")
     rates = _deduplicated_with_new_ids(
         sa.select(
@@ -852,6 +854,63 @@ def _copy_catalog_default_rates(scenario_id: uuid.UUID) -> sa.Insert:
     )
 
 
+def _copy_exchange_rates(scenario_id: uuid.UUID) -> sa.Insert:
+    """Freeze organization, project and scenario rate windows as plain values."""
+    source_scope = sa.case(
+        (ExchangeRate.scenario_id.is_not(None), "scenario"),
+        (ExchangeRate.project_id.is_not(None), "project"),
+        else_="organization",
+    )
+    source = (
+        sa.select(
+            _NEW_ID,
+            Scenario.id,
+            ExchangeRate.id,
+            source_scope,
+            ExchangeRate.project_id,
+            ExchangeRate.scenario_id,
+            ExchangeRate.source_currency,
+            ExchangeRate.target_currency,
+            ExchangeRate.effective_from,
+            ExchangeRate.effective_to,
+            ExchangeRate.rate,
+            ExchangeRate.source,
+        )
+        .select_from(Scenario)
+        .join(
+            ExchangeRate,
+            sa.or_(
+                ExchangeRate.project_id.is_(None) & ExchangeRate.scenario_id.is_(None),
+                (ExchangeRate.project_id == Scenario.project_id)
+                & ExchangeRate.scenario_id.is_(None),
+                ExchangeRate.scenario_id == Scenario.id,
+            ),
+        )
+        .where(Scenario.id == scenario_id, Scenario.id.in_(unapproved_scenario(scenario_id)))
+    )
+    return (
+        sa.insert(ApprovedSnapshotExchangeRate.__table__)
+        .from_select(
+            [
+                "id",
+                "scenario_id",
+                "source_rate_id",
+                "source_scope",
+                "source_project_id",
+                "source_scenario_id",
+                "source_currency",
+                "target_currency",
+                "effective_from",
+                "effective_to",
+                "rate",
+                "source",
+            ],
+            source,
+        )
+        .returning(ApprovedSnapshotExchangeRate.__table__.c.id)
+    )
+
+
 def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
     """Every snapshot insert as one statement: six data-modifying CTEs and a count of each (S-01).
 
@@ -903,6 +962,7 @@ def _snapshot_statement(scenario_id: uuid.UUID) -> sa.Select:
         "catalog_default_rates": _copy_catalog_default_rates(scenario_id).cte(
             "snapshot_catalog_default_rates"
         ),
+        "exchange_rates": _copy_exchange_rates(scenario_id).cte("snapshot_exchange_rates"),
     }
     return sa.select(
         *(
@@ -998,4 +1058,5 @@ def approve_scenario(
         absence_budgets=counts.absence_budgets,
         organization_defaults=counts.organization_defaults,
         catalog_default_rates=counts.catalog_default_rates,
+        exchange_rates=counts.exchange_rates,
     )

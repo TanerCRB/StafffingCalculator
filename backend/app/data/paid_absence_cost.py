@@ -87,7 +87,9 @@ def _live_cost_flags(session: Session, type_ids: set[uuid.UUID]) -> Mapping[uuid
             sa.select(AbsenceType.id, AbsenceType.generates_cost).where(
                 AbsenceType.id.in_(type_ids)
             )
-        ).tuples().all()
+        )
+        .tuples()
+        .all()
     )
 
 
@@ -99,7 +101,9 @@ def _frozen_cost_flags(session: Session, scenario_id: uuid.UUID) -> Mapping[uuid
                 ApprovedSnapshotAbsenceType.source_absence_type_id,
                 ApprovedSnapshotAbsenceType.generates_cost,
             ).where(ApprovedSnapshotAbsenceType.scenario_id == scenario_id)
-        ).tuples().all()
+        )
+        .tuples()
+        .all()
     )
 
 
@@ -178,9 +182,7 @@ def paid_absence_months(
             allocation.period_month: allocation_months[(position.id, allocation.period_month)]
             for allocation in position.allocations
         }
-        view = position_view(
-            position, basis, budgets, statutory, allocation_months=position_months
-        )
+        view = position_view(position, basis, budgets, statutory, allocation_months=position_months)
         spans = tuple(
             PaidAbsenceSpan(
                 start_date=absence.start_date,

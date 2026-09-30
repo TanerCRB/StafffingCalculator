@@ -380,9 +380,7 @@ def _common_project_fields(view: CallerProjectView) -> dict[str, Any]:
 
 
 def _shape_project(view: CallerProjectView, caller: CallerIdentity) -> ProjectListItem:
-    return _without_personnel_costs(
-        ProjectListItem(**_common_project_fields(view)), view, caller
-    )
+    return _without_personnel_costs(ProjectListItem(**_common_project_fields(view)), view, caller)
 
 
 def shape_project_detail(view: CallerProjectView, caller: CallerIdentity) -> ProjectDetail:
@@ -545,9 +543,7 @@ def shape_working_calendar(calendar: WorkingCalendar) -> WorkingCalendarEntry:
         name=calendar.name,
         standard_hours_per_day=calendar.standard_hours_per_day,
         week_pattern=calendar.week_pattern,
-        days=[
-            WorkingCalendarDayEntry(day=row.day, kind=row.kind.value) for row in calendar.days
-        ],
+        days=[WorkingCalendarDayEntry(day=row.day, kind=row.kind.value) for row in calendar.days],
         updated_at=calendar.updated_at,
     )
 
@@ -654,9 +650,7 @@ def shape_absence_type(absence_type: AbsenceType) -> AbsenceTypeEntry:
 
 def shape_absence_type_list(absence_types: Sequence[AbsenceType]) -> AbsenceTypeList:
     """Every absence type through the function above — no second construction path."""
-    return AbsenceTypeList(
-        absence_types=[shape_absence_type(entry) for entry in absence_types]
-    )
+    return AbsenceTypeList(absence_types=[shape_absence_type(entry) for entry in absence_types])
 
 
 def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> CatalogRate:
@@ -906,9 +900,7 @@ def shape_staffing_absence_list(
     absences: Sequence[StaffingPositionAbsence],
 ) -> StaffingAbsenceList:
     """An already scope-filtered sequence of absences — every row through the function above."""
-    return StaffingAbsenceList(
-        absences=[shape_staffing_absence(absence) for absence in absences]
-    )
+    return StaffingAbsenceList(absences=[shape_staffing_absence(absence) for absence in absences])
 
 
 def shape_staffing_position_list(
@@ -1244,9 +1236,7 @@ def _assigned_fte_fields(answer: AssignedFteCostAnswer) -> dict[str, Any]:
             for window in assumptions.rate_windows
         ],
         unresolved_months=[
-            UnresolvedCostMonthRead(
-                position_id=month.position_id, period_month=month.period_month
-            )
+            UnresolvedCostMonthRead(position_id=month.position_id, period_month=month.period_month)
             for month in assumptions.unresolved_months
         ],
         currencies=list(assumptions.currencies),
@@ -1325,9 +1315,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             for window in assumptions.rate_windows
         ],
         unresolved_months=[
-            UnresolvedCostMonthRead(
-                position_id=month.position_id, period_month=month.period_month
-            )
+            UnresolvedCostMonthRead(position_id=month.position_id, period_month=month.period_month)
             for month in assumptions.unresolved_months
         ],
         currencies=list(assumptions.currencies),
@@ -1491,9 +1479,7 @@ def shape_catalog_rate_list(
     catalogue" for however many rows fit in one page — exactly the field this parameter exists so a
     client never has to guess at.
     """
-    return CatalogRateList(
-        rates=[shape_catalog_rate(rate, caller) for rate in rates], total=total
-    )
+    return CatalogRateList(rates=[shape_catalog_rate(rate, caller) for rate in rates], total=total)
 
 
 # --- a scenario's whole-life profit, margin and markup (SC-7-01) --------------------------------
@@ -1551,6 +1537,7 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
     `view.additional_cost`) — never from the already-gated `PersonnelCostRead`, so the arithmetic
     cannot accidentally run on a `null` the gate produced.
     """
+    view = _with_exchange_rates(view)
     cost_view = view.cost_view
     revenue = _revenue_read_of(view.revenue)
     personnel_cost = _without_scenario_personnel_costs(
@@ -1573,6 +1560,170 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
         profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)
+
+
+def _with_exchange_rates(view: ScenarioResultsView) -> ScenarioResultsView:
+    """Apply directed rates to the four complete components before shaping their response."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from app.domain.additional_cost import AdditionalCostResult, AdditionalCostUnavailable
+    from app.domain.assigned_fte_cost import AssignedFteCostResult, AssignedFteCostUnavailable
+    from app.domain.exchange_rates import PeriodMoney, convert_component_periods
+    from app.domain.fixed_amount_cost import FixedAmountCostResult, FixedAmountCostUnavailable
+    from app.domain.paid_absence_cost import (
+        FullyLoadedPaidAbsenceCostResult,
+        FullyLoadedPaidAbsenceCostUnavailable,
+        PaidAbsenceCostResult,
+        PaidAbsenceCostUnavailable,
+    )
+    from app.domain.personnel_cost import (
+        FullyLoadedPersonnelCostResult,
+        FullyLoadedPersonnelCostUnavailable,
+        PersonnelCostResult,
+        PersonnelCostUnavailable,
+    )
+    from app.domain.revenue import RevenueResult, RevenueUnavailable
+
+    target = view.scenario.currency
+    if target is None:
+        return view
+
+    def convert(
+        items: tuple[tuple[Any, Decimal, str], ...], amount: Decimal, currency: str
+    ) -> Decimal | None:
+        periods = tuple(PeriodMoney(period, value, source) for period, value, source in items)
+        if not periods:
+            periods = (PeriodMoney(None, amount, currency),)
+        return convert_component_periods(
+            periods,
+            view.exchange_rates,
+            target_currency=target,
+            fallback_period=view.scenario.start_date,
+        )
+
+    revenue = view.revenue
+    if isinstance(revenue, RevenueResult):
+        amount = convert(revenue.period_amounts, revenue.revenue, revenue.currency)
+        if amount is None:
+            revenue = RevenueUnavailable("missing_exchange_rate", revenue.assumptions_used)
+        else:
+            expected = revenue.expected_revenue
+            if isinstance(expected, Decimal):
+                expected = convert((), expected, revenue.currency)
+            categories = tuple(
+                replace(category, revenue=convert((), category.revenue, revenue.currency))
+                for category in revenue.category_revenues
+            )
+            if expected is None or any(category.revenue is None for category in categories):
+                revenue = RevenueUnavailable("missing_exchange_rate", revenue.assumptions_used)
+            else:
+                revenue = replace(
+                    revenue,
+                    revenue=amount,
+                    currency=target,
+                    expected_revenue=expected,
+                    category_revenues=categories,
+                )
+
+    cost = view.cost_view.cost
+    if isinstance(cost, PersonnelCostResult):
+        amount = convert(cost.period_amounts, cost.cost, cost.currency)
+        cost = (
+            replace(cost, cost=amount, currency=target)
+            if amount is not None
+            else PersonnelCostUnavailable("missing_exchange_rate", cost.assumptions_used)
+        )
+
+    fully_loaded_cost = view.cost_view.fully_loaded_cost
+    if isinstance(fully_loaded_cost, FullyLoadedPersonnelCostResult):
+        amount = convert(
+            fully_loaded_cost.period_amounts, fully_loaded_cost.cost, fully_loaded_cost.currency
+        )
+        surcharge = convert(
+            fully_loaded_cost.surcharge_period_amounts,
+            fully_loaded_cost.surcharge_amount,
+            fully_loaded_cost.currency,
+        )
+        fully_loaded_cost = (
+            replace(fully_loaded_cost, cost=amount, surcharge_amount=surcharge, currency=target)
+            if amount is not None and surcharge is not None
+            else FullyLoadedPersonnelCostUnavailable(
+                "missing_exchange_rate", fully_loaded_cost.assumptions_used
+            )
+        )
+
+    absence = view.cost_view.paid_absence
+    if isinstance(absence, PaidAbsenceCostResult):
+        amount = convert(absence.period_amounts, absence.cost, absence.currency)
+        budget = convert(absence.budget_period_amounts, absence.budget_cost, absence.currency)
+        absence = (
+            replace(absence, cost=amount, budget_cost=budget, currency=target)
+            if amount is not None and budget is not None
+            else PaidAbsenceCostUnavailable("missing_exchange_rate", absence.assumptions_used)
+        )
+
+    fully_loaded_absence = view.cost_view.fully_loaded_paid_absence
+    if isinstance(fully_loaded_absence, FullyLoadedPaidAbsenceCostResult):
+        amount = convert(
+            fully_loaded_absence.period_amounts,
+            fully_loaded_absence.cost,
+            fully_loaded_absence.currency,
+        )
+        surcharge = convert(
+            fully_loaded_absence.surcharge_period_amounts,
+            fully_loaded_absence.surcharge_amount,
+            fully_loaded_absence.currency,
+        )
+        fully_loaded_absence = (
+            replace(fully_loaded_absence, cost=amount, surcharge_amount=surcharge, currency=target)
+            if amount is not None and surcharge is not None
+            else FullyLoadedPaidAbsenceCostUnavailable(
+                "missing_exchange_rate", fully_loaded_absence.assumptions_used
+            )
+        )
+
+    assigned_fte = view.cost_view.assigned_fte
+    if isinstance(assigned_fte, AssignedFteCostResult):
+        amount = convert(assigned_fte.period_amounts, assigned_fte.cost, assigned_fte.currency)
+        assigned_fte = (
+            replace(assigned_fte, cost=amount, currency=target)
+            if amount is not None
+            else AssignedFteCostUnavailable("missing_exchange_rate", assigned_fte.assumptions_used)
+        )
+
+    fixed_amount = view.cost_view.fixed_amount
+    if isinstance(fixed_amount, FixedAmountCostResult):
+        amount = convert(fixed_amount.period_amounts, fixed_amount.cost, fixed_amount.currency)
+        fixed_amount = (
+            replace(fixed_amount, cost=amount, currency=target)
+            if amount is not None
+            else FixedAmountCostUnavailable("missing_exchange_rate", fixed_amount.assumptions_used)
+        )
+
+    additional = view.additional_cost
+    if isinstance(additional, AdditionalCostResult):
+        amount = convert(additional.period_amounts, additional.amount, additional.currency)
+        additional = (
+            replace(additional, amount=amount, currency=target)
+            if amount is not None
+            else AdditionalCostUnavailable("missing_exchange_rate", additional.assumptions_used)
+        )
+
+    return replace(
+        view,
+        revenue=revenue,
+        cost_view=replace(
+            view.cost_view,
+            cost=cost,
+            paid_absence=absence,
+            fully_loaded_cost=fully_loaded_cost,
+            fully_loaded_paid_absence=fully_loaded_absence,
+            assigned_fte=assigned_fte,
+            fixed_amount=fixed_amount,
+        ),
+        additional_cost=additional,
+    )
 
 
 def shape_scenario_what_if_billable_utilization(

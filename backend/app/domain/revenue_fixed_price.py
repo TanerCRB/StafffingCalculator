@@ -50,6 +50,7 @@ def fixed_price_revenue(
     price: AgreedPrice | None,
     *,
     scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> RevenueAnswer:
     """The Fixed Price revenue of one scenario, or the named state that withholds it.
 
@@ -73,8 +74,15 @@ def fixed_price_revenue(
     )
     if price is None:
         return RevenueUnavailable(reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=assumptions)
-    if scenario_currency is not None and price.currency != scenario_currency:
+    if (
+        not allow_currency_mismatch
+        and scenario_currency is not None
+        and price.currency != scenario_currency
+    ):
         return RevenueUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
     return RevenueResult(
-        revenue=round_money(price.amount), currency=price.currency, assumptions_used=assumptions
+        revenue=round_money(price.amount),
+        currency=scenario_currency or price.currency,
+        assumptions_used=assumptions,
+        period_amounts=((None, round_money(price.amount), price.currency),),
     )

@@ -97,9 +97,7 @@ def _committed_approvable_scenario(engine: Engine, **scenario_kwargs: Any) -> di
         make_calendar_day(
             setup, calendar, day=date(2026, 12, 25), kind=WorkingCalendarDayKind.NON_WORKING
         )
-        project = make_project(
-            setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,)
-        )
+        project = make_project(setup, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
         scenario = make_scenario(setup, project, name="Baseline", **scenario_kwargs)
         position = make_staffing_position(
             setup,
@@ -893,9 +891,7 @@ def test_k_21_approving_a_scenario_outside_the_callers_scope_is_not_found_not_fo
     calendar = make_working_calendar(
         db_session, name="Poland 7.5h", standard_hours_per_day=Decimal("7.50")
     )
-    project = make_project(
-        db_session, name="Borealis rollout", accessible_to=(OUT_OF_SCOPE_USER,)
-    )
+    project = make_project(db_session, name="Borealis rollout", accessible_to=(OUT_OF_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Baseline")
     position = make_staffing_position(
         db_session,
@@ -927,9 +923,7 @@ def test_k_21_approving_a_scenario_outside_the_callers_scope_is_not_found_not_fo
 
     db_session.add(ProjectAccess(user_id=IN_SCOPE_USER, project_id=project.id))
     db_session.flush()
-    granted = client.post(
-        approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
-    )
+    granted = client.post(approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
     assert granted.status_code == 200, granted.text
 
 
@@ -949,16 +943,12 @@ def test_k_21_an_out_of_scope_approved_scenario_is_not_found_rather_than_a_confl
     `409` it would have been all along. That is what shows the `404` above was a scope decision
     rather than the endpoint being broken.
     """
-    project = make_project(
-        db_session, name="Borealis rollout", accessible_to=(OUT_OF_SCOPE_USER,)
-    )
+    project = make_project(db_session, name="Borealis rollout", accessible_to=(OUT_OF_SCOPE_USER,))
     scenario = make_scenario(
         db_session, project, name="Approved v1", status=ScenarioStatus.APPROVED
     )
 
-    refused = client.post(
-        approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
-    )
+    refused = client.post(approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
 
     assert refused.status_code == 404, refused.text
     assert refused.json()["detail"] == SCENARIO_NOT_FOUND_DETAIL
@@ -969,9 +959,7 @@ def test_k_21_an_out_of_scope_approved_scenario_is_not_found_rather_than_a_confl
 
     db_session.add(ProjectAccess(user_id=IN_SCOPE_USER, project_id=project.id))
     db_session.flush()
-    conflict = client.post(
-        approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
-    )
+    conflict = client.post(approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
 
     assert conflict.status_code == 409, conflict.text
     assert "already approved" in conflict.json()["detail"].lower()
@@ -1072,6 +1060,7 @@ def test_approving_a_scenario_with_no_positions_freezes_it_with_an_empty_snapsho
         # deliberate canary growth. Zero because this fixture has no catalogue rate; the
         # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
         "catalog_default_rates": 0,
+        "exchange_rates": 0,
     }
     assert response.json()["status"] == "Approved"
     status, rows = _status_and_snapshot(engine, state["scenario_id"])

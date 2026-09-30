@@ -360,9 +360,7 @@ def _worked_months(
         from_snapshot=approved,
         scenario_id=scenario.id,
         period_shift_months=period_shift_months,
-    ).subquery(
-        "costed_month_windows"
-    )
+    ).subquery("costed_month_windows")
     statement = sa.select(rows).order_by(
         rows.c.period_month, rows.c.position_id, rows.c.effective_from, rows.c.window_id
     )
@@ -579,6 +577,7 @@ def scenario_cost_for_caller(
     scenario_id: uuid.UUID,
     *,
     period_shift_months: int = 0,
+    allow_exchange_rates: bool = False,
 ) -> ScenarioCostView | None:
     """The base personnel cost of one scenario — or `None`, with no way to tell why (K-05).
 
@@ -593,6 +592,7 @@ def scenario_cost_for_caller(
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
     status_at_read = scenario.status
+    allow_exchange_rates = allow_exchange_rates and scenario.currency is not None
     source, months, positions = _worked_months(
         session, scenario, period_shift_months=period_shift_months
     )
@@ -611,23 +611,34 @@ def scenario_cost_for_caller(
         scenario=scenario,
         can_view_personnel_costs=project_view.can_view_personnel_costs,
         cost=base_personnel_cost(
-            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency
+            inputs.worked_months,
+            rate_source=source,
+            scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
-        paid_absence=paid_absence_cost(absence_months, scenario_currency=scenario.currency),
+        paid_absence=paid_absence_cost(
+            absence_months,
+            scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
+        ),
         fully_loaded_cost=fully_loaded_personnel_cost(
-            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency
+            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         assigned_fte=assigned_fte_cost(
             inputs.assigned_fte_lines,
             inputs.assigned_fte_months,
             rate_source=source,
             scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         fixed_amount=fixed_amount_cost(
-            _fixed_amount_lines(session, scenario), scenario_currency=scenario.currency
+            _fixed_amount_lines(session, scenario), scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         fully_loaded_paid_absence=fully_loaded_paid_absence_cost(
-            absence_months, scenario_currency=scenario.currency
+            absence_months, scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         status_at_read=status_at_read,
     )

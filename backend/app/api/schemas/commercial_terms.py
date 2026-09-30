@@ -81,6 +81,7 @@ RevenueState = Literal[
     "no_rate",
     "currency_mismatch",
     "no_revenue_currency",
+    "missing_exchange_rate",
 ]
 
 StoredModelType = str
@@ -339,8 +340,8 @@ def _by_model_type(value: Any) -> str:
     dict FastAPI re-validates. Everything that is not Fixed Price (T&M, no rule, a model this
     version does not know) keeps the SC-4-01 shape.
     """
-    model_type = value.get("model_type") if isinstance(value, dict) else getattr(
-        value, "model_type", None
+    model_type = (
+        value.get("model_type") if isinstance(value, dict) else getattr(value, "model_type", None)
     )
     return "fixed_price" if model_type == MODEL_TYPE_FIXED_PRICE else "other"
 
