@@ -296,7 +296,7 @@ Each risk row and each reserve row carries its own `updated_at` marker; `PATCH` 
 
 ### 2026-09-30 — commercial-rule replacement and deletion (SC-4-08, Issue #126)
 
-**Draft — pending approval.** Gate 1 approved full-replacement edits with a concurrency marker
+**Accepted (human decision at gate 1, 2026-09-30).** Gate 1 approved full-replacement edits with a concurrency marker
 and `COMMERCIAL_WRITE` for edit/delete. This addendum applies the accepted optimistic marker
 pattern to a commercial aggregate whose `commercial_terms.updated_at` has not previously been
 consumed.
