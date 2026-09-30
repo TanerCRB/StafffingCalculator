@@ -1080,7 +1080,7 @@ price edit targets the whole-scenario rule (`scope_ref IS NULL`).
 
 ### 2026-09-30 — draft commercial-rule edits and deletion (SC-4-08, Issue #126)
 
-**Draft — pending approval.** Gate 1 approved the scope on 2026-09-30. This addendum records
+**Accepted (human decision at gate 1, 2026-09-30).** Gate 1 approved the scope on 2026-09-30. This addendum records
 the resulting exception to the accepted D-5 premise and the immutable discriminator rule; it
 does not authorize implementation beyond the approved criteria.
 
