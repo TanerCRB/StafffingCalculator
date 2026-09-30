@@ -350,6 +350,17 @@
   font-weight: var(--sc-font-weight-semibold);
 }
 
+.scenario-results__negative-profit {
+  display: inline-block;
+  margin-top: var(--sc-space-2);
+  padding: var(--sc-space-1) var(--sc-space-2);
+  border-radius: var(--sc-radius-sm);
+  background-color: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+  font-size: var(--sc-font-size-sm);
+  font-weight: var(--sc-font-weight-semibold);
+}
+
 .scenario-results__actions {
   display: flex;
   flex-wrap: wrap;

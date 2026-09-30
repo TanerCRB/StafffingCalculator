@@ -20,6 +20,7 @@ import { SCREEN_CRASH_MESSAGE } from "../../shell/ScreenErrorBoundary";
 import { ProjectListScreen } from "./ProjectListScreen";
 import {
   ADDITIONAL_COST_STATE_MESSAGES,
+  NEGATIVE_PROFIT_INDICATOR,
   PERSONNEL_COST_STATE_MESSAGES,
   RESULTS_CONFLICT,
   RESULTS_FAILED,
@@ -274,6 +275,66 @@ describe("K-01 — money and percentage figures render only through the shared f
   });
 });
 
+describe("SC-7-05 - negative-profit indicator", () => {
+  it("shows the indicator when profit is negative", async () => {
+    stubBackend({
+      results: {
+        [BASELINE]: { status: 200, body: baseResults(BASELINE, { profit: "-0.01" }) },
+      },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const results = await settledSection("Baseline");
+
+    expect(within(results).getByText(NEGATIVE_PROFIT_INDICATOR)).toBeVisible();
+  });
+
+  it.each(["0.00", "-0.00"])("does not show the indicator when profit is zero (%s)", async (profit) => {
+    stubBackend({
+      results: {
+        [BASELINE]: { status: 200, body: baseResults(BASELINE, { profit }) },
+      },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const results = await settledSection("Baseline");
+
+    expect(within(results).queryByText(NEGATIVE_PROFIT_INDICATOR)).toBeNull();
+  });
+
+  it("does not show the indicator when profit is positive", async () => {
+    stubBackend({
+      results: {
+        [BASELINE]: { status: 200, body: baseResults(BASELINE, { profit: "0.01" }) },
+      },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const results = await settledSection("Baseline");
+
+    expect(within(results).queryByText(NEGATIVE_PROFIT_INDICATOR)).toBeNull();
+  });
+
+  it("renders separate indicator states for otherwise identical scenarios with opposite profit signs", async () => {
+    stubBackend({
+      results: {
+        [BASELINE]: { status: 200, body: baseResults(BASELINE, { profit: "-1.00" }) },
+        [STRETCH]: { status: 200, body: baseResults(STRETCH, { profit: "1.00" }) },
+      },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const baseline = await settledSection("Baseline");
+    const stretch = await settledSection("Stretch");
+
+    expect(within(baseline).getByText(NEGATIVE_PROFIT_INDICATOR)).toBeVisible();
+    expect(within(stretch).queryByText(NEGATIVE_PROFIT_INDICATOR)).toBeNull();
+  });
+});
 // --- K-02 -----------------------------------------------------------------------------------------
 
 describe("K-02 — the personnel-cost gate's null and a component's own n/a never render as the same thing", () => {
@@ -298,6 +359,7 @@ describe("K-02 — the personnel-cost gate's null and a component's own n/a neve
 
     expect(within(results).getByText(`Scenario cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
     expect(within(results).getByText(`Profit: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
+    expect(within(results).queryByText(NEGATIVE_PROFIT_INDICATOR)).toBeNull();
     expect(within(results).getByText(`Margin: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
     expect(within(results).getByText(`Markup: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
     expect(results.querySelectorAll('[data-result-state="unavailable"]')).toHaveLength(4);
