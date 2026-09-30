@@ -103,3 +103,9 @@ class ScenarioWhatIfBillableUtilizationResults(ScenarioResults):
 
     billable_utilization_decrease_percentage_points: DecimalString
     """The requested decrease is echoed in the response."""
+
+
+class ScenarioWhatIfDelayedStartResults(ScenarioResults):
+    """`GET .../what-if/delayed-start` result for a whole-calendar-month shift."""
+
+    delay_months: int

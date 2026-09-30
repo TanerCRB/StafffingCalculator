@@ -518,3 +518,43 @@ explicit boundary.
 | A15-21 | A required rate/calendar missing at a shifted destination yields the existing named unavailable state for affected components, with dependent and unrelated metrics following the existing result-state rules; no zero/default is invented. |
 | A15-22 | Only `draft` is accepted; `approved`, out-of-scope, and nonexistent scenarios have the same `404` shape, with existing access checks and personnel-cost field gating preserved. |
 | A15-23 | An approval or source-state change during the read cannot produce a mixed successful result; the existing what-if race refusal is preserved. |
+
+### 2026-09-30 — SC-6-06 clarification: absolute absence dates and status/source race scope
+
+**Status:** Draft — pending approval
+
+> Human Gate 1 decisions confirmed on 2026-09-30: saved absence dates remain absolute and are
+> evaluated for overlap with shifted staffing months; K-06 covers the existing scenario
+> status/source mismatch refusal only, without promising a stable live rate/calendar snapshot.
+
+1. **Saved absence dates do not shift.** The hypothetical shifts staffing allocation months only.
+   For each shifted staffing month, saved absence dates are evaluated for overlap with that
+   destination month under the existing paid-absence calculation. An absence whose saved dates do
+   not overlap the destination month does not move into it because of the staffing shift.
+2. **The race guarantee stays limited to the existing scenario status/source check.** A mixed
+   status/source read that the existing what-if race guard refuses remains refused. The request
+   does not guarantee one stable snapshot of live catalogue rates or calendars across its separate
+   component reads. SC-6-05's `FOR SHARE` serialization rule remains specific to that endpoint.
+
+| Control | Acceptance criterion |
+|---|---|
+| A15-24 | Saved absence dates remain unchanged; an absence affects a shifted staffing month only when its saved dates overlap that month. A mutation shifting absence dates with staffing is killed. |
+| A15-25 | The existing scenario status/source mismatch refusal remains in force; no request-wide live rate/calendar snapshot guarantee is made. |
+
+### 2026-09-30 — SC-6-06 clarification: supported commercial-model composition
+
+**Status:** Draft — pending approval
+
+> Human Gate 1 clarification confirmed on 2026-09-30: K-02 applies to the current one-commercial-
+> rule-per-scenario model. Combined simultaneous commercial models are out of scope until the data
+> model supports them.
+
+1. **Use only supported scenario composition.** For a scenario with its single supported
+   commercial rule, recalculate staffing-linked T&M revenue from the shifted destination-month
+   inputs. Revenue models independent of staffing retain their existing result semantics.
+   Profitability continues to use the existing result calculation. Do not add mixed-model
+   composition as part of SC-6-06.
+
+| Control | Acceptance criterion |
+|---|---|
+| A15-26 | Under the current one-commercial-rule-per-scenario model, T&M revenue uses the applicable shifted destination-month staffing inputs; staffing-independent revenue retains its existing semantics, and profitability follows the existing result calculation. Multiple simultaneous commercial models remain out of scope until supported by the data model. |

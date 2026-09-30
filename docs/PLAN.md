@@ -2243,33 +2243,45 @@ history / this file's own change log, not as tracked product work.
   point 3, backend). Applies one forward calendar-month shift to every staffing allocation month
   and evaluates staffing-linked inputs at the destination month; it does not move independently
   dated additional-cost rows.
-  *Done when:* `backend/tests` prove criteria K-01..K-06 (analyst, 2026-09-29; gate 1 approved
-  2026-09-29):
-  1. (K-01) N is a non-negative whole number of calendar months; every staffing allocation period
-     is evaluated at month+N, with N=0 identical to the unshifted result. Mutations: omit the shift,
-     shift only one allocation, or use a fixed-day duration instead of calendar months.
-  2. (K-02) The shifted staffing inputs produce revenue, cost, profit, margin, and markup with the
-     existing result semantics; independently dated additional-cost rows remain at their saved
-     periods. Mutations: use unshifted staffing, omit a result component, or shift additional-cost
-     periods.
-  3. (K-03) The what-if call changes no persisted scenario data; prove with before/after result and
-     staffing reads and direct database reads outside the ORM identity map. Mutation: persist any
-     shifted allocation or derived result.
-  4. (K-04) An out-of-scope or `approved` scenario is indistinguishable from a nonexistent scenario
-     (`404`); an authorized `draft` scenario returns the result. Preserve `RESULTS_READ` and
-     personnel-cost field gating. Mutations: remove the access check, the status check, or the
-     field-level cost gate.
-  5. (K-05) A required rate or calendar unavailable at a shifted month returns the existing named
-     unavailable state for affected components; dependent and unrelated metrics follow the
-     existing result-state rules, with no invented zero, default, or partial numeric total.
-     Contrast with a destination month inside the applicable window. Mutation: default or skip a
-     missing rate/calendar.
-  6. (K-06) Existing read-race behavior is preserved for the shifted composition; a raced status
-     or source mismatch never yields a mixed `200` result. Mutation: remove the what-if race guard.
+  *Done when:* `backend/tests` prove criteria K-01..K-06 (analyst, 2026-09-30; gate 1 decisions
+  confirmed 2026-09-30):
+  1. (K-01) Every staffing allocation is evaluated after the requested whole calendar-month shift;
+     N=0 reproduces the unshifted result. Contrast N=0 with N=1, including a month-end case that
+     distinguishes calendar-month from fixed-day arithmetic. Mutations: remove the shift, shift
+     only one allocation, or use a fixed-day duration.
+  2. (K-02) Under the currently supported one-commercial-rule-per-scenario model, T&M revenue uses
+     staffing-linked inputs from the applicable destination month and profitability follows
+     existing result semantics. Models whose revenue is independent of staffing retain their
+     existing revenue semantics. Combining multiple commercial models in one scenario is out of
+     scope until the data model supports it. Contrast destination months covered by different
+     rate/calendar windows. Mutations: resolve inputs at saved months, choose the latest rate
+     regardless of effective date, omit a result component, or count an applicable component more
+     than once.
+  3. (K-03) Saved absence dates remain absolute and affect shifted staffing months only where they
+     overlap. Contrast an overlapping saved absence with an otherwise equivalent non-overlapping
+     absence. Mutations: shift absence dates with staffing or skip overlap against the destination
+     month.
+  4. (K-04) Independently dated additional-cost rows keep their saved periods, and the what-if
+     changes no persisted scenario data; prove via before/after reads and direct database reads
+     outside the ORM identity map. Contrast a shifted result with unchanged cost rows and saved
+     inputs. Mutations: shift additional-cost periods or persist a shifted allocation/result.
+  5. (K-05) Missing destination-month rates or calendars preserve existing named component states
+     and dependent-metric behavior without invented or partial numeric totals. Contrast a month
+     outside coverage with one inside coverage. Mutations: substitute zero/default, skip the
+     missing-input state, or emit a partial total.
+  6. (K-06) Project access, personnel-cost field visibility, draft-only eligibility, and existing
+     scenario status/source mismatch refusal retain their boundaries. Contrast authorized and
+     out-of-scope callers, personnel-cost permission states, and consistent versus mismatched
+     scenario reads. Mutations: remove the access check, draft/status check, field gate, or status/
+     source race refusal. No stable live rate/calendar snapshot across the request is claimed.
 
-  **Gate 1 decision (2026-09-29, Issue #101):** `draft` only; named unavailable states follow the
-  existing component and dependent-metric rules; shift staffing-linked calculations only, leaving
-  independently dated additional costs in their saved periods. ADR-0015 addendum 2026-09-29.
+  **Gate 1 decisions (2026-09-29 and 2026-09-30, Issue #101):** `draft` only; named unavailable
+  states follow existing component/dependent-metric rules; shift staffing-linked calculations,
+  keep saved absence dates absolute and apply them where they overlap shifted staffing months,
+  and leave independently dated additional costs in their saved periods. K-06 covers existing
+  status/source mismatch handling, not a stable live rate/calendar snapshot. K-02 is limited to
+  the currently supported one-commercial-rule-per-scenario model; combined simultaneous models
+  remain out of scope until the data model supports them. ADR-0015 addenda 2026-09-29 and 2026-09-30.
   **Unproven foundation, consciously accepted:** delayed-start substitution across rate/calendar
   windows and its result-state behavior; SC-6-04 proves only the salary-raise what-if path.
   **Out of scope (explicit):** backward shifts; shifting only selected staffing positions;
