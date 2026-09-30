@@ -21,6 +21,7 @@ import {
   INCLUDED_COST_LABEL,
   MARGIN_LABEL,
   MARKUP_LABEL,
+  NEGATIVE_PROFIT_INDICATOR,
   PERSONNEL_COST_LABEL,
   PERSONNEL_COST_STATE_MESSAGES,
   PROFIT_LABEL,
@@ -112,6 +113,16 @@ const READ_FAILURE_MESSAGES: Readonly<Record<Exclude<ReadState["kind"], "loading
  * it names is a live one, and the very next read is the expected way past it. */
 const RETRYABLE: ReadonlySet<ReadState["kind"]> = new Set(["conflict", "timed-out", "unreadable", "failed"]);
 
+/** The API has already validated this fixed-point decimal string. Compare its exact sign without
+ * converting money to a JavaScript number; a signed zero is still zero. */
+function isNegativeProfit(value: GatedResultField): boolean {
+  if (value === null || value === RESULTS_NOT_APPLICABLE) {
+    return false;
+  }
+  const decimal = value.trim();
+  return decimal.startsWith("-") && /[1-9]/.test(decimal.slice(1));
+}
+
 export interface ScenarioResultsSectionProps {
   readonly projectId: string;
   readonly scenarioId: string;
@@ -198,6 +209,9 @@ export function ScenarioResultsSection({
         <AdditionalCostLine source={results.additional_cost} />
         <GatedMoneyLine label={INCLUDED_COST_LABEL} value={results.included_cost} currency={revenueCurrency} />
         <GatedMoneyLine label={PROFIT_LABEL} value={results.profit} currency={revenueCurrency} />
+        {isNegativeProfit(results.profit) && (
+          <p role="status" className="scenario-results__negative-profit">{NEGATIVE_PROFIT_INDICATOR}</p>
+        )}
         <GatedPercentLine label={MARGIN_LABEL} value={results.margin} />
         <GatedPercentLine label={MARKUP_LABEL} value={results.markup} />
       </>
