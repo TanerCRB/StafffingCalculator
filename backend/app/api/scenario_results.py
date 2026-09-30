@@ -83,13 +83,15 @@ on.
 """
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.response_shaping import shape_scenario_results
+from app.api.response_shaping import shape_scenario_results, shape_scenario_results_for_export
+from app.api.scenario_results_export import render_pdf, render_xlsx
 from app.api.schemas.scenario_results import ScenarioResults, ScenarioResultsComparison
 from app.core.identity import CallerIdentity, Permission
 from app.data.scenario_results import ScenarioResultsRaceDetected, scenario_results_for_caller
@@ -169,6 +171,91 @@ def read_scenario_results(
             status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_RESULTS_NOT_FOUND_DETAIL
         )
     return shape_scenario_results(view, caller)
+
+
+def _export_scenario_results(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: CallerIdentity,
+    session: Session,
+    file_format: str,
+) -> Response:
+    try:
+        view = scenario_results_for_caller(session, caller, project_id, scenario_id)
+    except ScenarioResultsRaceDetected as race:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(race)) from None
+    if view is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_RESULTS_NOT_FOUND_DETAIL
+        )
+
+    payload = shape_scenario_results_for_export(view, caller)
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if file_format == "pdf":
+        content = render_pdf(payload, generated_at)
+        media_type = "application/pdf"
+    else:
+        content = render_xlsx(payload, generated_at)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    filename = f"scenario-{scenario_id}-results.{file_format}"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get(
+    "/export.pdf",
+    summary="Export a scenario's whole-life results as PDF",
+    responses={
+        200: {
+            "description": "PDF artifact",
+            "content": {
+                "application/pdf": {"schema": {"type": "string", "format": "binary"}}
+            },
+        },
+        404: {"description": SCENARIO_RESULTS_NOT_FOUND_DETAIL},
+        409: {"description": "Scenario status changed while results were being composed. Retry."},
+    },
+)
+def export_scenario_results_pdf(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> Response:
+    """Download the shaped whole-scenario result as PDF, under the same scope and field gates."""
+    return _export_scenario_results(project_id, scenario_id, caller, session, "pdf")
+
+
+@router.get(
+    "/export.xlsx",
+    summary="Export every whole-scenario result field as XLSX",
+    responses={
+        200: {
+            "description": "XLSX artifact",
+            "content": {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        404: {"description": SCENARIO_RESULTS_NOT_FOUND_DETAIL},
+        409: {"description": "Scenario status changed while results were being composed. Retry."},
+    },
+)
+def export_scenario_results_xlsx(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> Response:
+    """Download the complete ScenarioResults contract as XLSX, preserving JSON distinctions."""
+    return _export_scenario_results(project_id, scenario_id, caller, session, "xlsx")
 
 
 @compare_router.get(

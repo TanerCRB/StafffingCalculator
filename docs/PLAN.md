@@ -2682,6 +2682,34 @@ history / this file's own change log, not as tracked product work.
   *Done when:* frontend tests prove the indicator appears when `profit < 0` and is absent when `profit >= 0`; otherwise identical result fixtures differing only in profit sign render different indicator states. Record a named mutation result for each criterion at verification.
   **Out of scope (explicit):** below-target-margin indicator - the API does not expose the required deviation; revisit in a separate task after that data is available. Compare view - separate scope in SC-7-04.
   **Done 2026-09-30:** PR #190 (merged as `ac6b343`). `ScenarioResults.test.tsx` proves negative profit shows the indicator; positive, `0.00` and `-0.00` do not; and otherwise identical scenarios differing only by profit sign render opposite indicator states. Mutation `SC-7-05-M1` forced the predicate to false and was killed by the negative-profit visibility and opposite-sign contrast tests (20 passed, 2 failed); after restoration, the focused suite passed 22/22. Full frontend suite: 419/419; `pnpm lint` and `pnpm build` passed. See [PR #190](https://github.com/TanerCRB/StafffingCalculator/pull/190).
+
+- [ ] **SC-7-06** — Export whole-scenario results to PDF and spreadsheet (F-11, AC-06).
+  *Done when:* backend artifact tests prove: (1) the spreadsheet preserves every field and nested
+  value from the `ScenarioResults` response contract, including component states, currencies, and
+  each `assumptions_used` object, preserving distinctions between numeric strings, `null`, `n/a`,
+  and named states; (2) the PDF identifies `scenario_id`, `scenario_status`, and a UTC generation
+  timestamp, and contains revenue, personnel-cost, and additional-cost values/states/currencies,
+  `included_cost`, `profit`, `margin`, `markup`, `profitability_state`, and the same assumption
+  objects; (3) an approved scenario exported again after defaults change retains the original
+  calculated values and assumptions (AC-10), excluding the intentionally different generation
+  timestamp. For both formats, mutation-checked artifact tests prove that when either
+  `PERSONNEL_COSTS_READ` or project `can_view_personnel_costs` is absent, the gated scenario-cost
+  fields (`amount`, `assumptions_used`, `paid_absence_amount`, `paid_absence_budget_amount`,
+  `paid_absence_assumptions_used`, `fully_loaded_amount`, `surcharge_amount`,
+  `paid_absence_fully_loaded_amount`, `paid_absence_surcharge_amount`, `fixed_amount_amount`,
+  `fixed_amount_assumptions_used`, `assigned_fte_amount`, `assigned_fte_assumptions_used`) and
+  profitability fields (`included_cost`, `profit`, `margin`, `markup`) are omitted, never zeroed;
+  ungated states/currencies, revenue, and additional-cost fields remain present. The two permission
+  factors are independently contrasted. Version identity is `scenario_id` plus `scenario_status`
+  under ADR-0004; draft exports describe the current draft at generation time, and reproducibility
+  is proven only for approved scenarios. Spreadsheet detail is limited to the existing whole-scenario
+  response contract; per-position, per-period, and multi-scenario comparison exports remain out of
+  scope.
+  **Out of scope (explicit):** BI/API and other export formats; per-position or per-period detail;
+  multi-scenario comparison export (separate task after SC-7-04).
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-11, §7 AC-06/AC-10; ADR-0002, ADR-0003, ADR-0004,
+  ADR-0005; `docs/PLAN.md` SC-7-01/02/04.
+
 - [x] **SC-7-07** — Show the scenario cost breakdown (F-11), Issue #107.
   *Done when:* Frontend tests for K-01..K-05 prove base personnel, paid absence, and additional cost render independently from SC-7-01 results; named uncalculable components differ from zero and do not suppress other lines; the personnel-cost gate withholds personnel amounts while additional cost follows its independent visibility rule. Record the five named mutations at verification.
   **Out of scope (explicit):** Reporting-period breakdown until source values are available by period; PDF and spreadsheet exports (SC-7-06); aggregation across scenarios (SC-6-02).
