@@ -1,5 +1,5 @@
-"""SC-7-01, R-01 (Reviewer, High) — a scenario's approval status must not change *between* the two
-composed reads `GET …/results` makes (revenue, then personnel cost) without the endpoint noticing.
+"""SC-7-01, R-01 (Reviewer, High) — the composed `GET …/results` read must detect a scenario
+approval status change across its revenue, personnel-cost, and additional-cost reads.
 
 **R-02 (Reviewer, Low), fixed alongside R-01.** The first cut of the `409` raised the two
 `rate_source` values (`live_catalog`/`approved_snapshot`) straight into the exception message, and
@@ -10,24 +10,19 @@ received a fragment of `assumptions_used` that `SCENARIO_COST_FIELDS` withholds 
 the absence of `"live_catalog"`/`"approved_snapshot"` from the `409` body is proven regardless of
 the caller's own permissions, not only for the caller who happens to hold every one.
 
-**The claim.** `app.data.scenario_results.scenario_results_for_caller` calls
-`commercial_terms_for_caller` and then `scenario_cost_for_caller`, each with its own
-`session.refresh(scenario)` on a plain `READ COMMITTED` session. If `POST …/approve` commits its
-status flip and its six-table snapshot *between* those two reads, the first has already priced
-revenue against the live catalogue and the second costs against the frozen snapshot — one `profit`
-built from two different moments of the same scenario. The endpoint must answer `409`, naming the
-disagreement, never a `200` with the two halves silently mixed.
+**The claim.** `app.data.scenario_results.scenario_results_for_caller` obtains revenue,
+personnel-cost, and additional-cost views, each with its own `session.refresh(scenario)` on a plain
+`READ COMMITTED` session. Each view carries the scenario status captured by that read in
+`status_at_read`. If `POST …/approve` commits its status flip and six-table snapshot between these
+reads, the guard compares the captured statuses and refuses a status-dependent mixed result with
+`409`.
 
 **Real concurrency, two connections, the real endpoints** — the shape of
-`tests/test_project_group_two_race.py`, adapted to a read-side race: nothing blocks here (two plain
-reads never contend for a lock under `READ COMMITTED`, unlike the write-vs-write races that file
-proves), so there is no lock to wait on and no need for `wait_until_a_lock_request_is_pending`. The
-interleaving is instead produced deterministically with a cursor-execute hook that fires exactly
-once — on the last statement `commercial_terms_for_caller` issues, the rate-window query naming
-`selling_rate` (never issued by the personnel-cost or additional-cost paths, rule 10 of the
-Invariant Guardian) — and a background thread that commits a real approval, through the real
-endpoint, before the hook returns control to `scenario_results_for_caller`, which then calls
-`scenario_cost_for_caller` and reads the scenario a second time.
+`tests/test_project_group_two_race.py`, adapted to a read-side race: plain reads do not contend for
+a lock under `READ COMMITTED`, so there is no lock to wait on. A cursor-execute hook fires exactly
+once on the rate-window query naming `selling_rate`, while a background thread commits a real
+approval through the real endpoint. The subsequent personnel-cost and additional-cost reads capture
+the updated status, allowing the guard to detect the change across the three read snapshots.
 """
 
 import threading
@@ -118,22 +113,22 @@ def _committed_scenario(engine: Engine) -> dict[str, uuid.UUID]:
 def test_r_01_an_approval_landing_between_the_revenue_and_cost_reads_is_refused_not_mixed(
     committing_client: TestClient, engine: Engine, caller_permissions: frozenset[Permission]
 ) -> None:
-    """R-01 — the approval commits, on a separate connection and a separate thread, the instant
-    revenue's own rate-window query returns and before `scenario_cost_for_caller` reads the
-    scenario a second time.
+    """R-01 — the approval commits, on a separate connection and thread, after the revenue read's
+    rate-window query returns and before the personnel-cost and additional-cost reads capture the
+    scenario status.
 
-    Without the guard in `app.data.scenario_results.scenario_results_for_caller` this would answer
+    Without the status guard in `app.data.scenario_results.scenario_results_for_caller` this would answer
     `200` with `profit` built from a `20000.00` live-catalogue revenue and a `12000.00`
     approved-snapshot cost (`8000.00`) — recognisable numbers, chosen so a silent mix is a wrong
-    answer and not merely "some number". With the guard it is a `409` naming the disagreement, and
-    none of the three figures appears anywhere in the body.
+    answer and not merely "some number". The guard uses each view's `status_at_read`; with it, the
+    response is `409`, and none of the three figures appears anywhere in the body.
 
     **Parametrized over the personnel-cost gate (R-02)**: the `409` must name no `rate_source`
     (`"live_catalog"`/`"approved_snapshot"`) whether the caller holds `PERSONNEL_COSTS_READ` or
     not — that gate has not even run yet when this response is built, so it must never be the thing
-    standing between a caller and those two words. Mutation killed: `ScenarioResultsRaceDetected`'s
-    message (or this endpoint's `except` clause) interpolating `revenue_source`/`cost_source` back
-    in — green for `every_permission`, red for `without_personnel_costs_read`.
+    standing between a caller and those two words. The mutation is adding source values to the
+    `ScenarioResultsRaceDetected` message (or endpoint error response): they should remain hidden
+    for both permission sets.
     """
     state = _committed_scenario(engine)
     fired: list[str] = []
