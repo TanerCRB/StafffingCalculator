@@ -110,6 +110,7 @@ from app.api.schemas.scenario_results import ScenarioResults
 from app.api.schemas.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationResults,
     ScenarioWhatIfDelayedStartResults,
+    ScenarioWhatIfExchangeRateResults,
     ScenarioWhatIfSalaryRaiseResults,
 )
 from app.api.schemas.staffing import (
@@ -137,6 +138,7 @@ from app.data.scenario_results import ScenarioResultsView
 from app.data.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationView,
     ScenarioWhatIfDelayedStartView,
+    ScenarioWhatIfExchangeRateView,
     ScenarioWhatIfView,
 )
 from app.data.staffing import StaffingPositionView
@@ -1859,6 +1861,23 @@ def shape_scenario_what_if_delayed_start(
         profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)
+
+
+def shape_scenario_what_if_exchange_rate(
+    view: ScenarioWhatIfExchangeRateView, caller: CallerIdentity
+) -> ScenarioWhatIfExchangeRateResults:
+    result = shape_scenario_results(view.results, caller)
+    return ScenarioWhatIfExchangeRateResults(
+        **result.model_dump(),
+        source_currency=view.source_currency,
+        target_currency=view.target_currency,
+        replacement_rate=view.replacement_rate,
+        exchange_rate_what_if_state=(
+            view.state
+            if _may_view_scenario_costs(view.results.cost_view, caller)
+            else view.public_state
+        ),
+    )
 
 
 # --- risks and reserves (F-09 pt 4-5, SC-6-08; ADR-0021) ------------------------------------------

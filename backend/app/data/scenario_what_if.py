@@ -93,6 +93,7 @@ that the real components are never evaluated in memory.
 
 import uuid
 from dataclasses import dataclass, replace
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -110,10 +111,15 @@ from app.data.personnel_cost import (
     dispatch_cost_inputs,
     scenario_cost_for_caller,
 )
-from app.data.scenario_results import refuse_a_status_race
+from app.data.scenario_results import (
+    ScenarioResultsView,
+    refuse_a_status_race,
+    scenario_results_for_caller,
+)
 from app.data.staffing import ensure_allocation_months_fit_shift, scenario_view_in_scope
 from app.domain.additional_cost import AdditionalCostAnswer
 from app.domain.assigned_fte_cost import assigned_fte_cost
+from app.domain.exchange_rates import EffectiveExchangeRate
 from app.domain.paid_absence_cost import fully_loaded_paid_absence_cost, paid_absence_cost
 from app.domain.personnel_cost import (
     WHAT_IF_HYPOTHETICAL,
@@ -172,6 +178,89 @@ class ScenarioWhatIfDelayedStartView:
     cost_view: ScenarioCostView
     additional_cost: AdditionalCostAnswer
     delay_months: int
+
+
+@dataclass(frozen=True)
+class ScenarioWhatIfExchangeRateView:
+    results: ScenarioResultsView
+    source_currency: str
+    target_currency: str
+    replacement_rate: Decimal
+    state: str
+    public_state: str
+
+
+def scenario_what_if_exchange_rate_for_caller(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    source_currency: str,
+    target_currency: str,
+    replacement_rate: Decimal,
+) -> ScenarioWhatIfExchangeRateView | None:
+    """Recompose a draft result with one temporary directed rate; never write the rate or result."""
+    results = scenario_results_for_caller(session, caller, project_id, scenario_id)
+    if results is None or results.scenario.status != ScenarioStatus.DRAFT:
+        return None
+
+    components = (
+        results.revenue,
+        results.cost_view.cost,
+        results.cost_view.paid_absence,
+        results.cost_view.fully_loaded_cost,
+        results.cost_view.fully_loaded_paid_absence,
+        results.cost_view.assigned_fte,
+        results.cost_view.fixed_amount,
+        results.additional_cost,
+    )
+
+    def uses_source_currency(component: object) -> bool:
+        periods = getattr(component, "period_amounts", ())
+        if any(period[2] == source_currency for period in periods):
+            return True
+        return not periods and getattr(component, "currency", None) == source_currency
+
+    applies = (
+        source_currency != target_currency
+        and target_currency == results.scenario.currency
+        and any(uses_source_currency(component) for component in components)
+    )
+    public_applies = (
+        source_currency != target_currency
+        and target_currency == results.scenario.currency
+        and any(
+            uses_source_currency(component)
+            for component in (results.revenue, results.additional_cost)
+        )
+    )
+    if applies:
+        hypothetical = EffectiveExchangeRate(
+            source_currency=source_currency,
+            target_currency=target_currency,
+            effective_from=date.min,
+            effective_to=None,
+            value=replacement_rate,
+            source="what_if_hypothetical",
+            scope="scenario",
+        )
+        retained = tuple(
+            rate
+            for rate in results.exchange_rates
+            if (rate.source_currency, rate.target_currency)
+            != (source_currency, target_currency)
+        )
+        results = replace(results, exchange_rates=(*retained, hypothetical))
+
+    return ScenarioWhatIfExchangeRateView(
+        results=results,
+        source_currency=source_currency,
+        target_currency=target_currency,
+        replacement_rate=replacement_rate,
+        state="calculated" if applies else "not_applicable",
+        public_state="calculated" if public_applies else "not_applicable",
+    )
 
 
 def _raised_rate(rate: MonthCostRate | None, multiplier: Decimal) -> MonthCostRate | None:
