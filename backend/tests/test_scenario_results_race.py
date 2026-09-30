@@ -117,7 +117,8 @@ def test_r_01_an_approval_landing_between_the_revenue_and_cost_reads_is_refused_
     rate-window query returns and before the personnel-cost and additional-cost reads capture the
     scenario status.
 
-    Without the status guard in `app.data.scenario_results.scenario_results_for_caller` this would answer
+    Without the status guard in
+    `app.data.scenario_results.scenario_results_for_caller` this would answer
     `200` with `profit` built from a `20000.00` live-catalogue revenue and a `12000.00`
     approved-snapshot cost (`8000.00`) — recognisable numbers, chosen so a silent mix is a wrong
     answer and not merely "some number". The guard uses each view's `status_at_read`; with it, the
