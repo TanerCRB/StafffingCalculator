@@ -2678,9 +2678,10 @@ history / this file's own change log, not as tracked product work.
   zostawał aktywny mimo braku widocznego zaznaczenia w nowym projekcie), naprawiony kodem i testem.
   Zob. `docs/architecture/capabilities.md`.
 
-- [ ] **SC-7-05** - Show a negative-profit indicator on the scenario results card (F-11).
+- [x] **SC-7-05** - Show a negative-profit indicator on the scenario results card (F-11).
   *Done when:* frontend tests prove the indicator appears when `profit < 0` and is absent when `profit >= 0`; otherwise identical result fixtures differing only in profit sign render different indicator states. Record a named mutation result for each criterion at verification.
   **Out of scope (explicit):** below-target-margin indicator - the API does not expose the required deviation; revisit in a separate task after that data is available. Compare view - separate scope in SC-7-04.
+  **Done 2026-09-30:** PR #190 (merged as `ac6b343`). `ScenarioResults.test.tsx` proves negative profit shows the indicator; positive, `0.00` and `-0.00` do not; and otherwise identical scenarios differing only by profit sign render opposite indicator states. Mutation `SC-7-05-M1` forced the predicate to false and was killed by the negative-profit visibility and opposite-sign contrast tests (20 passed, 2 failed); after restoration, the focused suite passed 22/22. Full frontend suite: 419/419; `pnpm lint` and `pnpm build` passed. See [PR #190](https://github.com/TanerCRB/StafffingCalculator/pull/190).
 - [ ] **SC-7-07** — Show the scenario cost breakdown (F-11), Issue #107.
   *Done when:* Frontend tests for K-01..K-05 prove base personnel, paid absence, and additional cost render independently from SC-7-01 results; named uncalculable components differ from zero and do not suppress other lines; the personnel-cost gate withholds personnel amounts while additional cost follows its independent visibility rule. Record the five named mutations at verification.
   **Out of scope (explicit):** Reporting-period breakdown until source values are available by period; PDF and spreadsheet exports (SC-7-06); aggregation across scenarios (SC-6-02).

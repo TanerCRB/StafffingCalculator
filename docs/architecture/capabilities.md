@@ -21,6 +21,7 @@ Evidence column uses exactly one of four values:
 
 | Capability | Requirement ref | Evidence | Reference |
 |---|---|---|---|
+| A calculated scenario with negative profit shows a loss indicator on its results card; zero and positive profit do not show it | F-11, Issue #109 | mutation-checked test | `frontend/src/features/projects/ScenarioResults.test.tsx::shows the indicator when profit is negative`, `::does not show the indicator when profit is zero`, `::does not show the indicator when profit is positive`, `::renders separate indicator states for otherwise identical scenarios with opposite profit signs`; PR #190 |
 | Project list restricted to the caller's `project_access` scope — out-of-scope project absent, not marked unavailable | F-13, NF-04, ADR-0001 aneks, ADR-0005 | mutation-checked test | `backend/tests/test_project_list.py::test_project_list_omits_projects_outside_caller_access` |
 | A caller with no `project_access` rows gets an empty list, not an error | F-13 | mutation-checked test | `backend/tests/test_project_list.py::test_caller_with_no_project_access_rows_gets_an_empty_list_not_an_error` |
 | A project holds ≥2 independent scenarios, proven at the data layer | F-01, F-02 | mutation-checked test | `backend/tests/test_project_list.py::test_sc_1_05_02_project_supports_two_independent_scenarios` |
@@ -321,6 +322,7 @@ Evidence column uses exactly one of four values:
 
 | Date | Task | Removed mechanism | Result |
 |---|---|---|---|
+| 2026-09-30 | SC-7-05 | Negative-profit predicate forced to always return false (`SC-7-05-M1`) | Killed — focused suite: 20 passed, 2 failed, including `shows the indicator when profit is negative` and `renders separate indicator states for otherwise identical scenarios with opposite profit signs`; restored suite passed 22/22. |
 | 2026-09-18 | SC-1-05 | `project_access` join usunięty z `accessible_projects()` | Killed — 3 testy. Projekt spoza zasięgu pojawia się na liście. |
 | 2026-09-18 | SC-1-05 | `list_projects_for_caller()` zwraca zawsze pustą listę | Killed — 5 testów, na PRZECIWNEJ asercji niż wyżej (brak własnego projektu). |
 | 2026-09-18 | SC-1-05 | Wyliczanie scenariuszy aliasuje pierwszy scenariusz na wszystkie wiersze | Killed — 2 testy. Dwa scenariusze dowiedzione jako niezależne wiersze, nie powtórzony jeden. |
