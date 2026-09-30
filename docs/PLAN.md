@@ -2624,6 +2624,33 @@ history / this file's own change log, not as tracked product work.
   zostawał aktywny mimo braku widocznego zaznaczenia w nowym projekcie), naprawiony kodem i testem.
   Zob. `docs/architecture/capabilities.md`.
 
+- [ ] **SC-7-06** — Export whole-scenario results to PDF and spreadsheet (F-11, AC-06).
+  *Done when:* backend artifact tests prove: (1) the spreadsheet preserves every field and nested
+  value from the `ScenarioResults` response contract, including component states, currencies, and
+  each `assumptions_used` object, preserving distinctions between numeric strings, `null`, `n/a`,
+  and named states; (2) the PDF identifies `scenario_id`, `scenario_status`, and a UTC generation
+  timestamp, and contains revenue, personnel-cost, and additional-cost values/states/currencies,
+  `included_cost`, `profit`, `margin`, `markup`, `profitability_state`, and the same assumption
+  objects; (3) an approved scenario exported again after defaults change retains the original
+  calculated values and assumptions (AC-10), excluding the intentionally different generation
+  timestamp. For both formats, mutation-checked artifact tests prove that when either
+  `PERSONNEL_COSTS_READ` or project `can_view_personnel_costs` is absent, the gated scenario-cost
+  fields (`amount`, `assumptions_used`, `paid_absence_amount`, `paid_absence_budget_amount`,
+  `paid_absence_assumptions_used`, `fully_loaded_amount`, `surcharge_amount`,
+  `paid_absence_fully_loaded_amount`, `paid_absence_surcharge_amount`, `fixed_amount_amount`,
+  `fixed_amount_assumptions_used`, `assigned_fte_amount`, `assigned_fte_assumptions_used`) and
+  profitability fields (`included_cost`, `profit`, `margin`, `markup`) are omitted, never zeroed;
+  ungated states/currencies, revenue, and additional-cost fields remain present. The two permission
+  factors are independently contrasted. Version identity is `scenario_id` plus `scenario_status`
+  under ADR-0004; draft exports describe the current draft at generation time, and reproducibility
+  is proven only for approved scenarios. Spreadsheet detail is limited to the existing whole-scenario
+  response contract; per-position, per-period, and multi-scenario comparison exports remain out of
+  scope.
+  **Out of scope (explicit):** BI/API and other export formats; per-position or per-period detail;
+  multi-scenario comparison export (separate task after SC-7-04).
+  **Basis:** `Wymagania/Requirements_EN.md` §4 F-11, §7 AC-06/AC-10; ADR-0002, ADR-0003, ADR-0004,
+  ADR-0005; `docs/PLAN.md` SC-7-01/02/04.
+
 - [x] **SC-4-07** — Pokaż przychód Outcome-based i Story Points na karcie scenariusza (F-06.3,
   F-06.4, frontend): konsument istniejącego API, zamyka ograniczenie D-9 SC-4-03 (ADR-0003 aneks
   SC-4-03 pkt 8) i nienazwaną dotąd degradację po SC-4-04 — scenariusz Outcome-based i Story Points
