@@ -21,6 +21,7 @@ import { ProjectListScreen } from "./ProjectListScreen";
 import {
   ADDITIONAL_COST_STATE_MESSAGES,
   NEGATIVE_PROFIT_INDICATOR,
+  PAID_ABSENCE_COST_STATE_MESSAGES,
   PERSONNEL_COST_STATE_MESSAGES,
   RESULTS_CONFLICT,
   RESULTS_FAILED,
@@ -85,11 +86,11 @@ function revenueWithheld(state: WithheldRevenueState): RevenueRead {
 }
 
 function personnelCostCalculated(amount: string, currency: string): PersonnelCostSource {
-  return { state: "calculated", amount, currency };
+  return { state: "calculated", amount, currency, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: currency };
 }
 
 function personnelCostWithheld(state: Exclude<PersonnelCostState, "calculated">): PersonnelCostSource {
-  return { state, amount: "n/a", currency: null };
+  return { state, amount: "n/a", currency: null, paid_absence_state: state, paid_absence_amount: "n/a", paid_absence_currency: null };
 }
 
 function additionalCostCalculated(amount: string, currency: string): AdditionalCostSource {
@@ -335,6 +336,65 @@ describe("SC-7-05 - negative-profit indicator", () => {
     expect(within(stretch).queryByText(NEGATIVE_PROFIT_INDICATOR)).toBeNull();
   });
 });
+// --- SC-7-07 --------------------------------------------------------------------------------------
+
+describe("SC-7-07 — scenario cost components are independent", () => {
+  it("renders distinct base and paid-absence amounts using the scenario currency", async () => {
+    stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
+    }) } } });
+    render(<ProjectListScreen />); await openProject();
+    const results = await settledSection("Baseline");
+    expect(within(results).getByText("Base personnel cost: 400.00 PLN")).toBeVisible();
+    expect(within(results).getByText("Paid absence cost: 25.00 PLN")).toBeVisible();
+  });
+
+  it("shows paid absence as zero without changing the base amount", async () => {
+    stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "0.00", paid_absence_currency: "PLN" },
+    }) } } });
+    render(<ProjectListScreen />); await openProject();
+    const results = await settledSection("Baseline");
+    expect(within(results).getByText("Base personnel cost: 400.00 PLN")).toBeVisible();
+    expect(within(results).getByText("Paid absence cost: 0.00 PLN")).toBeVisible();
+  });
+
+  it("keeps additional costs independent from personnel components", async () => {
+    stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
+      additional_cost: additionalCostCalculated("75.00", "PLN"),
+    }) } } });
+    render(<ProjectListScreen />); await openProject();
+    const results = await settledSection("Baseline");
+    expect(within(results).getByText("Base personnel cost: 400.00 PLN")).toBeVisible();
+    expect(within(results).getByText("Paid absence cost: 25.00 PLN")).toBeVisible();
+    expect(within(results).getByText("Additional costs: 75.00 PLN")).toBeVisible();
+  });
+
+  it("shows named unavailable components distinctly from zero while retaining additional costs", async () => {
+    stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "no_budget", paid_absence_amount: "n/a", paid_absence_currency: null },
+      additional_cost: additionalCostCalculated("50.00", "PLN"),
+    }) } } });
+    render(<ProjectListScreen />); await openProject();
+    const results = await settledSection("Baseline");
+    expect(within(results).getByText("Base personnel cost: 400.00 PLN")).toBeVisible();
+    expect(within(results).getByText(PAID_ABSENCE_COST_STATE_MESSAGES.no_budget)).toBeVisible();
+    expect(within(results).getByText("Additional costs: 50.00 PLN")).toBeVisible();
+  });
+
+  it("withholds both personnel components while additional costs remain visible", async () => {
+    stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
+      personnel_cost: { state: "calculated", amount: null, currency: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null },
+    }) } } });
+    render(<ProjectListScreen />); await openProject();
+    const results = await settledSection("Baseline");
+    expect(within(results).getByText(`Base personnel cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
+    expect(within(results).getByText(`Paid absence cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
+    expect(within(results).getByText("Additional costs: 50.00 PLN")).toBeVisible();
+  });
+});
+
 // --- K-02 -----------------------------------------------------------------------------------------
 
 describe("K-02 — the personnel-cost gate's null and a component's own n/a never render as the same thing", () => {
@@ -395,7 +455,7 @@ describe("K-02 — the personnel-cost gate's null and a component's own n/a neve
       results: {
         [BASELINE]: {
           status: 200,
-          body: baseResults(BASELINE, { personnel_cost: { state: "calculated", amount: null, currency: null } }),
+          body: baseResults(BASELINE, { personnel_cost: { state: "calculated", amount: null, currency: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null } }),
         },
       },
     });
@@ -404,8 +464,9 @@ describe("K-02 — the personnel-cost gate's null and a component's own n/a neve
     await openProject();
     const results = await settledSection("Baseline");
 
-    expect(within(results).getByText(`Personnel cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
-    expect(within(results).queryByText(/^Personnel cost: 400\.00/)).toBeNull();
+    expect(within(results).getByText(`Base personnel cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
+    expect(within(results).getByText(`Paid absence cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
+    expect(within(results).queryByText(/^Base personnel cost: 400\.00/)).toBeNull();
   });
 
   it("renders 'unavailable', never the state's own message, when the gate is closed AND the state names a cause at once", async () => {
@@ -421,7 +482,7 @@ describe("K-02 — the personnel-cost gate's null and a component's own n/a neve
         [BASELINE]: {
           status: 200,
           body: baseResults(BASELINE, {
-            personnel_cost: { state: "no_cost_rate", amount: null, currency: null },
+            personnel_cost: { state: "no_cost_rate", amount: null, currency: null, paid_absence_state: "no_cost_rate", paid_absence_amount: null, paid_absence_currency: null },
           }),
         },
       },
@@ -431,7 +492,8 @@ describe("K-02 — the personnel-cost gate's null and a component's own n/a neve
     await openProject();
     const results = await settledSection("Baseline");
 
-    expect(within(results).getByText(`Personnel cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
+    expect(within(results).getByText(`Base personnel cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
+    expect(within(results).getByText(`Paid absence cost: ${RESULTS_FIELD_UNAVAILABLE}`)).toBeVisible();
     expect(within(results).queryByText(PERSONNEL_COST_STATE_MESSAGES.no_cost_rate)).toBeNull();
     expect(results.querySelector('[data-personnel-cost-state="unavailable"]')).not.toBeNull();
   });
@@ -463,14 +525,17 @@ describe("K-03 — each composed source keeps its own named non-computable state
     const results = await settledSection("Baseline");
 
     const revenueMessage = within(results).getByText(REVENUE_STATE_MESSAGES.no_commercial_terms);
-    const costMessage = within(results).getByText(PERSONNEL_COST_STATE_MESSAGES.no_cost_rate);
+    const costMessages = within(results).getAllByText(PERSONNEL_COST_STATE_MESSAGES.no_cost_rate);
     const additionalMessage = within(results).getByText(
       ADDITIONAL_COST_STATE_MESSAGES.currency_mismatch,
     );
     expect(revenueMessage).toBeVisible();
-    expect(costMessage).toBeVisible();
+    expect(costMessages).toHaveLength(2);
+    costMessages.forEach((message) => expect(message).toBeVisible());
+    expect(results.querySelector('[data-cost-component="base"][data-personnel-cost-state="no_cost_rate"]')).not.toBeNull();
+    expect(results.querySelector('[data-cost-component="paid_absence"][data-personnel-cost-state="no_cost_rate"]')).not.toBeNull();
     expect(additionalMessage).toBeVisible();
-    const texts = [revenueMessage.textContent, costMessage.textContent, additionalMessage.textContent];
+    const texts = [revenueMessage.textContent, costMessages[0].textContent, additionalMessage.textContent];
     expect(new Set(texts).size).toBe(3);
     // The four gated fields, open but not computable — their own sentinel, not a state message.
     expect(results.querySelectorAll('[data-result-state="not-applicable"]')).toHaveLength(4);
@@ -484,7 +549,8 @@ describe("K-03 — each composed source keeps its own named non-computable state
     const results = await settledSection("Baseline");
 
     expect(within(results).getByText("Revenue: 1000.00 PLN")).toBeVisible();
-    expect(within(results).getByText("Personnel cost: 400.00 PLN")).toBeVisible();
+    expect(within(results).getByText("Base personnel cost: 400.00 PLN")).toBeVisible();
+    expect(within(results).getByText("Paid absence cost: 25.00 PLN")).toBeVisible();
     expect(within(results).getByText("Additional costs: 50.00 PLN")).toBeVisible();
     expect(within(results).getByText("Scenario cost: 450.00 PLN")).toBeVisible();
     expect(within(results).getByText("Profit: 550.00 PLN")).toBeVisible();

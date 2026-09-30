@@ -111,6 +111,7 @@ class AdditionalCostResult:
     amount: Decimal
     currency: str
     assumptions_used: AdditionalCostAssumptions
+    period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,10 @@ def _next_month(month: date) -> date:
 
 
 def additional_cost_total(
-    lines: Sequence[CostLine], *, scenario_currency: str | None
+    lines: Sequence[CostLine],
+    *,
+    scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> AdditionalCostAnswer:
     """The sum of a scenario's additional costs, or the named state that withholds it.
 
@@ -175,27 +179,33 @@ def additional_cost_total(
         for month in cost.months:
             by_month.setdefault(month, []).append(cost.line.cost_id)
     periods = tuple(
-        PeriodRow(period_month=month, cost_ids=tuple(by_month[month]))
-        for month in sorted(by_month)
+        PeriodRow(period_month=month, cost_ids=tuple(by_month[month])) for month in sorted(by_month)
     )
     currencies = tuple(sorted({line.currency for line in lines}))
-    assumptions = AdditionalCostAssumptions(
-        costs=spread, periods=periods, currencies=currencies
-    )
+    assumptions = AdditionalCostAssumptions(costs=spread, periods=periods, currencies=currencies)
 
-    if len(currencies) > 1 or (
-        scenario_currency is not None and currencies and currencies != (scenario_currency,)
+    if not allow_currency_mismatch and (
+        len(currencies) > 1
+        or (scenario_currency is not None and currencies and currencies != (scenario_currency,))
     ):
         return AdditionalCostUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
-    currency = currencies[0] if currencies else scenario_currency
+    currency = scenario_currency or (currencies[0] if currencies else None)
     if currency is None:
         return AdditionalCostUnavailable(reason=NO_COST_CURRENCY, assumptions_used=assumptions)
 
     amount_of = {cost.line.cost_id: cost.line.amount for cost in spread}
+    currency_of = {cost.line.cost_id: cost.line.currency for cost in spread}
     total = sum(
         (amount_of[cost_id] for period in periods for cost_id in period.cost_ids),
         Decimal("0"),
     )
     return AdditionalCostResult(
-        amount=round_money(total), currency=currency, assumptions_used=assumptions
+        amount=round_money(total),
+        currency=currency,
+        assumptions_used=assumptions,
+        period_amounts=tuple(
+            (period.period_month, amount_of[cost_id], currency_of[cost_id])
+            for period in periods
+            for cost_id in period.cost_ids
+        ),
     )

@@ -13,6 +13,7 @@
 
 import type {
   AdditionalCostState,
+  PaidAbsenceCostState,
   PersonnelCostState,
 } from "../../api/contracts/scenarioResults";
 import {
@@ -31,7 +32,8 @@ export { GUARANTEED_REVENUE_LABEL, REVENUE_STATE_MESSAGES, RULE_CURRENCY_MISMATC
 export const RESULTS_HEADING = "Scenario results";
 
 export const REVENUE_LABEL = "Revenue:";
-export const PERSONNEL_COST_LABEL = "Personnel cost:";
+export const PERSONNEL_COST_LABEL = "Base personnel cost:";
+export const PAID_ABSENCE_COST_LABEL = "Paid absence cost:";
 export const ADDITIONAL_COST_LABEL = "Additional costs:";
 export const INCLUDED_COST_LABEL = "Scenario cost:";
 export const PROFIT_LABEL = "Profit:";
@@ -79,6 +81,18 @@ export const PERSONNEL_COST_STATE_MESSAGES: Readonly<
   no_cost_currency:
     "Personnel cost not stated — there is no staffed month to take a cost rate's currency from, " +
     "and the scenario declares none.",
+};
+
+export const PAID_ABSENCE_COST_STATE_MESSAGES: Readonly<
+  Record<Exclude<PaidAbsenceCostState, "calculated">, string>
+> = {
+  no_calendar: "Paid absence cost not stated — no working calendar is available for the absence.",
+  no_statutory_leave_type: "Paid absence cost not stated — no statutory leave type is configured.",
+  no_budget: "Paid absence cost not stated — no leave budget is available.",
+  no_cost_rate: PERSONNEL_COST_STATE_MESSAGES.no_cost_rate,
+  currency_mismatch: PERSONNEL_COST_STATE_MESSAGES.currency_mismatch,
+  no_cost_currency: PERSONNEL_COST_STATE_MESSAGES.no_cost_currency,
+  no_working_days: "Paid absence cost not stated — the absence has no working days to cost.",
 };
 
 // --- The additional-cost source's own non-computable states (K-03) ---------------------------------

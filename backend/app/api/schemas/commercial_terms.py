@@ -81,6 +81,7 @@ RevenueState = Literal[
     "no_rate",
     "currency_mismatch",
     "no_revenue_currency",
+    "missing_exchange_rate",
 ]
 
 StoredModelType = str
@@ -332,6 +333,34 @@ class FixedPriceEditRequest(BaseModel):
         }
 
 
+class StoryPointsTermsEditRequest(StoryPointsTermsCreateRequest):
+    updated_at: AwareDatetime
+
+
+class OutcomeBasedTermsEditRequest(OutcomeBasedTermsCreateRequest):
+    updated_at: AwareDatetime
+
+
+class FixedPriceTermsReplaceRequest(FixedPriceTermsCreateRequest):
+    updated_at: AwareDatetime
+
+
+class TimeAndMaterialTermsEditRequest(TimeAndMaterialTermsCreateRequest):
+    updated_at: AwareDatetime
+
+
+CommercialTermsEditRequest = Annotated[
+    TimeAndMaterialTermsEditRequest | StoryPointsTermsEditRequest |
+    OutcomeBasedTermsEditRequest | FixedPriceTermsReplaceRequest,
+    Field(discriminator="model_type"),
+]
+
+
+class CommercialTermsDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    updated_at: AwareDatetime
+
+
 def _by_model_type(value: Any) -> str:
     """The discriminator of the two response shapes: `fixed_price` or everything else.
 
@@ -339,10 +368,19 @@ def _by_model_type(value: Any) -> str:
     dict FastAPI re-validates. Everything that is not Fixed Price (T&M, no rule, a model this
     version does not know) keeps the SC-4-01 shape.
     """
+    model_type = (
+        value.get("model_type") if isinstance(value, dict) else getattr(value, "model_type", None)
+    )
+    return "fixed_price" if model_type == MODEL_TYPE_FIXED_PRICE else "other"
+
+
+def _commercial_terms_by_model_type(value: Any) -> str:
     model_type = value.get("model_type") if isinstance(value, dict) else getattr(
         value, "model_type", None
     )
-    return "fixed_price" if model_type == MODEL_TYPE_FIXED_PRICE else "other"
+    if model_type == MODEL_TYPE_FIXED_PRICE:
+        return "fixed_price"
+    return "story_points" if model_type == "story_points" else "other"
 
 
 class CommercialTermsRead(BaseModel):
@@ -380,10 +418,18 @@ class FixedPriceCommercialTermsRead(BaseModel):
     currency: str | None
 
 
+class StoryPointsCommercialTermsRead(CommercialTermsRead):
+    model_type: Literal["story_points"]
+    price_per_point: DecimalString | None
+    accepted_points: int | None
+    currency: str | None
+
+
 CommercialTermsReadAny = Annotated[
     Annotated[CommercialTermsRead, Tag("other")]
+    | Annotated[StoryPointsCommercialTermsRead, Tag("story_points")]
     | Annotated[FixedPriceCommercialTermsRead, Tag("fixed_price")],
-    Discriminator(_by_model_type),
+    Discriminator(_commercial_terms_by_model_type),
 ]
 
 

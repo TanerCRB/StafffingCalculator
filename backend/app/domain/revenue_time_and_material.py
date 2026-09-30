@@ -85,6 +85,7 @@ def time_and_material_revenue(
     *,
     rate_source: str,
     scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> RevenueAnswer:
     """The T&M revenue of one scenario, or the named state that withholds it.
 
@@ -121,11 +122,12 @@ def time_and_material_revenue(
     )
     if unresolved:
         return RevenueUnavailable(reason=NO_RATE, assumptions_used=assumptions)
-    if len(currencies) > 1 or (
-        scenario_currency is not None and currencies and currencies != (scenario_currency,)
+    if not allow_currency_mismatch and (
+        len(currencies) > 1
+        or (scenario_currency is not None and currencies and currencies != (scenario_currency,))
     ):
         return RevenueUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
-    currency = currencies[0] if currencies else scenario_currency
+    currency = scenario_currency or (currencies[0] if currencies else None)
     if currency is None:
         return RevenueUnavailable(reason=NO_REVENUE_CURRENCY, assumptions_used=assumptions)
 
@@ -138,7 +140,18 @@ def time_and_material_revenue(
         Decimal("0"),
     )
     return RevenueResult(
-        revenue=round_money(total), currency=currency, assumptions_used=assumptions
+        revenue=round_money(total),
+        currency=currency,
+        assumptions_used=assumptions,
+        period_amounts=tuple(
+            (
+                month.period_month,
+                month.billable_hours * month.price.selling_rate,
+                month.price.currency,
+            )
+            for month in months
+            if month.price is not None
+        ),
     )
 
 

@@ -158,6 +158,7 @@ class AssignedFteCostResult:
     cost: Decimal
     currency: str
     assumptions_used: AssignedFteAssumptionsUsed
+    period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
     basis: str = COST_BASIS_ASSIGNED_FTE
 
 
@@ -225,6 +226,7 @@ def assigned_fte_cost(
     *,
     rate_source: str,
     scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> AssignedFteCostAnswer:
     """The sum of a scenario's `assigned_fte` positions, or the named state that withholds it.
 
@@ -263,9 +265,9 @@ def assigned_fte_cost(
 
     if unresolved:
         return unavailable(NO_COST_RATE)
-    if len(currencies) > 1 or (
+    if not allow_currency_mismatch and (len(currencies) > 1 or (
         scenario_currency is not None and currencies and currencies != (scenario_currency,)
-    ):
+    )):
         return unavailable(CURRENCY_MISMATCH)
 
     fte_by_position = {line.position_id: line.assigned_fte for line in lines}
@@ -283,5 +285,11 @@ def assigned_fte_cost(
 
     total = sum(amounts, Decimal("0"))
     return AssignedFteCostResult(
-        cost=round_money(total), currency=currency, assumptions_used=assumptions
+        cost=round_money(total), currency=scenario_currency or currency,
+        assumptions_used=assumptions,
+        period_amounts=tuple(
+            (month.period_month, amount, month.rate.currency)
+            for month, amount in zip(months, amounts, strict=True)
+            if month.rate is not None
+        ),
     )

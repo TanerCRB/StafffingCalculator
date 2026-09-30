@@ -39,7 +39,9 @@ FundingSource = Literal["internal", "rebilled_to_client"]
 """Who carries the cost (ADR-0014, point 9). Deliberately not "vendor": in this repository a vendor
 is a subcontractor (`catalog_vendors`)."""
 
-AdditionalCostState = Literal["calculated", "currency_mismatch", "no_cost_currency"]
+AdditionalCostState = Literal[
+    "calculated", "currency_mismatch", "no_cost_currency", "missing_exchange_rate"
+]
 
 CostAmount = Annotated[
     DecimalString,

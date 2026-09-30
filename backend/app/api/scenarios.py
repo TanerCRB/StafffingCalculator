@@ -136,9 +136,7 @@ def approve(
             status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
         ) from None
     if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
     return ScenarioApproval(
         id=result.scenario_id,
         status="Approved",
@@ -149,6 +147,7 @@ def approve(
             absence_budgets=result.absence_budgets,
             organization_defaults=result.organization_defaults,
             catalog_default_rates=result.catalog_default_rates,
+            exchange_rates=result.exchange_rates,
         ),
     )
 
@@ -181,9 +180,7 @@ def read_assumptions(
     """
     view = scenario_assumptions_for_caller(session, caller, project_id, scenario_id)
     if view is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
     return shape_scenario_assumptions(view)
 
 
@@ -245,9 +242,7 @@ def duplicate(
             status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
         ) from None
     if copy is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
     # A fresh `draft` copy is never itself `approved`, so this only ever reads the organisation's
     # live defaults (`organization_level_for`) — the same helper `create_project` and `copy_project`
     # use for the same reason.

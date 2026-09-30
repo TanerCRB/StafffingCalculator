@@ -213,6 +213,8 @@ class PaidAbsenceCostResult:
     budget_cost: Decimal
     currency: str
     assumptions_used: PaidAbsenceAssumptionsUsed
+    period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
+    budget_period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
     basis: str = COST_BASIS_BASE
     """`base` — the base cost rate, before overheads (addendum SC-5-06, point 5)."""
 
@@ -289,10 +291,14 @@ class _PricedAbsenceMonth:
     amount: Decimal
     budget_amount: Decimal
     rate: MonthCostRate
+    period_month: date
 
 
 def _resolve_paid_absence_months(
-    months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
+    months: Sequence[PaidAbsenceMonth],
+    *,
+    scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> tuple[PaidAbsenceAssumptionsUsed, list[_PricedAbsenceMonth], str | None, str | None]:
     """The checks `paid_absence_cost` and `fully_loaded_paid_absence_cost` share (SC-5-02),
     extracted once so the two cannot silently disagree about which months resolve.
@@ -339,8 +345,9 @@ def _resolve_paid_absence_months(
         reasons = {month.reason for month in unresolved}
         reason = next(state for state in STATE_ORDER if state in reasons)
         return assumptions, [], None, reason
-    if len(currencies) > 1 or (
-        scenario_currency is not None and currencies and currencies != (scenario_currency,)
+    if not allow_currency_mismatch and (
+        len(currencies) > 1
+        or (scenario_currency is not None and currencies and currencies != (scenario_currency,))
     ):
         return assumptions, [], None, CURRENCY_MISMATCH
     priced: list[_PricedAbsenceMonth] = []
@@ -353,7 +360,12 @@ def _resolve_paid_absence_months(
             # The basis exists, so the only state left is a month-unit rate with `D = 0`.
             return assumptions, [], None, NO_WORKING_DAYS
         priced.append(
-            _PricedAbsenceMonth(amount=amount, budget_amount=budget_amount, rate=rate)
+            _PricedAbsenceMonth(
+                amount=amount,
+                budget_amount=budget_amount,
+                rate=rate,
+                period_month=hours.period_month,
+            )
         )
     currency = currencies[0] if currencies else scenario_currency
     if currency is None:
@@ -362,7 +374,10 @@ def _resolve_paid_absence_months(
 
 
 def paid_absence_cost(
-    months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
+    months: Sequence[PaidAbsenceMonth],
+    *,
+    scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> PaidAbsenceCostAnswer:
     """The paid-absence component of one scenario, or the named state that withholds it.
 
@@ -382,7 +397,9 @@ def paid_absence_cost(
        `app.core.money.round_money` — never per month, never per position.
     """
     assumptions, priced, currency, reason = _resolve_paid_absence_months(
-        months, scenario_currency=scenario_currency
+        months,
+        scenario_currency=scenario_currency,
+        allow_currency_mismatch=allow_currency_mismatch,
     )
     if reason is not None:
         return PaidAbsenceCostUnavailable(reason=reason, assumptions_used=assumptions)
@@ -392,8 +409,14 @@ def paid_absence_cost(
     return PaidAbsenceCostResult(
         cost=round_money(total),
         budget_cost=round_money(budget_total),
-        currency=currency,
+        currency=scenario_currency or currency,
         assumptions_used=assumptions,
+        period_amounts=tuple(
+            (month.period_month, month.amount, month.rate.currency) for month in priced
+        ),
+        budget_period_amounts=tuple(
+            (month.period_month, month.budget_amount, month.rate.currency) for month in priced
+        ),
     )
 
 
@@ -409,6 +432,8 @@ class FullyLoadedPaidAbsenceCostResult:
     surcharge_amount: Decimal
     currency: str
     assumptions_used: PaidAbsenceAssumptionsUsed
+    period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
+    surcharge_period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
     basis: str = COST_BASIS_FULLY_LOADED
 
 
@@ -428,7 +453,8 @@ FullyLoadedPaidAbsenceCostAnswer = (
 
 
 def fully_loaded_paid_absence_cost(
-    months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None
+    months: Sequence[PaidAbsenceMonth], *, scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> FullyLoadedPaidAbsenceCostAnswer:
     """The paid-absence component's fully loaded cost (ADR-0013, addendum 2026-09-23 SC-5-06 pt 5,
     applied by SC-5-02's addendum of 2026-09-25): "the paid-absence component gets the surcharge the
@@ -441,20 +467,32 @@ def fully_loaded_paid_absence_cost(
     `fully_loaded_personnel_cost` gives its own single pass.
     """
     assumptions, priced, currency, reason = _resolve_paid_absence_months(
-        months, scenario_currency=scenario_currency
+        months, scenario_currency=scenario_currency,
+        allow_currency_mismatch=allow_currency_mismatch,
     )
     if reason is not None:
         return FullyLoadedPaidAbsenceCostUnavailable(reason=reason, assumptions_used=assumptions)
 
     base_total = Decimal("0")
     surcharge_total = Decimal("0")
+    surcharge_amounts: list[Decimal] = []
     for month in priced:
         base_total += month.amount
-        surcharge_total += month.amount * surcharge_fraction(month.rate)
+        surcharge = month.amount * surcharge_fraction(month.rate)
+        surcharge_total += surcharge
+        surcharge_amounts.append(surcharge)
 
     return FullyLoadedPaidAbsenceCostResult(
         cost=round_money(base_total + surcharge_total),
         surcharge_amount=round_money(surcharge_total),
-        currency=currency,
+        currency=scenario_currency or currency,
         assumptions_used=assumptions,
+        period_amounts=tuple(
+            (month.period_month, month.amount + surcharge, month.rate.currency)
+            for month, surcharge in zip(priced, surcharge_amounts, strict=True)
+        ),
+        surcharge_period_amounts=tuple(
+            (month.period_month, surcharge, month.rate.currency)
+            for month, surcharge in zip(priced, surcharge_amounts, strict=True)
+        ),
     )
