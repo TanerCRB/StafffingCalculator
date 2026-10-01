@@ -16,9 +16,11 @@ gets `profit`/`margin`/`markup`/`included_cost` withheld — the same shape SC-5
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -26,13 +28,18 @@ from app.api.response_shaping import shape_scenario_results
 from app.api.scenario_results import SCENARIO_RESULTS_NOT_FOUND_DETAIL
 from app.core.identity import CallerIdentity, Permission
 from app.data.scenario_results import scenario_results_for_caller
+from app.models import CatalogDefaultRate
 from tests.conftest import (
     IN_SCOPE_USER,
     OUT_OF_SCOPE_USER,
     as_caller,
     caller_holding,
+    make_allocation,
+    make_dimension_tuple,
     make_project,
+    make_rate,
     make_scenario,
+    make_staffing_position,
 )
 from tests.test_scenario_results import (
     EVERYTHING,
@@ -43,6 +50,45 @@ from tests.test_scenario_results import (
 
 WITHOUT_PERSONNEL_COSTS_READ = EVERYTHING - {Permission.PERSONNEL_COSTS_READ}
 WITHOUT_RESULTS_READ = EVERYTHING - {Permission.RESULTS_READ}
+
+
+def test_k_01_results_keep_each_resolved_rate_window_unit(client: TestClient, db_session: Session) -> None:
+    """The shared results response preserves the unit belonging to each resolved cost window."""
+    _ensure_statutory_bypass(db_session)
+    project, scenario, first_dimensions = _full_scenario(db_session, name="Rate unit windows")
+    first_rate = db_session.scalar(
+        sa.select(CatalogDefaultRate).where(CatalogDefaultRate.role_id == first_dimensions.role_id)
+    )
+    assert first_rate is not None
+
+    second_dimensions = make_dimension_tuple(db_session, suffix=" second rate unit")
+    second_position = make_staffing_position(
+        db_session, scenario, second_dimensions, start_date=date(2026, 3, 1)
+    )
+    make_allocation(
+        db_session,
+        second_position,
+        period_month=date(2026, 3, 1),
+        planned_allocation_hours=Decimal("80.00"),
+    )
+    second_rate = make_rate(
+        db_session,
+        second_dimensions,
+        effective_from=date(2026, 1, 1),
+        default_cost_rate=Decimal("90.0000"),
+        currency="PLN",
+        cost_rate_unit="day",
+    )
+
+    with caller_holding(*EVERYTHING):
+        response = client.get(results_path(project.id, scenario.id))
+
+    assert response.status_code == 200, response.text
+    windows = response.json()["personnel_cost"]["assumptions_used"]["rate_windows"]
+    assert {window["source_rate_id"]: window["cost_rate_unit"] for window in windows} == {
+        str(first_rate.id): "hour",
+        str(second_rate.id): "day",
+    }
 
 
 # --- K-03: out of scope is indistinguishable from absent -----------------------------------------
