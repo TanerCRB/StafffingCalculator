@@ -12,11 +12,11 @@ any cost calculation, at any depth** (F-06: independent calculation per model; r
 Invariant Guardian; control FP-4) — asserted over the whole import graph by
 `tests/test_fixed_price_revenue.py`. The shared vocabulary is `app.domain.revenue`.
 
-**Out of scope, and said so in the answer** (gate 1, D-3 = C): price adjustments — bonuses,
-penalties, scope changes. `assumptions_used.price_adjustments` is `not_included` on every answer,
-and the figure is described as the agreed price (`price_basis`), never as "price + approved
-adjustments". Milestones (D-1 = A) and the allocation of the revenue to periods (SC-4-05) are out
-of scope as well: the answer is one whole-project figure.
+Approved Fixed Price adjustments (SC-4-09) add their signed amounts to the agreed price; pending
+and rejected rows contribute zero. The answer continues to describe the base figure through
+`price_basis`, while `assumptions_used.price_adjustments` says `included`. Milestones (D-1 = A) and
+the allocation of revenue to periods (SC-4-05) remain out of scope: the answer is one whole-project
+figure.
 """
 
 from dataclasses import dataclass
@@ -44,12 +44,14 @@ class AgreedPrice:
 
     amount: Decimal
     currency: str
+    approved_adjustment_deltas: tuple[Decimal, ...] = ()
 
 
 def fixed_price_revenue(
     price: AgreedPrice | None,
     *,
     scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> RevenueAnswer:
     """The Fixed Price revenue of one scenario, or the named state that withholds it.
 
@@ -73,8 +75,22 @@ def fixed_price_revenue(
     )
     if price is None:
         return RevenueUnavailable(reason=INCOMPLETE_COMMERCIAL_TERMS, assumptions_used=assumptions)
-    if scenario_currency is not None and price.currency != scenario_currency:
+    if (
+        not allow_currency_mismatch
+        and scenario_currency is not None
+        and price.currency != scenario_currency
+    ):
         return RevenueUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
+    assumptions = FixedPriceAssumptionsUsed(
+        model_type=MODEL_TYPE_FIXED_PRICE,
+        currencies=(price.currency,),
+        price_adjustments="included",
+    )
+    adjusted_amount = price.amount + sum(price.approved_adjustment_deltas, Decimal(0))
+    rounded_amount = round_money(adjusted_amount)
     return RevenueResult(
-        revenue=round_money(price.amount), currency=price.currency, assumptions_used=assumptions
+        revenue=rounded_amount,
+        currency=scenario_currency or price.currency,
+        assumptions_used=assumptions,
+        period_amounts=((None, rounded_amount, price.currency),),
     )

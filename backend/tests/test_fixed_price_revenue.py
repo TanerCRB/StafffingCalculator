@@ -421,7 +421,7 @@ def _assert_fixed_price_revenue_fields(revenue: dict[str, Any]) -> None:
         "not_applicable",
         "not_applicable",
         "agreed_price",
-        "not_included",
+        "included",
     )
 
 

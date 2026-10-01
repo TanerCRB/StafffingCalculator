@@ -41,7 +41,13 @@ from app.core.money import NOT_APPLICABLE, ratio_percent, round_money
 from app.domain.additional_cost import AdditionalCostAnswer, AdditionalCostResult
 from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
 from app.domain.personnel_cost import PersonnelCostAnswer, PersonnelCostResult
-from app.domain.revenue import CALCULATED, CURRENCY_MISMATCH, RevenueAnswer, RevenueResult
+from app.domain.revenue import (
+    CALCULATED,
+    CURRENCY_MISMATCH,
+    EXPECTED_CALCULATED,
+    RevenueAnswer,
+    RevenueResult,
+)
 
 PROFITABILITY_NOT_APPLICABLE: Final = "not_applicable"
 """At least one of the four components is not `calculated` — which one and why is its own `state`
@@ -70,6 +76,43 @@ class ScenarioProfitability:
     included_cost: Amount
     state: ProfitabilityState = CALCULATED
     """Why the four fields above are `NOT_APPLICABLE` — or `calculated` when they are numbers."""
+
+
+@dataclass(frozen=True)
+class ScenarioExpectedProfitability:
+    """Expected profit and margin, when expected revenue and the included cost are both usable."""
+
+    expected_profit: Amount
+    expected_margin: Amount
+
+
+def scenario_expected_profitability(
+    revenue: RevenueAnswer, profitability: ScenarioProfitability
+) -> ScenarioExpectedProfitability:
+    """Calculate expected profit from the already-rounded expected revenue and included cost.
+
+    The revenue answer owns the named expected-revenue state (`no_probabilities` or
+    `not_applicable`). The composed profitability answer owns the cost availability and currency
+    checks. Reuse both answers so expected profitability cannot introduce a second currency or
+    component-availability rule.
+    """
+    if (
+        not isinstance(revenue, RevenueResult)
+        or revenue.expected_state != EXPECTED_CALCULATED
+        or profitability.state != CALCULATED
+        or not isinstance(revenue.expected_revenue, Decimal)
+        or not isinstance(profitability.included_cost, Decimal)
+    ):
+        return ScenarioExpectedProfitability(
+            expected_profit=NOT_APPLICABLE,
+            expected_margin=NOT_APPLICABLE,
+        )
+
+    expected_profit = round_money(revenue.expected_revenue - profitability.included_cost)
+    return ScenarioExpectedProfitability(
+        expected_profit=expected_profit,
+        expected_margin=ratio_percent(expected_profit, revenue.expected_revenue),
+    )
 
 
 def _withheld(state: ProfitabilityState) -> ScenarioProfitability:

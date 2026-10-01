@@ -46,6 +46,7 @@ from app.models import (  # noqa: E402
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
     ApprovedSnapshotCatalogDefaultRate,
+    ApprovedSnapshotExchangeRate,
     ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
@@ -58,6 +59,8 @@ from app.models import (  # noqa: E402
     CatalogSeniority,
     CatalogVendor,
     CommercialTerms,
+    ExchangeRate,
+    FixedPriceAdjustment,
     FixedPriceTerms,
     OrganizationDefaults,
     OutcomeTerms,
@@ -221,6 +224,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
     finally:
         app.dependency_overrides.pop(get_session, None)
         with engine.begin() as connection:
+            connection.execute(sa.delete(ExchangeRate))
             # Staffing first, grandchild before child (SC-3-01): every foreign key in
             # `app.models.staffing` is `NO ACTION`, so the database refuses to empty
             # `staffing_position` while an allocation row still points at one — and refuses to empty
@@ -253,6 +257,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(ApprovedSnapshotAbsenceType))
             connection.execute(sa.delete(ApprovedSnapshotAbsenceBudget))
             connection.execute(sa.delete(ApprovedSnapshotOrganizationDefaults))
+            connection.execute(sa.delete(ApprovedSnapshotExchangeRate))
             # SC-4-01: the rate snapshot like every snapshot table, and the commercial rule — its
             # details row first, because `tm_terms` points at `commercial_terms` with no `ON
             # DELETE` action, and the rule points at `scenarios` the same way. SC-4-04:
@@ -267,12 +272,14 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(StoryPointsTerms))
             # SC-4-03: Outcome-based details, before its rule, same reason as `tm_terms`.
             connection.execute(sa.delete(OutcomeTerms))
+            connection.execute(sa.delete(FixedPriceAdjustment))
             # SC-4-02: the Fixed Price details row, before its rule for the same reason as
             # `tm_terms` (a composite foreign key with no `ON DELETE` action).
             connection.execute(sa.delete(FixedPriceTerms))
             connection.execute(sa.delete(CommercialTerms))
             # SC-1-11: the delivery segment points at `scenarios` with no `ON DELETE` action too.
             connection.execute(sa.delete(ScenarioDeliverySegment))
+            connection.execute(sa.delete(ExchangeRate))
             connection.execute(sa.delete(ProjectAccess))
             connection.execute(sa.delete(Scenario))
             connection.execute(sa.delete(Project))
@@ -736,6 +743,7 @@ SNAPSHOT_MODELS = (
     # The sixth, SC-4-01 (ADR-0004, addendum 2026-09-23 SC-4-01, point 2d: the canary "a copy of an
     # approved scenario holds zero snapshot rows" must cover the new table).
     ApprovedSnapshotCatalogDefaultRate,
+    ApprovedSnapshotExchangeRate,
 )
 """The five snapshot tables, as models — so a test counting "every snapshot row" cannot count some
 of the five and look green (criteria K-17, K-18, K-19 of SC-3-02; K-07 of SC-3-03; K-05 of SC-1-10).

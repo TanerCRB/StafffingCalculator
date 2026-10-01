@@ -38,28 +38,43 @@ SC-4-02, point 1).
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.response_shaping import shape_scenario_commercial_terms
 from app.api.schemas.commercial_terms import (
     CommercialTermsCreateRequest,
-    FixedPriceEditRequest,
+    CommercialTermsDeleteRequest,
+    CommercialTermsEditRequest,
     FixedPriceTermsCreateRequest,
     OutcomeBasedTermsCreateRequest,
+    PriceAdjustmentCreateRequest,
+    PriceAdjustmentDecisionRead,
+    PriceAdjustmentDecisionRequest,
+    PriceAdjustmentEditRequest,
+    PriceAdjustmentRead,
+    PriceAdjustmentWriteAck,
     ScenarioCommercialTerms,
     StoryPointsTermsCreateRequest,
     TimeAndMaterialTermsCreateRequest,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.commercial_terms import (
+    CommercialTermsModelTypeMismatch,
     CommercialTermsNotFound,
     CommercialTermsWriteRefused,
     CommercialTermsWriteRejected,
     commercial_terms_for_caller,
     create_commercial_terms,
-    update_fixed_price,
+    create_price_adjustment,
+    decide_price_adjustment,
+    delete_commercial_terms,
+    edit_price_adjustment,
+    price_adjustments_for_caller,
+    replace_commercial_terms,
 )
 from app.db.session import get_session
 from app.models.commercial_terms import OUTCOME_CATEGORIES, probability_column, units_column
@@ -240,7 +255,7 @@ def create_scenario_commercial_terms(
 def edit_scenario_fixed_price(
     project_id: uuid.UUID,
     scenario_id: uuid.UUID,
-    payload: FixedPriceEditRequest,
+    payload: dict[str, object],
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.COMMERCIAL_WRITE))],
     session: Annotated[Session, Depends(get_session)],
 ) -> ScenarioCommercialTerms:
@@ -261,16 +276,25 @@ def edit_scenario_fixed_price(
     - **403** — the permission dependency, before the database.
     """
     try:
-        view = update_fixed_price(
+        edit = TypeAdapter(CommercialTermsEditRequest).validate_python(payload)
+        values = _details_of(edit)
+        view = replace_commercial_terms(
             session,
             caller,
             project_id,
             scenario_id,
-            expected_updated_at=payload.updated_at,
-            changes=payload.changes(),
+            model_type=edit.model_type,
+            expected_updated_at=edit.updated_at,
+            domain_values=values,
         )
+    except ValidationError as error:
+        raise RequestValidationError(error.errors()) from error
     except CommercialTermsNotFound as missing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(missing)) from None
+    except CommercialTermsModelTypeMismatch as invalid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(invalid)
+        ) from None
     except CommercialTermsWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
     except CommercialTermsWriteRefused as refusal:
@@ -280,3 +304,122 @@ def edit_scenario_fixed_price(
     if view is None:
         raise _not_found()
     return shape_scenario_commercial_terms(view)
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def delete_scenario_commercial_terms(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    payload: CommercialTermsDeleteRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.COMMERCIAL_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> Response:
+    try:
+        view = delete_commercial_terms(session, caller, project_id, scenario_id,
+                                       expected_updated_at=payload.updated_at)
+    except CommercialTermsNotFound as missing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(missing)) from None
+    except CommercialTermsWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    if view is None:
+        raise _not_found()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.post("/price-adjustments", response_model=PriceAdjustmentWriteAck, status_code=201)
+def create_fixed_price_adjustment(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    payload: PriceAdjustmentCreateRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.COMMERCIAL_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> PriceAdjustmentWriteAck:
+    try:
+        row = create_price_adjustment(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            request_id=payload.request_id,
+            kind=payload.kind,
+            amount=payload.amount,
+            currency=payload.currency,
+        )
+    except CommercialTermsWriteRejected as refusal:
+        raise HTTPException(status_code=409, detail=str(refusal)) from None
+    except CommercialTermsWriteRefused as refusal:
+        raise HTTPException(
+            status_code=409, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if row is None:
+        raise _not_found()
+    return PriceAdjustmentWriteAck(id=row.id, status=row.status)
+
+
+@router.get("/price-adjustments", response_model=list[PriceAdjustmentRead])
+def read_fixed_price_adjustments(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.COMMERCIAL_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> list[PriceAdjustmentRead]:
+    rows = price_adjustments_for_caller(session, caller, project_id, scenario_id)
+    if rows is None:
+        raise _not_found()
+    return [PriceAdjustmentRead.model_validate(row) for row in rows]
+
+
+@router.patch("/price-adjustments/{adjustment_id}", response_model=PriceAdjustmentWriteAck)
+def edit_fixed_price_adjustment(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    adjustment_id: uuid.UUID,
+    payload: PriceAdjustmentEditRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.COMMERCIAL_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> PriceAdjustmentWriteAck:
+    try:
+        row = edit_price_adjustment(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            adjustment_id,
+            payload.model_dump(exclude_unset=True),
+        )
+    except CommercialTermsWriteRejected as refusal:
+        raise HTTPException(status_code=409, detail=str(refusal)) from None
+    except CommercialTermsWriteRefused as refusal:
+        raise HTTPException(
+            status_code=409, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if row is None:
+        raise _not_found()
+    return PriceAdjustmentWriteAck(id=row.id, status=row.status)
+
+
+@router.post(
+    "/price-adjustments/{adjustment_id}/decision", response_model=PriceAdjustmentDecisionRead
+)
+def decide_fixed_price_adjustment(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    adjustment_id: uuid.UUID,
+    payload: PriceAdjustmentDecisionRequest,
+    caller: Annotated[
+        CallerIdentity, Depends(require_permission(Permission.COMMERCIAL_ADJUSTMENT_APPROVE))
+    ],
+    session: Annotated[Session, Depends(get_session)],
+) -> PriceAdjustmentDecisionRead:
+    try:
+        row = decide_price_adjustment(
+            session, caller, project_id, scenario_id, adjustment_id, payload.status
+        )
+    except CommercialTermsWriteRejected as refusal:
+        raise HTTPException(status_code=409, detail=str(refusal)) from None
+    except CommercialTermsWriteRefused as refusal:
+        raise HTTPException(
+            status_code=409, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if row is None:
+        raise _not_found()
+    return PriceAdjustmentDecisionRead(status=row.status)

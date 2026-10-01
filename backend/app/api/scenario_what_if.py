@@ -35,24 +35,33 @@ one would be a mutation the structural test in `tests/test_scenario_what_if.py` 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.api.response_shaping import (
     shape_scenario_what_if_billable_utilization,
+    shape_scenario_what_if_delayed_start,
+    shape_scenario_what_if_exchange_rate,
     shape_scenario_what_if_salary_raise,
 )
+from app.api.schemas.common import Iso4217Code
 from app.api.schemas.scenario_what_if import (
     BillableUtilizationDecreaseQuery,
+    ExchangeRateReplacementRateQuery,
     SalaryRaisePercentQuery,
     ScenarioWhatIfBillableUtilizationResults,
+    ScenarioWhatIfDelayedStartResults,
+    ScenarioWhatIfExchangeRateResults,
     ScenarioWhatIfSalaryRaiseResults,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.scenario_results import ScenarioResultsRaceDetected
 from app.data.scenario_what_if import (
+    ScenarioWhatIfDelayOutOfRange,
     scenario_what_if_billable_utilization_for_caller,
+    scenario_what_if_delayed_start_for_caller,
+    scenario_what_if_exchange_rate_for_caller,
     scenario_what_if_salary_raise_for_caller,
 )
 from app.db.session import get_session
@@ -61,6 +70,40 @@ from app.domain.revenue_time_and_material import InvalidBillableUtilizationDecre
 router = APIRouter(
     prefix="/projects/{project_id}/scenarios/{scenario_id}/what-if", tags=["scenario-what-if"]
 )
+
+
+@router.get(
+    "/delayed-start",
+    response_model=ScenarioWhatIfDelayedStartResults,
+    responses={
+        404: {"description": "Scenario not found."},
+        409: {"description": "Scenario state changed while composing the result."},
+        422: {"description": "The requested shift exceeds the supported date range."},
+    },
+)
+def read_scenario_what_if_delayed_start(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    delay_months: Annotated[
+        int,
+        Query(ge=0, description="Non-negative whole calendar months to delay staffing."),
+    ],
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioWhatIfDelayedStartResults:
+    try:
+        view = scenario_what_if_delayed_start_for_caller(
+            session, caller, project_id, scenario_id, delay_months=delay_months
+        )
+    except ScenarioResultsRaceDetected as race:
+        raise HTTPException(status_code=409, detail=str(race)) from None
+    except ScenarioWhatIfDelayOutOfRange as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+    if view is None:
+        raise HTTPException(
+            status_code=404, detail=SCENARIO_WHAT_IF_NOT_FOUND_DETAIL
+        )
+    return shape_scenario_what_if_delayed_start(view, caller)
 
 SCENARIO_WHAT_IF_NOT_FOUND_DETAIL = "Scenario not found."
 """The same wording — and the same body — as `app.api.scenario_results.
@@ -161,3 +204,40 @@ def read_scenario_what_if_billable_utilization(
             status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_WHAT_IF_NOT_FOUND_DETAIL
         )
     return shape_scenario_what_if_billable_utilization(view, caller)
+
+
+@router.get(
+    "/exchange-rate",
+    response_model=ScenarioWhatIfExchangeRateResults,
+    summary="Recompute a draft result with a temporary exchange rate, without persisting it",
+    responses={
+        404: {"description": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL},
+        409: {"description": "Scenario state changed while composing the result."},
+    },
+)
+def read_scenario_what_if_exchange_rate(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    source_currency: Iso4217Code,
+    target_currency: Iso4217Code,
+    replacement_rate: ExchangeRateReplacementRateQuery,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioWhatIfExchangeRateResults:
+    try:
+        view = scenario_what_if_exchange_rate_for_caller(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            source_currency=source_currency,
+            target_currency=target_currency,
+            replacement_rate=replacement_rate,
+        )
+    except ScenarioResultsRaceDetected as race:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(race)) from None
+    if view is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_WHAT_IF_NOT_FOUND_DETAIL
+        )
+    return shape_scenario_what_if_exchange_rate(view, caller)

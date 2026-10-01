@@ -332,7 +332,8 @@ def test_k_09_the_placeholder_permission_set_is_unchanged_and_no_permission_was_
     # `PEOPLE_READ`/`PEOPLE_WRITE` (ADR-0005, addendum 2026-09-27, point 3) — permissions of the
     # person register, not of this task's additional-cost tables; neither joins the placeholder
     # (the line below is unchanged).
-    assert len(Permission) == 16
+    assert len(Permission) == 17
+    assert Permission.COMMERCIAL_ADJUSTMENT_APPROVE not in PLACEHOLDER_PERMISSIONS
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
     assert {Permission.STAFFING_READ, Permission.STAFFING_WRITE} <= PLACEHOLDER_PERMISSIONS
     assert len(PLACEHOLDER_PERMISSIONS) == 13

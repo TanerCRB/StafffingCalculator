@@ -63,6 +63,7 @@ PersonnelCostState = Literal[
     "no_cost_currency",
     "no_calendar",
     "no_working_days",
+    "missing_exchange_rate",
 ]
 """The base cost's states. Since SC-5-08 (ADR-0013, addendum 2026-09-29) `no_calendar` (a day/month
 cost rate whose location has no calendar) and `no_working_days` (a month-unit rate in a month with
@@ -121,6 +122,7 @@ PaidAbsenceCostState = Literal[
     "currency_mismatch",
     "no_cost_currency",
     "no_working_days",
+    "missing_exchange_rate",
 ]
 """The paid-absence component's states (ADR-0013, addendum 2026-09-23 SC-5-06, point 4) — the
 calendar's and the budget's own names first, then the base cost's; `no_working_days` since SC-5-08
@@ -148,7 +150,9 @@ class UnresolvedPaidAbsenceMonthRead(BaseModel):
     reason: Literal["no_calendar", "no_statutory_leave_type", "no_budget", "no_cost_rate"]
 
 
-FixedAmountCostState = Literal["calculated", "currency_mismatch", "no_cost_currency"]
+FixedAmountCostState = Literal[
+    "calculated", "currency_mismatch", "no_cost_currency", "missing_exchange_rate"
+]
 """The fixed-amount basis's own states (ADR-0013, addendum 2026-09-25 SC-5-03, point 1) — its own,
 independent vocabulary, not the worked-time basis's `PersonnelCostState` reused: the two formulas
 are two independent predicates (K-01), and the values happen to read the same because both mirror
@@ -180,6 +184,7 @@ AssignedFteCostState = Literal[
     "no_working_days",
     "no_planned_months",
     "no_cost_currency",
+    "missing_exchange_rate",
 ]
 """The assigned-FTE basis's own states (ADR-0013, addendum 2026-09-29 SC-5-04, point 5) — its own
 vocabulary, independent of `PersonnelCostState` and `FixedAmountCostState` (three formulas, three

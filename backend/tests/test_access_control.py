@@ -255,7 +255,7 @@ def test_application_import_fails_when_nothing_is_configured_at_all(
     result = subprocess.run(
         [sys.executable, "-c", "import app.main"],
         cwd=tmp_path,
-        env=stripped,
+        env=stripped | {"PYTHONPATH": str(BACKEND_ROOT)},
         capture_output=True,
         text=True,
     )

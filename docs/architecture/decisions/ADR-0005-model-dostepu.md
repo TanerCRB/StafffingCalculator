@@ -1293,3 +1293,80 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
 ### 2026-09-29 - risks and reserves (SC-6-08, ADR-0021)
 
 Risks and reserves are read under `STAFFING_READ` and written under `STAFFING_WRITE` (the ADR-0014 point 11 precedent): no new permission, no conjunction with `PERSONNEL_COSTS_READ`, scenario-level only (no `position_id`), so the `headcount = 1` exposure is not widened. The risk read returns kinds and counts only, no amounts; it does disclose to a `STAFFING_READ` caller that a position-level cost event exists (a count) - named and accepted. Reserve amounts are readable under `STAFFING_READ` alone, at the level of the additional-cost read. Scope is a `404` (never `403`) with one body shared by the risk and reserve paths, decided before any `409` and before a paging `422`. The `PLACEHOLDER_PERMISSIONS` equality canary is unchanged. Proof: `backend/tests/test_risk_access.py`.
+
+### 2026-09-30 — Fixed Price adjustment approval permission (SC-4-09, Issue #112)
+
+**Status:** Accepted
+
+> Gate-1 choices approved by the human on 2026-09-30: editing pending adjustments uses
+> `COMMERCIAL_WRITE`; approving or rejecting uses a distinct `COMMERCIAL_ADJUSTMENT_APPROVE`;
+> self-approval is allowed.
+
+1. **Separate write and decision permissions.** Creating or editing a `pending` Fixed Price
+   adjustment requires `COMMERCIAL_WRITE`. Transitioning a pending adjustment to `approved` or
+   `rejected` requires `COMMERCIAL_ADJUSTMENT_APPROVE`. The approval permission does not imply
+   `COMMERCIAL_WRITE`; `COMMERCIAL_WRITE` does not imply approval permission. A caller holding
+   both permissions may approve their own adjustment.
+2. **Terminal decisions.** An approved or rejected adjustment cannot be edited, reopened, or
+   transitioned again. A correction is a new pending adjustment and follows the same permission
+   checks.
+3. **Placeholder identity caveat.** `COMMERCIAL_ADJUSTMENT_APPROVE` is not added to
+   `PLACEHOLDER_PERMISSIONS`. The placeholder identity does not receive adjustment decision
+   authority. This permission remains subject to the existing `APP_ALLOW_PLACEHOLDER_IDENTITY`
+   development/test boundary and the authentication ADR's future identity model.
+4. **Scope and refusal.** Authorization is checked at the shared permission/dependency boundary
+   and remains scoped to the caller's project access. A caller without the required permission
+   receives the established authorization refusal with no state change; the endpoint does not
+   reveal whether an inaccessible adjustment exists.
+5. **Decision responses do not grant read access.** Listing adjustment details requires
+   `COMMERCIAL_READ`. The decision endpoint acknowledges only the resulting status, so
+   `COMMERCIAL_ADJUSTMENT_APPROVE` alone does not disclose the adjustment amount, kind, or currency.
+
+| Control | Acceptance criterion |
+|---|---|
+| A5-FPAJ-1 | With only `COMMERCIAL_WRITE`, create/edit of pending adjustments succeeds while approve/reject is refused with no write; with only `COMMERCIAL_ADJUSTMENT_APPROVE`, approve/reject succeeds while create/edit is refused. |
+| A5-FPAJ-2 | A caller holding both permissions may approve their own pending adjustment; approved and rejected adjustments cannot be edited or transitioned. |
+| A5-FPAJ-3 | `PLACEHOLDER_PERMISSIONS` does not include `COMMERCIAL_ADJUSTMENT_APPROVE`; placeholder callers cannot approve or reject. |
+| A5-FPAJ-4 | Listing adjustment details requires `COMMERCIAL_READ`; the decision acknowledgment returns only the terminal status. |
+
+### 2026-10-01 — routing authentication and role closure conditions (SC-1-12, Issue #150)
+
+This dated addendum routes every authentication- or role-related closure/reopening condition
+found in ADR-0004, ADR-0005, and ADR-0013, including the three B-01 rows in
+`docs/architecture/capabilities.md`. It does not claim that any condition is implemented or
+proven. The new ADR-0018 decides caller identity; SC-1-14 decides authorization. Where both
+matter, the condition remains closed until both decisions and their required implementation
+evidence exist.
+
+| Source condition | Routed to | Boundary |
+|---|---|---|
+| ADR-0004, 2026-09-22 SC-3-02 point 5: the approval endpoint currently has no role check or audit attribution under placeholder identity | SC-1-14 for who may approve; ADR-0018 and its implementation successor for authenticated identity; block 8 for audit history | Authentication does not decide approval authority or deliver F-12 audit. |
+| ADR-0004, 2026-09-22 SC-3-03 point 5: access control for reading history may be decided with the read Story or authentication ADR | SC-8-02 / SC-1-14 for the read permission and scope; ADR-0018 only for the caller identity used by that check | Do not infer an authorization rule from authentication. |
+| ADR-0004, 2026-09-27 SC-8-01 point 7: author attribution beyond placeholder identity | ADR-0018 for the validated caller identifier; block 8 for any wider audit design | Acceptance of ADR-0018 does not add audit coverage beyond the existing approval event. |
+| ADR-0005, 2026-09-18 SC-1-05/06 and SC-1-01 addenda: placeholder exception must not be exposed outside development/test; caller role is collapsed under the placeholder | ADR-0018 for identity source, placeholder lifetime, and environment refusal; SC-1-14 for role dimensions and action mapping | The opt-in default remains false; no production or other non-development/test placeholder use. |
+| ADR-0005, 2026-10-01 SC-1-12 account-disable condition: an already-issued bearer token must stop working on the next request after its Keycloak account is disabled | ADR-0018 Z-1 for an online revocation/activity check on every request and fail-closed behavior; the authentication implementation Story must prove the check against Keycloak | A cached JWKS validates signatures only; it cannot stand in for current token/account status. The proposed 5-minute token maximum is an additional bound, not the revocation mechanism. |
+| ADR-0005, 2026-09-18 SC-1-02..04 addendum: write permissions can disclose project data; the holder of each action permission must be decided | SC-1-14 | Identity authenticates a caller but does not determine which caller receives these permissions. |
+| ADR-0005, 2026-09-19 SC-1-08 point 7: `PERSONNEL_COSTS_READ` derivation and whether a global permission may combine with project/catalog/staffing reads; associated dormant cost exposure | SC-1-14 | Decide grant scope and combinations before enabling non-placeholder authorization. This covers B-01 inheritance and the catalog-cost reopening condition in SC-2-01 point 7. |
+| ADR-0005, 2026-09-19 SC-2-01 point 7: catalog cost read combined with global `PERSONNEL_COSTS_READ` can bypass the project cost flag | SC-1-14 | Decide permission composition before enabling the real caller combination; ADR-0018 alone does not close this condition. |
+| ADR-0005, 2026-09-21 SC-2-03 points 4 and 6: per-supplier visibility requires an authenticated caller and its own scope decision; development/test supplier prices remain synthetic | SC-1-14 and a separate dated access decision for per-supplier scope; ADR-0018 for caller identity; the synthetic-data prohibition remains in force under Z-7 | This ADR does not grant supplier-specific access or relax the environment data restriction. |
+| ADR-0005, 2026-09-19 SC-3-01 and 2026-09-22 SC-3-02/03/04 conditions on named-person visibility, absence exposure, and the first render with a named person | ADR-0019 and the Q-4 follow-up as already routed by the 2026-09-27 SC-2-06 addendum; SC-1-14 for who receives `PEOPLE_READ` | Not reopened by SC-1-12. ADR-0019's real-data gate remains in force. |
+| ADR-0005, 2026-09-22 SC-3-02 point 9: scenario approval is missing a role distinction between planning and approving | SC-1-14 | ADR-0018 supplies identity only; approval authority is an authorization decision. |
+| ADR-0005, 2026-09-23 SC-5-05 point 2 and 2026-09-26 SC-3-04 point 2: reopen named-person/absence exposure if classified as personnel data or if behavior is differentiated by `headcount` | ADR-0019/Q-4 for named-person exposure; SC-1-14 only for any permission needed by the chosen control; a separate privacy decision for any new data classification | These are not closed by authenticating callers. The accepted 2026-09-27 SC-2-06 routing already assigns named-person exposure to Q-4. |
+| ADR-0005, 2026-09-23 SC-5-01 point 5 and 2026-09-25 SC-5-02 point 4; 2026-09-24 SC-6-02; 2026-09-24 SC-7-01 and 2026-09-25 SC-4-03: dormant B-01 cost and commercial disclosure combinations | SC-1-14 | Role/permission separation must explicitly decide the `PERSONNEL_COSTS_READ`, `CATALOG_READ`, `STAFFING_READ`, `RESULTS_READ`, and `COMMERCIAL_READ` intersections described by those addenda. ADR-0018 only supplies a trustworthy caller identity. |
+| ADR-0005, 2026-09-24 SC-6-01: `SCENARIO_COPY` permission crossing and placeholder's combined grants | SC-1-14 for whether write implies read and the permission intersection; ADR-0018 for placeholder removal | Do not treat the placeholder's combined permission set as a production policy. |
+| ADR-0005, 2026-09-27/28 SC-2-06 points 4, 5, 7, and 11: placeholder does not grant `PEOPLE_READ`/`PEOPLE_WRITE`; assignment is gated; decide whether `PEOPLE_READ` is global or project-derived and who grants it | SC-1-14 | ADR-0018 establishes only that a named person is not the user account (P-2); the authorization and grant path remain a role decision. |
+| ADR-0005, 2026-09-29 SC-5-08 points 6–7: dormant B-01 applies to the cost-rate unit and non-computable states; reopening condition remains the authentication/role boundary | SC-1-14 for cost permission composition; ADR-0018 and its implementation successor for the validated caller and placeholder boundary | The unit/state disclosures remain governed by the existing controls; authentication does not itself expose or authorize them. |
+| ADR-0005, 2026-09-30 SC-4-09 points 1, 3–5: `COMMERCIAL_ADJUSTMENT_APPROVE` is separate from `COMMERCIAL_WRITE`, is not granted to the placeholder, and does not grant read access | SC-1-14 for permission allocation and the `COMMERCIAL_READ` boundary; ADR-0018 for authenticated identity and the placeholder lifecycle | The permission must remain unavailable through placeholder identity; authenticated identity alone does not grant adjustment approval. |
+| ADR-0013, point 6: the positive personnel-cost path is unavailable to real callers until the authentication boundary exists | ADR-0018 plus the authentication implementation Story for identity; SC-1-14 for permission assignment and the cost gate | Availability of authentication alone does not authorize personnel-cost access. |
+| `capabilities.md` rows 179, 192, and 239: three dormant B-01 combinations, each marked `no evidence` and conditional on an authentication decision | SC-1-14 for resolving the permission combinations; the authentication implementation Story for a verified identity boundary | Keep all three rows `no evidence` until their specific controls are implemented and proven. |
+
+The routing intentionally preserves conditions already reassigned by the accepted 2026-09-27
+SC-2-06 addendum: named-person data minimization and Q-4 exposure remain under ADR-0019 and its
+follow-up, not under the authentication decision. The condition in ADR-0019 §8(b) is not
+satisfied by this draft; real named-person data remain prohibited until every §8 condition is
+met and evidenced.
+
+The role/permission successor referenced as SC-1-13 in the 2026-09-27 SC-2-06 addendum is
+identified here as SC-1-14. SC-1-13 is reserved for the exchange-rate Story (Issue #102) in the
+current plan; this clarification preserves the historical addendum while keeping current routing
+unambiguous.

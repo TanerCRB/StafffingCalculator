@@ -62,6 +62,9 @@ class ApprovedSnapshotCounts(BaseModel):
     `default_cost_rate` (point 2b), and no path in SC-4-01 returns them (ADR-0005, addendum SC-4-01,
     point 7). The same deliberate canary growth as the fourth and fifth."""
 
+    exchange_rates: int
+    """Rate windows copied with the approved scenario so later defaults cannot move its result."""
+
 
 class ScenarioApproval(BaseModel):
     """The result of approving one scenario: its new status and what was frozen with it."""

@@ -36,6 +36,13 @@ export const PERSONNEL_COST_STATES = [
 
 export type PersonnelCostState = (typeof PERSONNEL_COST_STATES)[number];
 
+export const PAID_ABSENCE_COST_STATES = [
+  "calculated", "no_calendar", "no_statutory_leave_type", "no_budget", "no_cost_rate",
+  "currency_mismatch", "no_cost_currency", "no_working_days",
+] as const;
+
+export type PaidAbsenceCostState = (typeof PAID_ABSENCE_COST_STATES)[number];
+
 /** Every `additional_cost.state` the backend can emit — exactly the backend's `AdditionalCostState`
  * literal. Never gated (ADR-0014, point 11). */
 export const ADDITIONAL_COST_STATES = ["calculated", "currency_mismatch", "no_cost_currency"] as const;
@@ -67,8 +74,6 @@ export interface PersonnelCostSource {
   currency: string | null;
   /** Gated together with the personnel-cost amount (ADR-0005, SC-5-08). */
   assumptions_used: PersonnelCostAssumptions | null;
-}
-
 /** The portion of the backend's gated assumptions this results screen reads. */
 export interface PersonnelCostAssumptions {
   rate_windows: PersonnelCostRateWindow[];
@@ -79,6 +84,9 @@ export interface PersonnelCostRateWindow {
   default_cost_rate: string;
   currency: string;
   cost_rate_unit?: "hour" | "day" | "month";
+  paid_absence_state: PaidAbsenceCostState;
+  paid_absence_amount: string | typeof RESULTS_NOT_APPLICABLE | null;
+  paid_absence_currency: string | null;
 }
 
 /** The scenario's additional-cost sum, as much of `AdditionalCostTotalRead` as this screen reads.

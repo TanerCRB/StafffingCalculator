@@ -118,6 +118,7 @@ from sqlalchemy.orm import Session
 from app.core.identity import CallerIdentity
 from app.data.additional_cost import additional_costs_for_caller
 from app.data.commercial_terms import commercial_terms_for_caller
+from app.data.exchange_rates import rates_for_scenario
 from app.data.personnel_cost import ScenarioCostView, scenario_cost_for_caller
 from app.domain.additional_cost import AdditionalCostAnswer
 from app.domain.revenue import (
@@ -241,6 +242,7 @@ class ScenarioResultsView:
     revenue: RevenueAnswer
     cost_view: ScenarioCostView
     additional_cost: AdditionalCostAnswer
+    exchange_rates: tuple = ()
 
 
 def scenario_results_for_caller(
@@ -263,13 +265,24 @@ def scenario_results_for_caller(
     (`ScenarioResultsRaceDetected`): an approval commits its status and snapshot in one
     transaction, but nothing serialises it against a concurrent read of unrelated rows.
     """
-    commercial = commercial_terms_for_caller(session, caller, project_id, scenario_id)
+    commercial = commercial_terms_for_caller(
+        session,
+        caller,
+        project_id,
+        scenario_id,
+        include_billable_months=True,
+        allow_exchange_rates=True,
+    )
     if commercial is None:
         return None
-    cost_view = scenario_cost_for_caller(session, caller, project_id, scenario_id)
+    cost_view = scenario_cost_for_caller(
+        session, caller, project_id, scenario_id, allow_exchange_rates=True
+    )
     if cost_view is None:  # pragma: no cover — scope agrees with the call above by construction
         return None
-    additional = additional_costs_for_caller(session, caller, project_id, scenario_id)
+    additional = additional_costs_for_caller(
+        session, caller, project_id, scenario_id, allow_exchange_rates=True
+    )
     if additional is None:  # pragma: no cover — scope agrees with the two calls above
         return None
     # After the third read: the status each call froze right after its own refresh — never
@@ -286,4 +299,5 @@ def scenario_results_for_caller(
         revenue=commercial.revenue,
         cost_view=cost_view,
         additional_cost=additional.total,
+        exchange_rates=rates_for_scenario(session, commercial.scenario),
     )

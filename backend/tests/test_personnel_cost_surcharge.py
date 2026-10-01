@@ -468,8 +468,9 @@ def test_qa_finding_approving_a_scenario_with_a_configured_surcharge_changes_its
 ) -> None:
     """QA finding (SC-5-02 review, 2026-09-25), fixed — `costed_month_windows`'s snapshot branch
     named a literal `0`/`false` for `surcharge_percent`/`includes_surcharge` instead of reading
-    `ApprovedSnapshotCatalogDefaultRate`'s own columns, reading ADR-0013's addendum 2026-09-25
-    point 2 ("SC-5-02 itself does not have to expose any path that returns this column" —
+    `ApprovedSnapshotCatalogDefaultRate`'s own columns, reading ADR-0005's addendum
+    2026-09-25 SC-5-02, point 3 ("SC-5-02 itself does not have to expose any path that
+    returns this column" —
     *does not have to*, not *must not*) as a prohibition rather than a permission. The
     consequence was a silent
     regression: approving a scenario with a non-zero, not-already-included surcharge moved its OWN

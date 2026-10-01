@@ -120,6 +120,16 @@ const TM_ASSUMPTIONS: RevenueAssumptionsRead = {
   currencies: ["PLN"],
 };
 
+const FIXED_PRICE_ASSUMPTIONS: RevenueAssumptionsRead = {
+  model_type: "fixed_price",
+  hours_source: "not_applicable",
+  vendor_axis: "not_applicable",
+  rate_source: "fixed_price_terms",
+  rate_windows: [],
+  unresolved_months: [],
+  currencies: ["PLN"],
+};
+
 const RULE = {
   id: "dddddddd-0000-0000-0000-000000000001",
   model_type: "time_and_material",
@@ -150,13 +160,49 @@ function withRule(
   return {
     scenario_id: scenarioId,
     scenario_status: "Draft",
-    commercial_terms: { ...RULE, model_type: modelType },
+    commercial_terms: {
+      ...RULE,
+      model_type: modelType,
+      ...(modelType === "fixed_price" ? { agreed_price: "150000.0050", currency: "PLN" } : {}),
+    },
     revenue,
   };
 }
 
 function calculated(amount: string, currency: string): RevenueRead {
   return { state: "calculated", amount, currency, assumptions_used: TM_ASSUMPTIONS, expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [] };
+}
+
+function fixedPriceTerms(
+  scenarioId: string,
+  status: ScenarioStatus,
+  agreedPrice: string,
+  currency: string,
+  revenue: RevenueRead,
+): ScenarioCommercialTerms {
+  return {
+    scenario_id: scenarioId,
+    scenario_status: status,
+    commercial_terms: {
+      ...RULE,
+      model_type: "fixed_price",
+      agreed_price: agreedPrice,
+      currency,
+    },
+    revenue,
+  };
+}
+
+function fixedPriceRevenue(amount = "150000.01", currency = "PLN"): RevenueRead {
+  return {
+    state: "calculated",
+    amount,
+    currency,
+    assumptions_used: FIXED_PRICE_ASSUMPTIONS,
+    expected_state: "not_applicable",
+    expected_amount: "n/a",
+    category_revenues: [],
+  };
 }
 
 function withheld(
@@ -183,6 +229,8 @@ interface Backend {
   readonly reads?: Record<string, Answer | ((call: number) => Answer)>;
   /** The `POST` answer per scenario id. */
   readonly writes?: Record<string, Answer>;
+  /** The `PATCH` answer per scenario id. */
+  readonly edits?: Record<string, Answer>;
 }
 
 function response(status: number, body: unknown) {
@@ -220,6 +268,8 @@ function stubBackend(backend: Backend) {
       answer = typeof configured === "function" ? configured(count) : configured;
     } else if (match !== null && method === "POST") {
       answer = backend.writes?.[match[2]];
+    } else if (match !== null && method === "PATCH") {
+      answer = backend.edits?.[match[2]];
     }
     if (answer === undefined) {
       throw new Error(`No answer stubbed for ${method} ${path}`);
@@ -242,7 +292,7 @@ function stubBackend(backend: Backend) {
 
 type FetchMock = ReturnType<typeof stubBackend>;
 
-function termsCalls(fetchMock: FetchMock, scenarioId: string, method: "GET" | "POST") {
+function termsCalls(fetchMock: FetchMock, scenarioId: string, method: "GET" | "POST" | "PATCH") {
   return fetchMock.mock.calls.filter(([url, init]) => {
     const match = TERMS_PATH.exec(new URL(url).pathname);
     return match?.[2] === scenarioId && ((init?.method ?? "GET") === method);
@@ -288,6 +338,18 @@ async function settledSection(scenarioName: string): Promise<HTMLElement> {
 function setButton(scenarioName: string) {
   return within(section(scenarioName)).queryByRole("button", {
     name: `Set Time & Material for ${scenarioName}`,
+  });
+}
+
+function setFixedPriceButton(scenarioName: string) {
+  return within(section(scenarioName)).queryByRole("button", {
+    name: `Set Fixed Price for ${scenarioName}`,
+  });
+}
+
+function editFixedPriceButton(scenarioName: string) {
+  return within(section(scenarioName)).queryByRole("button", {
+    name: `Edit agreed price for ${scenarioName}`,
   });
 }
 
@@ -486,7 +548,7 @@ describe("K-03 — the rule's presence decides whether 'Set Time & Material' is 
       reads: {
         [BASELINE]: {
           status: 200,
-          body: withRule(BASELINE, withheld("unsupported_model_type", { ...NO_ASSUMPTIONS, model_type: "fixed_price" }), "fixed_price"),
+          body: withRule(BASELINE, withheld("unsupported_model_type", { ...NO_ASSUMPTIONS, model_type: "future_model" }), "future_model"),
         },
         [STRETCH]: { hang: true },
         [SIGNED]: { hang: true },
@@ -497,7 +559,7 @@ describe("K-03 — the rule's presence decides whether 'Set Time & Material' is 
     await openProject();
     const terms = await settledSection("Baseline");
 
-    expect(within(terms).getByText("Commercial model: fixed_price")).toBeVisible();
+    expect(within(terms).getByText("Commercial model: future_model")).toBeVisible();
     expect(within(terms).getByText(REVENUE_STATE_MESSAGES.unsupported_model_type)).toBeVisible();
     expect(within(terms).queryByText(READ_UNREADABLE)).toBeNull();
     expect(setButton("Baseline")).toBeNull();
@@ -785,6 +847,200 @@ describe("K-05 — the state after a save is the 201 body, never a state assumed
     const terms = section("Baseline");
     expect(await within(terms).findByText(SAVE_UNRESOLVED_UNREADABLE_ANSWER)).toBeVisible();
     expect(terms.textContent).not.toContain("777.77");
+    expect(within(terms).getByText("Commercial model: not set")).toBeVisible();
+  });
+});
+
+// --- SC-4-10: Fixed Price creation and editing --------------------------------------------------
+
+describe("SC-4-10 K-03 — a draft with no rule can create a whole-scenario Fixed Price rule", () => {
+  it("sends the entered amount and currency, then renders the server's 201 answer", async () => {
+    const write = heldWrite();
+    const fetchMock = stubBackend({
+      reads: {
+        [BASELINE]: { status: 200, body: noRule(BASELINE) },
+        [STRETCH]: { hang: true },
+        [SIGNED]: { hang: true },
+      },
+      writes: { [BASELINE]: write.answer },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    fireEvent.click(setFixedPriceButton("Baseline") as HTMLElement);
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Agreed price for Baseline" }), {
+      target: { value: "175000.0050" },
+    });
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Currency for Baseline" }), {
+      target: { value: "USD" },
+    });
+    fireEvent.click(within(terms).getByRole("button", { name: "Save price" }));
+
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "POST")).toHaveLength(1));
+    const [, init] = termsCalls(fetchMock, BASELINE, "POST")[0];
+    expect(JSON.parse(String(init?.body))).toEqual({
+      model_type: "fixed_price",
+      agreed_price: "175000.0050",
+      currency: "USD",
+    });
+    expect(within(terms).getByText("Commercial model: not set")).toBeVisible();
+    expect(within(terms).queryByText("Commercial model: Fixed Price")).toBeNull();
+
+    await act(async () => {
+      write.release({
+        status: 201,
+        body: fixedPriceTerms(
+          BASELINE,
+          "Draft",
+          "175000.0050",
+          "USD",
+          fixedPriceRevenue("175000.01", "USD"),
+        ),
+      });
+    });
+
+    expect(within(terms).getByText("Commercial model: Fixed Price")).toBeVisible();
+    expect(within(terms).getByText("Agreed price: 175000.0050 USD")).toBeVisible();
+    expect(within(terms).getByText("Revenue: 175000.01 USD")).toBeVisible();
+    expect(within(terms).getByText(SAVED)).toBeVisible();
+  });
+
+  it("does not offer rule creation on an approved scenario", async () => {
+    stubBackend({
+      reads: {
+        [BASELINE]: { status: 200, body: noRule(BASELINE, "Approved") },
+        [STRETCH]: { hang: true },
+        [SIGNED]: { hang: true },
+      },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    expect(setFixedPriceButton("Baseline")).toBeNull();
+    expect(within(terms).getByText(APPROVED_SCENARIO_NOTE)).toBeVisible();
+  });
+});
+
+describe("SC-4-10 K-04 — a draft Fixed Price rule can edit its agreed price", () => {
+  it("sends the read marker with the new value and renders the successful PATCH response", async () => {
+    const responseTerms = fixedPriceTerms(
+      BASELINE,
+      "Draft",
+      "165000.0000",
+      "PLN",
+      fixedPriceRevenue("165000.00", "PLN"),
+    );
+    const fetchMock = stubBackend({
+      reads: {
+        [BASELINE]: {
+          status: 200,
+          body: fixedPriceTerms(BASELINE, "Draft", "150000.0050", "PLN", fixedPriceRevenue()),
+        },
+        [STRETCH]: { hang: true },
+        [SIGNED]: { hang: true },
+      },
+      edits: { [BASELINE]: { status: 200, body: responseTerms } },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    expect(within(terms).getByText("Agreed price: 150000.0050 PLN")).toBeVisible();
+    fireEvent.click(editFixedPriceButton("Baseline") as HTMLElement);
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Agreed price for Baseline" }), {
+      target: { value: "160000.0000" },
+    });
+    fireEvent.click(within(terms).getByRole("button", { name: "Save price" }));
+
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "PATCH")).toHaveLength(1));
+    const [, init] = termsCalls(fetchMock, BASELINE, "PATCH")[0];
+    expect(JSON.parse(String(init?.body))).toEqual({
+      updated_at: RULE.updated_at,
+      agreed_price: "160000.0000",
+    });
+    expect(await within(terms).findByText("Agreed price: 165000.0000 PLN")).toBeVisible();
+    expect(within(terms).getByText("Revenue: 165000.00 PLN")).toBeVisible();
+    expect(within(terms).queryByText("Agreed price: 160000.0000 PLN")).toBeNull();
+    expect(within(terms).getByText(SAVED)).toBeVisible();
+  });
+
+  it("does not offer price editing on an approved scenario", async () => {
+    stubBackend({
+      reads: {
+        [BASELINE]: {
+          status: 200,
+          body: fixedPriceTerms(BASELINE, "Approved", "150000.0050", "PLN", fixedPriceRevenue()),
+        },
+        [STRETCH]: { hang: true },
+        [SIGNED]: { hang: true },
+      },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    expect(editFixedPriceButton("Baseline")).toBeNull();
+    expect(within(terms).getByText("Agreed price: 150000.0050 PLN")).toBeVisible();
+  });
+});
+
+describe("SC-4-10 K-05 — Fixed Price write refusals and unresolved outcomes stay distinct", () => {
+  it("shows a refusal without claiming the entered price was saved", async () => {
+    stubBackend({
+      reads: {
+        [BASELINE]: { status: 200, body: noRule(BASELINE) },
+        [STRETCH]: { hang: true },
+        [SIGNED]: { hang: true },
+      },
+      writes: { [BASELINE]: { status: 409, body: { detail: FROZEN_DETAIL } } },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    fireEvent.click(setFixedPriceButton("Baseline") as HTMLElement);
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Agreed price for Baseline" }), {
+      target: { value: "888888.0000" },
+    });
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Currency for Baseline" }), {
+      target: { value: "USD" },
+    });
+    fireEvent.click(within(terms).getByRole("button", { name: "Save price" }));
+
+    const refusal = await within(terms).findByText(SAVE_REFUSED_APPROVED);
+    expect(refusal).toHaveAttribute("data-write-outcome", "refused");
+    expect(within(terms).queryByText(SAVED)).toBeNull();
+    expect(within(terms).getByText("Commercial model: not set")).toBeVisible();
+    expect(refusal.textContent).not.toContain("888888");
+  });
+
+  it("shows a timeout as unresolved, not as a refusal or a save", async () => {
+    stubBackend({
+      reads: {
+        [BASELINE]: { status: 200, body: noRule(BASELINE) },
+        [STRETCH]: { hang: true },
+        [SIGNED]: { hang: true },
+      },
+      writes: { [BASELINE]: { hang: true } },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    vi.useFakeTimers();
+    fireEvent.click(setFixedPriceButton("Baseline") as HTMLElement);
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Agreed price for Baseline" }), {
+      target: { value: "888888.0000" },
+    });
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Currency for Baseline" }), {
+      target: { value: "USD" },
+    });
+    fireEvent.click(within(terms).getByRole("button", { name: "Save price" }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+    });
+    const unresolved = within(terms).getByText(SAVE_UNRESOLVED);
+    expect(unresolved).toHaveAttribute("data-write-outcome", "unresolved");
+    expect(within(terms).queryByText(SAVED)).toBeNull();
     expect(within(terms).getByText("Commercial model: not set")).toBeVisible();
   });
 });

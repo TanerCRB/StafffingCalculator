@@ -23,6 +23,8 @@ import {
 } from "./contracts/catalog";
 import {
   EXPECTED_REVENUE_STATES,
+  FIXED_PRICE,
+  FIXED_PRICE_RATE_SOURCE,
   OUTCOME_BASED,
   OUTCOME_CATEGORIES,
   RATE_SOURCES,
@@ -34,6 +36,7 @@ import {
   TIME_AND_MATERIAL,
   type CommercialTermsCreateRequest,
   type ExpectedRevenueState,
+  type FixedPriceTermsEditRequest,
   type ScenarioCommercialTerms,
 } from "./contracts/commercialTerms";
 import { isDecimalString } from "../lib/money";
@@ -48,6 +51,7 @@ import type {
 import {
   ADDITIONAL_COST_STATES,
   PERSONNEL_COST_STATES,
+  PAID_ABSENCE_COST_STATES,
   PROFITABILITY_STATES,
   RESULTS_NOT_APPLICABLE,
   type AdditionalCostSource,
@@ -1002,6 +1006,14 @@ function isRevenueSourcePairing(value: Record<string, unknown>, revenueState: un
       noWindowsOrMonths
     );
   }
+  if (model === FIXED_PRICE) {
+    return (
+      value.hours_source === SOURCE_NOT_APPLICABLE &&
+      value.vendor_axis === SOURCE_NOT_APPLICABLE &&
+      value.rate_source === FIXED_PRICE_RATE_SOURCE &&
+      noWindowsOrMonths
+    );
+  }
   return (model === null || model === TIME_AND_MATERIAL) && catalogueSources;
 }
 
@@ -1164,6 +1176,13 @@ function isCommercialTermsShape(value: unknown): boolean {
   // Required, `null` included (ADR-0003, addendum SC-4-07, point 11): `null` for every model but
   // Outcome-based, and for an Outcome-based rule without its details row. Parameters under any other
   // model's name would be shown as that model's — so they are not a payload this client reads.
+  if (value.model_type === FIXED_PRICE) {
+    return (
+      value.outcome_terms === null &&
+      ((value.agreed_price === null && value.currency === null) ||
+        (isDecimalString(value.agreed_price) && typeof value.currency === "string"))
+    );
+  }
   if (value.outcome_terms === null) {
     return true;
   }
@@ -1276,6 +1295,19 @@ export async function createScenarioCommercialTerms(
   );
 }
 
+/** Edit a draft Fixed Price rule (`PATCH …/commercial-terms`). The backend compares `updated_at`
+ * inside its guarded write; the successful response is the refreshed rule and revenue rendered by
+ * the caller. */
+export async function editScenarioFixedPriceTerms(
+  projectId: string,
+  scenarioId: string,
+  body: FixedPriceTermsEditRequest,
+): Promise<ScenarioCommercialTerms> {
+  return write(commercialTermsPath(projectId, scenarioId), "PATCH", body, (value) =>
+    isScenarioCommercialTermsShape(value, scenarioId),
+  );
+}
+
 /** Add one default rate window (`POST /catalog/rates`). */
 export async function createCatalogRate(body: CatalogRateCreateRequest): Promise<CatalogRate> {
   return write("/catalog/rates", "POST", body, isCatalogRateShape);
@@ -1384,9 +1416,15 @@ function isGatedResultFieldShape(value: unknown): boolean {
  * revenue, applied here to its cost counterpart.
  */
 function isPersonnelCostSourceShape(value: unknown): value is PersonnelCostSource {
-  if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES)) {
+  if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES) || !isOneOf(value.paid_absence_state, PAID_ABSENCE_COST_STATES)) {
     return false;
   }
+  const componentShape = (state: unknown, amount: unknown, currency: unknown) => {
+    if (amount === null) return isRequiredNullableString(currency);
+    if (typeof amount !== "string") return false;
+    if (amount === RESULTS_NOT_APPLICABLE) return state !== "calculated" && isRequiredNullableString(currency);
+    return state === "calculated" && isDecimalString(amount) && typeof currency === "string";
+  };
   const assumptions = value.assumptions_used;
   const assumptionsShape =
     assumptions === null ||
@@ -1406,15 +1444,18 @@ function isPersonnelCostSourceShape(value: unknown): value is PersonnelCostSourc
   }
   const amount = value.amount;
   if (amount === null) {
-    return assumptions === null && isRequiredNullableString(value.currency);
+    return assumptions === null && isRequiredNullableString(value.currency) &&
+      componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
   }
   if (typeof amount !== "string") {
     return false;
   }
   if (amount === RESULTS_NOT_APPLICABLE) {
-    return value.state !== "calculated" && isRequiredNullableString(value.currency);
+    return value.state !== "calculated" && isRequiredNullableString(value.currency) &&
+      componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
   }
-  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string";
+  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string" &&
+    componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
 }
 
 /**
