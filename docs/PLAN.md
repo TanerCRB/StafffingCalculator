@@ -3013,8 +3013,9 @@ history / this file's own change log, not as tracked product work.
 
 - [x] **SC-7-09** — Calculate expected profit and margin for an Outcome-based scenario (Issue #127).
   **Done 2026-10-01:** Outcome-based results expose expected profit and margin from rounded expected revenue and included cost; non-applicable states, currency and personnel-cost gates, and per-scenario comparison are covered by `backend/tests/test_outcome_expected_profitability.py::test_k_01_*` through `::test_k_07_*`.
-- [ ] **SC-5-10** — Correct the ADR citation in the personnel-surcharge test (Issue #161).
+- [x] **SC-5-10** — Correct the ADR citation in the personnel-surcharge test (Issue #161).
   *Done when:* `test_qa_finding_approving_a_scenario_with_a_configured_surcharge_changes_its_own_cost` cites ADR-0005, addendum 2026-09-25, point 3 for the sentence; and review confirms no same mix-up in sibling `test_personnel_cost*.py` files.
+  **Done 2026-10-01:** The corrected docstring and scoped sibling review are recorded in [PR #210](https://github.com/TanerCRB/StafffingCalculator/pull/210); the sentence is in [ADR-0005, 2026-09-25 SC-5-02 addendum, point 3](https://github.com/TanerCRB/StafffingCalculator/blob/a711665567bf58dba7f9bf7f69798aacf53d2aa5/docs/architecture/decisions/ADR-0005-model-dostepu.md#L895), and the corrected [test docstring](https://github.com/TanerCRB/StafffingCalculator/blob/a711665567bf58dba7f9bf7f69798aacf53d2aa5/backend/tests/test_personnel_cost_surcharge.py#L471) is the artifact for the criterion.
   **Out of scope (explicit):** Other ADR citation accuracy issues — each has an independent source and proof requirement; file separately.
   **Basis:** Issue #161; reviewer verification of #157; ADR-0005, addendum 2026-09-25, SC-5-02, point 3.
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
