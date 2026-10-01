@@ -52,7 +52,9 @@ WITHOUT_PERSONNEL_COSTS_READ = EVERYTHING - {Permission.PERSONNEL_COSTS_READ}
 WITHOUT_RESULTS_READ = EVERYTHING - {Permission.RESULTS_READ}
 
 
-def test_k_01_results_keep_each_resolved_rate_window_unit(client: TestClient, db_session: Session) -> None:
+def test_k_01_results_keep_each_resolved_rate_window_unit(
+    client: TestClient, db_session: Session
+) -> None:
     """The shared results response preserves the unit belonging to each resolved cost window."""
     _ensure_statutory_bypass(db_session)
     project, scenario, first_dimensions = _full_scenario(db_session, name="Rate unit windows")
