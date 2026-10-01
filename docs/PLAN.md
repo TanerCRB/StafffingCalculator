@@ -3006,6 +3006,6 @@ history / this file's own change log, not as tracked product work.
   **Out of scope (explicit):** Backend (SC-4-02/#66); price adjustments (SC-4-09/#112); milestones and revenue-period allocation; profit, margin, and cost presentation (block 7).
   **Basis:** Issue #113; `Wymagania/Requirements_EN.md` §4 F-06.2 and §7 AC-07; ADR-0002, ADR-0003, ADR-0009, ADR-0010; `docs/architecture/capabilities.md`.
 
-- [ ] **SC-7-09** ? Calculate expected profit and margin for an Outcome-based scenario (Issue #127).
-  Reserved 2026-10-01 after Gate 1 approval; acceptance criteria and completion evidence will be added with the separate documentation PR.
+- [x] **SC-7-09** - Calculate expected profit and margin for an Outcome-based scenario (Issue #127).
+  **Done 2026-10-01:** Outcome-based results expose expected profit and margin from rounded expected revenue and included cost; non-applicable states, currency and personnel-cost gates, and per-scenario comparison are covered by `backend/tests/test_outcome_expected_profitability.py::test_k_01_*` through `::test_k_07_*`.
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
