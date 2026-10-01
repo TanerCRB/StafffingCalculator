@@ -1301,3 +1301,30 @@ days came from after the source row changes.
 ### 2026-09-29 - scenario risks and risk reserves (SC-6-08, ADR-0021)
 
 `scenario_risk` and `risk_reserve` are group 2: own data of the scenario, a write refused under `approved` in the same statement as the status read, no snapshot. Setting or clearing `additional_cost.risk_id` is a write under the same guard. Copy: `copy_scenario_risks` is an entry of `SCENARIO_CHILD_COPIERS` that runs **before** `copy_staffing_positions` (position-level costs are copied inside it and need the risk mapping); `copy_scenario_reserves` follows the additional-cost copier. Links are remapped by `UNIQUE(scenario_id, name)` of the risk, never through an id channel (the ADR-0016 / SC-4-05 pattern); `risk_id` is in `ADDITIONAL_COST_COLUMNS_NOT_COPIED`. The registry has six entries. Proof: `backend/tests/test_risk_guards.py`, `backend/tests/test_risk_copy.py`.
+
+### 2026-09-30 — Fixed Price price adjustments stay outside the approval snapshot (SC-4-09, Issue #112)
+
+**Status:** Accepted
+
+> Gate-1 choices approved by the human on 2026-09-30. This resolves the adjustment direction
+> recorded in the 2026-09-25 SC-4-02 addendum, point 4; it does not change calculation approval.
+
+1. **Adjustments are group-2 scenario data.** Each adjustment is a child of the Fixed Price rule
+   in the scenario aggregate, with no concurrency marker of its own. The adjustment's
+   `pending`/`approved`/`rejected` lifecycle is distinct from the scenario's draft/approved
+   lifecycle. Approving an adjustment does not create or alter a calculation snapshot.
+2. **No snapshot copy or freeze.** Adjustment rows are not members of `approved_snapshot_*` and
+   are not copied into a snapshot. An approved calculation's revenue reads only the adjustments
+   that were approved before scenario approval; after approval, the aggregate's immutable-write
+   guard prevents adjustment creation, editing, or state transition, keeping that revenue fixed.
+3. **Scenario copies copy adjustments as pending.** The Fixed Price aggregate copier copies each
+   adjustment's kind, amount, and currency into a new row with a new identifier. The copy starts
+   each such row as `pending`, regardless of the source decision, so approval is specific to the
+   scenario and the copied adjustment must be approved separately before affecting revenue.
+4. **A correction is a new row.** Approved and rejected adjustments are terminal; no adjustment
+   is revised or reopened. A replacement or correction is a separate pending adjustment.
+
+| Control | Acceptance criterion |
+|---|---|
+| FPS-AJ-1 | Approval snapshots contain no adjustment rows; copying a scenario copies adjustment kind, amount, and currency into new pending rows with new identifiers, and none affect revenue before approval. |
+| FPS-AJ-2 | A scenario approved with a set of approved adjustments returns the same Fixed Price revenue after attempted adjustment writes, which are refused. |

@@ -28,6 +28,7 @@ from app.models.catalog import (
 )
 from app.models.commercial_terms import (
     CommercialTerms,
+    FixedPriceAdjustment,
     FixedPriceTerms,
     OutcomeTerms,
     StoryPointsTerms,
@@ -71,6 +72,7 @@ __all__ = [
     "CommercialTerms",
     "FixedPriceTerms",
     "ExchangeRate",
+    "FixedPriceAdjustment",
     "OrganizationDefaults",
     "OutcomeTerms",
     "Person",

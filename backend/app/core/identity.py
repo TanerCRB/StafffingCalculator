@@ -125,6 +125,8 @@ class Permission(StrEnum):
     write permission here (point 6): the write answers with the rule and its revenue, so in
     practice it reads them too."""
 
+    COMMERCIAL_ADJUSTMENT_APPROVE = "commercial_adjustment:approve"
+
     RESULTS_READ = "results:read"
     """Reading a scenario's whole-scenario profit, margin and markup (F-10, SC-7-01; ADR-0005,
     addendum 2026-09-24 SC-7-01).

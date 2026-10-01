@@ -51,6 +51,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
@@ -97,10 +98,12 @@ from app.models.commercial_terms import (
     MODEL_TYPE_TIME_AND_MATERIAL,
     OUTCOME_CATEGORIES,
     CommercialTerms,
+    FixedPriceAdjustment,
     FixedPriceTerms,
     OutcomeTerms,
     StoryPointsTerms,
     TmTerms,
+    fixed_price_adjustment_request_fingerprint,
     probability_column,
     units_column,
 )
@@ -541,7 +544,16 @@ def _fixed_price_details_of(session: Session, rule: _Rule) -> AgreedPrice | None
     ).one_or_none()
     if row is None:
         return None
-    return AgreedPrice(amount=row.agreed_price, currency=row.currency)
+    adjustments = session.execute(
+        sa.select(FixedPriceAdjustment.kind, FixedPriceAdjustment.amount).where(
+            FixedPriceAdjustment.commercial_terms_id == rule.terms.id,
+            FixedPriceAdjustment.status == "approved",
+        )
+    ).all()
+    deltas = tuple(amount if kind == "increase" else -amount for kind, amount in adjustments)
+    return AgreedPrice(
+        amount=row.agreed_price, currency=row.currency, approved_adjustment_deltas=deltas
+    )
 
 
 REVENUE_BY_MODEL: dict[str, RevenueCalculator] = {
@@ -937,6 +949,201 @@ class CommercialTermsScenarioChanged(CommercialTermsWriteRejected):
     """The scenario was in scope a moment ago and no unapproved row matched — it changed since."""
 
 
+def _adjustment_scenario(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    allow_approved: bool = False,
+) -> Scenario | None:
+    candidate = scenario_in_scope(session, caller, project_id, scenario_id)
+    if candidate is None:
+        return None
+    scenario = session.execute(
+        sa.select(Scenario).where(Scenario.id == candidate.id).with_for_update()
+    ).scalar_one()
+    membership = session.execute(
+        sa.select(ProjectAccess)
+        .where(
+            ProjectAccess.user_id == caller.user_id,
+            ProjectAccess.project_id == project_id,
+        )
+        .with_for_update(read=True, key_share=True)
+    ).scalar_one_or_none()
+    if membership is None:
+        return None
+    if not allow_approved and scenario.status != ScenarioStatus.DRAFT:
+        raise CommercialTermsFrozen("The scenario is approved.")
+    return scenario
+
+
+def price_adjustments_for_caller(
+    session: Session, caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
+) -> list[FixedPriceAdjustment] | None:
+    scenario = scenario_in_scope(session, caller, project_id, scenario_id)
+    if scenario is None:
+        return None
+    terms_ids = (
+        sa.select(FixedPriceTerms.commercial_terms_id)
+        .join(CommercialTerms, CommercialTerms.id == FixedPriceTerms.commercial_terms_id)
+        .where(CommercialTerms.scenario_id == scenario.id)
+    )
+    return list(
+        session.execute(
+            sa.select(FixedPriceAdjustment)
+            .where(FixedPriceAdjustment.commercial_terms_id.in_(terms_ids))
+            .order_by(FixedPriceAdjustment.id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def create_price_adjustment(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    request_id: uuid.UUID,
+    kind: str,
+    amount: Decimal,
+    currency: str,
+) -> FixedPriceAdjustment | None:
+    scenario = _adjustment_scenario(
+        session, caller, project_id, scenario_id, allow_approved=True
+    )
+    if scenario is None:
+        return None
+    terms = session.execute(
+        sa.select(CommercialTerms).where(
+            CommercialTerms.scenario_id == scenario.id,
+            CommercialTerms.model_type == MODEL_TYPE_FIXED_PRICE,
+        )
+    ).scalar_one_or_none()
+    if terms is None:
+        return None
+    details = session.get(FixedPriceTerms, terms.id)
+    if details is None or details.currency != currency:
+        raise CommercialTermsWriteRejected(
+            "Adjustment currency must match the Fixed Price rule currency."
+        )
+    existing = session.execute(
+        sa.select(FixedPriceAdjustment).where(
+            FixedPriceAdjustment.commercial_terms_id == terms.id,
+            FixedPriceAdjustment.request_id == request_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        request_fingerprint = fixed_price_adjustment_request_fingerprint(
+            kind, amount, currency
+        )
+        if existing.request_fingerprint == request_fingerprint:
+            return existing
+        raise CommercialTermsWriteRejected(
+            "The request_id was already used for a different adjustment."
+        )
+    if scenario.status != ScenarioStatus.DRAFT:
+        raise CommercialTermsFrozen("The scenario is approved.")
+    row = FixedPriceAdjustment(
+        request_id=request_id,
+        request_fingerprint=fixed_price_adjustment_request_fingerprint(
+            kind, amount, currency
+        ),
+        commercial_terms_id=terms.id,
+        kind=kind,
+        amount=amount,
+        currency=currency,
+    )
+    try:
+        session.add(row)
+        session.flush()
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    return row
+
+
+def edit_price_adjustment(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    adjustment_id: uuid.UUID,
+    changes: Mapping[str, object],
+) -> FixedPriceAdjustment | None:
+    scenario = _adjustment_scenario(session, caller, project_id, scenario_id)
+    if scenario is None:
+        return None
+    row = session.execute(
+        sa.select(FixedPriceAdjustment)
+        .join(
+            FixedPriceTerms,
+            FixedPriceAdjustment.commercial_terms_id == FixedPriceTerms.commercial_terms_id,
+        )
+        .join(CommercialTerms, FixedPriceTerms.commercial_terms_id == CommercialTerms.id)
+        .where(FixedPriceAdjustment.id == adjustment_id, CommercialTerms.scenario_id == scenario.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    if row.status != "pending":
+        raise CommercialTermsWriteRejected("Only pending adjustments can be edited.")
+    values = {key: value for key, value in changes.items() if value is not None}
+    if "currency" in values:
+        details = session.get(FixedPriceTerms, row.commercial_terms_id)
+        if details is None or values["currency"] != details.currency:
+            raise CommercialTermsWriteRejected(
+                "Adjustment currency must match the Fixed Price rule currency."
+            )
+    try:
+        for key, value in values.items():
+            setattr(row, key, value)
+        session.flush()
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    return row
+
+
+def decide_price_adjustment(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    adjustment_id: uuid.UUID,
+    decision: str,
+) -> FixedPriceAdjustment | None:
+    scenario = _adjustment_scenario(session, caller, project_id, scenario_id)
+    if scenario is None:
+        return None
+    row = session.execute(
+        sa.select(FixedPriceAdjustment)
+        .join(
+            FixedPriceTerms,
+            FixedPriceAdjustment.commercial_terms_id == FixedPriceTerms.commercial_terms_id,
+        )
+        .join(CommercialTerms, FixedPriceTerms.commercial_terms_id == CommercialTerms.id)
+        .where(FixedPriceAdjustment.id == adjustment_id, CommercialTerms.scenario_id == scenario.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    if row.status != "pending":
+        raise CommercialTermsWriteRejected("A decided adjustment is terminal.")
+    try:
+        row.status = decision
+        session.flush()
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    return row
+
+
 def _failure(error: SQLAlchemyError) -> WriteFailed:
     return failure_for(
         error,
@@ -1326,6 +1533,13 @@ def update_fixed_price(
             ~sa.exists().where(
                 _OTHER_TERMS.c.scenario_id == scenario_id, _OTHER_TERMS.c.id != _TERMS_TABLE.c.id
             ),
+            (
+                "currency" not in changes
+                or ~sa.exists().where(
+                    FixedPriceAdjustment.commercial_terms_id == _TERMS_TABLE.c.id,
+                    FixedPriceAdjustment.currency != changes["currency"],
+                )
+            ),
         )
         # Explicit rather than left to the column's `onupdate`: the rotation of the marker is part
         # of what this statement claims, and `now()` is the database's clock.
@@ -1389,6 +1603,14 @@ def replace_commercial_terms(
             ~sa.exists().where(
                 _OTHER_TERMS.c.scenario_id == scenario_id,
                 _OTHER_TERMS.c.id != _TERMS_TABLE.c.id,
+            ),
+            (
+                model_type != MODEL_TYPE_FIXED_PRICE
+                or "currency" not in domain_values
+                or ~sa.exists().where(
+                    FixedPriceAdjustment.commercial_terms_id == _TERMS_TABLE.c.id,
+                    FixedPriceAdjustment.currency != domain_values["currency"],
+                )
             ),
         )
         .values(
@@ -1455,6 +1677,20 @@ def replace_commercial_terms(
                 "This scenario has more than one set of commercial terms, so its rule cannot be "
                 "edited here."
             )
+        if model_type == MODEL_TYPE_FIXED_PRICE and "currency" in domain_values:
+            mismatched_adjustment = session.execute(
+                sa.select(sa.exists().where(
+                    _TERMS_TABLE.c.scenario_id == scenario_id,
+                    _TERMS_TABLE.c.scope_ref.is_(None),
+                    _TERMS_TABLE.c.model_type == MODEL_TYPE_FIXED_PRICE,
+                    FixedPriceAdjustment.commercial_terms_id == _TERMS_TABLE.c.id,
+                    FixedPriceAdjustment.currency != domain_values["currency"],
+                ))
+            ).scalar_one()
+            if mismatched_adjustment:
+                raise CommercialTermsWriteRejected(
+                    "Fixed Price currency must match every existing price adjustment."
+                )
         refusal = _diagnose_refusal(session, scenario_id)
         if isinstance(refusal, CommercialTermsFrozen):
             raise refusal
@@ -1683,4 +1919,25 @@ def copy_commercial_terms(session: Session, source: Scenario, copy: Scenario) ->
                     }
                 )
             )
+            session.flush()
+        if terms.model_type == MODEL_TYPE_FIXED_PRICE:
+            adjustments = (
+                session.execute(
+                    sa.select(FixedPriceAdjustment).where(
+                        FixedPriceAdjustment.commercial_terms_id == terms.id
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for adjustment in adjustments:
+                session.add(
+                    FixedPriceAdjustment(
+                        commercial_terms_id=new_terms_id,
+                        kind=adjustment.kind,
+                        amount=adjustment.amount,
+                        currency=adjustment.currency,
+                        status="pending",
+                    )
+                )
             session.flush()
