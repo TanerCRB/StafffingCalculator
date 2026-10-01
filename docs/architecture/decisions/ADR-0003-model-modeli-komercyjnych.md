@@ -1154,3 +1154,22 @@ does not authorize implementation beyond the approved criteria.
 | FP-AJ-3 | Only `pending` can transition to `approved` or `rejected`; decided rows are terminal and a correction is a new pending row. |
 | FP-AJ-4 | An approved scenario's adjustment rows cannot be written, and no adjustment is copied into an approval snapshot. |
 | FP-AJ-5 | Repeating a create request with the same rule-scoped `request_id` and original contents returns the same row, including after scenario approval or later edit; reusing the key with different original contents is refused, and the same key on another rule is independent. |
+
+### 2026-10-01 - Outcome-based expected profit and margin (SC-7-09, Issue #127)
+
+**Draft — pending approval.** This addendum records the human-approved Gate 1 direction for SC-7-09. It supersedes only the deferral in the SC-4-03 addendum, point 5d, that placed expected profit and margin outside that task and deferred them to block 7 as a separate Issue. Existing guaranteed profitability fields and their behavior remain unchanged.
+
+1. **Additive expected profitability fields.** The scenario result adds `expected_profit` and `expected_margin`; `/compare` composes the same fields independently for each scenario, as it does the existing result. Expected markup remains out of scope.
+2. **Calculation basis.** Calculate `expected_profit` as `expected_amount - included_cost`, and calculate `expected_margin` as `ratio_percent(expected_profit, expected_amount)`. Both calculations use the already rounded `expected_amount` and the existing `included_cost`; do not derive from category amounts or recompute expected revenue. Follow ADR-0002 for `Decimal`, rounding and API representation. A zero expected amount yields `expected_margin = "n/a"`.
+3. **Named non-calculable states.** When `expected_state = no_probabilities`, both expected metrics are `"n/a"` and retain that named state. Models without expected revenue use `profitability_state = not_applicable` and return `"n/a"` for both expected metrics. A currency mismatch retains `profitability_state = currency_mismatch`; no expected metric performs mixed-currency arithmetic. As with existing profitability, `calculated` does not require a numeric margin when its denominator is zero.
+4. **Access shaping.** Both expected fields join the existing personnel-cost-gated profitability fields and are shaped under the same field-level personnel-cost permission conjunction as `profit`, `margin`, and `markup` (ADR-0005, SC-7-01). Keep the endpoint accessible under `RESULTS_READ`; apply shaping per scenario in `/compare`. This does not change the accepted B-01 disclosure risk or the rule that additional-cost contribution is not personnel-cost gated.
+5. **Guaranteed results remain stable.** The existing `profit`, `margin`, `markup`, `included_cost`, and guaranteed revenue retain their current meanings and values. This addendum permits the additive expected metrics; it does not relabel expected revenue as guaranteed revenue or change the result currency.
+
+| Control | Acceptance criterion |
+|---|---|
+| E-1 | Outcome-based results expose expected profit and margin from rounded expected revenue and included cost; existing guaranteed profitability fields retain their values. |
+| E-2 | `no_probabilities`, `not_applicable`, `currency_mismatch`, and zero expected revenue produce the named state and metric values specified above; no mixed-currency arithmetic occurs. |
+| E-3 | Expected fields follow the existing field-level personnel-cost gate; comparison applies it per scenario. |
+| E-4 | T&M, Story Points, and Fixed Price have no expected-revenue-derived figures; expected markup is absent. |
+
+**Basis:** ADR-0002, SC-7-01 addenda (separate named source states, composite currency and rounding rules); ADR-0005, SC-7-01 addendum (personnel-cost field gate and `RESULTS_READ` boundary); ADR-0003, SC-4-03 point 5d (the deferral superseded here).

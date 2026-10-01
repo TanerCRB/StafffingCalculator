@@ -3005,4 +3005,7 @@ history / this file's own change log, not as tracked product work.
   *Done when:* frontend tests prove K-01..K-06: Fixed Price rule and revenue on the scenario card and Compare screen; whole-scenario price creation and editing; distinct success, refusal, and unresolved write outcomes; and correct money formatting. Each named SC-4-10 mutation is killed.
   **Out of scope (explicit):** Backend (SC-4-02/#66); price adjustments (SC-4-09/#112); milestones and revenue-period allocation; profit, margin, and cost presentation (block 7).
   **Basis:** Issue #113; `Wymagania/Requirements_EN.md` §4 F-06.2 and §7 AC-07; ADR-0002, ADR-0003, ADR-0009, ADR-0010; `docs/architecture/capabilities.md`.
+
+- [ ] **SC-7-09** ? Calculate expected profit and margin for an Outcome-based scenario (Issue #127).
+  Reserved 2026-10-01 after Gate 1 approval; acceptance criteria and completion evidence will be added with the separate documentation PR.
 *(further rows are added by the Product Owner role, one per task, following gate 1)*

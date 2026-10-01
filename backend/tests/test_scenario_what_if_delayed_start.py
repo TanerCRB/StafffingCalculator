@@ -172,8 +172,12 @@ def test_k_01_calendar_month_shift_zero_identity_and_destination_windows(
         one = client.get(delayed_path(project.id, scenario.id, "1"))
     assert baseline.status_code == zero.status_code == one.status_code == 200
     baseline_body = baseline.json()
+    baseline_body.pop("expected_profit")
+    baseline_body.pop("expected_margin")
     zero_body = zero.json()
     zero_body.pop("delay_months")
+    assert "expected_profit" not in zero_body
+    assert "expected_margin" not in zero_body
     assert zero_body == baseline_body
 
     shifted = one.json()
