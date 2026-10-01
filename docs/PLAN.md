@@ -3025,3 +3025,7 @@ history / this file's own change log, not as tracked product work.
   **Out of scope (explicit):** Other ADR citation accuracy issues — each has an independent source and proof requirement; file separately.
   **Basis:** Issue #161; reviewer verification of #157; ADR-0005, addendum 2026-09-25, SC-5-02, point 3.
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
+- [ ] **SC-5-12** — Return a safe 422 for bare non-finite JSON numbers at the API boundary (Issue #178).
+  *Done when:* `backend/tests` prove that raw POST and PATCH bodies containing bare `NaN`, `Infinity` or `-Infinity` for SC-5-04's `assigned_fte` return 422 without echoing the rejected value and without writing data; raw POST bodies with those tokens in additional-cost `amount` (a separate request schema) do the same; finite-value contrasts succeed and persist; six existing strict xfail marks for the assigned-FTE bare-token cases are removed; ordinary 422 body shape is pinned and unchanged.
+  **Out of scope (explicit):** Changing numeric validation policy; frontend error rendering while the 422 response shape remains unchanged; broad JSON parser/configuration changes beyond this response contract.
+  **Basis:** Issue #178; PR #176 QA/reviewer findings; `docs/architecture/capabilities.md` SC-5-04 known gap; ADR-0005 and ADR-0009.
