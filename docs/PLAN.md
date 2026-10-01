@@ -3006,4 +3006,7 @@ history / this file's own change log, not as tracked product work.
   **Out of scope (explicit):** Backend (SC-4-02/#66); price adjustments (SC-4-09/#112); milestones and revenue-period allocation; profit, margin, and cost presentation (block 7).
   **Basis:** Issue #113; `Wymagania/Requirements_EN.md` §4 F-06.2 and §7 AC-07; ADR-0002, ADR-0003, ADR-0009, ADR-0010; `docs/architecture/capabilities.md`.
   **Done 2026-10-01:** PR #206 (merge commit `a6c106a`). Evidence: `ScenarioCommercialModels.test.tsx` covers Fixed Price card display and the accepted/rejected revenue-source pairing; `CompareScenariosScreen.test.tsx` covers the server-calculated amount/currency and four-decimal agreed-price formatting; `ScenarioCommercialTerms.test.tsx` covers draft whole-scenario create/edit and success, refusal, and unresolved outcomes. Frontend suite (433 passed), lint, production build, both required CI jobs, and Invariant Guardian passed. The Fixed Price pairing mutation was killed by the Compare screen test (the mutated response was rejected as unreadable and no comparison table rendered); money-formatting mutation evidence is documented below.
+
+- [ ] **SC-7-09** ? Calculate expected profit and margin for an Outcome-based scenario (Issue #127).
+  Reserved 2026-10-01 after Gate 1 approval; acceptance criteria and completion evidence will be added with the separate documentation PR.
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
