@@ -3000,4 +3000,8 @@ history / this file's own change log, not as tracked product work.
 - [ ] **SC-4-09** — Include approved price adjustments in Fixed Price revenue (F-06.2, Issue #112).
   *Done when:* mutation-checked backend tests prove that only approved adjustments affect Fixed Price revenue by their kind-defined signed amount; pending writes and approval decisions enforce their separate permissions; terminal states and corrections follow the approved lifecycle; adjustment currency matches the Fixed Price rule currency; scenario copies create new pending adjustments; and revenue remains independent of staffing, effort, and cost.
   **Out of scope (explicit):** Milestones and revenue-period allocation (SC-4-05); profit and margin (block 7); adjustments for other commercial models; currency conversion; real-user role assignment.
+- [ ] **SC-4-10** — Show Fixed Price rules and scenario revenue (F-06.2, frontend, Issue #113; gate 1 approved 2026-10-01).
+  *Done when:* frontend tests prove K-01..K-06: Fixed Price rule and revenue on the scenario card and Compare screen; whole-scenario price creation and editing; distinct success, refusal, and unresolved write outcomes; and correct money formatting. Each named SC-4-10 mutation is killed.
+  **Out of scope (explicit):** Backend (SC-4-02/#66); price adjustments (SC-4-09/#112); milestones and revenue-period allocation; profit, margin, and cost presentation (block 7).
+  **Basis:** Issue #113; `Wymagania/Requirements_EN.md` §4 F-06.2 and §7 AC-07; ADR-0002, ADR-0003, ADR-0009, ADR-0010; `docs/architecture/capabilities.md`.
 *(further rows are added by the Product Owner role, one per task, following gate 1)*
