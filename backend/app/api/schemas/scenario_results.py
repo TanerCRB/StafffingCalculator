@@ -48,9 +48,8 @@ ProfitabilityState = Literal["calculated", "not_applicable", "currency_mismatch"
 spells the revenue's named states) — a schema module does not import the domain."""
 
 
-class ScenarioResults(BaseModel):
-    """`GET …/scenarios/{id}/results` — the scenario-wide profit, margin and markup, next to the
-    three components they are built from."""
+class ScenarioResultsBase(BaseModel):
+    """Existing scenario-wide result fields shared with compute-without-persist endpoints."""
 
     scenario_id: uuid.UUID
     scenario_status: ScenarioStatusLabel
@@ -83,10 +82,19 @@ class ScenarioResults(BaseModel):
     why they are `"n/a"` — `not_applicable` or `currency_mismatch` (SC-4-03, R-01). Never gated."""
 
 
+class ScenarioResults(ScenarioResultsBase):
+    """`GET …/scenarios/{id}/results` — the scenario-wide profitability result."""
+
+    expected_profit: DecimalString | Literal[NOT_APPLICABLE] | None
+    """Expected revenue minus included cost; `null` under the same personnel-cost gate as profit."""
+    expected_margin: DecimalString | Literal[NOT_APPLICABLE] | None
+    """Expected profit divided by expected revenue via `ratio_percent`; `n/a` at zero revenue."""
+
+
 class ScenarioResultsComparison(BaseModel):
-    """`GET …/scenarios/compare` — the same eight result fields `ScenarioResults` already carries
-    (seven since SC-6-02, plus `profitability_state` since SC-4-03), once per named `scenario_id`,
-    in request order (SC-6-02, F-09 pt 2; ADR-0001/ADR-0005, addendum 2026-09-24).
+    """`GET …/scenarios/compare` — the same ten result fields `ScenarioResults` carries once per
+    named `scenario_id`, in request order (SC-6-02, F-09 pt 2; ADR-0001/ADR-0005, addendum
+    2026-09-24).
 
     **A set of independent rows, never an aggregate.** No field here sums, nets or averages
     `revenue`/`profit`/etc. across the compared scenarios (ADR-0005 addendum SC-7-01 pt.6,

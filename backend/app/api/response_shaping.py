@@ -105,7 +105,7 @@ from app.api.schemas.risk import (
     ScenarioRisks,
 )
 from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
-from app.api.schemas.scenario_results import ScenarioResults
+from app.api.schemas.scenario_results import ScenarioResults, ScenarioResultsBase
 from app.api.schemas.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationResults,
     ScenarioWhatIfSalaryRaiseResults,
@@ -172,7 +172,7 @@ from app.domain.risk_reserve import (
     ReserveTotalResult,
 )
 from app.domain.scenario_readiness import assess
-from app.domain.scenario_results import scenario_profitability
+from app.domain.scenario_results import scenario_expected_profitability, scenario_profitability
 from app.models.catalog import (
     AbsenceBudget,
     AbsenceType,
@@ -273,7 +273,14 @@ that a cost exists and why it may not be stateable — the refusal is of the *fi
 scenario (point 1)."""
 
 SCENARIO_PROFITABILITY_FIELDS: frozenset[str] = frozenset(
-    {"profit", "margin", "markup", "included_cost"}
+    {
+        "profit",
+        "margin",
+        "markup",
+        "included_cost",
+        "expected_profit",
+        "expected_margin",
+    }
 )
 """Fields of a scenario's whole-life result that mix a personnel cost into one number (SC-7-01,
 ADR-0005 addendum 2026-09-24).
@@ -286,10 +293,9 @@ disagree about whether this caller may see this scenario's personnel costs.
 
 **Not `revenue` and not `additional_cost`.** Neither one is a personnel cost by itself (SC-4-01,
 point 3; SC-5-05, point 1), and each keeps answering under `RESULTS_READ` alone. What earns a place
-in this set is that `profit`, `margin`, `markup` and `included_cost` cannot be split back into a
-personnel and a non-personnel part after they are computed — a caller who may not see the personnel
-cost may not be handed a profit either, because a profit and a personnel cost one subtraction apart
-is the same leak `SCENARIO_COST_FIELDS` exists to close."""
+in this set is that profitability figures cannot be split back into a personnel and a non-personnel
+part after they are computed — a caller who may not see the personnel cost may not be handed a
+profit or expected profit either, because each and the personnel cost are one subtraction apart."""
 
 _PROJECT_STATUS_LABELS = {
     ProjectStatus.ACTIVE: "Active",
@@ -1504,9 +1510,9 @@ def shape_catalog_rate_list(
 # for the four aggregate fields only, and does not touch any of the other three.
 
 
-def _without_scenario_profitability(
-    item: ScenarioResults, view: ScenarioCostView, caller: CallerIdentity
-) -> ScenarioResults:
+def _without_scenario_profitability[ScenarioResultPayload: ScenarioResultsBase](
+    item: ScenarioResultPayload, view: ScenarioCostView, caller: CallerIdentity
+) -> ScenarioResultPayload:
     """Remove `SCENARIO_PROFITABILITY_FIELDS` unless *both* halves of the SC-1-08 conjunction say
     yes — the same conjunction, and the same `ScenarioCostView`, `_without_scenario_personnel_costs`
     already applies to this payload's `personnel_cost` field.
@@ -1533,7 +1539,10 @@ def _without_scenario_profitability(
         )
     if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
         return item
-    return item.model_copy(update=dict.fromkeys(SCENARIO_PROFITABILITY_FIELDS))
+    fields = type(item).model_fields
+    return item.model_copy(
+        update={field: None for field in SCENARIO_PROFITABILITY_FIELDS if field in fields}
+    )
 
 
 def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) -> ScenarioResults:
@@ -1558,6 +1567,7 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
     profitability = scenario_profitability(
         view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
     )
+    expected_profitability = scenario_expected_profitability(view.revenue, profitability)
     result = ScenarioResults(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
@@ -1569,6 +1579,8 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
         margin=profitability.margin,
         markup=profitability.markup,
         profitability_state=profitability.state,
+        expected_profit=expected_profitability.expected_profit,
+        expected_margin=expected_profitability.expected_margin,
     )
     return _without_scenario_profitability(result, cost_view, caller)
 
