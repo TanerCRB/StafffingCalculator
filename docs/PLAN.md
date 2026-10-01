@@ -1991,7 +1991,7 @@ history / this file's own change log, not as tracked product work.
   cost-amount edit; an empty `role="status"` element leaves a small layout gap; the ADR-0009 and
   ADR-0007 addenda of 2026-09-29 (third `409` cause) remain "Draft — pending approval".
 
-- [ ] **SC-5-10** — Show the cost-rate unit in scenario cost results (F-07). Authorized scenario results expose each resolved rate window's `cost_rate_unit` only in gated `assumptions_used.rate_windows` and display the unit beside its corresponding resolved rate. Callers missing either cost permission receive no unit; cost calculation and rate-window resolution are unchanged.
+- [ ] **SC-5-11** — Show the cost-rate unit in scenario cost results (F-07). Authorized scenario results expose each resolved rate window's `cost_rate_unit` only in gated `assumptions_used.rate_windows` and display the unit beside its corresponding resolved rate. Callers missing either cost permission receive no unit; cost calculation and rate-window resolution are unchanged.
   *Done when:* Backend response tests prove per-window unit mapping, nested-only shape, and withholding for callers missing either conjunct; `frontend/src/features/projects/ScenarioResults.test.tsx` proves each window's unit is displayed with its corresponding rate and that an absent unit affects only its own display. Update the five exact-body tests by the gate-1 decision.
   **Out of scope (explicit):** Catalogue behavior (#164), selling-rate units, cost computation, and rate-window resolution.
   **Basis:** Issues #80, #164, #172; ADR-0005 addendum 2026-09-29; SC-5-08 and SC-5-09.
