@@ -132,6 +132,38 @@ ADR-0013 definiuje formułę kosztu osobowego i zamknięty słownik `rate_source
 
 ## Aneksy
 
+### 2026-09-30 — SC-6-07 (Issue #102): wymiana waluty jako what-if bez zapisu
+
+> Draft — pending approval. Prepared for gate 1 of Issue #102 after the human approved the
+> refreshed criteria and the exchange-rate what-if boundary. This addendum records that boundary;
+> it does not introduce a new architectural decision.
+
+SC-6-07 applies the existing what-if boundary to one exchange-rate pair. A caller may provide a
+hypothetical replacement rate for one selected currency pair and receive the scenario result
+recalculated through the existing exchange conversion and result composition behavior. The
+replacement is an input to that calculation only: it does not alter persisted scenario state.
+
+1. **Scope:** one selected currency pair per request, using a direct replacement value. Automated
+   rate feeds, multiple changed pairs in one request, UI, and save-as-scenario are outside this
+   task.
+2. **Persistence boundary:** calculation is read-only with respect to scenario state. The observable
+   criterion is that `GET .../results` is identical before and after the what-if request. The
+   existing ADR-0015 requirements for an ephemeral substituted input and reuse of established
+   calculation behavior continue to apply.
+3. **Scenario eligibility and visibility:** only a draft scenario is eligible. An out-of-scope or
+   approved scenario receives the same 404 response as a missing scenario, preserving the existing
+   non-disclosure boundary.
+4. **No affected foreign-currency amount:** when the selected pair does not affect any amount in
+   the scenario, the response explicitly reports not-applicable; it does not imply a recalculated
+   monetary effect.
+5. **Conversion semantics:** the hypothetical calculation reuses the established exchange-rate
+   conversion and result composition rules. It does not create an independent conversion formula
+   or an automated source of rates (ADR-0006).
+
+**Reopening condition.** A request to change more than one pair at a time, persist or save the
+hypothetical result, include approved scenarios, or obtain rates from an automated feed requires a
+separate human decision before implementation.
+
 ### 2026-09-25 — SC-5-02 (Issue #77, narzuty): podstawienie what-if obejmuje narzut bez nowego kodu — konsekwencja rozstrzygnięta na bramce 1 (ADR-0013, Q3)
 
 Pkt 3 "Decyzji" wyżej już stwierdza: "Podwyżka dotyka WSZYSTKICH konsumentów wspólnego słownika

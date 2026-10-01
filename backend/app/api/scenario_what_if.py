@@ -42,13 +42,17 @@ from app.api.deps import require_permission
 from app.api.response_shaping import (
     shape_scenario_what_if_billable_utilization,
     shape_scenario_what_if_delayed_start,
+    shape_scenario_what_if_exchange_rate,
     shape_scenario_what_if_salary_raise,
 )
+from app.api.schemas.common import Iso4217Code
 from app.api.schemas.scenario_what_if import (
     BillableUtilizationDecreaseQuery,
+    ExchangeRateReplacementRateQuery,
     SalaryRaisePercentQuery,
     ScenarioWhatIfBillableUtilizationResults,
     ScenarioWhatIfDelayedStartResults,
+    ScenarioWhatIfExchangeRateResults,
     ScenarioWhatIfSalaryRaiseResults,
 )
 from app.core.identity import CallerIdentity, Permission
@@ -57,6 +61,7 @@ from app.data.scenario_what_if import (
     ScenarioWhatIfDelayOutOfRange,
     scenario_what_if_billable_utilization_for_caller,
     scenario_what_if_delayed_start_for_caller,
+    scenario_what_if_exchange_rate_for_caller,
     scenario_what_if_salary_raise_for_caller,
 )
 from app.db.session import get_session
@@ -199,3 +204,40 @@ def read_scenario_what_if_billable_utilization(
             status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_WHAT_IF_NOT_FOUND_DETAIL
         )
     return shape_scenario_what_if_billable_utilization(view, caller)
+
+
+@router.get(
+    "/exchange-rate",
+    response_model=ScenarioWhatIfExchangeRateResults,
+    summary="Recompute a draft result with a temporary exchange rate, without persisting it",
+    responses={
+        404: {"description": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL},
+        409: {"description": "Scenario state changed while composing the result."},
+    },
+)
+def read_scenario_what_if_exchange_rate(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    source_currency: Iso4217Code,
+    target_currency: Iso4217Code,
+    replacement_rate: ExchangeRateReplacementRateQuery,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioWhatIfExchangeRateResults:
+    try:
+        view = scenario_what_if_exchange_rate_for_caller(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            source_currency=source_currency,
+            target_currency=target_currency,
+            replacement_rate=replacement_rate,
+        )
+    except ScenarioResultsRaceDetected as race:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(race)) from None
+    if view is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_WHAT_IF_NOT_FOUND_DETAIL
+        )
+    return shape_scenario_what_if_exchange_rate(view, caller)
