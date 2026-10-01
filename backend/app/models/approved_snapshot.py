@@ -56,6 +56,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     func,
@@ -180,6 +181,10 @@ class ApprovedSnapshotWorkingCalendarDay(_ApprovedSnapshotRow):
     without either table having authority over the other's lifetime."""
 
     day: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     kind: Mapped[WorkingCalendarDayKind] = mapped_column(
         Enum(
             WorkingCalendarDayKind,

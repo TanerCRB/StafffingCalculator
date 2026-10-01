@@ -64,6 +64,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     UniqueConstraint,
@@ -772,6 +773,11 @@ class WorkingCalendarDay(Base):
         nullable=False,
     )
 
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="manual")
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -789,6 +795,20 @@ class WorkingCalendarDay(Base):
         # answers to "is this a working day?" and nothing downstream could choose between them. A
         # `SELECT` before the `INSERT` would be check-then-act and two connections would both pass
         # it (criterion K-03; the mutation that has survived delivered tests three times here).
+        CheckConstraint("source IN ('manual', 'nager_date')", name="source_valid"),
+        CheckConstraint(
+            "(source = 'manual' AND name IS NULL AND country_code IS NULL AND year IS NULL) OR "
+            "(source = 'nager_date' AND name IS NOT NULL AND country_code IS NOT NULL "
+            "AND year IS NOT NULL)",
+            name="provenance_complete",
+        ),
+        CheckConstraint(
+            "country_code IS NULL OR country_code ~ '^[A-Z]{2}$'", name="country_code"
+        ),
+        CheckConstraint(
+            "year IS NULL OR (year BETWEEN 1 AND 9999 AND year = EXTRACT(YEAR FROM day)::integer)",
+            name="provenance_year",
+        ),
         UniqueConstraint("calendar_id", "day"),
     )
 
