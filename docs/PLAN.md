@@ -2879,4 +2879,7 @@ history / this file's own change log, not as tracked product work.
   concurrent segment-rule write (R-07); the frontend (#113); a multi-step downgrade across
   `b9e3c7a1f264`. See `docs/architecture/capabilities.md`.
 
-*(further rows are added by the Product Owner role, one per task, following gate 1)*
+*Further rows are added by the Product Owner role, one per task, following gate 1.*
+
+- [ ] **SC-7-09** — Calculate expected profit and margin for an Outcome-based scenario (Issue #127).
+  Reserved 2026-10-01 after Gate 1 approval; acceptance criteria and completion evidence will be added with the separate documentation PR.
