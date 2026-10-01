@@ -331,6 +331,19 @@
   margin-top: var(--sc-space-2);
 }
 
+.commercial-terms__form {
+  display: grid;
+  gap: var(--sc-space-2);
+  margin-top: var(--sc-space-2);
+  max-width: 22rem;
+}
+
+.commercial-terms__form label {
+  display: grid;
+  gap: var(--sc-space-1);
+  font-size: var(--sc-font-size-sm);
+}
+
 /* SC-7-02 — the results section of a scenario card. Same layout convention as `.commercial-terms`
    above: colour comes from `.scenario-card__metric` / `.scenario-card__gaps`. `min-height` (Reviewer
    R-02, Issue #94): this section's own `GET …/results` is latent independently of the
