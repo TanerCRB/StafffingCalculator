@@ -200,7 +200,7 @@ def test_k_01_one_hundred_twenty_planned_hours_at_one_hundred_twenty_is_14400(
 def test_k_01_each_resolved_window_returns_its_own_cost_rate_unit(
     client: TestClient, db_session: Session
 ) -> None:
-    """K-01 / SC-5-10: two independent resolved windows retain their distinct catalogue units.
+    """K-01 / SC-5-11: two independent resolved windows retain their distinct catalogue units.
 
     The day position has no calendar, so the aggregate is withheld as `no_calendar`; both resolved
     assumptions remain visible to the authorized caller. Reusing the first unit for every window

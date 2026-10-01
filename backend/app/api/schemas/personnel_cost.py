@@ -87,7 +87,7 @@ class CostRateWindowRead(BaseModel):
     the amount it multiplies is."""
     includes_surcharge: bool
     cost_rate_unit: Literal["hour", "day", "month"]
-    """The unit of this window's cost rate (SC-5-10). Kept nested in gated cost assumptions."""
+    """The unit of this window's cost rate (SC-5-11). Kept nested in gated cost assumptions."""
 
 
 class UnresolvedCostMonthRead(BaseModel):

@@ -341,7 +341,7 @@ describe("SC-7-05 - negative-profit indicator", () => {
 describe("SC-7-07 — scenario cost components are independent", () => {
   it("renders distinct base and paid-absence amounts using the scenario currency", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
     }) } } });
     render(<ProjectListScreen />); await openProject();
     const results = await settledSection("Baseline");
@@ -351,7 +351,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("shows paid absence as zero without changing the base amount", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "0.00", paid_absence_currency: "PLN" },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "0.00", paid_absence_currency: "PLN" },
     }) } } });
     render(<ProjectListScreen />); await openProject();
     const results = await settledSection("Baseline");
@@ -361,7 +361,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("keeps additional costs independent from personnel components", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
       additional_cost: additionalCostCalculated("75.00", "PLN"),
     }) } } });
     render(<ProjectListScreen />); await openProject();
@@ -373,7 +373,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("shows named unavailable components distinctly from zero while retaining additional costs", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "no_budget", paid_absence_amount: "n/a", paid_absence_currency: null },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "no_budget", paid_absence_amount: "n/a", paid_absence_currency: null },
       additional_cost: additionalCostCalculated("50.00", "PLN"),
     }) } } });
     render(<ProjectListScreen />); await openProject();
@@ -385,7 +385,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("withholds both personnel components while additional costs remain visible", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: null, currency: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null },
+      personnel_cost: { state: "calculated", amount: null, currency: null, assumptions_used: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null },
     }) } } });
     render(<ProjectListScreen />); await openProject();
     const results = await settledSection("Baseline");
@@ -710,9 +710,9 @@ describe("K-06 — the section mounts on its own, and a failure on it never remo
   });
 });
 
-// --- SC-5-10 --------------------------------------------------------------------------------------
+// --- SC-5-11 --------------------------------------------------------------------------------------
 
-describe("SC-5-10 — each resolved cost-rate window shows only its own unit", () => {
+describe("SC-5-11 — each resolved cost-rate window shows only its own unit", () => {
   it("pairs distinct units with their corresponding rates, and follows changed units per window", async () => {
     const withWindows = (id: string, windows: PersonnelCostSource["assumptions_used"]) =>
       baseResults(id, {
@@ -721,6 +721,9 @@ describe("SC-5-10 — each resolved cost-rate window shows only its own unit", (
           amount: "400.00",
           currency: "PLN",
           assumptions_used: windows,
+          paid_absence_state: "calculated",
+          paid_absence_amount: "25.00",
+          paid_absence_currency: "PLN",
         },
       });
     stubBackend({
@@ -765,6 +768,9 @@ describe("SC-5-10 — each resolved cost-rate window shows only its own unit", (
           amount: "400.00",
           currency: "PLN",
           assumptions_used: windows,
+          paid_absence_state: "calculated",
+          paid_absence_amount: "25.00",
+          paid_absence_currency: "PLN",
         },
       });
     stubBackend({
