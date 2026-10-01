@@ -56,6 +56,7 @@ from app.data.absence_budget import (
     frozen_statutory_leave_type,
     statutory_leave_type,
 )
+from app.data.rate_windows import shift_calendar_month_date
 from app.data.staffing import budget_keys_and_months, position_view
 from app.data.working_calendar import basis_by_location, frozen_basis_by_location
 from app.domain.paid_absence_cost import PaidAbsenceMonth, PaidAbsenceSpan
@@ -86,7 +87,9 @@ def _live_cost_flags(session: Session, type_ids: set[uuid.UUID]) -> Mapping[uuid
             sa.select(AbsenceType.id, AbsenceType.generates_cost).where(
                 AbsenceType.id.in_(type_ids)
             )
-        ).tuples().all()
+        )
+        .tuples()
+        .all()
     )
 
 
@@ -98,7 +101,9 @@ def _frozen_cost_flags(session: Session, scenario_id: uuid.UUID) -> Mapping[uuid
                 ApprovedSnapshotAbsenceType.source_absence_type_id,
                 ApprovedSnapshotAbsenceType.generates_cost,
             ).where(ApprovedSnapshotAbsenceType.scenario_id == scenario_id)
-        ).tuples().all()
+        )
+        .tuples()
+        .all()
     )
 
 
@@ -106,6 +111,8 @@ def paid_absence_months(
     session: Session,
     scenario: Scenario,
     rates: Mapping[tuple[uuid.UUID, date], MonthCostRate | None],
+    *,
+    period_shift_months: int = 0,
 ) -> Sequence[PaidAbsenceMonth]:
     """One `PaidAbsenceMonth` per allocation row of the scenario, live or frozen by its status.
 
@@ -137,13 +144,27 @@ def paid_absence_months(
     if scenario.status == ScenarioStatus.APPROVED:
         bases = frozen_basis_by_location(session, scenario.id)
         statutory = frozen_statutory_leave_type(session, scenario.id)
-        keys, months = budget_keys_and_months(positions, bases)
+        allocation_months = {
+            (position.id, allocation.period_month): shift_calendar_month_date(
+                allocation.period_month, period_shift_months
+            )
+            for position in positions
+            for allocation in position.allocations
+        }
+        keys, months = budget_keys_and_months(positions, bases, allocation_months)
         budgets = frozen_budgets_for_months(session, scenario.id, keys, months)
         cost_flags = _frozen_cost_flags(session, scenario.id)
     else:
         bases = basis_by_location(session, location_ids)
         statutory = statutory_leave_type(session)
-        keys, months = budget_keys_and_months(positions, bases)
+        allocation_months = {
+            (position.id, allocation.period_month): shift_calendar_month_date(
+                allocation.period_month, period_shift_months
+            )
+            for position in positions
+            for allocation in position.allocations
+        }
+        keys, months = budget_keys_and_months(positions, bases, allocation_months)
         budgets = budgets_for_months(session, keys, months)
         cost_flags = _live_cost_flags(session, booked_types)
 
@@ -157,7 +178,11 @@ def paid_absence_months(
     result: list[PaidAbsenceMonth] = []
     for position in positions:
         basis = bases.get(position.location_id)
-        view = position_view(position, basis, budgets, statutory)
+        position_months = {
+            allocation.period_month: allocation_months[(position.id, allocation.period_month)]
+            for allocation in position.allocations
+        }
+        view = position_view(position, basis, budgets, statutory, allocation_months=position_months)
         spans = tuple(
             PaidAbsenceSpan(
                 start_date=absence.start_date,
@@ -167,7 +192,8 @@ def paid_absence_months(
             for absence in position.absences
         )
         for allocation in position.allocations:
-            capacity = view.capacity[allocation.period_month]
+            period_month = allocation_months[(position.id, allocation.period_month)]
+            capacity = view.capacity[period_month]
             # Never `None` on a view built by `position_view`: a month with no calendar carries the
             # calendar's own named state, every other month a share or a named budget state
             # (`app.domain.capacity.month_capacity`). Raised rather than defaulted, because a
@@ -177,14 +203,14 @@ def paid_absence_months(
             result.append(
                 PaidAbsenceMonth(
                     position_id=position.id,
-                    period_month=allocation.period_month,
+                    period_month=period_month,
                     basis=basis,
                     absences=spans,
                     budget=capacity.budget,
                     statutory_generates_cost=(
                         None if statutory is None else statutory.generates_cost
                     ),
-                    rate=rates.get((position.id, allocation.period_month)),
+                    rate=rates.get((position.id, period_month)),
                 )
             )
     return result

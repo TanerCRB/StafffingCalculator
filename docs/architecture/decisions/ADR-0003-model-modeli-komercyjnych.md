@@ -1078,6 +1078,83 @@ price edit targets the whole-scenario rule (`scope_ref IS NULL`).
 | T-15 | Profitability uses the existing calculation with baseline costs, and preserves the established currency and non-computable behavior. |
 | T-16 | A negative requested decrease is refused for the whole request with generic `422`; zero decrease is valid and reproduces baseline hours and T&M revenue. |
 
+### 2026-09-30 — draft commercial-rule edits and deletion (SC-4-08, Issue #126)
+
+**Accepted (human decision at gate 1, 2026-09-30).** Gate 1 approved the scope on 2026-09-30. This addendum records
+the resulting exception to the accepted D-5 premise and the immutable discriminator rule; it
+does not authorize implementation beyond the approved criteria.
+
+1. **Supersede D-5 Option A for Story Points edits.** The 2026-09-25 D-5 Option A says
+   `accepted_points` has no edit path and changes require a scenario copy. For SC-4-08, a draft
+   Story Points rule may be fully replaced, including `price_per_point` and `accepted_points`.
+   The rule remains own scenario data; edits remain barred once the scenario is approved.
+2. **Draft edit scope.** Full-replacement edits apply to Fixed Price, Outcome-based, and Story
+   Points rules on draft scenarios. T&M edit remains refused. For Outcome-based and Story Points,
+   the read contract exposes their persisted rule fields; Story Points `price_per_point` and
+   `accepted_points` are visible under `COMMERCIAL_READ`. The existing create shape is the
+   replacement shape, accompanied by the concurrency marker (ADR-0007).
+3. **`model_type` remains immutable per row.** Delete of a draft rule is allowed for all four
+   models. A later create may use another model and receives a new rule id; this is replacement
+   by deletion and creation, not mutation of a row's discriminator. No edit or delete of an
+   approved scenario is allowed.
+4. The existing `scope_ref` rules are unchanged; this task does not edit segment-scoped rules.
+
+| Control | Acceptance criterion |
+|---|---|
+| C3-126-1 | Draft full-replacement edit is available for Fixed Price, Outcome-based, and Story Points; T&M edit is refused; approved-scenario edits are refused. |
+| C3-126-2 | `model_type` cannot change on an existing row; delete/recreate may choose another model and creates a new rule id. |
+| C3-126-3 | Story Points GET exposes `price_per_point` and `accepted_points` under `COMMERCIAL_READ`; rule read fields are the persisted values. |
+| C3-126-4 | Draft delete applies to each of the four models and leaves no aggregate or detail row; a recreated rule is independent and can use a different model. |
+
+### 2026-09-30 — Fixed Price price adjustments (SC-4-09, Issue #112)
+
+**Status:** Accepted
+
+> Gate-1 choices approved by the human on 2026-09-30: adjustments have a separate approval
+> permission; self-approval is allowed; each adjustment must use the Fixed Price rule currency;
+> approved and rejected adjustments are terminal, and a correction is a new pending adjustment.
+
+1. **Separate adjustment rows extend Fixed Price revenue.** The agreed price remains in
+   `fixed_price_terms`; each adjustment is a separate row associated with the Fixed Price rule.
+   Its kind determines whether its non-negative amount adds to or subtracts from revenue. The
+   database enforces a non-negative amount and a closed kind vocabulary. Revenue includes only
+   `approved` adjustments; `pending` and `rejected` rows do not affect it. With no approved
+   adjustments, revenue remains the agreed price. This resolves the deferred direction in the
+   2026-09-25 SC-4-02 addendum, point 8.
+2. **Currency follows the rule.** Every adjustment currency equals the currency of its
+   `fixed_price_terms` row. A mismatch is refused; no conversion or exchange-rate assumption is
+   introduced. The result currency remains the Fixed Price rule currency.
+3. **Adjustment lifecycle is independent of scenario approval.** An adjustment starts as
+   `pending` and may transition to `approved` or `rejected`. Both decisions are terminal. A
+   mistaken or changed adjustment is represented by a new pending row; an approved or rejected
+   row is not edited or reopened. The create request carries a client-generated `request_id`,
+   unique within its Fixed Price rule and separate from the server-generated adjustment ID. The
+   original request contents are fingerprinted immutably, so later edits do not change how a retry
+   is recognized. Retrying the same request returns the same row, including after scenario approval
+   or a later edit; reusing its key with different original contents is refused. A key used for
+   another rule is independent. This prevents a lost response and retry from creating a second
+   revenue adjustment without revealing whether another project used the key. Self-approval is
+   permitted for a caller holding the dedicated approval permission.
+4. **No scenario snapshot is added for adjustments.** Adjustments are own data of the scenario
+   aggregate, in group 2, and are not copied into `approved_snapshot_*`. Their approval is not
+   calculation approval. The revenue for an approved scenario reads its adjustment rows under
+   the immutable-scenario rule; an approved scenario and its adjustments cannot be altered.
+5. **The response distinguishes agreed price from adjustments.** The `price_adjustments`
+   assumption changes from `not_included` (SC-4-02 point 8) to `included` for this model: the
+   returned revenue is the agreed price plus the signed total of approved adjustments. Pending
+   and rejected amounts contribute zero. This statement describes the calculation result; the
+   agreed price stored in `fixed_price_terms` is never rewritten by an adjustment. This supersedes
+   only the `price_adjustments = not_included` clause of control FP-6; its other response fields
+   and controls remain unchanged.
+
+| Control | Acceptance criterion |
+|---|---|
+| FP-AJ-1 | Pending and rejected adjustments leave Fixed Price revenue unchanged; an approved positive or negative kind changes Fixed Price revenue by its non-negative amount in the kind-defined direction, and `assumptions_used.price_adjustments` is `included`. |
+| FP-AJ-2 | A currency differing from `fixed_price_terms` is refused without a write; matching currency is accepted, and revenue retains that currency. |
+| FP-AJ-3 | Only `pending` can transition to `approved` or `rejected`; decided rows are terminal and a correction is a new pending row. |
+| FP-AJ-4 | An approved scenario's adjustment rows cannot be written, and no adjustment is copied into an approval snapshot. |
+| FP-AJ-5 | Repeating a create request with the same rule-scoped `request_id` and original contents returns the same row, including after scenario approval or later edit; reusing the key with different original contents is refused, and the same key on another rule is independent. |
+
 ### 2026-10-01 - Outcome-based expected profit and margin (SC-7-09, Issue #127)
 
 **Draft — pending approval.** This addendum records the human-approved Gate 1 direction for SC-7-09. It supersedes only the deferral in the SC-4-03 addendum, point 5d, that placed expected profit and margin outside that task and deferred them to block 7 as a separate Issue. Existing guaranteed profitability fields and their behavior remain unchanged.

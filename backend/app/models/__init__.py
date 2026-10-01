@@ -6,6 +6,7 @@ from app.models.approved_snapshot import (
     ApprovedSnapshotAbsenceBudget,
     ApprovedSnapshotAbsenceType,
     ApprovedSnapshotCatalogDefaultRate,
+    ApprovedSnapshotExchangeRate,
     ApprovedSnapshotOrganizationDefaults,
     ApprovedSnapshotWorkingCalendar,
     ApprovedSnapshotWorkingCalendarDay,
@@ -27,11 +28,13 @@ from app.models.catalog import (
 )
 from app.models.commercial_terms import (
     CommercialTerms,
+    FixedPriceAdjustment,
     FixedPriceTerms,
     OutcomeTerms,
     StoryPointsTerms,
     TmTerms,
 )
+from app.models.exchange_rate import ExchangeRate
 from app.models.organization_defaults import OrganizationDefaults
 from app.models.person import Person
 from app.models.project import Project, ProjectStatus
@@ -53,6 +56,7 @@ __all__ = [
     "ApprovedSnapshotAbsenceBudget",
     "ApprovedSnapshotAbsenceType",
     "ApprovedSnapshotCatalogDefaultRate",
+    "ApprovedSnapshotExchangeRate",
     "ApprovedSnapshotOrganizationDefaults",
     "ApprovedSnapshotWorkingCalendar",
     "ApprovedSnapshotWorkingCalendarDay",
@@ -67,6 +71,8 @@ __all__ = [
     "CatalogVendor",
     "CommercialTerms",
     "FixedPriceTerms",
+    "ExchangeRate",
+    "FixedPriceAdjustment",
     "OrganizationDefaults",
     "OutcomeTerms",
     "Person",

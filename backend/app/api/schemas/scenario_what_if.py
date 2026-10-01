@@ -28,11 +28,11 @@ hold, never a negative one it could not.
 """
 
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Query
 
-from app.api.schemas.common import DecimalString
+from app.api.schemas.common import DecimalString, Iso4217Code
 from app.api.schemas.scenario_results import ScenarioResultsBase
 from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
@@ -103,3 +103,22 @@ class ScenarioWhatIfBillableUtilizationResults(ScenarioResultsBase):
 
     billable_utilization_decrease_percentage_points: DecimalString
     """The requested decrease is echoed in the response."""
+
+
+class ScenarioWhatIfDelayedStartResults(ScenarioResultsBase):
+    """`GET .../what-if/delayed-start` result for a whole-calendar-month shift."""
+
+    delay_months: int
+
+
+ExchangeRateReplacementRateQuery = Annotated[
+    Decimal,
+    Query(gt=0, max_digits=20, decimal_places=10, description="Positive temporary exchange rate."),
+]
+
+
+class ScenarioWhatIfExchangeRateResults(ScenarioResultsBase):
+    source_currency: Iso4217Code
+    target_currency: Iso4217Code
+    replacement_rate: DecimalString
+    exchange_rate_what_if_state: Literal["calculated", "not_applicable"]

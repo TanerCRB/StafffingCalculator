@@ -51,6 +51,7 @@ def story_points_revenue(
     accepted_points: int,
     currency: str,
     scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> RevenueAnswer:
     """The Story Points revenue of one rule — a result, or the one named state this model can reach.
 
@@ -76,7 +77,16 @@ def story_points_revenue(
     """
     currencies = (currency,)
     assumptions = story_points_assumptions(currencies)
-    if scenario_currency is not None and currencies != (scenario_currency,):
+    if (
+        not allow_currency_mismatch
+        and scenario_currency is not None
+        and currencies != (scenario_currency,)
+    ):
         return RevenueUnavailable(reason=CURRENCY_MISMATCH, assumptions_used=assumptions)
     revenue = round_money(Decimal(accepted_points) * price_per_point)
-    return RevenueResult(revenue=revenue, currency=currency, assumptions_used=assumptions)
+    return RevenueResult(
+        revenue=revenue,
+        currency=scenario_currency or currency,
+        assumptions_used=assumptions,
+        period_amounts=((None, revenue, currency),),
+    )

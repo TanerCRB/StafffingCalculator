@@ -224,6 +224,7 @@ class PersonnelCostResult:
     cost: Decimal
     currency: str
     assumptions_used: CostAssumptionsUsed
+    period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
     basis: str = COST_BASIS_BASE
 
 
@@ -298,7 +299,11 @@ def _month_amounts(months: Sequence[WorkedMonth]) -> list[Decimal] | str:
 
 
 def _resolve_months(
-    months: Sequence[WorkedMonth], *, rate_source: str, scenario_currency: str | None
+    months: Sequence[WorkedMonth],
+    *,
+    rate_source: str,
+    scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> tuple[CostAssumptionsUsed, str | None, str | None, list[Decimal]]:
     """The checks every cost figure over `WorkedMonth` shares, extracted once (SC-5-02) so
     `base_personnel_cost` and `fully_loaded_personnel_cost` cannot silently disagree about which
@@ -329,8 +334,9 @@ def _resolve_months(
     )
     if unresolved:
         return assumptions, None, NO_COST_RATE, []
-    if len(currencies) > 1 or (
-        scenario_currency is not None and currencies and currencies != (scenario_currency,)
+    if not allow_currency_mismatch and (
+        len(currencies) > 1
+        or (scenario_currency is not None and currencies and currencies != (scenario_currency,))
     ):
         return assumptions, None, CURRENCY_MISMATCH, []
     amounts = _month_amounts(months)
@@ -347,6 +353,7 @@ def base_personnel_cost(
     *,
     rate_source: str,
     scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> PersonnelCostAnswer:
     """The base personnel cost of one scenario, or the named state that withholds it.
 
@@ -370,14 +377,24 @@ def base_personnel_cost(
        position.
     """
     assumptions, currency, reason, amounts = _resolve_months(
-        months, rate_source=rate_source, scenario_currency=scenario_currency
+        months,
+        rate_source=rate_source,
+        scenario_currency=scenario_currency,
+        allow_currency_mismatch=allow_currency_mismatch,
     )
     if reason is not None:
         return PersonnelCostUnavailable(reason=reason, assumptions_used=assumptions)
 
     total = sum(amounts, Decimal("0"))
     return PersonnelCostResult(
-        cost=round_money(total), currency=currency, assumptions_used=assumptions
+        cost=round_money(total),
+        currency=scenario_currency or currency,
+        assumptions_used=assumptions,
+        period_amounts=tuple(
+            (month.period_month, amount, month.rate.currency)
+            for month, amount in zip(months, amounts, strict=True)
+            if month.rate is not None
+        ),
     )
 
 
@@ -418,6 +435,8 @@ class FullyLoadedPersonnelCostResult:
     """The surcharge alone — `0.00` for every month whose row already includes it (K-02)."""
     currency: str
     assumptions_used: CostAssumptionsUsed
+    period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
+    surcharge_period_amounts: tuple[tuple[date, Decimal, str], ...] = ()
     """The same rate windows `base_personnel_cost` names for the identical months — not a second,
     parallel list: the fully loaded cost is a second consumer of the same resolved rates, never a
     second resolution of them (ADR-0013, addendum 2026-09-24 "reuse boundary", applied one task
@@ -445,6 +464,7 @@ def fully_loaded_personnel_cost(
     *,
     rate_source: str,
     scenario_currency: str | None,
+    allow_currency_mismatch: bool = False,
 ) -> FullyLoadedPersonnelCostAnswer:
     """The fully loaded personnel cost of one scenario, or the named state that withholds it.
 
@@ -458,7 +478,8 @@ def fully_loaded_personnel_cost(
     disagree with the single-pass sum by a cent (ADR-0013, point 3: one rounding, at the end).
     """
     assumptions, currency, reason, amounts = _resolve_months(
-        months, rate_source=rate_source, scenario_currency=scenario_currency
+        months, rate_source=rate_source, scenario_currency=scenario_currency,
+        allow_currency_mismatch=allow_currency_mismatch,
     )
     if reason is not None:
         return FullyLoadedPersonnelCostUnavailable(reason=reason, assumptions_used=assumptions)
@@ -467,17 +488,30 @@ def fully_loaded_personnel_cost(
     surcharge_total = Decimal("0")
     # `amounts` is aligned with `months` (every month has a rate here); the surcharge percentage
     # applies to the base amount **after** unit conversion, still one final rounding (SC-5-08).
+    surcharge_amounts: list[Decimal] = []
     for month, base_amount in zip(months, amounts, strict=True):
         if month.rate is None:  # always false here; narrows the type
             continue
         base_total += base_amount
-        surcharge_total += base_amount * surcharge_fraction(month.rate)
+        surcharge = base_amount * surcharge_fraction(month.rate)
+        surcharge_total += surcharge
+        surcharge_amounts.append(surcharge)
 
     return FullyLoadedPersonnelCostResult(
         cost=round_money(base_total + surcharge_total),
         surcharge_amount=round_money(surcharge_total),
-        currency=currency,
+        currency=scenario_currency or currency,
         assumptions_used=assumptions,
+        period_amounts=tuple(
+            (month.period_month, base + surcharge, month.rate.currency)
+            for month, base, surcharge in zip(months, amounts, surcharge_amounts, strict=True)
+            if month.rate is not None
+        ),
+        surcharge_period_amounts=tuple(
+            (month.period_month, surcharge, month.rate.currency)
+            for month, surcharge in zip(months, surcharge_amounts, strict=True)
+            if month.rate is not None
+        ),
     )
 
 

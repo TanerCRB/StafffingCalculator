@@ -57,6 +57,26 @@ from tests.conftest import (
 FIXED_PRICE = {"model_type": "fixed_price", "agreed_price": "150000", "currency": "PLN"}
 
 
+def _edit_payload(
+    client: TestClient,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    updated_at: str | None = None,
+    agreed_price: str | None = None,
+    currency: str | None = None,
+) -> dict[str, str]:
+    terms = client.get(
+        commercial_terms_path(project_id, scenario_id), headers=as_caller(IN_SCOPE_USER)
+    ).json()["commercial_terms"]
+    return {
+        "model_type": "fixed_price",
+        "updated_at": updated_at or terms["updated_at"],
+        "agreed_price": agreed_price or terms["agreed_price"],
+        "currency": currency or terms["currency"],
+    }
+
+
 def _committed_project(engine: Engine, *, priced_draft: bool = False) -> dict[str, uuid.UUID]:
     """A committed project in scope with one `draft` and one `approved` scenario — and, when asked,
     a committed Fixed Price rule of 150000 PLN on **each** of the two."""
@@ -293,10 +313,9 @@ def test_k_05_editing_the_price_of_an_approved_scenario_is_refused_and_changes_n
 
     refused = committing_client.patch(
         commercial_terms_path(project_id, state["approved_id"]),
-        json={
-            "updated_at": _marker(committing_client, project_id, state["approved_id"]),
-            "agreed_price": "175000",
-        },
+        json=_edit_payload(
+            committing_client, project_id, state["approved_id"], agreed_price="175000"
+        ),
         headers=as_caller(IN_SCOPE_USER),
     )
     assert refused.status_code == 409, refused.text
@@ -306,10 +325,7 @@ def test_k_05_editing_the_price_of_an_approved_scenario_is_refused_and_changes_n
     draft_before = _price_of(engine, state["draft_id"])
     accepted = committing_client.patch(
         commercial_terms_path(project_id, state["draft_id"]),
-        json={
-            "updated_at": _marker(committing_client, project_id, state["draft_id"]),
-            "agreed_price": "175000",
-        },
+        json=_edit_payload(committing_client, project_id, state["draft_id"], agreed_price="175000"),
         headers=as_caller(IN_SCOPE_USER),
     )
     assert accepted.status_code == 200, accepted.text
@@ -329,13 +345,16 @@ def test_k_05_an_approval_committed_just_before_the_price_edit_still_refuses_it(
     state = _committed_project(engine, priced_draft=True)
     before = _price_of(engine, state["draft_id"])
     marker = _marker(committing_client, state["project_id"], state["draft_id"])
-    hook = _approve_just_before(engine, "update commercial_terms set", state["draft_id"])
+    hook = _approve_just_before(engine, "for update", state["draft_id"])
 
     event.listen(Engine, "before_cursor_execute", hook)
     try:
         response = committing_client.patch(
             commercial_terms_path(state["project_id"], state["draft_id"]),
-            json={"updated_at": marker, "agreed_price": "175000"},
+            json=_edit_payload(
+                committing_client, state["project_id"], state["draft_id"],
+                updated_at=marker, agreed_price="175000",
+            ),
             headers=as_caller(IN_SCOPE_USER),
         )
     finally:
@@ -362,7 +381,10 @@ def test_k_05_an_approval_committing_concurrently_with_the_price_edit_leaves_the
         state,
         lambda: committing_client.patch(
             commercial_terms_path(state["project_id"], state["draft_id"]),
-            json={"updated_at": marker, "agreed_price": "175000"},
+            json=_edit_payload(
+                committing_client, state["project_id"], state["draft_id"],
+                updated_at=marker, agreed_price="175000",
+            ),
             headers=as_caller(IN_SCOPE_USER),
         ),
     )
@@ -391,7 +413,9 @@ def test_k_05_contrast_a_price_edited_before_the_approval_is_approved_with_it(
 
     edited = committing_client.patch(
         commercial_terms_path(project_id, draft_id),
-        json={"updated_at": _marker(committing_client, project_id, draft_id), "currency": "EUR"},
+        json=_edit_payload(
+            committing_client, project_id, draft_id, currency="EUR"
+        ),
         headers=as_caller(IN_SCOPE_USER),
     )
     assert edited.status_code == 200, edited.text
@@ -421,12 +445,18 @@ def test_k_05_a_stale_marker_is_a_409_distinguishable_from_the_approved_409(
 
     first = committing_client.patch(
         commercial_terms_path(project_id, draft_id),
-        json={"updated_at": shared_marker, "agreed_price": "160000"},
+        json=_edit_payload(
+            committing_client, project_id, draft_id,
+            updated_at=shared_marker, agreed_price="160000",
+        ),
         headers=as_caller(IN_SCOPE_USER),
     )
     second = committing_client.patch(
         commercial_terms_path(project_id, draft_id),
-        json={"updated_at": shared_marker, "agreed_price": "170000"},
+        json=_edit_payload(
+            committing_client, project_id, draft_id,
+            updated_at=shared_marker, agreed_price="170000",
+        ),
         headers=as_caller(IN_SCOPE_USER),
     )
 
@@ -438,7 +468,10 @@ def test_k_05_a_stale_marker_is_a_409_distinguishable_from_the_approved_409(
 
     approved = committing_client.patch(
         commercial_terms_path(project_id, state["approved_id"]),
-        json={"updated_at": shared_marker, "agreed_price": "170000"},
+        json=_edit_payload(
+            committing_client, project_id, state["approved_id"],
+            updated_at=shared_marker, agreed_price="170000",
+        ),
         headers=as_caller(IN_SCOPE_USER),
     )
     assert approved.status_code == 409, approved.text
@@ -472,7 +505,10 @@ def test_k_05_a_fixed_price_write_outside_the_scope_is_the_same_404_before_any_4
     mine_priced = make_scenario(db_session, mine_project, name="Priced")
     make_fixed_price_terms(db_session, mine_priced)
     stale = "2000-01-01T00:00:00+00:00"
-    edit = {"updated_at": stale, "agreed_price": "1"}
+    edit = {
+        "model_type": "fixed_price", "updated_at": stale,
+        "agreed_price": "1", "currency": "PLN",
+    }
 
     addresses = [
         commercial_terms_path(theirs_project.id, theirs_approved.id),
@@ -533,9 +569,12 @@ def test_k_05_editing_the_price_of_a_scenario_without_a_fixed_price_rule_is_a_40
     make_commercial_terms(db_session, approved_tm)
     priced = make_scenario(db_session, project, name="Priced")
     make_fixed_price_terms(db_session, priced)
-    edit = {"updated_at": "2000-01-01T00:00:00+00:00", "agreed_price": "1"}
+    edit = {
+        "model_type": "fixed_price", "updated_at": "2000-01-01T00:00:00+00:00",
+        "agreed_price": "1", "currency": "PLN",
+    }
 
-    for scenario in (no_rule, time_and_material, incomplete, approved_tm):
+    for scenario in (no_rule, incomplete):
         response = client.patch(
             commercial_terms_path(project.id, scenario.id),
             json=edit,
@@ -544,6 +583,14 @@ def test_k_05_editing_the_price_of_a_scenario_without_a_fixed_price_rule_is_a_40
         assert response.status_code == 404, response.text
         assert response.json()["detail"] != COMMERCIAL_TERMS_NOT_FOUND_DETAIL
         assert "Fixed Price" in response.json()["detail"]
+
+    for scenario in (time_and_material, approved_tm):
+        response = client.patch(
+            commercial_terms_path(project.id, scenario.id),
+            json=edit,
+            headers=as_caller(IN_SCOPE_USER),
+        )
+        assert response.status_code == 422, response.text
 
     changes_the_model = client.patch(
         commercial_terms_path(project.id, priced.id),
@@ -603,19 +650,22 @@ def test_k_05_an_edit_body_without_a_change_or_with_a_null_is_a_422(
     path = commercial_terms_path(project.id, scenario.id)
     marker = _marker(client, project.id, scenario.id)
 
+    baseline = _edit_payload(client, project.id, scenario.id, updated_at=marker)
     for body in (
         {"updated_at": marker},
-        {"updated_at": marker, "agreed_price": None},
-        {"updated_at": marker, "currency": None},
-        {"updated_at": "2026-09-25T10:00:00", "agreed_price": "1"},
-        {"updated_at": marker, "agreed_price": "1.00001"},
-        {"agreed_price": "1"},
+        {**baseline, "agreed_price": None},
+        {**baseline, "currency": None},
+        {**baseline, "updated_at": "2026-09-25T10:00:00"},
+        {**baseline, "agreed_price": "1.00001"},
+        {key: value for key, value in baseline.items() if key != "updated_at"},
     ):
         response = client.patch(path, json=body, headers=as_caller(IN_SCOPE_USER))
         assert response.status_code == 422, (body, response.text)
 
     accepted = client.patch(
-        path, json={"updated_at": marker, "agreed_price": "1"}, headers=as_caller(IN_SCOPE_USER)
+        path,
+        json=_edit_payload(client, project.id, scenario.id, updated_at=marker, agreed_price="1"),
+        headers=as_caller(IN_SCOPE_USER),
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["commercial_terms"]["agreed_price"] == "1.0000"
@@ -632,7 +682,7 @@ def test_k_05_the_price_edit_is_refused_to_a_caller_holding_every_permission_but
     scenario = make_scenario(db_session, project, name="Baseline")
     make_fixed_price_terms(db_session, scenario)
     path = commercial_terms_path(project.id, scenario.id)
-    body = {"updated_at": _marker(client, project.id, scenario.id), "agreed_price": "1"}
+    body = _edit_payload(client, project.id, scenario.id, agreed_price="1")
 
     with caller_holding(*(set(Permission) - {Permission.COMMERCIAL_WRITE})):
         refused = client.patch(path, json=body)
