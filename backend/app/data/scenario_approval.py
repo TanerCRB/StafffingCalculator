@@ -403,6 +403,10 @@ def _copy_calendar_days(scenario_id: uuid.UUID) -> sa.Insert:
             WorkingCalendarDay.calendar_id.label("source_calendar_id"),
             WorkingCalendarDay.day,
             WorkingCalendarDay.kind,
+            WorkingCalendarDay.source,
+            WorkingCalendarDay.name,
+            WorkingCalendarDay.country_code,
+            WorkingCalendarDay.year,
         )
         .select_from(days_source)
         .join(StaffingPosition, StaffingPosition.scenario_id == days_source.c.id)
@@ -412,7 +416,20 @@ def _copy_calendar_days(scenario_id: uuid.UUID) -> sa.Insert:
     )
     return (
         sa.insert(ApprovedSnapshotWorkingCalendarDay.__table__)
-        .from_select(["id", "scenario_id", "source_calendar_id", "day", "kind"], days)
+        .from_select(
+            [
+                "id",
+                "scenario_id",
+                "source_calendar_id",
+                "day",
+                "kind",
+                "source",
+                "name",
+                "country_code",
+                "year",
+            ],
+            days,
+        )
         .returning(ApprovedSnapshotWorkingCalendarDay.__table__.c.id)
     )
 
