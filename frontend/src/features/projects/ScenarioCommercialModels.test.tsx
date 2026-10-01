@@ -50,6 +50,7 @@ import {
 const OUTCOME = "aaaaaaaa-0000-0000-0000-00000000000a";
 const POINTS = "aaaaaaaa-0000-0000-0000-00000000000b";
 const HOURLY = "aaaaaaaa-0000-0000-0000-00000000000c";
+const FIXED_PRICE = "aaaaaaaa-0000-0000-0000-00000000000d";
 
 function scenario(id: string, name: string) {
   return { id, name, status: "Draft" as const, missing_inputs: [], ready_for_approval: false, target_margin_percent: null };
@@ -100,6 +101,21 @@ const OUTCOME_ASSUMPTIONS: RevenueAssumptionsRead = {
   hours_source: "not_applicable",
   vendor_axis: "not_applicable",
   rate_source: "not_applicable",
+  rate_windows: [],
+  unresolved_months: [],
+  currencies: ["PLN"],
+};
+
+const FIXED_PRICE_PROJECT: ProjectListItem = {
+  ...PROJECT,
+  scenarios: [...PROJECT.scenarios, scenario(FIXED_PRICE, "Fixed Price deal")],
+};
+
+const FIXED_PRICE_ASSUMPTIONS: RevenueAssumptionsRead = {
+  model_type: "fixed_price",
+  hours_source: "not_applicable",
+  vendor_axis: "not_applicable",
+  rate_source: "fixed_price_terms",
   rate_windows: [],
   unresolved_months: [],
   currencies: ["PLN"],
@@ -176,12 +192,24 @@ function hourlyRevenue(overrides: Partial<Record<string, unknown>> = {}): Revenu
   } as RevenueRead;
 }
 
+function fixedPriceRevenue(overrides: Partial<Record<string, unknown>> = {}): RevenueRead {
+  return {
+    state: "calculated",
+    amount: "150000.01",
+    currency: "PLN",
+    assumptions_used: FIXED_PRICE_ASSUMPTIONS,
+    ...NOT_OUTCOME,
+    ...overrides,
+  } as RevenueRead;
+}
+
 function rule(modelType: string, outcomeTerms: OutcomeTermsRead | null = null): CommercialTermsRead {
   return {
     id: "dddddddd-0000-0000-0000-000000000001",
     model_type: modelType,
     updated_at: "2026-09-25T10:00:00Z",
     outcome_terms: outcomeTerms,
+    ...(modelType === "fixed_price" ? { agreed_price: "150000.0050", currency: "PLN" } : {}),
   };
 }
 
@@ -218,6 +246,7 @@ const TERMS_PATH = /^\/projects\/([^/]+)\/scenarios\/([^/]+)\/commercial-terms$/
 const RESULTS_PATH = /^\/projects\/([^/]+)\/scenarios\/([^/]+)\/results$/;
 
 interface Backend {
+  readonly projects?: ProjectListItem[];
   /** `GET …/commercial-terms` per scenario id; unspecified hangs. */
   readonly terms?: Record<string, unknown>;
   /** `GET …/results` per scenario id; unspecified hangs. */
@@ -236,7 +265,7 @@ function stubBackend(backend: Backend) {
     if (path === "/health") {
       answer = { status: 200, body: { status: "ok" } };
     } else if (path === "/projects") {
-      answer = { status: 200, body: { projects: [PROJECT] } };
+      answer = { status: 200, body: { projects: backend.projects ?? [PROJECT] } };
     } else if (path === "/catalog/rates") {
       answer = { status: 200, body: { rates: [], total: 0 } };
     } else if (path.startsWith("/catalog/dimensions/")) {
@@ -369,7 +398,7 @@ describe("K-01 — Story Points and Outcome-based scenarios are readable in both
     ["a time & material revenue with the story points rate_source", hourlyRevenue({ assumptions_used: { ...TM_ASSUMPTIONS, rate_source: "story_points_terms" } })],
     ["a story points revenue with Time & Material's sources", pointsRevenue({ assumptions_used: { ...TM_ASSUMPTIONS, model_type: "story_points" } })],
     ["an outcome revenue with the story points rate_source", outcomeRevenue({ assumptions_used: { ...OUTCOME_ASSUMPTIONS, rate_source: "story_points_terms" } })],
-    ["a calculated revenue of a model outside the closed set", hourlyRevenue({ assumptions_used: { ...TM_ASSUMPTIONS, model_type: "fixed_price" } })],
+    ["a calculated revenue of a model outside the closed set", hourlyRevenue({ assumptions_used: { ...TM_ASSUMPTIONS, model_type: "future_model" } })],
   ];
 
   for (const [what, revenue] of refused) {
@@ -398,8 +427,8 @@ describe("K-01 — Story Points and Outcome-based scenarios are readable in both
       terms: {
         [HOURLY]: terms(
           HOURLY,
-          rule("fixed_price"),
-          hourlyRevenue({ state: "unsupported_model_type", amount: "n/a", currency: null, assumptions_used: { ...TM_ASSUMPTIONS, model_type: "fixed_price" } }),
+          rule("future_model"),
+          hourlyRevenue({ state: "unsupported_model_type", amount: "n/a", currency: null, assumptions_used: { ...TM_ASSUMPTIONS, model_type: "future_model" } }),
         ),
       },
     });
@@ -1083,5 +1112,54 @@ describe("R-04 — the outcome rule's categories are shown with its parameters, 
     expect(outcome.querySelectorAll("[data-rule-category]")).toHaveLength(4);
     expect(within(outcome).getByText("Not achieved — units set: none; probability set: 70.00%")).toBeVisible();
     expect(outcome.querySelector('[data-rule-category="achieved"]')?.textContent).not.toMatch(/revenue:/);
+  });
+});
+
+describe("SC-4-10 K-01 — a Fixed Price card reads the rule and server-calculated revenue", () => {
+  it("shows the agreed price and revenue in their own currencies, while the T&M contrast remains readable", async () => {
+    stubBackend({
+      projects: [FIXED_PRICE_PROJECT],
+      terms: {
+        [FIXED_PRICE]: terms(FIXED_PRICE, rule("fixed_price"), fixedPriceRevenue()),
+        [HOURLY]: hourlyTerms(),
+      },
+      results: {
+        [FIXED_PRICE]: results(FIXED_PRICE, fixedPriceRevenue()),
+        [HOURLY]: results(HOURLY, hourlyRevenue()),
+      },
+    });
+
+    await openInApp();
+    const fixedPrice = await termsSection("Fixed Price deal");
+    const hourly = await termsSection("Hourly deal");
+
+    expect(within(fixedPrice).getByText("Commercial model: Fixed Price")).toBeVisible();
+    expect(within(fixedPrice).getByText("Agreed price: 150000.0050 PLN")).toBeVisible();
+    expect(within(fixedPrice).getByText("Revenue: 150000.01 PLN")).toBeVisible();
+    expect(within(fixedPrice).queryByText(READ_UNREADABLE)).toBeNull();
+    expect(within(hourly).getByText("Commercial model: Time & Material")).toBeVisible();
+    expect(within(hourly).getByText("Revenue: 1000.00 PLN")).toBeVisible();
+    expectScreenAlive("Fixed Price deal");
+  });
+
+  it("rejects a Fixed Price response paired with catalogue sources", async () => {
+    stubBackend({
+      projects: [FIXED_PRICE_PROJECT],
+      terms: {
+        [FIXED_PRICE]: terms(
+          FIXED_PRICE,
+          rule("fixed_price"),
+          fixedPriceRevenue({
+            assumptions_used: { ...FIXED_PRICE_ASSUMPTIONS, rate_source: "live_catalog" },
+          }),
+        ),
+      },
+    });
+
+    await openInApp();
+    const section = await termsSection("Fixed Price deal");
+    expect(within(section).getByText(READ_UNREADABLE)).toBeVisible();
+    expect(section.textContent).not.toContain("150000.01");
+    expectScreenAlive("Fixed Price deal");
   });
 });

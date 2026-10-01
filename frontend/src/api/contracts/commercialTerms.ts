@@ -18,12 +18,31 @@
 
 import type { ScenarioStatus } from "./projects";
 
-/** The one model the request side accepts today (`ModelType` in the backend schema). */
+/** Time & Material (`ModelType` in the backend schema). */
 export const TIME_AND_MATERIAL = "time_and_material";
 
-/** What a `POST …/commercial-terms` sends. Closed, like the backend's `extra="forbid"` model. */
-export interface CommercialTermsCreateRequest {
+/** Fixed Price (SC-4-02). */
+export const FIXED_PRICE = "fixed_price";
+
+/** What a Time & Material `POST …/commercial-terms` sends. */
+export interface TimeAndMaterialTermsCreateRequest {
   model_type: typeof TIME_AND_MATERIAL;
+}
+
+export interface FixedPriceTermsCreateRequest {
+  model_type: typeof FIXED_PRICE;
+  agreed_price: string;
+  currency: string;
+}
+
+export type CommercialTermsCreateRequest =
+  | TimeAndMaterialTermsCreateRequest
+  | FixedPriceTermsCreateRequest;
+
+/** Fixed Price edits replace the agreed price and carry the rule's concurrency marker. */
+export interface FixedPriceTermsEditRequest {
+  updated_at: string;
+  agreed_price: string;
 }
 
 /** Every `revenue.state` the backend can emit — exactly the backend's `RevenueState` literal. */
@@ -66,12 +85,14 @@ export const OUTCOME_BASED = "outcome_based";
 export const SOURCE_NOT_APPLICABLE = "not_applicable";
 /** Story Points' `rate_source`: the rule's own price per point, never the catalogue. */
 export const STORY_POINTS_RATE_SOURCE = "story_points_terms";
+/** Fixed Price revenue comes from its own agreed-price row. */
+export const FIXED_PRICE_RATE_SOURCE = "fixed_price_terms";
 
 /** Every `assumptions_used.model_type` this client can read besides `null` (the scenario without a
  * rule). A stored model this version does not know is readable only as the named
  * `unsupported_model_type` state (the response side of `model_type` is open — SC-4-01, R-02), and
  * then with the catalogue sources the backend's dispatcher gives it. */
-export const REVENUE_MODEL_TYPES = [TIME_AND_MATERIAL, STORY_POINTS, OUTCOME_BASED] as const;
+export const REVENUE_MODEL_TYPES = [TIME_AND_MATERIAL, STORY_POINTS, OUTCOME_BASED, FIXED_PRICE] as const;
 
 /** The backend's `NOT_APPLICABLE` sentinel, as `revenue.amount` carries it for a withheld state. */
 export const REVENUE_NOT_APPLICABLE = "n/a";
@@ -112,6 +133,10 @@ export interface CommercialTermsRead {
   /** The Outcome-based rule's parameters — `null` for every other model, and for an Outcome-based
    * rule without its details row (then `revenue.state` is `incomplete_commercial_terms`). */
   outcome_terms: OutcomeTermsRead | null;
+  /** Fixed Price only; null with an incomplete details row. */
+  agreed_price?: string | null;
+  /** Fixed Price only; null with an incomplete details row. */
+  currency?: string | null;
 }
 
 export interface RateWindowRead {
@@ -166,17 +191,26 @@ export interface OutcomeRevenueAssumptionsRead extends RevenueAssumptionsCommon 
   rate_source: typeof SOURCE_NOT_APPLICABLE;
 }
 
+/** Fixed Price (SC-4-02): revenue reads the agreed-price row, not hours or a rate catalogue. */
+export interface FixedPriceRevenueAssumptionsRead extends RevenueAssumptionsCommon {
+  model_type: typeof FIXED_PRICE;
+  hours_source: typeof SOURCE_NOT_APPLICABLE;
+  vendor_axis: typeof SOURCE_NOT_APPLICABLE;
+  rate_source: typeof FIXED_PRICE_RATE_SOURCE;
+}
+
 export type RevenueAssumptionsRead =
   | CatalogRevenueAssumptionsRead
   | StoryPointsRevenueAssumptionsRead
-  | OutcomeRevenueAssumptionsRead;
+  | OutcomeRevenueAssumptionsRead
+  | FixedPriceRevenueAssumptionsRead;
 
-/** Which of the three renderings a revenue gets — chosen by `assumptions_used.model_type` and by
+/** Which rendering a revenue gets — chosen by `assumptions_used.model_type` and by
  * nothing else (ADR-0003, addendum SC-4-07, point 3), except that the named `unsupported_model_type`
  * state comes first: a backend instance that cannot price the model says so with the dispatcher's
  * catalogue sources, whatever the model's word (SC-4-07, verification R-01). `"catalog"` covers
  * Time & Material, the scenario without a rule, and every unsupported model. */
-export type RevenueModelKind = "catalog" | typeof STORY_POINTS | typeof OUTCOME_BASED;
+export type RevenueModelKind = "catalog" | typeof STORY_POINTS | typeof OUTCOME_BASED | typeof FIXED_PRICE;
 
 export function revenueModelKind(revenue: RevenueRead): RevenueModelKind {
   if (revenue.state === "unsupported_model_type") {
@@ -187,6 +221,9 @@ export function revenueModelKind(revenue: RevenueRead): RevenueModelKind {
   }
   if (revenue.assumptions_used.model_type === OUTCOME_BASED) {
     return OUTCOME_BASED;
+  }
+  if (revenue.assumptions_used.model_type === FIXED_PRICE) {
+    return FIXED_PRICE;
   }
   return "catalog";
 }

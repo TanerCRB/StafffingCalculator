@@ -36,6 +36,7 @@ import { CompareScenariosScreen } from "./CompareScenariosScreen";
 const ALPHA = "aaaaaaaa-0000-0000-0000-000000000001";
 const BETA = "aaaaaaaa-0000-0000-0000-000000000002";
 const GAMMA = "aaaaaaaa-0000-0000-0000-000000000003";
+const FIXED = "aaaaaaaa-0000-0000-0000-000000000006";
 
 function scenario(id: string, name: string, status: ScenarioStatus = "Draft") {
   return {
@@ -97,6 +98,21 @@ function revenueCalculated(amount: string, currency: string): RevenueRead {
     expected_state: "not_applicable",
     expected_amount: "n/a",
     category_revenues: [],
+  };
+}
+
+function fixedPriceRevenue(amount: string, currency: string): RevenueRead {
+  return {
+    ...revenueCalculated(amount, currency),
+    assumptions_used: {
+      model_type: "fixed_price",
+      hours_source: "not_applicable",
+      vendor_axis: "not_applicable",
+      rate_source: "fixed_price_terms",
+      rate_windows: [],
+      unresolved_months: [],
+      currencies: [],
+    },
   };
 }
 
@@ -367,6 +383,32 @@ describe("K-01 — no mixing of data between rows", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+});
+
+// --- Fixed Price revenue --------------------------------------------------------------------------
+
+describe("Fixed Price revenue", () => {
+  it("renders the server-calculated Fixed Price amount and currency in Compare", async () => {
+    const fixedProject: ProjectListItem = {
+      ...PROJECT,
+      scenarios: [...PROJECT.scenarios, scenario(FIXED, "Fixed")],
+    };
+    stubBackend({
+      projects: [fixedProject],
+      compare: {
+        status: 200,
+        body: { results: [baseResults(FIXED, { revenue: fixedPriceRevenue("150000.0100", "PLN") })] },
+      },
+    });
+    render(<CompareScenariosScreen />);
+    await openProject();
+    check("Fixed");
+    compareSelected();
+
+    await screen.findByRole("table");
+    expect(within(rows()[0]).getByText("150000.01 PLN")).toBeVisible();
+    expect(within(rows()[0]).queryByText("150000.0100 PLN")).toBeNull();
   });
 });
 
