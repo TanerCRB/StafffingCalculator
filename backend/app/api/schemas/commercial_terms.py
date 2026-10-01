@@ -253,6 +253,58 @@ class FixedPriceTermsCreateRequest(BaseModel):
     currency: Iso4217Code
 
 
+class PriceAdjustmentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: uuid.UUID
+    kind: Literal["increase", "decrease"]
+    amount: Annotated[DecimalString, Field(ge=0, max_digits=14, decimal_places=4)]
+    currency: Iso4217Code
+
+
+class PriceAdjustmentEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["increase", "decrease"] | None = None
+    amount: Annotated[DecimalString, Field(ge=0, max_digits=14, decimal_places=4)] | None = None
+    currency: Iso4217Code | None = None
+
+    @model_validator(mode="after")
+    def _has_non_null_change(self) -> Self:
+        if not self.model_fields_set or any(
+            getattr(self, field) is None for field in self.model_fields_set
+        ):
+            raise ValueError("An adjustment edit must name at least one non-null field.")
+        return self
+
+
+class PriceAdjustmentDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["approved", "rejected"]
+
+
+class PriceAdjustmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    kind: Literal["increase", "decrease"]
+    amount: DecimalString
+    currency: str
+    status: Literal["pending", "approved", "rejected"]
+
+
+class PriceAdjustmentWriteAck(BaseModel):
+    id: uuid.UUID
+    status: Literal["pending", "approved", "rejected"]
+
+
+class PriceAdjustmentDecisionRead(BaseModel):
+    """Decision acknowledgment; adjustment details remain protected by `COMMERCIAL_READ`."""
+
+    status: Literal["approved", "rejected"]
+
+
 CommercialTermsCreateRequest = Annotated[
     TimeAndMaterialTermsCreateRequest
     | StoryPointsTermsCreateRequest
@@ -488,7 +540,8 @@ class FixedPriceRevenueAssumptionsRead(BaseModel):
     - `hours_source` and `vendor_axis` are `not_applicable` — the price reads no hours and no rate
       row;
     - `price_basis` says what the figure is — the agreed price;
-    - `price_adjustments` says what it leaves out — `not_included` (D-3 = C, Issue #112).
+    - `price_adjustments` is `included` — approved adjustments affect the returned revenue
+      (SC-4-09).
     """
 
     model_type: Literal["fixed_price"]
@@ -499,7 +552,7 @@ class FixedPriceRevenueAssumptionsRead(BaseModel):
     unresolved_months: list[UnresolvedMonthRead]
     currencies: list[str]
     price_basis: Literal["agreed_price"]
-    price_adjustments: Literal["not_included"]
+    price_adjustments: Literal["included"]
 
 
 RevenueAssumptionsReadAny = Annotated[

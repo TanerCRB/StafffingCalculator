@@ -1293,3 +1293,38 @@ powrotem". Tymczasem pole osoby przy pozycji jest widoczne wyłącznie dla `STAF
 ### 2026-09-29 - risks and reserves (SC-6-08, ADR-0021)
 
 Risks and reserves are read under `STAFFING_READ` and written under `STAFFING_WRITE` (the ADR-0014 point 11 precedent): no new permission, no conjunction with `PERSONNEL_COSTS_READ`, scenario-level only (no `position_id`), so the `headcount = 1` exposure is not widened. The risk read returns kinds and counts only, no amounts; it does disclose to a `STAFFING_READ` caller that a position-level cost event exists (a count) - named and accepted. Reserve amounts are readable under `STAFFING_READ` alone, at the level of the additional-cost read. Scope is a `404` (never `403`) with one body shared by the risk and reserve paths, decided before any `409` and before a paging `422`. The `PLACEHOLDER_PERMISSIONS` equality canary is unchanged. Proof: `backend/tests/test_risk_access.py`.
+
+### 2026-09-30 — Fixed Price adjustment approval permission (SC-4-09, Issue #112)
+
+**Status:** Accepted
+
+> Gate-1 choices approved by the human on 2026-09-30: editing pending adjustments uses
+> `COMMERCIAL_WRITE`; approving or rejecting uses a distinct `COMMERCIAL_ADJUSTMENT_APPROVE`;
+> self-approval is allowed.
+
+1. **Separate write and decision permissions.** Creating or editing a `pending` Fixed Price
+   adjustment requires `COMMERCIAL_WRITE`. Transitioning a pending adjustment to `approved` or
+   `rejected` requires `COMMERCIAL_ADJUSTMENT_APPROVE`. The approval permission does not imply
+   `COMMERCIAL_WRITE`; `COMMERCIAL_WRITE` does not imply approval permission. A caller holding
+   both permissions may approve their own adjustment.
+2. **Terminal decisions.** An approved or rejected adjustment cannot be edited, reopened, or
+   transitioned again. A correction is a new pending adjustment and follows the same permission
+   checks.
+3. **Placeholder identity caveat.** `COMMERCIAL_ADJUSTMENT_APPROVE` is not added to
+   `PLACEHOLDER_PERMISSIONS`. The placeholder identity does not receive adjustment decision
+   authority. This permission remains subject to the existing `APP_ALLOW_PLACEHOLDER_IDENTITY`
+   development/test boundary and the authentication ADR's future identity model.
+4. **Scope and refusal.** Authorization is checked at the shared permission/dependency boundary
+   and remains scoped to the caller's project access. A caller without the required permission
+   receives the established authorization refusal with no state change; the endpoint does not
+   reveal whether an inaccessible adjustment exists.
+5. **Decision responses do not grant read access.** Listing adjustment details requires
+   `COMMERCIAL_READ`. The decision endpoint acknowledges only the resulting status, so
+   `COMMERCIAL_ADJUSTMENT_APPROVE` alone does not disclose the adjustment amount, kind, or currency.
+
+| Control | Acceptance criterion |
+|---|---|
+| A5-FPAJ-1 | With only `COMMERCIAL_WRITE`, create/edit of pending adjustments succeeds while approve/reject is refused with no write; with only `COMMERCIAL_ADJUSTMENT_APPROVE`, approve/reject succeeds while create/edit is refused. |
+| A5-FPAJ-2 | A caller holding both permissions may approve their own pending adjustment; approved and rejected adjustments cannot be edited or transitioned. |
+| A5-FPAJ-3 | `PLACEHOLDER_PERMISSIONS` does not include `COMMERCIAL_ADJUSTMENT_APPROVE`; placeholder callers cannot approve or reject. |
+| A5-FPAJ-4 | Listing adjustment details requires `COMMERCIAL_READ`; the decision acknowledgment returns only the terminal status. |

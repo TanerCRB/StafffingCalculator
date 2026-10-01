@@ -503,12 +503,14 @@ def test_k_09_the_calendar_and_absence_type_dictionaries_are_the_sixth_and_seven
         # explicitly *not* a catalogue dictionary — so this canary's claim holds unchanged.
         Permission.PEOPLE_READ,
         Permission.PEOPLE_WRITE,
+        # Added by SC-4-09 for explicit Fixed Price adjustment decisions.
+        Permission.COMMERCIAL_ADJUSTMENT_APPROVE,
     }, (
         "the permission vocabulary changed in SC-3-02. ADR-0005's addendum of 2026-09-22 (point 3) "
         "decides that calendars and absence types are the sixth and seventh dictionaries of the "
         "catalogue and take no permission of their own."
     )
-    assert len(Permission) == 16
+    assert len(Permission) == 17
 
 
 def test_k_09_the_two_new_dictionaries_hold_a_caller_with_no_identity_out_as_well(

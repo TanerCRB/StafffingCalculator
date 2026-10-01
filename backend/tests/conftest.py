@@ -60,6 +60,7 @@ from app.models import (  # noqa: E402
     CatalogVendor,
     CommercialTerms,
     ExchangeRate,
+    FixedPriceAdjustment,
     FixedPriceTerms,
     OrganizationDefaults,
     OutcomeTerms,
@@ -271,6 +272,7 @@ def committing_client(engine: Engine) -> Iterator[TestClient]:
             connection.execute(sa.delete(StoryPointsTerms))
             # SC-4-03: Outcome-based details, before its rule, same reason as `tm_terms`.
             connection.execute(sa.delete(OutcomeTerms))
+            connection.execute(sa.delete(FixedPriceAdjustment))
             # SC-4-02: the Fixed Price details row, before its rule for the same reason as
             # `tm_terms` (a composite foreign key with no `ON DELETE` action).
             connection.execute(sa.delete(FixedPriceTerms))

@@ -241,12 +241,14 @@ def test_k_09_the_permission_vocabulary_did_not_grow_in_this_task(
         # explicitly *not* a catalogue dictionary — so this canary's claim holds unchanged.
         Permission.PEOPLE_READ,
         Permission.PEOPLE_WRITE,
+        # Added by SC-4-09: decision authority for Fixed Price adjustments; not placeholder-granted.
+        Permission.COMMERCIAL_ADJUSTMENT_APPROVE,
     }, (
         "the permission vocabulary changed in SC-3-03. ADR-0005's addendum of 2026-09-22 (SC-3-03, "
         "point 2) decides that the absence budget is the eighth table of the catalogue and takes "
         "no permission of its own."
     )
-    assert len(Permission) == 16
+    assert len(Permission) == 17
 
 
 def test_the_budget_carrying_staffing_read_is_not_gated_on_the_personnel_cost_permission(

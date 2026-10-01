@@ -134,7 +134,7 @@ PRICE_BASIS_AGREED_PRICE: Final = "agreed_price"
 """What a Fixed Price revenue *is*: the price agreed for the whole project (ADR-0003, addendum
 2026-09-25 SC-4-02, point 8) — named, so it is never read as "price + approved adjustments"."""
 
-PRICE_ADJUSTMENTS_NOT_INCLUDED: Final = "not_included"
+PRICE_ADJUSTMENTS_INCLUDED: Final = "included"
 """D-3 = C of SC-4-02's gate 1: price adjustments (bonuses, penalties, scope changes — F-06.2)
 are out of scope (Issue #112), and the answer says so explicitly instead of letting a reader
 assume that an absent adjustment was a zero one."""
@@ -247,7 +247,8 @@ class FixedPriceAssumptionsUsed(AssumptionsUsed):
       `rate_windows` is always empty;
     - `hours_source` and `vendor_axis` are `not_applicable` — the price reads no hours and no rate
       row;
-    - `price_basis` and `price_adjustments` say what the figure is and what it leaves out (D-3 = C).
+    - `price_basis` says the base figure is the agreed price; `price_adjustments` says approved
+      adjustments are included (SC-4-09).
 
     A subclass, so every reader that only needs the shared fields reads it exactly as it reads a
     T&M answer, and the shaping layer tells the two apart by type, never by which fields happen to
@@ -258,7 +259,7 @@ class FixedPriceAssumptionsUsed(AssumptionsUsed):
     hours_source: str = HOURS_SOURCE_NOT_APPLICABLE
     vendor_axis: str = VENDOR_AXIS_NOT_APPLICABLE
     price_basis: str = PRICE_BASIS_AGREED_PRICE
-    price_adjustments: str = PRICE_ADJUSTMENTS_NOT_INCLUDED
+    price_adjustments: str = PRICE_ADJUSTMENTS_INCLUDED
 
 
 @dataclass(frozen=True)
