@@ -32,6 +32,12 @@ export const RESULTS_HEADING = "Scenario results";
 
 export const REVENUE_LABEL = "Revenue:";
 export const PERSONNEL_COST_LABEL = "Personnel cost:";
+export const PERSONNEL_COST_RATE_LABEL = "Cost rate:";
+export const COST_RATE_UNIT_LABELS = {
+  hour: "per hour",
+  day: "per day",
+  month: "per month",
+} as const;
 export const ADDITIONAL_COST_LABEL = "Additional costs:";
 export const INCLUDED_COST_LABEL = "Scenario cost:";
 export const PROFIT_LABEL = "Profit:";

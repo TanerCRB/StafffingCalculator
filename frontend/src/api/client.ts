@@ -1387,9 +1387,26 @@ function isPersonnelCostSourceShape(value: unknown): value is PersonnelCostSourc
   if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES)) {
     return false;
   }
+  const assumptions = value.assumptions_used;
+  const assumptionsShape =
+    assumptions === null ||
+    (isRecord(assumptions) &&
+      Array.isArray(assumptions.rate_windows) &&
+      assumptions.rate_windows.every(
+        (window) =>
+          isRecord(window) &&
+          isDecimalString(window.default_cost_rate) &&
+          typeof window.currency === "string" &&
+          window.currency.length > 0 &&
+          (window.cost_rate_unit === undefined ||
+            isOneOf(window.cost_rate_unit, COST_RATE_UNITS)),
+      ));
+  if (!assumptionsShape) {
+    return false;
+  }
   const amount = value.amount;
   if (amount === null) {
-    return isRequiredNullableString(value.currency);
+    return assumptions === null && isRequiredNullableString(value.currency);
   }
   if (typeof amount !== "string") {
     return false;

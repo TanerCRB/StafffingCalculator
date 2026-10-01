@@ -22,6 +22,8 @@ import {
   MARGIN_LABEL,
   MARKUP_LABEL,
   PERSONNEL_COST_LABEL,
+  PERSONNEL_COST_RATE_LABEL,
+  COST_RATE_UNIT_LABELS,
   PERSONNEL_COST_STATE_MESSAGES,
   PROFIT_LABEL,
   PROFITABILITY_CURRENCY_MISMATCH,
@@ -260,9 +262,17 @@ function PersonnelCostLine({ source }: { source: PersonnelCostSource }) {
     );
   }
   return (
-    <p className="scenario-card__metric" data-personnel-cost-state="calculated">
-      {PERSONNEL_COST_LABEL} {formatMoneyString(source.amount, source.currency ?? "")}
-    </p>
+    <>
+      <p className="scenario-card__metric" data-personnel-cost-state="calculated">
+        {PERSONNEL_COST_LABEL} {formatMoneyString(source.amount, source.currency ?? "")}
+      </p>
+      {source.assumptions_used?.rate_windows.map((window, index) => (
+        <p className="scenario-card__metric" data-cost-rate-window key={`${window.default_cost_rate}-${window.currency}-${index}`}>
+          {PERSONNEL_COST_RATE_LABEL} {formatMoneyString(window.default_cost_rate, window.currency)}
+          {window.cost_rate_unit ? ` ${COST_RATE_UNIT_LABELS[window.cost_rate_unit]}` : ""}
+        </p>
+      ))}
+    </>
   );
 }
 

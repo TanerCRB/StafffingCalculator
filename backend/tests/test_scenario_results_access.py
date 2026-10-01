@@ -118,6 +118,7 @@ def test_k_06_the_four_aggregate_fields_are_withheld_but_revenue_and_additional_
     assert body["markup"] is None
     assert body["included_cost"] is None
     assert body["personnel_cost"]["amount"] is None
+    assert body["personnel_cost"]["assumptions_used"] is None
     assert body["revenue"]["amount"] == "20000.00"
     assert body["additional_cost"]["amount"] == "2000.00"
     assert "6000.00" not in withheld.text
@@ -132,6 +133,9 @@ def test_k_06_the_four_aggregate_fields_are_withheld_but_revenue_and_additional_
     assert shown_body["markup"] == "42.86"
     assert shown_body["included_cost"] == "14000.00"
     assert shown_body["personnel_cost"]["amount"] == "12000.00"
+    assert shown_body["personnel_cost"]["assumptions_used"]["rate_windows"][0][
+        "cost_rate_unit"
+    ] == "hour"
 
 
 def test_k_06_the_flag_is_the_one_on_the_scenarios_own_project_not_on_another_assignment(
@@ -148,8 +152,14 @@ def test_k_06_the_flag_is_the_one_on_the_scenarios_own_project_not_on_another_as
         withheld = client.get(results_path(project_a.id, scenario_a.id))
         shown = client.get(results_path(project_b.id, scenario_b.id))
 
-    assert withheld.json()["profit"] is None
-    assert shown.json()["profit"] == "6000.00"
+    withheld_body = withheld.json()
+    shown_body = shown.json()
+    assert withheld_body["profit"] is None
+    assert withheld_body["personnel_cost"]["assumptions_used"] is None
+    assert shown_body["profit"] == "6000.00"
+    assert shown_body["personnel_cost"]["assumptions_used"]["rate_windows"][0][
+        "cost_rate_unit"
+    ] == "hour"
 
 
 def test_k_06_a_caller_without_results_read_is_refused_the_whole_endpoint(
@@ -260,6 +270,7 @@ def test_k_06_the_gate_and_an_unresolvable_source_together_answer_null_not_n_a(
     assert body["markup"] is None
     assert body["included_cost"] is None
     assert body["personnel_cost"]["amount"] is None
+    assert body["personnel_cost"]["assumptions_used"] is None
     assert body["personnel_cost"]["state"] == "no_cost_rate"
     assert body["revenue"]["amount"] == "20000.00"
     assert body["additional_cost"]["amount"] == "2000.00"

@@ -806,6 +806,7 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
                         "currency": "PLN",
                         "surcharge_percent": "0.000",
                         "includes_surcharge": False,
+                        "cost_rate_unit": "hour",
                     }
                 ],
                 "unresolved_months": [],

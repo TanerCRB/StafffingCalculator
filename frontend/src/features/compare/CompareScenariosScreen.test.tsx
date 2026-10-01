@@ -113,15 +113,15 @@ function revenueWithheld(state: WithheldRevenueState): RevenueRead {
 }
 
 function personnelCostCalculated(amount: string, currency: string): PersonnelCostSource {
-  return { state: "calculated", amount, currency };
+  return { state: "calculated", amount, currency, assumptions_used: { rate_windows: [] } };
 }
 
 function personnelCostWithheld(state: Exclude<PersonnelCostState, "calculated">): PersonnelCostSource {
-  return { state, amount: "n/a", currency: null };
+  return { state, amount: "n/a", currency: null, assumptions_used: { rate_windows: [] } };
 }
 
 function personnelCostGated(): PersonnelCostSource {
-  return { state: "calculated", amount: null, currency: null };
+  return { state: "calculated", amount: null, currency: null, assumptions_used: null };
 }
 
 function additionalCostCalculated(amount: string, currency: string): AdditionalCostSource {

@@ -199,7 +199,7 @@ function results(scenarioId: string, revenue: RevenueRead, overrides: Partial<Sc
     scenario_id: scenarioId,
     scenario_status: "Draft",
     revenue,
-    personnel_cost: { state: "calculated", amount: "15000.00", currency: "PLN" },
+    personnel_cost: { state: "calculated", amount: "15000.00", currency: "PLN", assumptions_used: { rate_windows: [] } },
     additional_cost: { state: "calculated", amount: "0.00", currency: "PLN" },
     included_cost: "15000.00",
     profit: "5000.00",
@@ -750,7 +750,7 @@ describe("K-06 — profitability_state currency_mismatch is its own reason, besi
     stubBackend({
       results: {
         [HOURLY]: results(HOURLY, hourlyRevenue(), {
-          personnel_cost: { state: "calculated", amount: null, currency: null },
+          personnel_cost: { state: "calculated", amount: null, currency: null, assumptions_used: null },
           included_cost: null,
           profit: null,
           margin: null,
@@ -799,7 +799,7 @@ describe("K-06 — profitability_state currency_mismatch is its own reason, besi
     stubBackend({
       results: {
         [HOURLY]: results(HOURLY, hourlyRevenue(), {
-          personnel_cost: { state: "no_cost_rate", amount: "n/a", currency: null },
+          personnel_cost: { state: "no_cost_rate", amount: "n/a", currency: null, assumptions_used: { rate_windows: [] } },
           included_cost: "n/a",
           profit: "n/a",
           margin: "n/a",

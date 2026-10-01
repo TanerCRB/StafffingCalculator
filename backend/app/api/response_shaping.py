@@ -1238,6 +1238,7 @@ def _assigned_fte_fields(answer: AssignedFteCostAnswer) -> dict[str, Any]:
                 currency=window.currency,
                 surcharge_percent=window.surcharge_percent,
                 includes_surcharge=window.includes_surcharge,
+                cost_rate_unit=window.cost_rate_unit,
             )
             for window in assumptions.rate_windows
         ],
@@ -1319,6 +1320,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
                 currency=window.currency,
                 surcharge_percent=window.surcharge_percent,
                 includes_surcharge=window.includes_surcharge,
+                cost_rate_unit=window.cost_rate_unit,
             )
             for window in assumptions.rate_windows
         ],

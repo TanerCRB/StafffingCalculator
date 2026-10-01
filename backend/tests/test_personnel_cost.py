@@ -185,6 +185,7 @@ def test_k_01_one_hundred_twenty_planned_hours_at_one_hundred_twenty_is_14400(
                 # "no surcharge" a tuple written before SC-5-02 existed carries.
                 "surcharge_percent": "0.000",
                 "includes_surcharge": False,
+                "cost_rate_unit": "hour",
             }
         ],
         "unresolved_months": [],
@@ -194,6 +195,39 @@ def test_k_01_one_hundred_twenty_planned_hours_at_one_hundred_twenty_is_14400(
         "no surcharge configured on this tuple — the fully loaded cost equals the base cost"
     )
     assert cost["surcharge_amount"] == "0.00"
+
+
+def test_k_01_each_resolved_window_returns_its_own_cost_rate_unit(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-01 / SC-5-10: two independent resolved windows retain their distinct catalogue units.
+
+    The day position has no calendar, so the aggregate is withheld as `no_calendar`; both resolved
+    assumptions remain visible to the authorized caller. Reusing the first unit for every window
+    or omitting per-window propagation fails the exact ID-to-unit mapping below.
+    """
+    project, scenario, hourly_dimensions, _ = _plan(db_session)
+    day_dimensions = make_dimension_tuple(db_session, suffix=" day unit")
+    day_position = make_staffing_position(db_session, scenario, day_dimensions, start_date=MAR)
+    make_allocation(db_session, day_position, period_month=MAR)
+    hourly_rate = make_rate(
+        db_session, hourly_dimensions, effective_from=date(2026, 1, 1),
+        default_cost_rate=COST, default_selling_rate=SELLING, currency="PLN",
+        cost_rate_unit="hour",
+    )
+    day_rate = make_rate(
+        db_session, day_dimensions, effective_from=date(2026, 1, 1),
+        default_cost_rate=COST, default_selling_rate=SELLING, currency="PLN",
+        cost_rate_unit="day",
+    )
+
+    cost = _cost(client, project.id, scenario.id)
+
+    assert cost["state"] == "no_calendar"
+    assert {
+        window["source_rate_id"]: window["cost_rate_unit"]
+        for window in cost["assumptions_used"]["rate_windows"]
+    } == {str(hourly_rate.id): "hour", str(day_rate.id): "day"}
 
 
 def test_k_01_the_sum_is_rounded_once_at_the_end_never_per_month(
@@ -679,6 +713,7 @@ WINDOW_FIELDS = {
     # field (K-04) even though this payload sits behind the SC-1-08 conjunction as a whole.
     "surcharge_percent",
     "includes_surcharge",
+    "cost_rate_unit",
 }
 UNRESOLVED_FIELDS = {"position_id", "period_month"}
 
