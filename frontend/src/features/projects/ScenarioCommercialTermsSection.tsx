@@ -1,12 +1,14 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import {
   ApiError,
   RequestTimeoutError,
   createScenarioCommercialTerms,
+  editScenarioFixedPriceTerms,
   getScenarioCommercialTerms,
 } from "../../api/client";
 import {
+  FIXED_PRICE,
   OUTCOME_BASED,
   OUTCOME_CATEGORIES,
   TIME_AND_MATERIAL,
@@ -28,6 +30,7 @@ import {
 } from "../../lib/money";
 import {
   APPROVED_SCENARIO_NOTE,
+  AGREED_PRICE_LABEL,
   CATEGORY_PROBABILITY_LABEL,
   CATEGORY_REVENUE_LABEL,
   CATEGORY_UNITS_LABEL,
@@ -51,6 +54,9 @@ import {
   READ_NOT_FOUND,
   READ_TIMED_OUT,
   READ_UNREADABLE,
+  EDIT_FIXED_PRICE,
+  FIXED_PRICE_CURRENCY_FIELD_LABEL,
+  FIXED_PRICE_PRICE_LABEL,
   REVENUE_LABEL,
   REVENUE_MAX_LABEL,
   REVENUE_MIN_LABEL,
@@ -63,6 +69,8 @@ import {
   SAVED,
   SAVING,
   SET_TIME_AND_MATERIAL,
+  SET_FIXED_PRICE,
+  SAVE_FIXED_PRICE,
   SUCCESS_BONUS_LABEL,
   UNIT_RATE_LABEL,
   UNRESOLVED_MONTHS_LABEL,
@@ -111,7 +119,25 @@ type WriteState =
   | { kind: "idle" }
   | { kind: "saving" }
   | { kind: "saved" }
-  | { kind: "refused"; message: string };
+  | { kind: "refused"; message: string }
+  | { kind: "unresolved"; message: string };
+
+type FixedPriceFormState = {
+  mode: "create" | "edit";
+  agreedPrice: string;
+  currency: string;
+};
+
+function writeFailure(error: unknown): Extract<WriteState, { kind: "refused" | "unresolved" }> {
+  const message = describeCommercialTermsWriteFailure(error);
+  if (error instanceof RequestTimeoutError) {
+    return { kind: "unresolved", message };
+  }
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+    return { kind: "refused", message };
+  }
+  return { kind: "unresolved", message };
+}
 
 function toReadFailure(error: unknown): ReadState {
   if (error instanceof RequestTimeoutError) {
@@ -157,6 +183,7 @@ export function ScenarioCommercialTermsSection({
   const headingId = useId();
   const [read, setRead] = useState<ReadState>({ kind: "loading" });
   const [write, setWrite] = useState<WriteState>({ kind: "idle" });
+  const [fixedPriceForm, setFixedPriceForm] = useState<FixedPriceFormState | null>(null);
   /** Bumped by "Read commercial terms again" — the read effect depends on it. */
   const [readRequest, setReadRequest] = useState(0);
   const mounted = useRef(true);
@@ -196,7 +223,7 @@ export function ScenarioCommercialTermsSection({
   useEffect(() => {
     // The control that was pressed is gone once the save has an answer; the answer takes the focus
     // so that keyboard users are not dropped onto the page body.
-    if (write.kind === "saved" || write.kind === "refused") {
+    if (write.kind === "saved" || write.kind === "refused" || write.kind === "unresolved") {
       outcomeRef.current?.focus();
     }
   }, [write.kind]);
@@ -216,7 +243,41 @@ export function ScenarioCommercialTermsSection({
       setWrite({ kind: "saved" });
     } catch (error: unknown) {
       if (mounted.current) {
-        setWrite({ kind: "refused", message: describeCommercialTermsWriteFailure(error) });
+        setWrite(writeFailure(error));
+      }
+    }
+  }
+
+  async function saveFixedPrice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (fixedPriceForm === null) return;
+    setWrite({ kind: "saving" });
+    try {
+      let terms: ScenarioCommercialTerms;
+      if (fixedPriceForm.mode === "create") {
+        terms = await createScenarioCommercialTerms(projectId, scenarioId, {
+          model_type: FIXED_PRICE,
+          agreed_price: fixedPriceForm.agreedPrice,
+          currency: fixedPriceForm.currency,
+        });
+      } else {
+        const currentTerms = read.kind === "ready" ? read.terms.commercial_terms : null;
+        if (currentTerms === null || currentTerms.model_type !== FIXED_PRICE) {
+          setWrite({ kind: "unresolved", message: READ_FAILED });
+          return;
+        }
+        terms = await editScenarioFixedPriceTerms(projectId, scenarioId, {
+          updated_at: currentTerms.updated_at,
+          agreed_price: fixedPriceForm.agreedPrice,
+        });
+      }
+      if (!mounted.current) return;
+      setRead({ kind: "ready", terms });
+      setFixedPriceForm(null);
+      setWrite({ kind: "saved" });
+    } catch (error: unknown) {
+      if (mounted.current) {
+        setWrite(writeFailure(error));
       }
     }
   }
@@ -224,6 +285,7 @@ export function ScenarioCommercialTermsSection({
   function readAgain() {
     setRead({ kind: "loading" });
     setWrite({ kind: "idle" });
+    setFixedPriceForm(null);
     setReadRequest((count) => count + 1);
   }
 
@@ -262,6 +324,13 @@ export function ScenarioCommercialTermsSection({
       noRule &&
       terms.scenario_status !== "Approved" &&
       (write.kind === "idle" || write.kind === "saving");
+    const fixedPriceTerms =
+      terms.commercial_terms?.model_type === FIXED_PRICE ? terms.commercial_terms : null;
+    const canEditFixedPrice =
+      fixedPriceTerms !== null &&
+      terms.scenario_status !== "Approved" &&
+      typeof fixedPriceTerms.agreed_price === "string" &&
+      typeof fixedPriceTerms.currency === "string";
     body = (
       <>
         <p className="scenario-card__metric">
@@ -279,10 +348,17 @@ export function ScenarioCommercialTermsSection({
         {terms.commercial_terms !== null && terms.commercial_terms.outcome_terms !== null && (
           <OutcomeRuleParameters parameters={terms.commercial_terms.outcome_terms} />
         )}
+        {fixedPriceTerms !== null &&
+          typeof fixedPriceTerms.agreed_price === "string" &&
+          typeof fixedPriceTerms.currency === "string" && (
+            <p className="scenario-card__metric" data-fixed-price="agreed-price">
+              {AGREED_PRICE_LABEL} {formatRuleAmountString(fixedPriceTerms.agreed_price, fixedPriceTerms.currency)}
+            </p>
+          )}
         {noRule && terms.scenario_status === "Approved" && (
           <p className="scenario-card__metric">{APPROVED_SCENARIO_NOTE}</p>
         )}
-        {offerSet && (
+        {offerSet && fixedPriceForm === null && (
           <div className="commercial-terms__actions">
             <button
               type="button"
@@ -293,7 +369,90 @@ export function ScenarioCommercialTermsSection({
             >
               {SET_TIME_AND_MATERIAL}
             </button>
+            <button
+              type="button"
+              className="button button--secondary"
+              aria-label={`${SET_FIXED_PRICE} for ${scenarioName}`}
+              disabled={write.kind === "saving"}
+              onClick={() => {
+                setWrite({ kind: "idle" });
+                setFixedPriceForm({ mode: "create", agreedPrice: "", currency: "" });
+              }}
+            >
+              {SET_FIXED_PRICE}
+            </button>
           </div>
+        )}
+        {canEditFixedPrice && fixedPriceForm === null && write.kind !== "refused" && write.kind !== "unresolved" && (
+          <div className="commercial-terms__actions">
+            <button
+              type="button"
+              className="button button--secondary"
+              aria-label={`${EDIT_FIXED_PRICE} for ${scenarioName}`}
+              disabled={write.kind === "saving"}
+              onClick={() => {
+                setWrite({ kind: "idle" });
+                setFixedPriceForm({
+                  mode: "edit",
+                  agreedPrice: fixedPriceTerms.agreed_price ?? "",
+                  currency: fixedPriceTerms.currency ?? "",
+                });
+              }}
+            >
+              {EDIT_FIXED_PRICE}
+            </button>
+          </div>
+        )}
+        {fixedPriceForm !== null && (
+          <form className="commercial-terms__form" onSubmit={(event) => void saveFixedPrice(event)}>
+            <label>
+              {FIXED_PRICE_PRICE_LABEL}
+              <input
+                aria-label={`${FIXED_PRICE_PRICE_LABEL} for ${scenarioName}`}
+                inputMode="decimal"
+                name="agreed_price"
+                className="input"
+                required
+                value={fixedPriceForm.agreedPrice}
+                onChange={(event) => setFixedPriceForm((current) =>
+                  current === null ? null : { ...current, agreedPrice: event.target.value },
+                )}
+              />
+            </label>
+            {fixedPriceForm.mode === "create" ? (
+              <label>
+                {FIXED_PRICE_CURRENCY_FIELD_LABEL}
+                <input
+                  aria-label={`${FIXED_PRICE_CURRENCY_FIELD_LABEL} for ${scenarioName}`}
+                  autoCapitalize="characters"
+                  maxLength={3}
+                  name="currency"
+                  className="input"
+                  required
+                  value={fixedPriceForm.currency}
+                  onChange={(event) => setFixedPriceForm((current) =>
+                    current === null ? null : { ...current, currency: event.target.value },
+                  )}
+                />
+              </label>
+            ) : (
+              <p className="scenario-card__metric">{FIXED_PRICE_CURRENCY_FIELD_LABEL} {fixedPriceForm.currency}</p>
+            )}
+            <button type="submit" className="button button--primary" disabled={write.kind === "saving"}>
+              {write.kind === "saving" ? SAVING : SAVE_FIXED_PRICE}
+            </button>
+            <button
+              type="button"
+              className="button button--secondary"
+              disabled={write.kind === "saving"}
+              onClick={() => {
+                setFixedPriceForm(null);
+                setWrite({ kind: "idle" });
+              }}
+            >
+              Cancel
+            </button>
+          </form>
         )}
         {write.kind === "saving" && (
           <p role="status" className="scenario-card__metric">
@@ -305,9 +464,9 @@ export function ScenarioCommercialTermsSection({
             {SAVED}
           </p>
         )}
-        {write.kind === "refused" && (
+        {(write.kind === "refused" || write.kind === "unresolved") && (
           <>
-            <p ref={outcomeRef} tabIndex={-1} role="status" className="scenario-card__gaps">
+            <p ref={outcomeRef} tabIndex={-1} role="status" className="scenario-card__gaps" data-write-outcome={write.kind}>
               {write.message}
             </p>
             <div className="commercial-terms__actions">{readAgainButton}</div>

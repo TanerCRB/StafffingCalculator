@@ -23,6 +23,8 @@ import {
 } from "./contracts/catalog";
 import {
   EXPECTED_REVENUE_STATES,
+  FIXED_PRICE,
+  FIXED_PRICE_RATE_SOURCE,
   OUTCOME_BASED,
   OUTCOME_CATEGORIES,
   RATE_SOURCES,
@@ -34,6 +36,7 @@ import {
   TIME_AND_MATERIAL,
   type CommercialTermsCreateRequest,
   type ExpectedRevenueState,
+  type FixedPriceTermsEditRequest,
   type ScenarioCommercialTerms,
 } from "./contracts/commercialTerms";
 import { isDecimalString } from "../lib/money";
@@ -1003,6 +1006,14 @@ function isRevenueSourcePairing(value: Record<string, unknown>, revenueState: un
       noWindowsOrMonths
     );
   }
+  if (model === FIXED_PRICE) {
+    return (
+      value.hours_source === SOURCE_NOT_APPLICABLE &&
+      value.vendor_axis === SOURCE_NOT_APPLICABLE &&
+      value.rate_source === FIXED_PRICE_RATE_SOURCE &&
+      noWindowsOrMonths
+    );
+  }
   return (model === null || model === TIME_AND_MATERIAL) && catalogueSources;
 }
 
@@ -1165,6 +1176,13 @@ function isCommercialTermsShape(value: unknown): boolean {
   // Required, `null` included (ADR-0003, addendum SC-4-07, point 11): `null` for every model but
   // Outcome-based, and for an Outcome-based rule without its details row. Parameters under any other
   // model's name would be shown as that model's — so they are not a payload this client reads.
+  if (value.model_type === FIXED_PRICE) {
+    return (
+      value.outcome_terms === null &&
+      ((value.agreed_price === null && value.currency === null) ||
+        (isDecimalString(value.agreed_price) && typeof value.currency === "string"))
+    );
+  }
   if (value.outcome_terms === null) {
     return true;
   }
@@ -1273,6 +1291,19 @@ export async function createScenarioCommercialTerms(
   body: CommercialTermsCreateRequest,
 ): Promise<ScenarioCommercialTerms> {
   return write(commercialTermsPath(projectId, scenarioId), "POST", body, (value) =>
+    isScenarioCommercialTermsShape(value, scenarioId),
+  );
+}
+
+/** Edit a draft Fixed Price rule (`PATCH …/commercial-terms`). The backend compares `updated_at`
+ * inside its guarded write; the successful response is the refreshed rule and revenue rendered by
+ * the caller. */
+export async function editScenarioFixedPriceTerms(
+  projectId: string,
+  scenarioId: string,
+  body: FixedPriceTermsEditRequest,
+): Promise<ScenarioCommercialTerms> {
+  return write(commercialTermsPath(projectId, scenarioId), "PATCH", body, (value) =>
     isScenarioCommercialTermsShape(value, scenarioId),
   );
 }
