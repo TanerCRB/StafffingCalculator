@@ -20,12 +20,14 @@ says which.
 """
 
 import ast
+import json
 import uuid
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -231,6 +233,41 @@ def test_k_02_months_outside_the_delivery_period_and_the_allocation_still_count(
 
 
 # --- K-04: four decimal places in, one rounding out ----------------------------------------------
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_k_03_bare_non_finite_amount_is_rejected_without_echo_or_write(
+    client: TestClient, db_session: Session, literal: str
+) -> None:
+    """K-03: raw non-finite JSON in a separate numeric request schema is safely refused."""
+    project = _project(db_session)
+    category = make_cost_category(db_session)
+    scenario = make_scenario(db_session, project, name="Bare token")
+    path = additional_costs_path(project.id, scenario.id)
+    before = count_additional_costs(db_session)
+    body = json.dumps(additional_cost_payload(category.id, amount="@@")).replace('"@@"', literal)
+
+    refused = client.post(
+        path,
+        content=body,
+        headers={**as_caller(IN_SCOPE_USER), "Content-Type": "application/json"},
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert literal.lower() not in refused.text.lower()
+    assert count_additional_costs(db_session) == before
+
+    accepted = client.post(
+        path,
+        json=additional_cost_payload(category.id, amount="10.0000"),
+        headers=as_caller(IN_SCOPE_USER),
+    )
+    assert accepted.status_code == 201, accepted.text
+    cost_id = uuid.UUID(accepted.json()["id"])
+    stored_amount = db_session.execute(
+        sa.select(AdditionalCost.amount).where(AdditionalCost.id == cost_id)
+    ).scalar_one()
+    assert stored_amount == Decimal("10.0000")
 
 
 def test_k_04_four_decimal_places_are_stored_unrounded_and_five_are_a_422_writing_nothing(
