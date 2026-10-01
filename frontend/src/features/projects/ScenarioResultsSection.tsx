@@ -25,6 +25,8 @@ import {
   MARKUP_LABEL,
   NEGATIVE_PROFIT_INDICATOR,
   PERSONNEL_COST_LABEL,
+  PERSONNEL_COST_RATE_LABEL,
+  COST_RATE_UNIT_LABELS,
   PAID_ABSENCE_COST_LABEL,
   PAID_ABSENCE_COST_STATE_MESSAGES,
   PERSONNEL_COST_STATE_MESSAGES,
@@ -287,9 +289,17 @@ function PersonnelCostLine({ source, component }: { source: PersonnelCostSource;
     );
   }
   return (
-    <p className="scenario-card__metric" data-personnel-cost-state="calculated" data-cost-component={component}>
-      {label} {formatMoneyString(amount, currency ?? "")}
-    </p>
+    <>
+      <p className="scenario-card__metric" data-personnel-cost-state="calculated" data-cost-component={component}>
+        {label} {formatMoneyString(amount, currency ?? "")}
+      </p>
+      {isBase && source.assumptions_used?.rate_windows.map((window, index) => (
+        <p className="scenario-card__metric" data-cost-rate-window key={`${window.default_cost_rate}-${window.currency}-${index}`}>
+          {PERSONNEL_COST_RATE_LABEL} {formatMoneyString(window.default_cost_rate, window.currency)}
+          {window.cost_rate_unit ? ` ${COST_RATE_UNIT_LABELS[window.cost_rate_unit]}` : ""}
+        </p>
+      ))}
+    </>
   );
 }
 

@@ -1425,7 +1425,36 @@ function isPersonnelCostSourceShape(value: unknown): value is PersonnelCostSourc
     if (amount === RESULTS_NOT_APPLICABLE) return state !== "calculated" && isRequiredNullableString(currency);
     return state === "calculated" && isDecimalString(amount) && typeof currency === "string";
   };
-  return componentShape(value.state, value.amount, value.currency) &&
+  const assumptions = value.assumptions_used;
+  const assumptionsShape =
+    assumptions === null ||
+    (isRecord(assumptions) &&
+      Array.isArray(assumptions.rate_windows) &&
+      assumptions.rate_windows.every(
+        (window) =>
+          isRecord(window) &&
+          isDecimalString(window.default_cost_rate) &&
+          typeof window.currency === "string" &&
+          window.currency.length > 0 &&
+          (window.cost_rate_unit === undefined ||
+            isOneOf(window.cost_rate_unit, COST_RATE_UNITS)),
+      ));
+  if (!assumptionsShape) {
+    return false;
+  }
+  const amount = value.amount;
+  if (amount === null) {
+    return assumptions === null && isRequiredNullableString(value.currency) &&
+      componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
+  }
+  if (typeof amount !== "string") {
+    return false;
+  }
+  if (amount === RESULTS_NOT_APPLICABLE) {
+    return value.state !== "calculated" && isRequiredNullableString(value.currency) &&
+      componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
+  }
+  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string" &&
     componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
 }
 

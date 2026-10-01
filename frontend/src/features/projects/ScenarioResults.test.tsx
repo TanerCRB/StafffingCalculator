@@ -86,11 +86,11 @@ function revenueWithheld(state: WithheldRevenueState): RevenueRead {
 }
 
 function personnelCostCalculated(amount: string, currency: string): PersonnelCostSource {
-  return { state: "calculated", amount, currency, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: currency };
+  return { state: "calculated", amount, currency, assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: currency };
 }
 
 function personnelCostWithheld(state: Exclude<PersonnelCostState, "calculated">): PersonnelCostSource {
-  return { state, amount: "n/a", currency: null, paid_absence_state: state, paid_absence_amount: "n/a", paid_absence_currency: null };
+  return { state, amount: "n/a", currency: null, assumptions_used: { rate_windows: [] }, paid_absence_state: state, paid_absence_amount: "n/a", paid_absence_currency: null };
 }
 
 function additionalCostCalculated(amount: string, currency: string): AdditionalCostSource {
@@ -341,7 +341,7 @@ describe("SC-7-05 - negative-profit indicator", () => {
 describe("SC-7-07 — scenario cost components are independent", () => {
   it("renders distinct base and paid-absence amounts using the scenario currency", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
     }) } } });
     render(<ProjectListScreen />); await openProject();
     const results = await settledSection("Baseline");
@@ -351,7 +351,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("shows paid absence as zero without changing the base amount", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "0.00", paid_absence_currency: "PLN" },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "0.00", paid_absence_currency: "PLN" },
     }) } } });
     render(<ProjectListScreen />); await openProject();
     const results = await settledSection("Baseline");
@@ -361,7 +361,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("keeps additional costs independent from personnel components", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: "PLN" },
       additional_cost: additionalCostCalculated("75.00", "PLN"),
     }) } } });
     render(<ProjectListScreen />); await openProject();
@@ -373,7 +373,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("shows named unavailable components distinctly from zero while retaining additional costs", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", paid_absence_state: "no_budget", paid_absence_amount: "n/a", paid_absence_currency: null },
+      personnel_cost: { state: "calculated", amount: "400.00", currency: "PLN", assumptions_used: { rate_windows: [] }, paid_absence_state: "no_budget", paid_absence_amount: "n/a", paid_absence_currency: null },
       additional_cost: additionalCostCalculated("50.00", "PLN"),
     }) } } });
     render(<ProjectListScreen />); await openProject();
@@ -385,7 +385,7 @@ describe("SC-7-07 — scenario cost components are independent", () => {
 
   it("withholds both personnel components while additional costs remain visible", async () => {
     stubBackend({ results: { [BASELINE]: { status: 200, body: baseResults(BASELINE, {
-      personnel_cost: { state: "calculated", amount: null, currency: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null },
+      personnel_cost: { state: "calculated", amount: null, currency: null, assumptions_used: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null },
     }) } } });
     render(<ProjectListScreen />); await openProject();
     const results = await settledSection("Baseline");
@@ -455,7 +455,7 @@ describe("K-02 — the personnel-cost gate's null and a component's own n/a neve
       results: {
         [BASELINE]: {
           status: 200,
-          body: baseResults(BASELINE, { personnel_cost: { state: "calculated", amount: null, currency: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null } }),
+          body: baseResults(BASELINE, { personnel_cost: { state: "calculated", amount: null, currency: null, assumptions_used: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null } }),
         },
       },
     });
@@ -482,7 +482,7 @@ describe("K-02 — the personnel-cost gate's null and a component's own n/a neve
         [BASELINE]: {
           status: 200,
           body: baseResults(BASELINE, {
-            personnel_cost: { state: "no_cost_rate", amount: null, currency: null, paid_absence_state: "no_cost_rate", paid_absence_amount: null, paid_absence_currency: null },
+            personnel_cost: { state: "no_cost_rate", amount: null, currency: null, assumptions_used: null, paid_absence_state: "no_cost_rate", paid_absence_amount: null, paid_absence_currency: null },
           }),
         },
       },
@@ -707,6 +707,105 @@ describe("K-06 — the section mounts on its own, and a failure on it never remo
     expect(within(card("Baseline")).getByRole("heading", { name: "Baseline" })).toBeVisible();
     expect(within(card("Baseline")).getByText("Status: Draft")).toBeVisible();
     expect(within(await settledSection("Stretch")).getByText("Revenue: 1000.00 PLN")).toBeVisible();
+  });
+});
+
+// --- SC-5-11 --------------------------------------------------------------------------------------
+
+describe("SC-5-11 — each resolved cost-rate window shows only its own unit", () => {
+  it("pairs distinct units with their corresponding rates, and follows changed units per window", async () => {
+    const withWindows = (id: string, windows: PersonnelCostSource["assumptions_used"]) =>
+      baseResults(id, {
+        personnel_cost: {
+          state: "calculated",
+          amount: "400.00",
+          currency: "PLN",
+          assumptions_used: windows,
+          paid_absence_state: "calculated",
+          paid_absence_amount: "25.00",
+          paid_absence_currency: "PLN",
+        },
+      });
+    stubBackend({
+      results: {
+        [BASELINE]: {
+          status: 200,
+          body: withWindows(BASELINE, {
+            rate_windows: [
+              { default_cost_rate: "120.00", currency: "PLN", cost_rate_unit: "hour" },
+              { default_cost_rate: "900.00", currency: "PLN", cost_rate_unit: "day" },
+            ],
+          }),
+        },
+        [STRETCH]: {
+          status: 200,
+          body: withWindows(STRETCH, {
+            rate_windows: [
+              { default_cost_rate: "120.00", currency: "PLN", cost_rate_unit: "month" },
+              { default_cost_rate: "900.00", currency: "PLN", cost_rate_unit: "hour" },
+            ],
+          }),
+        },
+      },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const baseline = await settledSection("Baseline");
+    expect(within(baseline).getByText("Cost rate: 120.00 PLN per hour")).toBeVisible();
+    expect(within(baseline).getByText("Cost rate: 900.00 PLN per day")).toBeVisible();
+
+    const stretch = await settledSection("Stretch");
+    expect(within(stretch).getByText("Cost rate: 120.00 PLN per month")).toBeVisible();
+    expect(within(stretch).getByText("Cost rate: 900.00 PLN per hour")).toBeVisible();
+  });
+
+  it("omits only a missing window unit and restores only that label when supplied", async () => {
+    const withWindows = (id: string, windows: PersonnelCostSource["assumptions_used"]) =>
+      baseResults(id, {
+        personnel_cost: {
+          state: "calculated",
+          amount: "400.00",
+          currency: "PLN",
+          assumptions_used: windows,
+          paid_absence_state: "calculated",
+          paid_absence_amount: "25.00",
+          paid_absence_currency: "PLN",
+        },
+      });
+    stubBackend({
+      results: {
+        [BASELINE]: {
+          status: 200,
+          body: withWindows(BASELINE, {
+            rate_windows: [
+              { default_cost_rate: "120.00", currency: "PLN" },
+              { default_cost_rate: "900.00", currency: "PLN", cost_rate_unit: "day" },
+            ],
+          }),
+        },
+        [STRETCH]: {
+          status: 200,
+          body: withWindows(STRETCH, {
+            rate_windows: [
+              { default_cost_rate: "120.00", currency: "PLN", cost_rate_unit: "hour" },
+              { default_cost_rate: "900.00", currency: "PLN", cost_rate_unit: "day" },
+            ],
+          }),
+        },
+      },
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const baseline = await settledSection("Baseline");
+    expect(within(baseline).getByText("Cost rate: 120.00 PLN")).toBeVisible();
+    expect(within(baseline).queryByText("Cost rate: 120.00 PLN per hour")).toBeNull();
+    expect(within(baseline).getByText("Cost rate: 900.00 PLN per day")).toBeVisible();
+
+    const stretch = await settledSection("Stretch");
+    expect(within(stretch).getByText("Cost rate: 120.00 PLN per hour")).toBeVisible();
+    expect(within(stretch).getByText("Cost rate: 900.00 PLN per day")).toBeVisible();
   });
 });
 

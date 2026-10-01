@@ -16,9 +16,11 @@ gets `profit`/`margin`/`markup`/`included_cost` withheld — the same shape SC-5
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -26,13 +28,18 @@ from app.api.response_shaping import shape_scenario_results
 from app.api.scenario_results import SCENARIO_RESULTS_NOT_FOUND_DETAIL
 from app.core.identity import CallerIdentity, Permission
 from app.data.scenario_results import scenario_results_for_caller
+from app.models import CatalogDefaultRate
 from tests.conftest import (
     IN_SCOPE_USER,
     OUT_OF_SCOPE_USER,
     as_caller,
     caller_holding,
+    make_allocation,
+    make_dimension_tuple,
     make_project,
+    make_rate,
     make_scenario,
+    make_staffing_position,
 )
 from tests.test_scenario_results import (
     EVERYTHING,
@@ -43,6 +50,47 @@ from tests.test_scenario_results import (
 
 WITHOUT_PERSONNEL_COSTS_READ = EVERYTHING - {Permission.PERSONNEL_COSTS_READ}
 WITHOUT_RESULTS_READ = EVERYTHING - {Permission.RESULTS_READ}
+
+
+def test_k_01_results_keep_each_resolved_rate_window_unit(
+    client: TestClient, db_session: Session
+) -> None:
+    """The shared results response preserves the unit belonging to each resolved cost window."""
+    _ensure_statutory_bypass(db_session)
+    project, scenario, first_dimensions = _full_scenario(db_session, name="Rate unit windows")
+    first_rate = db_session.scalar(
+        sa.select(CatalogDefaultRate).where(CatalogDefaultRate.role_id == first_dimensions.role_id)
+    )
+    assert first_rate is not None
+
+    second_dimensions = make_dimension_tuple(db_session, suffix=" second rate unit")
+    second_position = make_staffing_position(
+        db_session, scenario, second_dimensions, start_date=date(2026, 3, 1)
+    )
+    make_allocation(
+        db_session,
+        second_position,
+        period_month=date(2026, 3, 1),
+        planned_allocation_hours=Decimal("80.00"),
+    )
+    second_rate = make_rate(
+        db_session,
+        second_dimensions,
+        effective_from=date(2026, 1, 1),
+        default_cost_rate=Decimal("90.0000"),
+        currency="PLN",
+        cost_rate_unit="day",
+    )
+
+    with caller_holding(*EVERYTHING):
+        response = client.get(results_path(project.id, scenario.id))
+
+    assert response.status_code == 200, response.text
+    windows = response.json()["personnel_cost"]["assumptions_used"]["rate_windows"]
+    assert {window["source_rate_id"]: window["cost_rate_unit"] for window in windows} == {
+        str(first_rate.id): "hour",
+        str(second_rate.id): "day",
+    }
 
 
 # --- K-03: out of scope is indistinguishable from absent -----------------------------------------
@@ -118,6 +166,7 @@ def test_k_06_the_four_aggregate_fields_are_withheld_but_revenue_and_additional_
     assert body["markup"] is None
     assert body["included_cost"] is None
     assert body["personnel_cost"]["amount"] is None
+    assert body["personnel_cost"]["assumptions_used"] is None
     assert body["revenue"]["amount"] == "20000.00"
     assert body["additional_cost"]["amount"] == "2000.00"
     assert "6000.00" not in withheld.text
@@ -132,6 +181,9 @@ def test_k_06_the_four_aggregate_fields_are_withheld_but_revenue_and_additional_
     assert shown_body["markup"] == "42.86"
     assert shown_body["included_cost"] == "14000.00"
     assert shown_body["personnel_cost"]["amount"] == "12000.00"
+    assert shown_body["personnel_cost"]["assumptions_used"]["rate_windows"][0][
+        "cost_rate_unit"
+    ] == "hour"
 
 
 def test_k_06_the_flag_is_the_one_on_the_scenarios_own_project_not_on_another_assignment(
@@ -148,8 +200,14 @@ def test_k_06_the_flag_is_the_one_on_the_scenarios_own_project_not_on_another_as
         withheld = client.get(results_path(project_a.id, scenario_a.id))
         shown = client.get(results_path(project_b.id, scenario_b.id))
 
-    assert withheld.json()["profit"] is None
-    assert shown.json()["profit"] == "6000.00"
+    withheld_body = withheld.json()
+    shown_body = shown.json()
+    assert withheld_body["profit"] is None
+    assert withheld_body["personnel_cost"]["assumptions_used"] is None
+    assert shown_body["profit"] == "6000.00"
+    assert shown_body["personnel_cost"]["assumptions_used"]["rate_windows"][0][
+        "cost_rate_unit"
+    ] == "hour"
 
 
 def test_k_06_a_caller_without_results_read_is_refused_the_whole_endpoint(
@@ -260,6 +318,7 @@ def test_k_06_the_gate_and_an_unresolvable_source_together_answer_null_not_n_a(
     assert body["markup"] is None
     assert body["included_cost"] is None
     assert body["personnel_cost"]["amount"] is None
+    assert body["personnel_cost"]["assumptions_used"] is None
     assert body["personnel_cost"]["state"] == "no_cost_rate"
     assert body["revenue"]["amount"] == "20000.00"
     assert body["additional_cost"]["amount"] == "2000.00"

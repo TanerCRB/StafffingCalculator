@@ -129,15 +129,15 @@ function revenueWithheld(state: WithheldRevenueState): RevenueRead {
 }
 
 function personnelCostCalculated(amount: string, currency: string): PersonnelCostSource {
-  return { state: "calculated", amount, currency, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: currency };
+  return { state: "calculated", amount, currency, assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: currency };
 }
 
 function personnelCostWithheld(state: Exclude<PersonnelCostState, "calculated">): PersonnelCostSource {
-  return { state, amount: "n/a", currency: null, paid_absence_state: state, paid_absence_amount: "n/a", paid_absence_currency: null };
+  return { state, amount: "n/a", currency: null, assumptions_used: { rate_windows: [] }, paid_absence_state: state, paid_absence_amount: "n/a", paid_absence_currency: null };
 }
 
 function personnelCostGated(): PersonnelCostSource {
-  return { state: "calculated", amount: null, currency: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null };
+  return { state: "calculated", amount: null, currency: null, assumptions_used: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null };
 }
 
 function additionalCostCalculated(amount: string, currency: string): AdditionalCostSource {

@@ -86,13 +86,8 @@ class CostRateWindowRead(BaseModel):
     payload as a whole sits behind the SC-1-08 conjunction: the percentage was never the gated part,
     the amount it multiplies is."""
     includes_surcharge: bool
-    # No `cost_rate_unit` here (SC-5-08): ADR-0005's addendum of 2026-09-29 (point 3) allows the
-    # unit to reach the scenario cost response only inside `assumptions_used`, but adding the key
-    # changes the pinned response bodies of existing tests (`test_personnel_cost.py` K-01/K-03 and
-    # the `1739f1e` literals of `test_scenario_results_status_guard.py`). Left out and reported to
-    # the human gate rather than editing those tests; the unit is read by the calculation from
-    # `MonthCostRate`/`CostRateWindow`, so exposing it later is one field here and one line in
-    # `app.api.response_shaping._personnel_cost_read_of`.
+    cost_rate_unit: Literal["hour", "day", "month"]
+    """The unit of this window's cost rate (SC-5-11). Kept nested in gated cost assumptions."""
 
 
 class UnresolvedCostMonthRead(BaseModel):

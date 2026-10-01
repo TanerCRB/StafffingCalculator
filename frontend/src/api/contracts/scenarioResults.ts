@@ -6,11 +6,9 @@
 // `revenue` is exactly `RevenueRead` from `./commercialTerms` (SC-4-01) — reused, not re-declared
 // (ADR-0004 "fits", confirmed at this task's gate 1). `personnel_cost` and `additional_cost` below
 // model only the subset of `PersonnelCostRead` (backend/app/api/schemas/personnel_cost.py) and
-// `AdditionalCostTotalRead` (backend/app/api/schemas/additional_cost.py) this screen reads — each
-// source's own `state`, `amount`, `currency`. Neither's `assumptions_used` (rate windows, unresolved
-// months, paid-absence detail) is declared here: this screen does not render it (Issue #94, out of
-// scope — monthly/period breakdown), and a field this client never reads is a field this contract
-// does not need to promise a shape for.
+// `AdditionalCostTotalRead` (backend/app/api/schemas/additional_cost.py) this screen reads. For
+// personnel cost that includes the gated base `assumptions_used.rate_windows`, so each resolved
+// cost-rate unit can be shown beside its own rate (SC-5-11); other breakdowns remain out of scope.
 //
 // **Four fields are gated as one group, never split** (ADR-0005, addendum 2026-09-24): `included_cost`,
 // `profit`, `margin`, `markup` are `null` when the caller may not see personnel costs of this
@@ -74,9 +72,23 @@ export interface PersonnelCostSource {
   state: PersonnelCostState;
   amount: string | typeof RESULTS_NOT_APPLICABLE | null;
   currency: string | null;
+  /** Gated together with the personnel-cost amount (ADR-0005, SC-5-08). */
+  assumptions_used: PersonnelCostAssumptions | null;
   paid_absence_state: PaidAbsenceCostState;
   paid_absence_amount: string | typeof RESULTS_NOT_APPLICABLE | null;
   paid_absence_currency: string | null;
+}
+
+/** The portion of the backend's gated assumptions this results screen reads. */
+export interface PersonnelCostAssumptions {
+  rate_windows: PersonnelCostRateWindow[];
+}
+
+/** A resolved cost rate. Unit is optional for a response that omits it. */
+export interface PersonnelCostRateWindow {
+  default_cost_rate: string;
+  currency: string;
+  cost_rate_unit?: "hour" | "day" | "month";
 }
 
 /** The scenario's additional-cost sum, as much of `AdditionalCostTotalRead` as this screen reads.
