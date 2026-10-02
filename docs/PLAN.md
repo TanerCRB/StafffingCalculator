@@ -954,7 +954,7 @@ history / this file's own change log, not as tracked product work.
   `scenarios.full_time_hours_per_week` holds by construction (signature), not by a test that could have read it; partial
   months, FTE as an allocation input and any API surface are not covered. See `docs/architecture/capabilities.md`.
 
-- [ ] **SC-3-08** — Import public holidays from Nager.Date into a working calendar's exceptional days,
+- [x] **SC-3-08** — Import public holidays from Nager.Date into a working calendar's exceptional days,
   with provenance (F-05, F-02), Issue #165. A new instruction, not a documented requirement
   (F-05 addendum 2026-09-29).
   *Done when:* `backend/tests` prove: after an operator-run import for (calendar, country, year)
@@ -980,6 +980,12 @@ history / this file's own change log, not as tracked product work.
   and half days; self-hosted Nager.Date.
   **Basis:** ADR-0020 (draft), ADR-0004 addendum 2026-09-29, ADR-0006, ADR-0008, F-05 addendum
   2026-09-29; Nager.Date Terms of Service (2023-09-15).
+  **Done 2026-10-02:** [PR #214](https://github.com/TanerCRB/StafffingCalculator/pull/214) implements
+  the import; [PR #218](https://github.com/TanerCRB/StafffingCalculator/pull/218) guards the
+  calculation path against HTTP; [PR #224](https://github.com/TanerCRB/StafffingCalculator/pull/224)
+  adds the legacy-migration, fixed-HTTPS, and no-HTTP-route regression tests. Proof: the test set
+  and mutation records are listed in the [SC-3-08 capability and mutation registry](architecture/capabilities.md#capabilities)
+  and [QA report on Issue #165](https://github.com/TanerCRB/StafffingCalculator/issues/165#issuecomment-5954378260).
 
 - [x] **SC-2-05** — Dostosuj wygląd ekranu Roles & rates (katalog) do makiety UI-15 i rozbuduj rail
   nawigacji `AppShell` do pełnej listy 11 wpisów z tej samej makiety, bez zmiany zachowania ani
