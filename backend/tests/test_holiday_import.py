@@ -457,6 +457,7 @@ def test_imported_rows_feed_capacity_without_http_and_keep_snapshot_provenance(
         raise AssertionError("calculation path attempted HTTP")
 
     monkeypatch.setattr(httpx, "Client", fail_client)
+    monkeypatch.setattr(httpx, "get", fail_client)
     basis = basis_by_location(db_session, [dims.location_id])[dims.location_id]
     assert working_days_in_month(basis, date(2026, 1, 1)) == 21
 
