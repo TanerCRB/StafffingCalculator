@@ -32,7 +32,7 @@ from app.data.risk_reserve import copy_scenario_reserves
 from app.data.scenario_delivery_segment import copy_scenario_delivery_segments
 from app.data.scenario_guard import copying_source_scenario, project_group_two_lock
 from app.data.staffing import copy_staffing_positions
-from app.data.write_errors import WriteFailed, describe_without_values
+from app.data.write_errors import WriteFailed, WriteRefused, describe_without_values, failure_for
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 from app.models.scenario import Scenario, ScenarioStatus
@@ -52,6 +52,10 @@ class ProjectWriteFailed(WriteFailed):
     violation — the whole row, owner's name and description included — and whatever prints the
     unhandled exception prints that too.
     """
+
+
+class ProjectCopyRefused(WriteRefused):
+    """A classified database refusal of the project-copy transaction."""
 
 
 def _describe_without_values(error: SQLAlchemyError) -> str:
@@ -568,7 +572,12 @@ def copy_project(
         session.rollback()
         # Same reasoning as in `create_project`: `from None` keeps psycopg's `DETAIL: Failing row
         # contains (…)` — the whole row, owner's name included — out of the traceback (NF-11).
-        raise ProjectWriteFailed(_describe_without_values(error)) from None
+        raise failure_for(
+            error,
+            subject="project copy",
+            refused=ProjectCopyRefused,
+            failed=ProjectWriteFailed,
+        ) from None
     return CallerProjectView(
         user_id=caller.user_id,
         project=copy,
