@@ -239,12 +239,32 @@ def test_fa_9_the_amount_and_the_assumptions_need_both_halves_the_state_stays_vi
     assert cost["assigned_fte_currency"] == "PLN"
     if visible:
         assert cost["assigned_fte_amount"] == MARKER_AMOUNT
+        assert cost["assigned_fte_above_headcount_position_ids"] == []
         lines = cost["assigned_fte_assumptions_used"]["lines"]
         assert [line["assigned_fte"] for line in lines] == [MARKER_FTE]
         assert isinstance(lines[0]["assigned_fte"], str)  # a decimal string, never a JSON float
     else:
         assert cost["assigned_fte_amount"] is None
         assert cost["assigned_fte_assumptions_used"] is None
+        assert cost["assigned_fte_above_headcount_position_ids"] is None
+
+
+def test_assigned_fte_above_headcount_marker_is_machine_readable_and_uses_cost_gate(
+    client: TestClient, db_session: Session
+) -> None:
+    project, scenario, dimensions = _setup(db_session, suffix="fte-plausibility")
+    position = _fte_position(db_session, scenario, dimensions, fte="2.50")
+
+    visible = _cost(client, project.id, scenario.id)
+    hidden = _cost(
+        client,
+        project.id,
+        scenario.id,
+        *(p for p in Permission if p is not Permission.PERSONNEL_COSTS_READ),
+    )
+
+    assert visible["assigned_fte_above_headcount_position_ids"] == [str(position.id)]
+    assert hidden["assigned_fte_above_headcount_position_ids"] is None
 
 
 def test_fa_9_a_named_state_is_visible_to_a_caller_who_may_not_see_amounts(

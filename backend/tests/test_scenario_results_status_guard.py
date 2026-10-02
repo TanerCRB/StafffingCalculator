@@ -851,6 +851,7 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
                 "unresolved_months": [],
                 "currencies": [],
             },
+            "assigned_fte_above_headcount_position_ids": [],
         },
         "additional_cost": {
             "state": "calculated",

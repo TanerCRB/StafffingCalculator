@@ -31,6 +31,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.domain.additional_cost import AdditionalCostResult
+from app.domain.assigned_fte_cost import AssignedFteCostResult
+from app.domain.fixed_amount_cost import FixedAmountCostResult
 from app.domain.paid_absence_cost import PaidAbsenceCostResult, PaidAbsenceCostUnavailable
 from app.domain.personnel_cost import PersonnelCostResult
 from app.domain.revenue import RevenueResult
@@ -49,12 +51,18 @@ _ASSUMPTIONS: object = object()
 """`scenario_profitability` does not read `assumptions_used` — a stand-in, not made-up
 assumptions."""
 
-_SOURCES = ("revenue", "base_cost", "paid_absence", "additional_cost")
+_SOURCES = (
+    "revenue",
+    "base_cost",
+    "paid_absence",
+    "additional_cost",
+    "fixed_amount",
+    "assigned_fte",
+)
 
 
 def _components(**currencies: str) -> dict[str, object]:
-    """Four `calculated` components: revenue 20000, base cost 12000, absences 500, additional
-    cost 1500 — each in PLN unless `currencies` says otherwise."""
+    """Six `calculated` components, each in PLN unless `currencies` says otherwise."""
     currency = {source: currencies.get(source, "PLN") for source in _SOURCES}
     return {
         "revenue": RevenueResult(
@@ -77,6 +85,12 @@ def _components(**currencies: str) -> dict[str, object]:
             amount=Decimal("1500.00"),
             currency=currency["additional_cost"],
             assumptions_used=_ASSUMPTIONS,  # type: ignore[arg-type]
+        ),
+        "fixed_amount": FixedAmountCostResult(
+            cost=Decimal("0.00"), currency=currency["fixed_amount"], assumptions_used=_ASSUMPTIONS
+        ),
+        "assigned_fte": AssignedFteCostResult(
+            cost=Decimal("0.00"), currency=currency["assigned_fte"], assumptions_used=_ASSUMPTIONS
         ),
     }
 

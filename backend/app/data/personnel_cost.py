@@ -289,6 +289,7 @@ class NonWorkedTimePosition:
     position_id: uuid.UUID
     cost_basis: str
     assigned_fte: Decimal | None
+    headcount: Decimal
 
 
 def _non_worked_time_positions(session: Session, scenario: Scenario) -> list[NonWorkedTimePosition]:
@@ -302,7 +303,12 @@ def _non_worked_time_positions(session: Session, scenario: Scenario) -> list[Non
     `app.data.paid_absence_cost` (R-02): the next read is consistent.
     """
     statement = (
-        sa.select(StaffingPosition.id, StaffingPosition.cost_basis, StaffingPosition.assigned_fte)
+        sa.select(
+            StaffingPosition.id,
+            StaffingPosition.cost_basis,
+            StaffingPosition.assigned_fte,
+            StaffingPosition.headcount,
+        )
         .where(
             StaffingPosition.scenario_id == scenario.id,
             StaffingPosition.cost_basis != COST_BASIS_WORKED_TIME,
@@ -311,7 +317,8 @@ def _non_worked_time_positions(session: Session, scenario: Scenario) -> list[Non
     )
     return [
         NonWorkedTimePosition(
-            position_id=row.id, cost_basis=row.cost_basis, assigned_fte=row.assigned_fte
+            position_id=row.id, cost_basis=row.cost_basis, assigned_fte=row.assigned_fte,
+            headcount=row.headcount
         )
         for row in session.execute(statement)
     ]
@@ -432,6 +439,7 @@ class CostInputs:
     """Every `assigned_fte` position, with or without allocation rows (a position with none is
     `no_planned_months`)."""
     assigned_fte_months: list[AssignedFteMonth]
+    non_worked_time_positions: list[NonWorkedTimePosition]
     """The allocation rows of `assigned_fte` positions, with their resolved rate and calendar."""
 
 
@@ -459,6 +467,7 @@ def dispatch_cost_inputs(
     }
     not_worked_time_ids = {position.position_id for position in positions}
     return CostInputs(
+        non_worked_time_positions=positions,
         worked_months=[month for month in months if month.position_id not in not_worked_time_ids],
         assigned_fte_lines=[
             AssignedFteLine(position_id=position_id, assigned_fte=fte)
@@ -568,6 +577,7 @@ class ScenarioCostView:
     fully_loaded_paid_absence: FullyLoadedPaidAbsenceCostAnswer
     """The paid-absence component's fully loaded cost (SC-5-02, criterion K-05) — beside
     `paid_absence`, never added to it, for the same reason `paid_absence` sits beside `cost`."""
+    assigned_fte_above_headcount_position_ids: tuple[uuid.UUID, ...] = ()
 
 
 def scenario_cost_for_caller(
@@ -641,4 +651,11 @@ def scenario_cost_for_caller(
             allow_currency_mismatch=allow_exchange_rates,
         ),
         status_at_read=status_at_read,
+        assigned_fte_above_headcount_position_ids=tuple(
+            position.position_id
+            for position in inputs.non_worked_time_positions
+            if position.cost_basis == COST_BASIS_ASSIGNED_FTE
+            and position.assigned_fte is not None
+            and position.assigned_fte > position.headcount
+        ),
     )

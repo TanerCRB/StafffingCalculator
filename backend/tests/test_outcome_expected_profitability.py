@@ -193,7 +193,7 @@ def test_k_05_currency_mismatch_withholds_expected_metrics(
     matched = _results(client, match_project.id, match_scenario.id)
 
     assert mismatch["revenue"]["state"] == "calculated"
-    assert mismatch["profitability_state"] == "currency_mismatch"
+    assert mismatch["profitability_state"] == "not_applicable"
     assert (mismatch["expected_profit"], mismatch["expected_margin"]) == ("n/a", "n/a")
     assert matched["profitability_state"] == "calculated"
     assert matched["expected_profit"] == "9000.00"

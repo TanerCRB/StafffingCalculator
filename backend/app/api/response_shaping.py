@@ -258,6 +258,7 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
         # `fixed_amount_state`/`fixed_amount_currency` do.
         "assigned_fte_amount",
         "assigned_fte_assumptions_used",
+        "assigned_fte_above_headcount_position_ids",
     }
 )
 """Fields of a scenario's personnel cost that carry a personnel cost (SC-5-01, SC-5-06, SC-5-02).
@@ -1362,6 +1363,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             **paid_absence_fully_loaded,
             **fixed_amount,
             **assigned_fte,
+            assigned_fte_above_headcount_position_ids=list(view.assigned_fte_above_headcount_position_ids),
         )
     return PersonnelCostRead(
         state=answer.reason,
@@ -1374,6 +1376,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         **paid_absence_fully_loaded,
         **fixed_amount,
         **assigned_fte,
+        assigned_fte_above_headcount_position_ids=list(view.assigned_fte_above_headcount_position_ids),
     )
 
 
@@ -1566,7 +1569,8 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte,
     )
     expected_profitability = scenario_expected_profitability(view.revenue, profitability)
     result = ScenarioResults(
@@ -1780,7 +1784,8 @@ def shape_scenario_what_if_billable_utilization(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte
     )
     result = ScenarioWhatIfBillableUtilizationResults(
         scenario_id=view.scenario.id,
@@ -1831,7 +1836,8 @@ def shape_scenario_what_if_salary_raise(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte
     )
     result = ScenarioWhatIfSalaryRaiseResults(
         scenario_id=view.scenario.id,
@@ -1859,7 +1865,8 @@ def shape_scenario_what_if_delayed_start(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte
     )
     result = ScenarioWhatIfDelayedStartResults(
         scenario_id=view.scenario.id,
