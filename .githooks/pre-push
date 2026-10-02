@@ -57,27 +57,57 @@ fi
 
 # Backend tests: run wherever backend/ has a pytest-runnable project. Condition is on the
 # presence of the project marker, not a hardcoded assumption that backend/ always exists.
-if [ -f backend/pyproject.toml ] || [ -f backend/setup.cfg ]; then
-    if ! command -v pytest >/dev/null 2>&1 && [ ! -x backend/.venv/bin/pytest ]; then
-        echo "" >&2
-        echo "  pre-push: backend/ has a Python project but pytest isn't on PATH." >&2
-        echo "  Activate the virtualenv, or push with --no-verify deliberately." >&2
-        echo "" >&2
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "  pre-push: cannot find the working tree root; run this hook from a Git checkout." >&2
+    exit 1
+}
+git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+    echo "  pre-push: cannot find the shared Git directory; run this hook from a Git checkout." >&2
+    exit 1
+}
+case "$git_common_dir" in
+    /*) ;;
+    *) git_common_dir=$(cd "$repo_root" && cd "$git_common_dir" && pwd -P) || exit 1 ;;
+esac
+main_checkout=$(dirname "$git_common_dir")
+
+if [ -f "$repo_root/backend/pyproject.toml" ] || [ -f "$repo_root/backend/setup.cfg" ]; then
+    pytest_command=$(command -v pytest 2>/dev/null || true)
+    if [ -z "$pytest_command" ]; then
+        for candidate in \
+            "$repo_root/backend/.venv/Scripts/pytest.exe" \
+            "$repo_root/backend/.venv/Scripts/pytest" \
+            "$repo_root/backend/.venv/bin/pytest" \
+            "$main_checkout/backend/.venv/Scripts/pytest.exe" \
+            "$main_checkout/backend/.venv/Scripts/pytest" \
+            "$main_checkout/backend/.venv/bin/pytest" \
+            "$repo_root/.venv/Scripts/pytest.exe" \
+            "$repo_root/.venv/Scripts/pytest" \
+            "$repo_root/.venv/bin/pytest" \
+            "$main_checkout/.venv/Scripts/pytest.exe" \
+            "$main_checkout/.venv/Scripts/pytest" \
+            "$main_checkout/.venv/bin/pytest"; do
+            if [ -x "$candidate" ]; then pytest_command=$candidate; break; fi
+        done
+    fi
+    if [ -z "$pytest_command" ]; then
+        echo "  pre-push: backend/ has a Python project, but pytest was not found." >&2
+        echo "  Run: cd \"$repo_root/backend\" && uv sync --extra dev && uv run pytest" >&2
         exit 1
     fi
-    ( cd backend && (command -v pytest >/dev/null 2>&1 && pytest || .venv/bin/pytest) ) || exit 1
+    (cd "$repo_root/backend" && "$pytest_command") || exit 1
 fi
 
 # Frontend tests: run wherever frontend/ declares a `test` script.
-if [ -f frontend/package.json ] && \
-   node -e 'process.exit(require("./frontend/package.json").scripts?.test ? 0 : 1)' 2>/dev/null; then
+if [ -f "$repo_root/frontend/package.json" ] && \
+   (cd "$repo_root/frontend" && node -e 'process.exit(require("./package.json").scripts?.test ? 0 : 1)' 2>/dev/null); then
 
     # pnpm is sometimes off PATH despite Node being installed — the packageManager field doesn't
     # install anything, it only tells corepack which version to run.
     # COREPACK_ENABLE_DOWNLOAD_PROMPT=0, because a prompt asked inside a hook has no one to answer it.
     if ! command -v pnpm >/dev/null 2>&1; then
         if command -v corepack >/dev/null 2>&1; then
-            pnpm() { ( cd frontend && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm "$@" ); }
+            pnpm() { (cd "$repo_root/frontend" && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm "$@"); }
         else
             echo "" >&2
             echo "  pre-push: pnpm and corepack are both missing. Install Node 22+ or add pnpm to PATH." >&2
@@ -85,7 +115,13 @@ if [ -f frontend/package.json ] && \
             exit 1
         fi
     else
-        pnpm() { ( cd frontend && command pnpm "$@" ); }
+        pnpm() { (cd "$repo_root/frontend" && command pnpm "$@"); }
+    fi
+
+    if [ ! -d "$repo_root/frontend/node_modules" ]; then
+        echo "  pre-push: frontend dependencies are missing." >&2
+        echo "  Run: cd \"$repo_root/frontend\" && pnpm install --frozen-lockfile" >&2
+        exit 1
     fi
 
     # E2E is deliberately outside the hook: it requires a build and a browser, so it's a gate in CI.
