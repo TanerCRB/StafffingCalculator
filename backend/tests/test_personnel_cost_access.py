@@ -290,7 +290,8 @@ def test_k_04_the_scenario_cost_fields_are_their_own_set_and_the_projects_stays_
             # assumptions (which name every stored FTE), gated identically to the fixed-amount pair
             # above (FA-9).
             "assigned_fte_amount",
-            "assigned_fte_assumptions_used",
+                "assigned_fte_assumptions_used",
+                "assigned_fte_above_headcount_position_ids",
         }
     )
     assert PERSONNEL_COST_FIELDS == frozenset()

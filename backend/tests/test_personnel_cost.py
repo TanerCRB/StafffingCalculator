@@ -683,6 +683,7 @@ COST_FIELDS = {
     "assigned_fte_amount",
     "assigned_fte_currency",
     "assigned_fte_assumptions_used",
+    "assigned_fte_above_headcount_position_ids",
 }
 FIXED_AMOUNT_ASSUMPTIONS_FIELDS = {"lines", "currencies"}
 FIXED_AMOUNT_LINE_FIELDS = {"position_id", "amount", "currency"}

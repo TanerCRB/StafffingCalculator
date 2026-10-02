@@ -297,6 +297,8 @@ class PersonnelCostRead(BaseModel):
     assigned_fte_currency: str | None
     assigned_fte_assumptions_used: AssignedFteAssumptionsRead | None
     """`null` when the caller may not see personnel costs of this scenario's project."""
+    assigned_fte_above_headcount_position_ids: list[uuid.UUID] | None
+    """Position IDs with assigned FTE above headcount; gated with the other personnel costs."""
 
 
 class ScenarioPersonnelCost(BaseModel):

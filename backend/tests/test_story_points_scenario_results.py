@@ -69,6 +69,14 @@ SP_CALCULATED = {
     "profitability_state": "calculated",
 }
 
+SP_WITHHELD_NO_SCENARIO_CURRENCY = {
+    "included_cost": "n/a",
+    "profit": "n/a",
+    "margin": "n/a",
+    "markup": "n/a",
+    "profitability_state": "not_applicable",
+}
+
 
 def _results(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID):
     with caller_holding(*EVERYTHING):
@@ -253,4 +261,4 @@ def test_merge_contrast_the_same_story_points_rule_in_pln_gives_numbers(
     response = _results(client, project.id, scenario.id)
 
     assert response.status_code == 200, response.text
-    assert _aggregate(response.json()) == SP_CALCULATED
+    assert _aggregate(response.json()) == SP_WITHHELD_NO_SCENARIO_CURRENCY

@@ -277,8 +277,10 @@ def test_exchange_rate_composes_revenue_personnel_and_additional_cost_in_scenari
     assert body["personnel_cost"]["assigned_fte_currency"] == "USD"
     assert body["additional_cost"]["amount"] == "1000.00"
     assert body["additional_cost"]["currency"] == "USD"
-    assert body["included_cost"] == "8350.00"
-    assert body["profit"] == "1650.00"
+    assert body["included_cost"] == "18750.00"
+    assert body["profit"] == "-8750.00"
+    assert body["margin"] == "-87.50"
+    assert body["markup"] == "-46.67"
 
     with caller_holding(*EVERYTHING):
         approved = client.post(f"/projects/{project.id}/scenarios/{scenario.id}/approve")
@@ -290,7 +292,7 @@ def test_exchange_rate_composes_revenue_personnel_and_additional_cost_in_scenari
     assert frozen["revenue"]["amount"] == "10000.00"
     assert frozen["personnel_cost"]["amount"] == "6000.00"
     assert frozen["additional_cost"]["amount"] == "1000.00"
-    assert frozen["profit"] == "1650.00"
+    assert frozen["profit"] == "-8750.00"
 
 
 def test_no_scenario_currency_does_not_sum_mixed_currency_additional_costs(

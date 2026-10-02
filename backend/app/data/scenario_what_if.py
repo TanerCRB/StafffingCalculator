@@ -417,6 +417,7 @@ def scenario_what_if_salary_raise_for_caller(
         # The assigned-FTE component (SC-5-04) **is** raised — unlike the fixed amount it reads a
         # catalogue rate, and the raise scales that rate through the shared structure (FA-8).
         assigned_fte=hypothetical_assigned_fte,
+        assigned_fte_above_headcount_position_ids=cost_view.assigned_fte_above_headcount_position_ids,
     )
     return ScenarioWhatIfView(
         scenario=scenario,
