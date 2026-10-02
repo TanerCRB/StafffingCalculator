@@ -29,6 +29,7 @@ from app.core.identity import CallerIdentity, Permission
 from app.data.commercial_terms import CommercialTermsNotCopyable
 from app.data.project_reads import list_projects_for_caller, project_for_caller
 from app.data.project_writes import (
+    ProjectCopyRefused,
     ProjectEditRefused,
     archive_project,
     copy_project,
@@ -223,8 +224,9 @@ def archive_project_endpoint(
     responses={
         404: {"description": PROJECT_NOT_FOUND_DETAIL},
         409: {
-            "description": "Refused: a scenario's commercial terms use a model this version of the "
-            "application cannot copy. Nothing was copied."
+            "description": "Refused: a named database constraint rejected the copy, or "
+            "a scenario's commercial terms use a model this version cannot copy. "
+            "Nothing was copied."
         },
     },
 )
@@ -257,7 +259,7 @@ def copy_project_endpoint(
         )
     try:
         copy = copy_project(session, caller, source)
-    except CommercialTermsNotCopyable as refusal:
+    except (CommercialTermsNotCopyable, ProjectCopyRefused) as refusal:
         # R-03 (SC-4-01, gate 2): a readable, named refusal instead of an unhandled `500` — and it
         # is reached only for a project the caller can already see, so it confirms nothing.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
