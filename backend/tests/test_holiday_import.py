@@ -176,7 +176,7 @@ def test_import_is_idempotent_reports_stale_rows_and_uses_fixed_egress(
         db_session, calendar.id, "PL", 2026, transport=RecordingTransport(handler)
     )
     assert (first.written, second.written, second.conflict_skipped) == (1, 0, 1)
-    assert str(seen[0].url) == f"{API_BASE_URL}/PublicHolidays/2026/PL"
+    assert str(seen[0].url) == "https://date.nager.at/api/v3/PublicHolidays/2026/PL"
     assert dict(seen[0].headers)["accept"] == "application/json"
     assert set(REQUEST_HEADERS) == {"Accept", "Accept-Encoding", "User-Agent"}
     assert REQUEST_TIMEOUT.connect == 3.0
@@ -644,3 +644,13 @@ def test_two_interleaved_imports_use_database_conflict_handling(engine):
             connection.execute(
                 sa.delete(WorkingCalendar).where(WorkingCalendar.id == calendar_id)
             )
+
+
+def test_operator_holiday_import_has_no_http_trigger():
+    from app.main import app
+
+    paths = app.openapi()["paths"]
+    assert not any(
+        "holiday" in path.casefold() or "import" in path.casefold()
+        for path in paths
+    )
