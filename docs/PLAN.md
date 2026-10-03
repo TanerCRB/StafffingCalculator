@@ -3051,4 +3051,4 @@ history / this file's own change log, not as tracked product work.
 - [ ] **SC-1-18** — Create projects from the Projects screen (F-01; Issue #228).
   *Done when:* Frontend tests prove a caller with `PROJECT_CREATE` can submit a project with name, client, owner, delivery period, reporting currency, and description; the created project appears in the list; invalid input and API refusals are visible without a success state; and a caller without `PROJECT_CREATE` cannot create a project.
   **Out of scope (explicit):** Project search/filter/pagination (Issue #229, SC-1-17); editing (Issue #230, SC-1-16), copying (Issue #231), and archiving (Issue #232) — separate project actions with distinct write invariants; scenario creation (Issue #233) — separate scenario workflow.
-  **Gate 1 pending:** Personal-data impact assessment for `projects.owner` under ADR-0019.
+  **Gate 1 pending:** Human approval of the acceptance criteria and architecture impact map.
