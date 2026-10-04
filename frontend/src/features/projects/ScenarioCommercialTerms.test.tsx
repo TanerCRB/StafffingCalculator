@@ -256,7 +256,8 @@ function stubBackend(backend: Backend) {
     if (path === "/health") {
       answer = { status: 200, body: { status: "ok" } };
     } else if (path === "/projects") {
-      answer = { status: 200, body: { projects: backend.projects ?? [AURORA, HELIOS] } };
+      const projects = backend.projects ?? [AURORA, HELIOS];
+      answer = { status: 200, body: { projects, total: projects.length } };
     } else if (path === "/catalog/rates") {
       answer = { status: 200, body: { rates: [], total: 0 } };
     } else if (path.startsWith("/catalog/dimensions/")) {

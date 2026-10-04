@@ -67,4 +67,14 @@ export interface ProjectEditRequest {
 /** An object, not a bare array — the backend reserves room for filtering/pagination metadata. */
 export interface ProjectListResponse {
   projects: ProjectListItem[];
+  /** Caller-scoped match count before pagination (ADR-0017). */
+  total: number;
+}
+
+/** Server-side search, status and offset-page parameters for `GET /projects`. */
+export interface ProjectListQuery {
+  readonly search?: string;
+  readonly status?: ProjectStatus;
+  readonly limit?: number;
+  readonly offset?: number;
 }

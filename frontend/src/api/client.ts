@@ -43,6 +43,7 @@ import { isDecimalString } from "../lib/money";
 import type { HealthResponse } from "./contracts/health";
 import type {
   ProjectListItem,
+  ProjectListQuery,
   ProjectListResponse,
   ProjectDetail,
   ProjectEditRequest,
@@ -311,16 +312,31 @@ export async function getHealth(): Promise<HealthResponse> {
  * user actually moved to; a `cancelled` flag that only blocks `setState` does nothing about that,
  * and reads as cancellation in a review.
  */
-export async function getProjects(signal?: AbortSignal): Promise<ProjectListResponse> {
+export async function getProjects(
+  signal?: AbortSignal,
+  query: ProjectListQuery = {},
+): Promise<ProjectListResponse> {
+  const params = new URLSearchParams();
+  const search = query.search?.trim();
+  if (search) params.set("search", search);
+  if (query.status) params.set("status", query.status);
+  params.set("limit", String(query.limit ?? 20));
+  params.set("offset", String(query.offset ?? 0));
+  const suffix = params.toString();
   return requestWithDeadline(
-    `${API_BASE_URL}/projects`,
+    `${API_BASE_URL}/projects?${suffix}`,
     { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
     async (response) => {
       if (!response.ok) {
         throw new ApiError(response.status, `GET /projects failed: ${response.status}`);
       }
       const payload = (await response.json()) as ProjectListResponse | null;
-      if (!Array.isArray(payload?.projects) || !payload.projects.every(isProjectListItemShape)) {
+      if (
+        !Array.isArray(payload?.projects) ||
+        !payload.projects.every(isProjectListItemShape) ||
+        !Number.isSafeInteger(payload.total) ||
+        payload.total < 0
+      ) {
         // A payload that does not match the contract is an error, not an empty list: an empty
         // list is a statement ("you have no projects") and may only come from the server.
         //
@@ -330,7 +346,7 @@ export async function getProjects(signal?: AbortSignal): Promise<ProjectListResp
         // blank page this check exists to prevent.
         throw new ApiError(
           response.status,
-          "GET /projects returned a payload without a valid project list",
+          "GET /projects returned a payload without a valid project page",
         );
       }
       return payload;

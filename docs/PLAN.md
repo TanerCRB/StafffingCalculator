@@ -3052,3 +3052,7 @@ history / this file's own change log, not as tracked product work.
   *Done when:* Frontend tests prove a successful edit displays the PATCH response, the original `updated_at` token is sent byte-for-byte, a stale-token `409` preserves input and explains the conflict, and edits to delivery period/reporting currency are explained and refused when an approved scenario exists. A refused write is never presented as saved.
   **Out of scope (explicit):** Project creation, copying, archiving, and scenario editing — these are separate actions or data invariants outside metadata editing.
   **Basis:** Issue #230; `Wymagania/Requirements_EN.md` F-01; SC-1-02; ADR-0005 and ADR-0007.
+- [ ] **SC-1-17** — Search, filter and paginate the Projects list (F-01).
+  *Done when:* backend and frontend tests prove case-insensitive substring search over project name, client and owner; active/archived filtering and combined criteria; 20-item server-side pages with stable ordering and no duplicates or omissions over a stable dataset; inaccessible projects never appear in rows or totals; criterion changes reset to page 1; reset clears criteria; and the UI distinguishes no matches from an empty accessible project list.
+  **Out of scope (explicit):** Project writes; client-side filtering of truncated pages; fuzzy/ranked search, filters beyond status, and user-configurable page size.
+  **Basis:** Issue #229; docs/PLAN.md SC-1-05, SC-1-07 and SC-1-09; ADR-0005 and ADR-0017; docs/architecture/capabilities.md.

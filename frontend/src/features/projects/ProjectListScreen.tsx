@@ -11,6 +11,7 @@ import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
+import { PROJECT_LIST_MESSAGES } from "./projectListMessages";
 import "./ProjectListScreen.css";
 
 /**
@@ -49,16 +50,13 @@ const ROW_ACTIONS: readonly RowAction[] = [
  * other user). The reasons below are this screen's own; the shape of the sentence is not.
  */
 const NOT_IMPLEMENTED_HINT = notImplementedHint("planned in SC-1-02..04");
-const SEARCH_AND_FILTER_HINT = notImplementedHint(
-  "search and filtering are a separate story (Issue #3, out of scope 2)",
-);
 const ADD_PROJECT_HINT = notImplementedHint(
   "creating a project from this screen is a separate task",
 );
 
 type ScreenState =
   | { kind: "loading" }
-  | { kind: "ready"; projects: ProjectListItem[] }
+  | { kind: "ready"; projects: ProjectListItem[]; total: number }
   | { kind: "denied" }
   | { kind: "timed-out" }
   | { kind: "failed" };
@@ -77,6 +75,12 @@ export function ProjectListScreen() {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<"" | ProjectListItem["status"]>("");
+  const [page, setPage] = useState(0);
+  const [accessibleTotal, setAccessibleTotal] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     // Leaving this screen ends the read, it does not merely stop listening to it (SC-1-09, K-05).
@@ -95,22 +99,33 @@ export function ProjectListScreen() {
     // R-02 read it (SC-2-04). It looks like cancellation in a diff and cancels nothing.
     const controller = new AbortController();
     let left = false;
-    getProjects(controller.signal)
+    setRefreshing(true);
+    getProjects(controller.signal, {
+      search,
+      status: status || undefined,
+      limit: 20,
+      offset: page * 20,
+    })
       .then((response) => {
         if (!left) {
-          setState({ kind: "ready", projects: response.projects });
+          const total = response.total;
+          setState({ kind: "ready", projects: response.projects, total });
+          if (search.trim() === "" && status === "") setAccessibleTotal(total);
         }
       })
       .catch((error: unknown) => {
         if (!left) {
           setState(toFailureState(error));
         }
+      })
+      .finally(() => {
+        if (!left) setRefreshing(false);
       });
     return () => {
       left = true;
       controller.abort();
     };
-  }, []);
+  }, [page, retryCount, search, status]);
 
   const projects = state.kind === "ready" ? state.projects : [];
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
@@ -134,6 +149,7 @@ export function ProjectListScreen() {
             ? { ...project, scenarios: [...project.scenarios, scenario] }
             : project,
         ),
+        total: previous.total,
       };
     });
   }
@@ -157,8 +173,12 @@ export function ProjectListScreen() {
               }
             : project,
         ),
+        total: previous.total,
       };
     });
+    // Editing a searchable field can move this row outside the active server query or onto a
+    // different page. Apply the PATCH response immediately, then reconcile the current page.
+    setRetryCount((current) => current + 1);
   }
 
   function onRowAction(actionKey: string, projectId: string) {
@@ -184,7 +204,26 @@ export function ProjectListScreen() {
             </h2>
             {/* The toolbar belongs to a list that exists. A denied read renders a screen with no
                 action controls at all — not a toolbar above an empty table (ADR-0005). */}
-            {state.kind === "ready" && <ListToolbar />}
+            {(state.kind === "ready" ||
+              (accessibleTotal !== null && (state.kind === "failed" || state.kind === "timed-out"))) && (
+              <ListToolbar
+                search={search}
+                status={status}
+                onSearchChange={(value) => {
+                  setPage(0);
+                  setSearch(value);
+                }}
+                onStatusChange={(value) => {
+                  setPage(0);
+                  setStatus(value);
+                }}
+                onReset={() => {
+                  setSearch("");
+                  setStatus("");
+                  setPage(0);
+                }}
+              />
+            )}
           </div>
 
           {state.kind === "loading" && <p className="project-list__message">Loading projects…</p>}
@@ -198,21 +237,33 @@ export function ProjectListScreen() {
           {state.kind === "timed-out" && (
             <p role="status" className="project-list__message project-list__message--attention">
               Projects could not be loaded — request timed out.
+              <button type="button" className="button button--secondary" disabled={refreshing} onClick={() => setRetryCount((count) => count + 1)}>
+                {PROJECT_LIST_MESSAGES.retry}
+              </button>
             </p>
           )}
           {state.kind === "failed" && (
             <p role="status" className="project-list__message project-list__message--attention">
               Projects could not be loaded.
+              <button type="button" className="button button--secondary" disabled={refreshing} onClick={() => setRetryCount((count) => count + 1)}>
+                {PROJECT_LIST_MESSAGES.retry}
+              </button>
             </p>
           )}
 
-          {state.kind === "ready" && projects.length === 0 && (
+          {state.kind === "ready" && refreshing && (
+            <p role="status" className="project-list__message">{PROJECT_LIST_MESSAGES.updating}</p>
+          )}
+
+          {state.kind === "ready" && !refreshing && projects.length === 0 && (
             <p role="status" className="project-list__message">
-              No projects to show.
+              {accessibleTotal === 0
+                ? PROJECT_LIST_MESSAGES.noProjects
+                : PROJECT_LIST_MESSAGES.noMatches}
             </p>
           )}
 
-          {state.kind === "ready" && projects.length > 0 && (
+          {state.kind === "ready" && !refreshing && projects.length > 0 && (
             <table className="project-list__table">
               {/* The layout has no room for a visible caption; a screen reader still gets one. */}
               <caption className="visually-hidden">Projects you have access to</caption>
@@ -284,6 +335,30 @@ export function ProjectListScreen() {
               </tbody>
             </table>
           )}
+
+          {state.kind === "ready" && !refreshing && (
+            <nav className="project-list__pagination" aria-label={PROJECT_LIST_MESSAGES.paginationLabel}>
+              <span role="status">
+                {state.total === 0
+                  ? PROJECT_LIST_MESSAGES.noPages
+                  : PROJECT_LIST_MESSAGES.page(page + 1, Math.ceil(state.total / 20))}
+              </span>
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-label={PROJECT_LIST_MESSAGES.previousPage}
+                disabled={page === 0 || refreshing}
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+              >{PROJECT_LIST_MESSAGES.previous}</button>
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-label={PROJECT_LIST_MESSAGES.nextPage}
+                disabled={(page + 1) * 20 >= state.total || refreshing}
+                onClick={() => setPage((current) => current + 1)}
+              >{PROJECT_LIST_MESSAGES.next}</button>
+            </nav>
+          )}
         </div>
 
         {state.kind === "ready" && (
@@ -334,26 +409,42 @@ export function ProjectListScreen() {
  * is exactly the API's answer), and Add project does not call `POST /projects` even though the
  * endpoint exists (SC-1-01) — that screen is a separate task with its own criteria.
  */
-function ListToolbar() {
+interface ListToolbarProps {
+  readonly search: string;
+  readonly status: "" | ProjectListItem["status"];
+  readonly onSearchChange: (value: string) => void;
+  readonly onStatusChange: (value: "" | ProjectListItem["status"]) => void;
+  readonly onReset: () => void;
+}
+
+function ListToolbar({ search, status, onSearchChange, onStatusChange, onReset }: ListToolbarProps) {
   return (
     <div className="project-list__toolbar">
       <input
         type="search"
         className="input project-list__search"
         aria-label="Search projects"
-        placeholder="Search"
-        readOnly
-        aria-disabled="true"
-        title={SEARCH_AND_FILTER_HINT}
+        placeholder={PROJECT_LIST_MESSAGES.searchPlaceholder}
+        value={search}
+        onChange={(event) => onSearchChange(event.currentTarget.value)}
       />
-      <button
-        type="button"
-        className="button button--secondary"
-        aria-disabled="true"
-        title={SEARCH_AND_FILTER_HINT}
-        onClick={handleNotYetImplemented}
-      >
-        Filters
+      <label className="project-list__status-filter">
+        {PROJECT_LIST_MESSAGES.statusLabel}
+        <select
+          aria-label="Filter projects by status"
+          className="input"
+          value={status}
+          onChange={(event) =>
+            onStatusChange(event.currentTarget.value as "" | ProjectListItem["status"])
+          }
+        >
+          <option value="">{PROJECT_LIST_MESSAGES.statusAll}</option>
+          <option value="Active">Active</option>
+          <option value="Archived">Archived</option>
+        </select>
+      </label>
+      <button type="button" className="button button--secondary" onClick={onReset}>
+        {PROJECT_LIST_MESSAGES.resetFilters}
       </button>
       <button
         type="button"

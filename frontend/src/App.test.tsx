@@ -13,7 +13,7 @@ function stubRunningBackend() {
     const path = new URL(url).pathname;
     const body: Record<string, unknown> = {
       "/health": { status: "ok" },
-      "/projects": { projects: [] },
+      "/projects": { projects: [], total: 0 },
       "/catalog/rates": { rates: [], total: 0 },
       "/catalog/dimensions/roles": { entries: [] },
       "/catalog/dimensions/seniorities": { entries: [] },

@@ -96,7 +96,7 @@ function stubBackend(terms: unknown, results?: unknown) {
       if (path === "/health") {
         body = { status: "ok" };
       } else if (path === "/projects") {
-        body = { projects: [PROJECT] };
+        body = { projects: [PROJECT], total: 1 };
       } else if (path === "/catalog/rates") {
         body = { rates: [], total: 0 };
       } else if (path.startsWith("/catalog/dimensions/")) {

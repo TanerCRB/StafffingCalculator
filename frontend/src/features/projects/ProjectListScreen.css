@@ -44,6 +44,23 @@
   min-width: 14rem;
 }
 
+.project-list__status-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--sc-space-2);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+}
+
+.project-list__pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sc-space-2);
+  margin-top: var(--sc-space-4);
+}
+
 .project-list__message {
   padding: var(--sc-space-5);
   border-radius: var(--sc-radius-md);
