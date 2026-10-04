@@ -1,0 +1,16 @@
+export const PROJECT_CREATE_TEXT = {
+  add: "Add project", cancel: "Cancel", client: "Client", create: "Create project",
+  description: "Description", end: "Delivery period end", heading: "Create a project",
+  invalid: "Enter a name, client, owner, valid delivery period, and a three-letter reporting currency.",
+  name: "Project name", owner: "Owner", currency: "Reporting currency", start: "Delivery period start",
+  forbidden: "You do not have permission to create projects.",
+  timeout: "Project creation timed out. The result may be unknown.",
+  timeoutRecovery: "The result may be unknown. This browser keeps only a recovery key, not project details. Re-enter the exact original values and retry to safely recover; changed values may be refused. Check the Projects list after recovery.",
+  retry: "Retry project creation",
+  conflict: "The server could not replay this request for the saved recovery key. Re-enter the exact original values and retry with this key.",
+  conflictDecision: "The earlier request may already have created a project. Check the Projects list first; if you still need a separate project, use the action below.",
+  startSeparate: "I checked the Projects list; start a separate project",
+  storageUnavailable: "Project creation is unavailable because this browser could not save a recovery key. Try again after enabling browser storage.",
+  refused: (status: number) => "Project could not be created (HTTP " + status + ").",
+  failed: "Project could not be created.",
+} as const;

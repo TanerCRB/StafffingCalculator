@@ -564,7 +564,7 @@ describe("ProjectListScreen", () => {
 
   // --- Restyle (layout pass over the same data) ----------------------------------------------
 
-  it("keeps search and status controls keyboard reachable and leaves add-project as a placeholder", async () => {
+  it("keeps search, status and reset keyboard reachable while Add project opens the create form", async () => {
     const fetchMock = stubProjectListResponse([AURORA, HELIOS]);
 
     render(<ProjectListScreen />);
@@ -582,15 +582,28 @@ describe("ProjectListScreen", () => {
       expect(control.tabIndex).toBe(0);
       control.focus();
       expect(control).toHaveFocus();
-      if (control === addProject) {
-        expect(control).toHaveAttribute("aria-disabled", "true");
-        expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
-      }
     }
+    expect(addProject).toBeVisible();
+    expect(addProject.tabIndex).toBe(0);
+    addProject.focus();
+    expect(addProject).toHaveFocus();
+    expect(addProject).not.toHaveAttribute("aria-disabled");
+    expect(addProject).not.toHaveAttribute("title");
 
     expect(search).not.toHaveAttribute("readonly");
 
     fireEvent.click(addProject);
+    expect(screen.getByRole("heading", { name: "Create a project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close create form" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close create form" }));
+    expect(screen.queryByRole("heading", { name: "Create a project" })).not.toBeInTheDocument();
+    // Typing in the box filters nothing: the list is the API's answer, never a client-side
+    // subset (Issue #3, out of scope 2). Both projects are still there, including the one whose
+    // name does not contain the typed text.
+    expect(addProject).toHaveAttribute("aria-expanded", "false");
     fireEvent.change(search, { target: { value: "Aurora" } });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     fireEvent.change(status, { target: { value: "Archived" } });

@@ -574,6 +574,7 @@ describe("colour contrast", () => {
     const foregroundsOn: Readonly<Record<string, readonly string[]>> = {
       // The catalogue form: its title and stated values in body text, labels and hints muted.
       "CatalogScreen.css .catalog__form": ["--sc-color-text", "--sc-color-text-muted"],
+      "ProjectCreateForm.css .project-create-form": ["--sc-color-text", "--sc-color-text-muted"],
       // A rate row: names, the muted period and "Internal", the link-style "Edit".
       "CatalogScreen.css .catalog__row > td": [
         "--sc-color-text",

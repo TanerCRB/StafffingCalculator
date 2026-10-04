@@ -12,12 +12,15 @@ upsert with no prior row to take an ADR-0007 concurrency token from, hence no 40
 lost update.
 """
 
+import hashlib
+import json
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -35,6 +38,7 @@ from app.data.staffing import copy_staffing_positions
 from app.data.write_errors import WriteFailed, WriteRefused, describe_without_values, failure_for
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
+from app.models.project_create_idempotency import ProjectCreateIdempotency
 from app.models.scenario import Scenario, ScenarioStatus
 
 
@@ -58,6 +62,10 @@ class ProjectCopyRefused(WriteRefused):
     """A classified database refusal of the project-copy transaction."""
 
 
+class ProjectCreateIdempotencyConflict(Exception):
+    """The caller reused a project-create key with a different request."""
+
+
 def _describe_without_values(error: SQLAlchemyError) -> str:
     """`app.data.write_errors.describe_without_values` bound to this table's subject.
 
@@ -78,6 +86,7 @@ def create_project(
     delivery_period_end: date,
     reporting_currency: str,
     description: str = "",
+    idempotency_key: uuid.UUID | None = None,
 ) -> CallerProjectView:
     """Insert one project and the `project_access` row that lets its creator see it.
 
@@ -104,6 +113,22 @@ def create_project(
     effect of creating), so the value is the column default, `false`. The named consequence: the
     creator of a project does not see its personnel costs until someone grants the flag.
     """
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "name": name,
+                "client": client,
+                "owner": owner,
+                "delivery_period_start": delivery_period_start.isoformat(),
+                "delivery_period_end": delivery_period_end.isoformat(),
+                "reporting_currency": reporting_currency,
+                "description": description,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     project = Project(
         id=uuid.uuid4(),
         name=name,
@@ -124,6 +149,42 @@ def create_project(
         # response agree with the gate even if the insert stopped agreeing with either.
         session.flush()
         grants_cost_visibility = bool(grant.can_view_personnel_costs)
+        if idempotency_key is not None:
+            claim = (
+                pg_insert(ProjectCreateIdempotency)
+                .values(
+                    caller_user_id=caller.user_id,
+                    key=idempotency_key,
+                    request_fingerprint=fingerprint,
+                    project_id=project.id,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        ProjectCreateIdempotency.caller_user_id,
+                        ProjectCreateIdempotency.key,
+                    ]
+                )
+                .returning(ProjectCreateIdempotency.project_id)
+            )
+            claimed_project_id = session.execute(claim).scalar_one_or_none()
+            if claimed_project_id is None:
+                existing = session.execute(
+                    sa.select(
+                        ProjectCreateIdempotency.request_fingerprint,
+                        ProjectCreateIdempotency.project_id,
+                    ).where(
+                        ProjectCreateIdempotency.caller_user_id == caller.user_id,
+                        ProjectCreateIdempotency.key == idempotency_key,
+                    )
+                ).one()
+                session.rollback()
+                if existing.request_fingerprint != fingerprint:
+                    raise ProjectCreateIdempotencyConflict
+                replay = project_for_caller(session, caller, existing.project_id)
+                if replay is None:
+                    # Do not disclose a project after its access grant has been revoked.
+                    raise ProjectCreateIdempotencyConflict
+                return replay
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()

@@ -42,6 +42,7 @@ import {
 import { isDecimalString } from "../lib/money";
 import type { HealthResponse } from "./contracts/health";
 import type {
+  ProjectCreateRequest,
   ProjectListItem,
   ProjectListQuery,
   ProjectListResponse,
@@ -381,6 +382,10 @@ export async function editProject(projectId: string, body: ProjectEditRequest): 
  * the copied project's detail, validated before the caller can add it to the visible list. */
 export async function copyProject(projectId: string): Promise<ProjectDetail> {
   return write(`/projects/${projectId}/copy`, "POST", undefined, isProjectDetailShape);
+}
+
+export async function createProject(body: ProjectCreateRequest, idempotencyKey: string): Promise<ProjectDetail> {
+  return write("/projects", "POST", body, isProjectDetailShape, { "Idempotency-Key": idempotencyKey });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -919,11 +924,12 @@ async function write<T>(
   method: "POST" | "PATCH",
   body: unknown,
   isShape: (value: unknown) => boolean,
+  extraHeaders: Record<string, string> = {},
 ): Promise<T> {
   const what = `${method} ${path}`;
   return requestWithDeadline(
     `${API_BASE_URL}${path}`,
-    { method, headers: JSON_REQUEST_HEADERS, body: JSON.stringify(body) },
+    { method, headers: { ...JSON_REQUEST_HEADERS, ...extraHeaders }, body: JSON.stringify(body) },
     async (response) => {
       if (!response.ok) {
         throw await refusalOf(response, what);
