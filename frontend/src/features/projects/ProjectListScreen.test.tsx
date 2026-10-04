@@ -3,7 +3,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CALLER_ID_HEADER, REQUEST_TIMEOUT_MS } from "../../api/client";
-import type { ProjectListItem } from "../../api/contracts/projects";
+import type { ProjectDetail, ProjectListItem } from "../../api/contracts/projects";
 import { SCREEN_CRASH_MESSAGE } from "../../shell/ScreenErrorBoundary";
 import { ProjectListScreen } from "./ProjectListScreen";
 
@@ -124,6 +124,40 @@ function stubFailedResponse(status: number) {
   return fetchMock;
 }
 
+function projectDetail(project: ProjectListItem, updatedAt = "2026-10-04T12:34:56.123456Z"): ProjectDetail {
+  return {
+    ...project,
+    owner: "Project Owner",
+    updated_at: updatedAt,
+    target_margin_percent: null,
+    overload_threshold_percent: null,
+  };
+}
+
+function stubProjectEditFlow(
+  listProject: ProjectListItem,
+  detail: ProjectDetail,
+  onPatch: (body: Record<string, unknown>) => { readonly ok: boolean; readonly status: number; readonly body: unknown },
+) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/projects") && init?.method === undefined) {
+      return { ok: true, status: 200, json: async () => ({ projects: [listProject] }) };
+    }
+    if (url.endsWith(`/projects/${detail.id}`) && init?.method === undefined) {
+      return { ok: true, status: 200, json: async () => detail };
+    }
+    if (url.endsWith(`/projects/${detail.id}`) && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      const response = onPatch(body);
+      return { ok: response.ok, status: response.status, json: async () => response.body };
+    }
+    return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 /** Body rows only — the header row is not a project. */
 async function projectRows() {
   const table = await screen.findByRole("table");
@@ -216,10 +250,15 @@ describe("ProjectListScreen", () => {
         control.focus();
         expect(control).toHaveFocus();
 
-        // Rendered, announced as not yet actionable, and wired to nothing (SC-1-02..04).
-        expect(control).toHaveAttribute("aria-disabled", "true");
-        expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
-        fireEvent.click(control);
+        if (label === "Edit") {
+          // SC-1-16 wires only Edit. Other project actions remain visibly unavailable.
+          expect(control).not.toHaveAttribute("aria-disabled");
+          expect(control).not.toHaveAttribute("title");
+        } else {
+          expect(control).toHaveAttribute("aria-disabled", "true");
+          expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
+          fireEvent.click(control);
+        }
       }
     }
 
@@ -864,5 +903,126 @@ describe("ProjectListScreen", () => {
     expect(await projectRows()).toHaveLength(2);
     await waitFor(() => expect(screen.queryByText("Loading projects…")).toBeNull());
     expect(screen.queryByText("Projects could not be loaded.")).toBeNull();
+  });
+
+  it.each(["2026-10-04T12:34:56.123456Z", "2026-11-19T03:02:01.000007Z"])(
+    "sends the unmodified detail token with a project edit (%s)",
+    async (token) => {
+      const detail = projectDetail(VESTA, token);
+      const fetchMock = stubProjectEditFlow(VESTA, detail, () => ({
+        ok: true,
+        status: 200,
+        body: { ...detail, name: "Vesta discovery edited", updated_at: "2026-10-04T12:35:00.000001Z" },
+      }));
+
+      render(<ProjectListScreen />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Vesta discovery" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Project name" }), {
+        target: { value: "Vesta discovery edited" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+      await screen.findByText("Project updated.");
+      const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+      expect(patchCall).toBeDefined();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
+        updated_at: token,
+        name: "Vesta discovery edited",
+      });
+    },
+  );
+
+  it("renders the accepted PATCH values in the project row", async () => {
+    const detail = projectDetail(VESTA);
+    stubProjectEditFlow(VESTA, detail, () => ({
+      ok: true,
+      status: 200,
+      body: { ...detail, name: "Vesta refreshed", client: "Fabrikam Updated" },
+    }));
+
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Vesta discovery" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Project name" }), {
+      target: { value: "Vesta refreshed" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Client" }), {
+      target: { value: "Fabrikam Updated" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await screen.findByText("Project updated.");
+    const rows = await projectRows();
+    const updatedRow = rowFor(rows, "Vesta refreshed");
+    expect(updatedRow.getByText("Fabrikam Updated")).toBeVisible();
+    expect(screen.queryByText("Vesta discovery")).toBeNull();
+  });
+
+  it("keeps entered values and explains a stale edit refusal", async () => {
+    const detail = projectDetail(VESTA);
+    stubProjectEditFlow(VESTA, detail, () => ({
+      ok: false,
+      status: 409,
+      body: { detail: "Project changed since it was loaded." },
+    }));
+
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Vesta discovery" }));
+    const nameInput = await screen.findByRole("textbox", { name: "Project name" });
+    fireEvent.change(nameInput, { target: { value: "My unsaved project name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This project changed while you were editing");
+    expect(nameInput).toHaveValue("My unsaved project name");
+    expect(screen.queryByText("Project updated.")).toBeNull();
+    expect(rowFor(await projectRows(), "Vesta discovery").getByText("Vesta discovery")).toBeVisible();
+  });
+
+  it("explains approved-scenario field freezes and contrasts an editable draft project", async () => {
+    const approved = { ...AURORA, scenarios: AURORA.scenarios.map((scenario) => ({ ...scenario, status: "Approved" as const })) };
+    const approvedDetail = projectDetail(approved);
+    const refusedFetch = stubProjectEditFlow(approved, approvedDetail, () => ({
+      ok: false,
+      status: 409,
+      body: { detail: "Project fields are frozen by an approved scenario." },
+    }));
+
+    const firstRender = render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Aurora migration" }));
+    expect(await screen.findByText(/may be frozen while an approved scenario exists/)).toBeVisible();
+    const approvedStart = await screen.findByLabelText("Delivery period start");
+    expect(approvedStart).toBeEnabled();
+    fireEvent.change(approvedStart, { target: { value: "2026-02-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("cannot be edited while this project has an approved scenario");
+    expect(approvedStart).toHaveValue("2026-02-01");
+    expect(screen.queryByText("Project updated.")).toBeNull();
+    expect(rowFor(await projectRows(), "Aurora migration").getByText("2026-01-01 – 2026-12-31")).toBeVisible();
+    const refusedPatch = refusedFetch.mock.calls.find(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(String(refusedPatch?.[1]?.body))).toMatchObject({
+      updated_at: approvedDetail.updated_at,
+      delivery_period: { start: "2026-02-01", end: approvedDetail.delivery_period.end },
+    });
+
+    firstRender.unmount();
+    const draftProject = { ...approved, scenarios: approved.scenarios.map((scenario) => ({ ...scenario, status: "Draft" as const })) };
+    const draftDetail = projectDetail(draftProject);
+    const fetchMock = stubProjectEditFlow(draftProject, draftDetail, (body) => ({
+      ok: true,
+      status: 200,
+      body: { ...draftDetail, delivery_period: body.delivery_period as ProjectDetail["delivery_period"] },
+    }));
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Aurora migration" }));
+    expect(screen.queryByText(/may be frozen while an approved scenario exists/)).toBeNull();
+    const start = await screen.findByLabelText("Delivery period start");
+    expect(start).toBeEnabled();
+    fireEvent.change(start, { target: { value: "2026-02-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Project updated.");
+    const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
+      updated_at: draftDetail.updated_at,
+      delivery_period: { start: "2026-02-01", end: draftDetail.delivery_period.end },
+    });
   });
 });

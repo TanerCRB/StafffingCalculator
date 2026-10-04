@@ -532,6 +532,8 @@ describe("colour contrast", () => {
       "ProjectListScreen.css .project-list__details-meta, .project-list__details-empty": [
         "--sc-color-surface-muted",
       ],
+      "ProjectListScreen.css .project-edit__error": ["--sc-color-surface-muted"],
+      "ProjectListScreen.css .project-edit__field": ["--sc-color-surface-muted"],
       "ProjectListScreen.css .scenario-card__gaps": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__metric": ["--sc-color-surface"],
       // The shell: the topbar and the rail are both white.

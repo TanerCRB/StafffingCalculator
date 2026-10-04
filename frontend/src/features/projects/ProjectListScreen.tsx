@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { ApiError, RequestTimeoutError, getProjects } from "../../api/client";
-import type { ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
+import type { ProjectDetail, ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
 import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
@@ -9,6 +9,7 @@ import { DuplicateScenarioControl } from "./DuplicateScenarioControl";
 import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
+import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
 import "./ProjectListScreen.css";
 
@@ -17,19 +18,16 @@ import "./ProjectListScreen.css";
  *
  * Read only, with one exception added by SC-4-06 (gate 1, D-2 = option A): every scenario card
  * carries a `ScenarioCommercialTermsSection`, which reads that scenario's commercial rule and revenue
- * itself and can set a Time & Material rule. Everything else on this screen still writes nothing.
+ * itself and can set a Time & Material rule. SC-1-16 adds project metadata editing from each row.
  *
  * The screen takes no access or visibility decision of its own (NF-04, ADR-0005): every row it
  * shows came from the API in that shape, including an archived project. There is no client-side
  * filter, no client-side sort and no locally invented empty list — an empty list is something
  * only the server can say.
  *
- * The row controls (View/Edit/Copy/Archive/Add scenario) and the list toolbar (search, filters,
- * add project) are rendered and keyboard reachable but wired to nothing: the screens behind them
- * are SC-1-02..04 (Issue #3, out of scope 4) and a separate search/filter story (Issue #3, out of
- * scope 2). They are `aria-disabled` with a tooltip rather than `disabled`, so that they stay in
- * the tab order and remain announced — a user may see the shape of the product ahead of its
- * implementation.
+ * View/Copy/Archive/Add scenario and the list toolbar (search, filters, add project) remain
+ * rendered and keyboard reachable but unwired. Edit is implemented by SC-1-16; the other project
+ * actions have separate write behavior and stay aria-disabled.
  *
  * Layout reference: `Wymagania/UI/Project List.jpeg` — a reference, not a specification (Issue #3,
  * out of scope 1). Colours and type come from `src/styles/tokens.css`, never from a literal here.
@@ -78,6 +76,7 @@ function toFailureState(error: unknown): ScreenState {
 export function ProjectListScreen() {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     // Leaving this screen ends the read, it does not merely stop listening to it (SC-1-09, K-05).
@@ -137,6 +136,38 @@ export function ProjectListScreen() {
         ),
       };
     });
+  }
+
+  function updateProject(updated: ProjectDetail) {
+    setState((previous) => {
+      if (previous.kind !== "ready") {
+        return previous;
+      }
+      return {
+        kind: "ready",
+        projects: previous.projects.map((project) =>
+          project.id === updated.id
+            ? {
+                ...project,
+                name: updated.name,
+                client: updated.client,
+                delivery_period: updated.delivery_period,
+                reporting_currency: updated.reporting_currency,
+                description: updated.description,
+              }
+            : project,
+        ),
+      };
+    });
+  }
+
+  function onRowAction(actionKey: string, projectId: string) {
+    if (actionKey === "edit") {
+      setSelectedProjectId(projectId);
+      setEditingProjectId(projectId);
+    } else {
+      handleNotYetImplemented();
+    }
   }
 
   return (
@@ -209,7 +240,10 @@ export function ProjectListScreen() {
                         type="button"
                         className="project-list__name-button"
                         aria-pressed={project.id === selectedProjectId}
-                        onClick={() => setSelectedProjectId(project.id)}
+                        onClick={() => {
+                          setSelectedProjectId(project.id);
+                          setEditingProjectId(null);
+                        }}
                       >
                         {project.name}
                       </button>
@@ -236,9 +270,9 @@ export function ProjectListScreen() {
                             type="button"
                             className="button button--quiet"
                             aria-label={`${action.label} ${project.name}`}
-                            aria-disabled="true"
-                            title={NOT_IMPLEMENTED_HINT}
-                            onClick={handleNotYetImplemented}
+                            aria-disabled={action.key === "edit" ? undefined : "true"}
+                            title={action.key === "edit" ? undefined : NOT_IMPLEMENTED_HINT}
+                            onClick={() => onRowAction(action.key, project.id)}
                           >
                             {action.label}
                           </button>
@@ -260,13 +294,32 @@ export function ProjectListScreen() {
             {/* The mockup calls this panel "Calculation details". The word here stays "Scenario":
                 gate-1 decision 5 (Issue #3) made Scenario the single name of that entity, in the
                 API, the data model and the UI. */}
-            <h2 id="scenario-details-heading" className="project-list__details-title">
-              Scenario details
-            </h2>
             {selectedProject === undefined ? (
+              <>
+                <h2 id="scenario-details-heading" className="project-list__details-title">
+                  Scenario details
+                </h2>
               <p className="project-list__details-empty">Select a project to see its scenarios.</p>
+              </>
+            ) : editingProjectId === selectedProject.id ? (
+              <>
+                <h2 id="scenario-details-heading" className="project-list__details-title">
+                  Project details
+                </h2>
+                <ProjectEditForm
+                  projectId={selectedProject.id}
+                  projectName={selectedProject.name}
+                  onSaved={updateProject}
+                  onCancel={() => setEditingProjectId(null)}
+                />
+              </>
             ) : (
+              <>
+                <h2 id="scenario-details-heading" className="project-list__details-title">
+                  Scenario details
+                </h2>
               <ScenarioDetails project={selectedProject} onScenarioDuplicated={addDuplicatedScenario} />
+              </>
             )}
           </section>
         )}
