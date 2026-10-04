@@ -242,6 +242,41 @@ substring of another; this addendum applies that point to the new cause and sett
 | A9-164-4 | A `409` carrying `updated_at_marker` keeps the stale-marker message (contrast). |
 | A9-164-5 | Every member of `RefusalCause` has an entry in `CONFLICT_MESSAGES`; a member added without an entry fails the type check. |
 
+## Addendum 2026-10-04 (Issue #228, SC-1-18 — gate 2)
+
+**Status:** Accepted (human decision 2026-10-04, explicitly approved for Issue #228)
+
+This addendum records the separate API decision required by point 2 of the base decision. `POST /projects`
+now supports an optional `Idempotency-Key` for project creation. It is deliberately narrow:
+it does not change the write contract for other endpoints.
+
+1. **The key is optional.** A request without `Idempotency-Key` keeps the existing create behavior,
+   preserving compatibility for callers that do not send the header. The Projects screen sends a
+   fresh UUID for each logical create operation.
+2. **Identity and payload are bound together.** A key is scoped to the authenticated caller. The
+   server records a digest of the request payload and the created project reference; it does not
+   retain a second copy of the submitted payload. A matching caller, key, and payload replays the
+   original project result. Reusing the same caller and key with a different payload returns `409`
+   and creates no second project.
+3. **Authorization remains current.** The caller must still pass the current project-create
+   permission check before a replay can return the project. Idempotency does not grant access to a
+   result after permission has been removed.
+4. **Concurrent claims are atomic.** Concurrent requests using the same caller and key cannot
+   create duplicate projects; the database claim and project reference are persisted atomically.
+5. **Client recovery is bounded to the operation key.** The browser stores the UUID in
+   `sessionStorage`, not the payload or owner data, so it can retry an unresolved create after a
+   remount. A key duplicated into another tab requires an explicit recovery choice. The UI does not
+   synthesize server-paginated rows or totals from the create response.
+6. **Scope of this decision.** This is the task-specific exception to the base decision's
+   no-idempotency rule, limited to `POST /projects`. Other write endpoints still require their own
+   decision before gaining idempotency keys.
+
+**Evidence:** `backend/tests/test_project_create_idempotency.py` covers replay, changed payload,
+caller scoping, permission re-check, and concurrency. Frontend coverage in
+`frontend/src/features/projects/ProjectListScreen.test.tsx` and
+`ProjectListSearchPagination.test.tsx` covers unresolved-create recovery, duplicated tab state, and
+paginated replay without local total inflation.
+
 ## Powiązane wymagania
 
 NF-05, NF-07, NF-08, NF-11, AC-06, F-03, NF-10; ADR-0002 (kierunek wejścia kwoty — aneks SC-2-04),
