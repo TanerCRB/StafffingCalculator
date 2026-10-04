@@ -532,6 +532,8 @@ describe("colour contrast", () => {
       "ProjectListScreen.css .project-list__details-meta, .project-list__details-empty": [
         "--sc-color-surface-muted",
       ],
+      "ProjectListScreen.css .project-edit__error": ["--sc-color-surface-muted"],
+      "ProjectListScreen.css .project-edit__field": ["--sc-color-surface-muted"],
       "ProjectListScreen.css .project-list__status-filter": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__gaps": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__metric": ["--sc-color-surface"],

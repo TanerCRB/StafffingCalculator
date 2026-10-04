@@ -45,6 +45,8 @@ import type {
   ProjectListItem,
   ProjectListQuery,
   ProjectListResponse,
+  ProjectDetail,
+  ProjectEditRequest,
   ProjectStatus,
   ScenarioListItem,
   ScenarioStatus,
@@ -352,6 +354,27 @@ export async function getProjects(
     REQUEST_TIMEOUT_MS,
     signal,
   );
+}
+
+function isProjectDetailShape(value: unknown): value is ProjectDetail {
+  return isRecord(value) && isProjectListItemShape(value) && typeof value.owner === "string" &&
+    typeof value.updated_at === "string" &&
+    (typeof value.target_margin_percent === "string" || value.target_margin_percent === null) &&
+    (typeof value.overload_threshold_percent === "string" || value.overload_threshold_percent === null);
+}
+
+export async function getProject(projectId: string, signal?: AbortSignal): Promise<ProjectDetail> {
+  const path = `/projects/${projectId}`;
+  return requestWithDeadline(`${API_BASE_URL}${path}`, { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } }, async (response) => {
+    if (!response.ok) throw await refusalOf(response, `GET ${path}`);
+    const payload: unknown = await response.json();
+    if (!isProjectDetailShape(payload)) throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+    return payload;
+  }, REQUEST_TIMEOUT_MS, signal);
+}
+
+export async function editProject(projectId: string, body: ProjectEditRequest): Promise<ProjectDetail> {
+  return write(`/projects/${projectId}`, "PATCH", body, isProjectDetailShape);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
