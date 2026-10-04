@@ -255,9 +255,10 @@ it does not change the write contract for other endpoints.
    fresh UUID for each logical create operation.
 2. **Identity and payload are bound together.** A key is scoped to the authenticated caller. The
    server records a digest of the request payload and the created project reference; it does not
-   retain a second copy of the submitted payload. A matching caller, key, and payload replays the
-   original project result. Reusing the same caller and key with a different payload returns `409`
-   and creates no second project.
+   retain a second copy of the submitted payload. The record remains while its project exists and
+   is removed with that project. A matching caller, key, and payload replays the original project
+   result. Reusing the same caller and key with a different payload returns `409` and creates no
+   second project.
 3. **Authorization remains current.** The caller must still pass the current project-create
    permission check before a replay can return the project. Idempotency does not grant access to a
    result after permission has been removed.
@@ -275,7 +276,9 @@ it does not change the write contract for other endpoints.
 caller scoping, permission re-check, and concurrency. Frontend coverage in
 `frontend/src/features/projects/ProjectListScreen.test.tsx` and
 `ProjectListSearchPagination.test.tsx` covers unresolved-create recovery, duplicated tab state, and
-paginated replay without local total inflation.
+paginated replay without local total inflation. Migration
+`backend/migrations/versions/b2d4f6a8c0e1_add_project_create_idempotency.py` ties record lifetime to
+the project with `ON DELETE CASCADE`.
 
 ## Powiązane wymagania
 
