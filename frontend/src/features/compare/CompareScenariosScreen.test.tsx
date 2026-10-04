@@ -203,7 +203,8 @@ function stubBackend(backend: Backend) {
     if (path === "/health") {
       answer = { status: 200, body: { status: "ok" } };
     } else if (path === "/projects") {
-      answer = { status: 200, body: { projects: backend.projects ?? [PROJECT] } };
+      const projects = backend.projects ?? [PROJECT];
+      answer = { status: 200, body: { projects, total: projects.length } };
     } else if (COMPARE_PATH.test(path)) {
       compareCalls += 1;
       const configured = backend.compare;
@@ -666,7 +667,7 @@ describe("abort/unmount — leaving the screen ends its reads, it does not merel
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const path = new URL(url).pathname;
       if (path === "/projects") {
-        return Promise.resolve(response(200, { projects: [PROJECT] }));
+        return Promise.resolve(response(200, { projects: [PROJECT], total: 1 }));
       }
       compareSignal = init?.signal as AbortSignal;
       return new Promise<never>((_resolve, reject) => {

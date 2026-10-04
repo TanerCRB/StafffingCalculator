@@ -46,7 +46,35 @@ export interface ProjectListItem {
   scenarios: ScenarioListItem[];
 }
 
+/** Detail read returned by GET/PATCH /projects/{id}; the token is passed back unchanged. */
+export interface ProjectDetail extends ProjectListItem {
+  owner: string;
+  updated_at: string;
+  target_margin_percent: string | null;
+  overload_threshold_percent: string | null;
+}
+
+export interface ProjectEditRequest {
+  updated_at: string;
+  name?: string;
+  client?: string;
+  owner?: string;
+  description?: string;
+  reporting_currency?: string;
+  delivery_period?: DeliveryPeriod;
+}
+
 /** An object, not a bare array — the backend reserves room for filtering/pagination metadata. */
 export interface ProjectListResponse {
   projects: ProjectListItem[];
+  /** Caller-scoped match count before pagination (ADR-0017). */
+  total: number;
+}
+
+/** Server-side search, status and offset-page parameters for `GET /projects`. */
+export interface ProjectListQuery {
+  readonly search?: string;
+  readonly status?: ProjectStatus;
+  readonly limit?: number;
+  readonly offset?: number;
 }

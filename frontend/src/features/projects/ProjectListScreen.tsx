@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { ApiError, RequestTimeoutError, getProjects } from "../../api/client";
-import type { ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
+import { ApiError, RequestTimeoutError, copyProject, getProjects } from "../../api/client";
+import type { ProjectDetail, ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
 import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
@@ -9,7 +9,9 @@ import { DuplicateScenarioControl } from "./DuplicateScenarioControl";
 import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
+import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
+import { PROJECT_COPY_MESSAGES, PROJECT_LIST_MESSAGES } from "./projectListMessages";
 import "./ProjectListScreen.css";
 
 /**
@@ -17,19 +19,16 @@ import "./ProjectListScreen.css";
  *
  * Read only, with one exception added by SC-4-06 (gate 1, D-2 = option A): every scenario card
  * carries a `ScenarioCommercialTermsSection`, which reads that scenario's commercial rule and revenue
- * itself and can set a Time & Material rule. Everything else on this screen still writes nothing.
+ * itself and can set a Time & Material rule. SC-1-16 adds project metadata editing from each row.
  *
  * The screen takes no access or visibility decision of its own (NF-04, ADR-0005): every row it
  * shows came from the API in that shape, including an archived project. There is no client-side
  * filter, no client-side sort and no locally invented empty list — an empty list is something
  * only the server can say.
  *
- * The row controls (View/Edit/Copy/Archive/Add scenario) and the list toolbar (search, filters,
- * add project) are rendered and keyboard reachable but wired to nothing: the screens behind them
- * are SC-1-02..04 (Issue #3, out of scope 4) and a separate search/filter story (Issue #3, out of
- * scope 2). They are `aria-disabled` with a tooltip rather than `disabled`, so that they stay in
- * the tab order and remain announced — a user may see the shape of the product ahead of its
- * implementation.
+ * View/Archive/Add scenario and the list toolbar (search, filters, add project) remain rendered
+ * and keyboard reachable but unwired. Edit is implemented by SC-1-16 and Copy by SC-1-19; the
+ * other project actions have separate write behavior and stay aria-disabled.
  *
  * Layout reference: `Wymagania/UI/Project List.jpeg` — a reference, not a specification (Issue #3,
  * out of scope 1). Colours and type come from `src/styles/tokens.css`, never from a literal here.
@@ -51,16 +50,13 @@ const ROW_ACTIONS: readonly RowAction[] = [
  * other user). The reasons below are this screen's own; the shape of the sentence is not.
  */
 const NOT_IMPLEMENTED_HINT = notImplementedHint("planned in SC-1-02..04");
-const SEARCH_AND_FILTER_HINT = notImplementedHint(
-  "search and filtering are a separate story (Issue #3, out of scope 2)",
-);
 const ADD_PROJECT_HINT = notImplementedHint(
   "creating a project from this screen is a separate task",
 );
 
 type ScreenState =
   | { kind: "loading" }
-  | { kind: "ready"; projects: ProjectListItem[] }
+  | { kind: "ready"; projects: ProjectListItem[]; total: number }
   | { kind: "denied" }
   | { kind: "timed-out" }
   | { kind: "failed" };
@@ -78,6 +74,23 @@ function toFailureState(error: unknown): ScreenState {
 export function ProjectListScreen() {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<"" | ProjectListItem["status"]>("");
+  const [page, setPage] = useState(0);
+  const [accessibleTotal, setAccessibleTotal] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [copyingProjectId, setCopyingProjectId] = useState<string | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [copiedProjectSnapshot, setCopiedProjectSnapshot] = useState<ProjectListItem | null>(null);
+  const copiedProjectSnapshotRef = useRef<ProjectListItem | null>(null);
+
+  function clearCopiedProjectSnapshot() {
+    copiedProjectSnapshotRef.current = null;
+    setCopiedProjectSnapshot(null);
+    setCopyMessage(null);
+  }
 
   useEffect(() => {
     // Leaving this screen ends the read, it does not merely stop listening to it (SC-1-09, K-05).
@@ -96,25 +109,47 @@ export function ProjectListScreen() {
     // R-02 read it (SC-2-04). It looks like cancellation in a diff and cancels nothing.
     const controller = new AbortController();
     let left = false;
-    getProjects(controller.signal)
+    setRefreshing(true);
+    getProjects(controller.signal, {
+      search,
+      status: status || undefined,
+      limit: 20,
+      offset: page * 20,
+      })
       .then((response) => {
         if (!left) {
-          setState({ kind: "ready", projects: response.projects });
+          const copied = copiedProjectSnapshotRef.current;
+          const copyIsOnPage = copied !== null &&
+            response.projects.some((project) => project.id === copied.id);
+          const total = response.total;
+          setState({ kind: "ready", projects: response.projects, total });
+          if (copyIsOnPage) {
+            copiedProjectSnapshotRef.current = null;
+            setCopiedProjectSnapshot(null);
+            setCopyMessage(null);
+          } else if (copied !== null && search === copied.name && status === "") {
+            setCopyMessage(PROJECT_COPY_MESSAGES.copiedNotOnPage);
+          }
+          if (search.trim() === "" && status === "") setAccessibleTotal(total);
         }
       })
       .catch((error: unknown) => {
         if (!left) {
           setState(toFailureState(error));
         }
+      })
+      .finally(() => {
+        if (!left) setRefreshing(false);
       });
     return () => {
       left = true;
       controller.abort();
     };
-  }, []);
+  }, [page, retryCount, search, status]);
 
   const projects = state.kind === "ready" ? state.projects : [];
-  const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ??
+    (copiedProjectSnapshot?.id === selectedProjectId ? copiedProjectSnapshot : undefined);
 
   /**
    * SC-6-03 — the `201` body of a successful duplicate, inserted into the scenario array of the
@@ -135,12 +170,97 @@ export function ProjectListScreen() {
             ? { ...project, scenarios: [...project.scenarios, scenario] }
             : project,
         ),
+        total: previous.total,
       };
     });
   }
 
+  function updateProject(updated: ProjectDetail) {
+    setState((previous) => {
+      if (previous.kind !== "ready") {
+        return previous;
+      }
+      return {
+        kind: "ready",
+        projects: previous.projects.map((project) =>
+          project.id === updated.id
+            ? {
+                ...project,
+                name: updated.name,
+                client: updated.client,
+                delivery_period: updated.delivery_period,
+                reporting_currency: updated.reporting_currency,
+                description: updated.description,
+              }
+            : project,
+        ),
+        total: previous.total,
+      };
+    });
+    // Editing a searchable field can move this row outside the active server query or onto a
+    // different page. Apply the PATCH response immediately, then reconcile the current page.
+    setRetryCount((current) => current + 1);
+  }
+
+  function onRowAction(actionKey: string, projectId: string) {
+    if (actionKey === "edit") {
+      setSelectedProjectId(projectId);
+      setEditingProjectId(projectId);
+    } else if (actionKey === "copy") {
+      void copyProjectRow(projectId);
+    } else {
+      handleNotYetImplemented();
+    }
+  }
+
+  async function copyProjectRow(projectId: string) {
+    if (copyingProjectId !== null) return;
+    setCopyingProjectId(projectId);
+    setCopyMessage(PROJECT_COPY_MESSAGES.copying);
+    try {
+      const detail = await copyProject(projectId);
+      const listItem: ProjectListItem = {
+        id: detail.id,
+        name: detail.name,
+        client: detail.client,
+        delivery_period: detail.delivery_period,
+        reporting_currency: detail.reporting_currency,
+        description: detail.description,
+        status: detail.status,
+        scenarios: detail.scenarios,
+      };
+      copiedProjectSnapshotRef.current = listItem;
+      setCopiedProjectSnapshot(listItem);
+      setSelectedProjectId(listItem.id);
+      setEditingProjectId(null);
+      setCopyMessage(PROJECT_COPY_MESSAGES.reconciling);
+      setPage(0);
+      setStatus("");
+      setSearch(detail.name);
+      // Reconcile ordering, filters and the total from the server's current page. Keep the
+      // validated response selected until its server-paginated row is opened (ADR-0009).
+      setRetryCount((count) => count + 1);
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setCopyMessage(PROJECT_COPY_MESSAGES.denied);
+      } else if (error instanceof RequestTimeoutError) {
+        setCopyMessage(PROJECT_COPY_MESSAGES.timedOut);
+      } else if (
+        error instanceof ApiError && error.status === 409 && error.detail !== undefined &&
+        /^The scenario's commercial terms use the model .+, which this version of the application cannot copy\. Nothing was copied; retry once every instance runs a version that supports it\.$/.test(error.detail)
+      ) {
+        setCopyMessage(PROJECT_COPY_MESSAGES.unsupportedModel(error.detail));
+      } else {
+        setCopyMessage(error instanceof ApiError ? error.detail ?? PROJECT_COPY_MESSAGES.refused : PROJECT_COPY_MESSAGES.refused);
+      }
+    } finally {
+      setCopyingProjectId(null);
+    }
+  }
+
   return (
     <section className="project-list" aria-labelledby="project-list-heading">
+      {copyMessage !== null && <p role="status" className="project-list__message">{copyMessage}</p>}
       <div className="project-list__grid">
         <div className="card project-list__main">
           <div className="project-list__toolbar-row">
@@ -153,7 +273,29 @@ export function ProjectListScreen() {
             </h2>
             {/* The toolbar belongs to a list that exists. A denied read renders a screen with no
                 action controls at all — not a toolbar above an empty table (ADR-0005). */}
-            {state.kind === "ready" && <ListToolbar />}
+            {(state.kind === "ready" ||
+              (accessibleTotal !== null && (state.kind === "failed" || state.kind === "timed-out"))) && (
+              <ListToolbar
+                search={search}
+                status={status}
+                onSearchChange={(value) => {
+                  clearCopiedProjectSnapshot();
+                  setPage(0);
+                  setSearch(value);
+                }}
+                onStatusChange={(value) => {
+                  clearCopiedProjectSnapshot();
+                  setPage(0);
+                  setStatus(value);
+                }}
+                onReset={() => {
+                  clearCopiedProjectSnapshot();
+                  setSearch("");
+                  setStatus("");
+                  setPage(0);
+                }}
+              />
+            )}
           </div>
 
           {state.kind === "loading" && <p className="project-list__message">Loading projects…</p>}
@@ -167,21 +309,33 @@ export function ProjectListScreen() {
           {state.kind === "timed-out" && (
             <p role="status" className="project-list__message project-list__message--attention">
               Projects could not be loaded — request timed out.
+              <button type="button" className="button button--secondary" disabled={refreshing} onClick={() => setRetryCount((count) => count + 1)}>
+                {PROJECT_LIST_MESSAGES.retry}
+              </button>
             </p>
           )}
           {state.kind === "failed" && (
             <p role="status" className="project-list__message project-list__message--attention">
               Projects could not be loaded.
+              <button type="button" className="button button--secondary" disabled={refreshing} onClick={() => setRetryCount((count) => count + 1)}>
+                {PROJECT_LIST_MESSAGES.retry}
+              </button>
             </p>
           )}
 
-          {state.kind === "ready" && projects.length === 0 && (
+          {state.kind === "ready" && refreshing && (
+            <p role="status" className="project-list__message">{PROJECT_LIST_MESSAGES.updating}</p>
+          )}
+
+          {state.kind === "ready" && !refreshing && projects.length === 0 && (
             <p role="status" className="project-list__message">
-              No projects to show.
+              {accessibleTotal === 0
+                ? PROJECT_LIST_MESSAGES.noProjects
+                : PROJECT_LIST_MESSAGES.noMatches}
             </p>
           )}
 
-          {state.kind === "ready" && projects.length > 0 && (
+          {state.kind === "ready" && !refreshing && projects.length > 0 && (
             <table className="project-list__table">
               {/* The layout has no room for a visible caption; a screen reader still gets one. */}
               <caption className="visually-hidden">Projects you have access to</caption>
@@ -209,7 +363,11 @@ export function ProjectListScreen() {
                         type="button"
                         className="project-list__name-button"
                         aria-pressed={project.id === selectedProjectId}
-                        onClick={() => setSelectedProjectId(project.id)}
+                        onClick={() => {
+                          clearCopiedProjectSnapshot();
+                          setSelectedProjectId(project.id);
+                          setEditingProjectId(null);
+                        }}
                       >
                         {project.name}
                       </button>
@@ -236,11 +394,12 @@ export function ProjectListScreen() {
                             type="button"
                             className="button button--quiet"
                             aria-label={`${action.label} ${project.name}`}
-                            aria-disabled="true"
-                            title={NOT_IMPLEMENTED_HINT}
-                            onClick={handleNotYetImplemented}
+                            aria-disabled={action.key === "edit" || action.key === "copy" ? undefined : "true"}
+                            disabled={action.key === "copy" && copyingProjectId !== null}
+                            title={action.key === "edit" || action.key === "copy" ? undefined : NOT_IMPLEMENTED_HINT}
+                            onClick={() => onRowAction(action.key, project.id)}
                           >
-                            {action.label}
+                            {action.key === "copy" && copyingProjectId === project.id ? PROJECT_COPY_MESSAGES.copying : action.label}
                           </button>
                         ))}
                       </div>
@@ -249,6 +408,34 @@ export function ProjectListScreen() {
                 ))}
               </tbody>
             </table>
+          )}
+
+          {state.kind === "ready" && !refreshing && (
+            <nav className="project-list__pagination" aria-label={PROJECT_LIST_MESSAGES.paginationLabel}>
+              <span role="status">
+                {state.total === 0
+                  ? PROJECT_LIST_MESSAGES.noPages
+                  : PROJECT_LIST_MESSAGES.page(page + 1, Math.ceil(state.total / 20))}
+              </span>
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-label={PROJECT_LIST_MESSAGES.previousPage}
+                disabled={page === 0 || refreshing}
+                onClick={() => {
+                  setPage((current) => Math.max(0, current - 1));
+                }}
+              >{PROJECT_LIST_MESSAGES.previous}</button>
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-label={PROJECT_LIST_MESSAGES.nextPage}
+                disabled={(page + 1) * 20 >= state.total || refreshing}
+                onClick={() => {
+                  setPage((current) => current + 1);
+                }}
+              >{PROJECT_LIST_MESSAGES.next}</button>
+            </nav>
           )}
         </div>
 
@@ -260,13 +447,32 @@ export function ProjectListScreen() {
             {/* The mockup calls this panel "Calculation details". The word here stays "Scenario":
                 gate-1 decision 5 (Issue #3) made Scenario the single name of that entity, in the
                 API, the data model and the UI. */}
-            <h2 id="scenario-details-heading" className="project-list__details-title">
-              Scenario details
-            </h2>
             {selectedProject === undefined ? (
+              <>
+                <h2 id="scenario-details-heading" className="project-list__details-title">
+                  Scenario details
+                </h2>
               <p className="project-list__details-empty">Select a project to see its scenarios.</p>
+              </>
+            ) : editingProjectId === selectedProject.id ? (
+              <>
+                <h2 id="scenario-details-heading" className="project-list__details-title">
+                  Project details
+                </h2>
+                <ProjectEditForm
+                  projectId={selectedProject.id}
+                  projectName={selectedProject.name}
+                  onSaved={updateProject}
+                  onCancel={() => setEditingProjectId(null)}
+                />
+              </>
             ) : (
+              <>
+                <h2 id="scenario-details-heading" className="project-list__details-title">
+                  Scenario details
+                </h2>
               <ScenarioDetails project={selectedProject} onScenarioDuplicated={addDuplicatedScenario} />
+              </>
             )}
           </section>
         )}
@@ -281,26 +487,42 @@ export function ProjectListScreen() {
  * is exactly the API's answer), and Add project does not call `POST /projects` even though the
  * endpoint exists (SC-1-01) — that screen is a separate task with its own criteria.
  */
-function ListToolbar() {
+interface ListToolbarProps {
+  readonly search: string;
+  readonly status: "" | ProjectListItem["status"];
+  readonly onSearchChange: (value: string) => void;
+  readonly onStatusChange: (value: "" | ProjectListItem["status"]) => void;
+  readonly onReset: () => void;
+}
+
+function ListToolbar({ search, status, onSearchChange, onStatusChange, onReset }: ListToolbarProps) {
   return (
     <div className="project-list__toolbar">
       <input
         type="search"
         className="input project-list__search"
         aria-label="Search projects"
-        placeholder="Search"
-        readOnly
-        aria-disabled="true"
-        title={SEARCH_AND_FILTER_HINT}
+        placeholder={PROJECT_LIST_MESSAGES.searchPlaceholder}
+        value={search}
+        onChange={(event) => onSearchChange(event.currentTarget.value)}
       />
-      <button
-        type="button"
-        className="button button--secondary"
-        aria-disabled="true"
-        title={SEARCH_AND_FILTER_HINT}
-        onClick={handleNotYetImplemented}
-      >
-        Filters
+      <label className="project-list__status-filter">
+        {PROJECT_LIST_MESSAGES.statusLabel}
+        <select
+          aria-label="Filter projects by status"
+          className="input"
+          value={status}
+          onChange={(event) =>
+            onStatusChange(event.currentTarget.value as "" | ProjectListItem["status"])
+          }
+        >
+          <option value="">{PROJECT_LIST_MESSAGES.statusAll}</option>
+          <option value="Active">Active</option>
+          <option value="Archived">Archived</option>
+        </select>
+      </label>
+      <button type="button" className="button button--secondary" onClick={onReset}>
+        {PROJECT_LIST_MESSAGES.resetFilters}
       </button>
       <button
         type="button"

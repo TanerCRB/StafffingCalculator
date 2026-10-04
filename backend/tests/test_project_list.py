@@ -294,7 +294,7 @@ def test_caller_with_no_project_access_rows_gets_an_empty_list_not_an_error(
     response = client.get("/projects", headers=as_caller(UNKNOWN_USER))
 
     assert response.status_code == 200
-    assert response.json() == {"projects": []}
+    assert response.json() == {"projects": [], "total": 0}
     assert "Aurora migration" not in response.text
     assert "Borealis rollout" not in response.text
 
