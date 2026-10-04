@@ -110,6 +110,25 @@ describe("project search and pagination", () => {
     expect(screen.getByText("Page 1 of 1")).toBeVisible();
   });
 
+  it("resets to offset zero when status changes from a later page", async () => {
+    const fetchMock = stubListApi();
+    render(<ProjectListScreen />);
+    await screen.findByText("Project 1", { selector: "button" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByRole("row", { name: /Project 21/ });
+    expect(requestedUrl(fetchMock, 1).searchParams.get("offset")).toBe("20");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Filter projects by status" }), {
+      target: { value: "Archived" },
+    });
+    await screen.findByRole("row", { name: /Project 30/ });
+    const changedStatus = requestedUrl(fetchMock, 2).searchParams;
+    expect(changedStatus.get("status")).toBe("Archived");
+    expect(changedStatus.get("offset")).toBe("0");
+    expect(screen.getByText("Page 1 of 1")).toBeVisible();
+  });
+
   it("distinguishes an empty caller-scoped list from a search with no matches", async () => {
     const noAccessibleProjects = stubListApi({ accessibleTotal: 0 });
     const firstRender = render(<ProjectListScreen />);
