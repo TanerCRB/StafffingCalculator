@@ -137,10 +137,10 @@ class ProjectDetail(ProjectListItem):
 
 
 class ProjectListResponse(BaseModel):
-    """An object, not a bare array: the list gains filtering/pagination metadata in a later
-    Story (explicitly out of scope here) without breaking the contract."""
+    """A page of caller-accessible projects and its filtered pre-pagination total."""
 
     projects: list[ProjectListItem]
+    total: int
 
 
 class ProjectCreateRequest(BaseModel):

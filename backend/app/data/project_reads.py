@@ -15,12 +15,12 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select, true
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.identity import CallerIdentity
 from app.data.organization_defaults import OrganizationLevel, organization_level_for
-from app.models.project import Project
+from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
 
 
@@ -106,8 +106,14 @@ def _as_view(
 
 
 def list_projects_for_caller(
-    session: Session, caller: CallerIdentity
-) -> Sequence[CallerProjectView]:
+    session: Session,
+    caller: CallerIdentity,
+    *,
+    search: str | None = None,
+    status: ProjectStatus | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[Sequence[CallerProjectView], int]:
     """Every project the caller has access to, archived ones included.
 
     Archived projects stay on the default list, clearly marked, rather than being hidden
@@ -118,17 +124,46 @@ def list_projects_for_caller(
     One statement for the whole list: the alternative — reading the flag per row where it is
     needed — is both an N+1 and a second scope decision (SC-1-08, ADR-0005 addendum point 6).
     """
-    statement = (
-        accessible_projects(caller)
-        .options(selectinload(Project.scenarios))
-        .order_by(Project.name, Project.id)
+    filtered = accessible_projects(caller)
+    if search:
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        filtered = filtered.where(
+            Project.name.ilike(pattern, escape="\\")
+            | Project.client.ilike(pattern, escape="\\")
+            | Project.owner.ilike(pattern, escape="\\")
+        )
+    if status is not None:
+        filtered = filtered.where(Project.status == status)
+    base = filtered.subquery()
+    page = (
+        select(base.c.id, base.c.can_view_personnel_costs, base.c.name)
+        .order_by(base.c.name, base.c.id)
+        .limit(limit)
+        .offset(offset)
+        .subquery()
     )
-    rows = session.execute(statement).unique().all()
+    total = select(func.count()).select_from(base).scalar_subquery()
+    total_row = select(total.label("total")).subquery()
+    statement = (
+        select(Project, page.c.can_view_personnel_costs, total_row.c.total)
+        .select_from(total_row.outerjoin(page, true()).outerjoin(Project, Project.id == page.c.id))
+        .order_by(page.c.name, page.c.id)
+        .options(selectinload(Project.scenarios))
+    )
+    result = session.execute(statement).unique().all()
+    total_count = int(result[0][2]) if result else 0
+    rows = [(row[0], row[1]) for row in result if row[0] is not None]
     # One organisation level for the whole list — two statements, not two per project (SC-1-10).
     level = organization_level_for(
         session, (scenario for project, _ in rows for scenario in project.scenarios)
     )
-    return [_as_view(row, caller, level) for row in rows]
+    return [_as_view(row, caller, level) for row in rows], total_count
+
+
+def caller_has_accessible_projects(session: Session, caller: CallerIdentity) -> bool:
+    """Resolve the caller's project scope before the API validates list-page parameters."""
+    return session.execute(select(accessible_projects(caller).exists())).scalar_one()
 
 
 def project_for_caller(

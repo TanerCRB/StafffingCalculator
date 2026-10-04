@@ -113,7 +113,7 @@ const ROW_ACTION_LABELS = ["View", "Edit", "Copy", "Archive", "Add scenario"];
 function stubProjectListResponse(projects: ProjectListItem[]) {
   const fetchMock = vi
     .fn()
-    .mockResolvedValue({ ok: true, status: 200, json: async () => ({ projects }) });
+    .mockResolvedValue({ ok: true, status: 200, json: async () => ({ projects, total: projects.length }) });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -302,45 +302,41 @@ describe("ProjectListScreen", () => {
 
   // --- Restyle (layout pass over the same data) ----------------------------------------------
 
-  it("shows search, filters and add-project as reachable controls that are wired to nothing", async () => {
+  it("keeps search and status controls keyboard reachable and leaves add-project as a placeholder", async () => {
     const fetchMock = stubProjectListResponse([AURORA, HELIOS]);
 
     render(<ProjectListScreen />);
     await projectRows();
 
     const search = screen.getByRole("searchbox", { name: "Search projects" });
-    const filters = screen.getByRole("button", { name: "Filters" });
+    const status = screen.getByRole("combobox", { name: "Filter projects by status" });
+    const reset = screen.getByRole("button", { name: "Reset filters" });
     const addProject = screen.getByRole("button", { name: "Add project" });
 
-    for (const control of [search, filters, addProject]) {
+    for (const control of [search, status, reset, addProject]) {
       // Visible and in the tab order — the shape of the product ahead of its implementation
       // (F-13), not a hidden control.
       expect(control).toBeVisible();
       expect(control.tabIndex).toBe(0);
       control.focus();
       expect(control).toHaveFocus();
-      expect(control).toHaveAttribute("aria-disabled", "true");
-      expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
+      if (control === addProject) {
+        expect(control).toHaveAttribute("aria-disabled", "true");
+        expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
+      }
     }
 
-    // The box does not accept input it cannot honour. `readOnly` is the affordance, not the
-    // mechanism: what makes typing harmless is that there is no change handler and no state behind
-    // it (asserted below). Both are pinned, because a box a user can type into that silently
-    // ignores every keystroke is a different, worse lie than one that refuses the keystroke.
-    expect(search).toHaveAttribute("readonly");
+    expect(search).not.toHaveAttribute("readonly");
 
-    fireEvent.click(filters);
     fireEvent.click(addProject);
-    // Typing in the box filters nothing: the list is the API's answer, never a client-side
-    // subset (Issue #3, out of scope 2). Both projects are still there, including the one whose
-    // name does not contain the typed text.
     fireEvent.change(search, { target: { value: "Aurora" } });
-
-    const rows = await projectRows();
-    expect(rows).toHaveLength(2);
-    expect(rowFor(rows, "Helios rollout").getByText("Contoso")).toBeInTheDocument();
-    // Nothing was fetched, created or re-read beyond the initial list request.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    fireEvent.change(status, { target: { value: "Archived" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    fireEvent.click(reset);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(search).toHaveValue("");
+    expect(status).toHaveValue("");
   });
 
   it("renders no search, filters or add-project controls when the API denies the request", async () => {
@@ -541,10 +537,11 @@ describe("ProjectListScreen", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Loading projects…")).toBeNull();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    // A screen that gave up waiting has no list, so it offers no controls over one either.
+    // The initial read never produced a list, so search controls remain hidden. Retry is available.
     expect(screen.queryByRole("searchbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add project" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 
   it("stops waiting when the response headers arrive but the body never finishes", async () => {
@@ -630,7 +627,7 @@ describe("ProjectListScreen", () => {
         vi.fn().mockResolvedValue({
           ok: true,
           status: 200,
-          json: async () => ({ projects: [row, HELIOS] }),
+          json: async () => ({ projects: [row, HELIOS], total: 2 }),
         }),
       );
 
@@ -727,7 +724,9 @@ describe("ProjectListScreen", () => {
    * `replaceWith`, when given, is the answer the *second* call gets — the one `StrictMode` issues
    * after abandoning the first.
    */
-  function stubAbortableProjectListRead(replaceWith?: { readonly projects: ProjectListItem[] }) {
+  function stubAbortableProjectListRead(
+    replaceWith?: { readonly projects: ProjectListItem[]; readonly total: number },
+  ) {
     const fetchMock = vi.fn((_url: string, init: RequestInit) => {
       return new Promise<unknown>((resolve, reject) => {
         const answer = fetchMock.mock.calls.length === 2 ? replaceWith : undefined;
@@ -796,7 +795,7 @@ describe("ProjectListScreen", () => {
     const answer = (projects: ProjectListItem[]) => ({
       ok: true,
       status: 200,
-      json: async () => ({ projects }),
+      json: async () => ({ projects, total: projects.length }),
     });
     // Neither argument is read here: which read this is depends only on the order it arrived in,
     // and the signal is inspected by the test through `fetchMock.mock.calls`.
@@ -852,7 +851,7 @@ describe("ProjectListScreen", () => {
     // The contrast to the test above: the guard silences the read the screen walked away from, not
     // every read. A guard written as `if (false)` would satisfy that test for ever and leave this
     // screen loading until the tab is closed.
-    const fetchMock = stubAbortableProjectListRead({ projects: [AURORA, HELIOS] });
+    const fetchMock = stubAbortableProjectListRead({ projects: [AURORA, HELIOS], total: 2 });
 
     render(
       <StrictMode>

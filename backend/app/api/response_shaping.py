@@ -465,7 +465,7 @@ def _without_personnel_costs[ProjectItemT: ProjectListItem](
 
 
 def shape_project_list(
-    views: Sequence[CallerProjectView], caller: CallerIdentity
+    views: Sequence[CallerProjectView], caller: CallerIdentity, *, total: int | None = None
 ) -> ProjectListResponse:
     """Shape an already access-filtered sequence of projects.
 
@@ -477,7 +477,10 @@ def shape_project_list(
     where a per-caller shortcut would be invisible, because with one accessible project the two
     readings agree.
     """
-    return ProjectListResponse(projects=[_shape_project(view, caller) for view in views])
+    return ProjectListResponse(
+        projects=[_shape_project(view, caller) for view in views],
+        total=len(views) if total is None else total,
+    )
 
 
 # --- the catalogue (SC-2-01) --------------------------------------------------------------------

@@ -52,7 +52,7 @@ function stubBackend(projects: readonly ProjectListItem[]) {
     const body: Record<string, unknown> =
       {
         "/health": { status: "ok" },
-        "/projects": { projects },
+        "/projects": { projects, total: projects.length },
         "/catalog/rates": { rates: [], total: 0 },
         "/catalog/dimensions/roles": { entries: [] },
         "/catalog/dimensions/seniorities": { entries: [] },
