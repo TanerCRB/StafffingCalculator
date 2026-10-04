@@ -14,7 +14,7 @@ through `app.data.project_writes` (ADR-0001, addendum 2026-09-18).
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -34,6 +34,7 @@ from app.data.project_reads import (
 )
 from app.data.project_writes import (
     ProjectCopyRefused,
+    ProjectCreateIdempotencyConflict,
     ProjectEditRefused,
     archive_project,
     copy_project,
@@ -122,6 +123,7 @@ def create_project_endpoint(
     payload: ProjectCreateRequest,
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_CREATE))],
     session: Annotated[Session, Depends(get_session)],
+    idempotency_key: Annotated[uuid.UUID | None, Header(alias="Idempotency-Key")] = None,
 ) -> ProjectDetail:
     """Create a project and grant its creator access to it.
 
@@ -129,17 +131,24 @@ def create_project_endpoint(
     read-only viewer must not reach this endpoint. The permission is declared as a dependency —
     the endpoint has no way to run without the check having run first.
     """
-    created = create_project(
-        session,
-        caller,
-        name=payload.name,
-        client=payload.client,
-        owner=payload.owner,
-        delivery_period_start=payload.delivery_period.start,
-        delivery_period_end=payload.delivery_period.end,
-        reporting_currency=payload.reporting_currency,
-        description=payload.description,
-    )
+    try:
+        created = create_project(
+            session,
+            caller,
+            name=payload.name,
+            client=payload.client,
+            owner=payload.owner,
+            delivery_period_start=payload.delivery_period.start,
+            delivery_period_end=payload.delivery_period.end,
+            reporting_currency=payload.reporting_currency,
+            description=payload.description,
+            idempotency_key=idempotency_key,
+        )
+    except ProjectCreateIdempotencyConflict as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Idempotency key was already used for a different or unavailable project.",
+        ) from error
     return shape_project_detail(created, caller)
 
 

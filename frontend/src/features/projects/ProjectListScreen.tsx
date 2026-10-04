@@ -12,6 +12,8 @@ import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
 import { PROJECT_COPY_MESSAGES, PROJECT_LIST_MESSAGES } from "./projectListMessages";
+import { ProjectCreateForm } from "./ProjectCreateForm";
+import { clearPendingProjectCreateKey, readPendingProjectCreateKey } from "./projectCreateOperation";
 import "./ProjectListScreen.css";
 
 /**
@@ -26,9 +28,8 @@ import "./ProjectListScreen.css";
  * filter, no client-side sort and no locally invented empty list — an empty list is something
  * only the server can say.
  *
- * View/Archive/Add scenario and the list toolbar (search, filters, add project) remain rendered
- * and keyboard reachable but unwired. Edit is implemented by SC-1-16 and Copy by SC-1-19; the
- * other project actions have separate write behavior and stay aria-disabled.
+ * Edit (SC-1-16), copy (SC-1-19), search, filters and pagination (SC-1-17) are wired.
+ * Add project opens the F-01 creation form (SC-1-18); remaining row actions are placeholders.
  *
  * Layout reference: `Wymagania/UI/Project List.jpeg` — a reference, not a specification (Issue #3,
  * out of scope 1). Colours and type come from `src/styles/tokens.css`, never from a literal here.
@@ -50,10 +51,6 @@ const ROW_ACTIONS: readonly RowAction[] = [
  * other user). The reasons below are this screen's own; the shape of the sentence is not.
  */
 const NOT_IMPLEMENTED_HINT = notImplementedHint("planned in SC-1-02..04");
-const ADD_PROJECT_HINT = notImplementedHint(
-  "creating a project from this screen is a separate task",
-);
-
 type ScreenState =
   | { kind: "loading" }
   | { kind: "ready"; projects: ProjectListItem[]; total: number }
@@ -71,7 +68,7 @@ function toFailureState(error: unknown): ScreenState {
   return { kind: "failed" };
 }
 
-export function ProjectListScreen() {
+export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: { readonly recoveryStorage?: Storage } = {}) {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -85,6 +82,12 @@ export function ProjectListScreen() {
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [copiedProjectSnapshot, setCopiedProjectSnapshot] = useState<ProjectListItem | null>(null);
   const copiedProjectSnapshotRef = useRef<ProjectListItem | null>(null);
+  const [createdProjectSnapshot, setCreatedProjectSnapshot] = useState<ProjectListItem | null>(null);
+  const createdProjectSnapshotRef = useRef<ProjectListItem | null>(null);
+  const [pendingCreateKey, setPendingCreateKey] = useState<string | null>(() => readPendingProjectCreateKey(recoveryStorage));
+  const [showCreateForm, setShowCreateForm] = useState(() => readPendingProjectCreateKey(recoveryStorage) !== null);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [createOutcomeUnknown, setCreateOutcomeUnknown] = useState(() => readPendingProjectCreateKey(recoveryStorage) !== null);
 
   function clearCopiedProjectSnapshot() {
     copiedProjectSnapshotRef.current = null;
@@ -121,6 +124,9 @@ export function ProjectListScreen() {
           const copied = copiedProjectSnapshotRef.current;
           const copyIsOnPage = copied !== null &&
             response.projects.some((project) => project.id === copied.id);
+          const created = createdProjectSnapshotRef.current;
+          const createdIsOnPage = created !== null &&
+            response.projects.some((project) => project.id === created.id);
           const total = response.total;
           setState({ kind: "ready", projects: response.projects, total });
           if (copyIsOnPage) {
@@ -129,6 +135,10 @@ export function ProjectListScreen() {
             setCopyMessage(null);
           } else if (copied !== null && search === copied.name && status === "") {
             setCopyMessage(PROJECT_COPY_MESSAGES.copiedNotOnPage);
+          }
+          if (createdIsOnPage) {
+            createdProjectSnapshotRef.current = null;
+            setCreatedProjectSnapshot(null);
           }
           if (search.trim() === "" && status === "") setAccessibleTotal(total);
         }
@@ -149,7 +159,33 @@ export function ProjectListScreen() {
 
   const projects = state.kind === "ready" ? state.projects : [];
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ??
-    (copiedProjectSnapshot?.id === selectedProjectId ? copiedProjectSnapshot : undefined);
+    (copiedProjectSnapshot?.id === selectedProjectId ? copiedProjectSnapshot : undefined) ??
+    (createdProjectSnapshot?.id === selectedProjectId ? createdProjectSnapshot : undefined);
+
+  function addCreatedProject(detail: ProjectDetail) {
+    // The detail response has owner; the list contract deliberately omits it (B-02).
+    const { id, name, client, delivery_period, reporting_currency, description, status: projectStatus, scenarios } = detail;
+    const project: ProjectListItem = { id, name, client, delivery_period, reporting_currency, description, status: projectStatus, scenarios };
+    clearCopiedProjectSnapshot();
+    setSearch("");
+    setStatus("");
+    setPage(0);
+    setEditingProjectId(null);
+    setSelectedProjectId(project.id);
+    const alreadyVisible = state.kind === "ready" && state.projects.some((item) => item.id === project.id);
+    const remainsOnCurrentPage = search === "" && status === "" && page === 0;
+    if (alreadyVisible && remainsOnCurrentPage) {
+      createdProjectSnapshotRef.current = null;
+      setCreatedProjectSnapshot(null);
+    } else {
+      createdProjectSnapshotRef.current = project;
+      setCreatedProjectSnapshot(project);
+    }
+    setShowCreateForm(false);
+    // Refresh the server-owned page and count. The created response stays pinned in the details
+    // panel until pagination returns it in a real page; it never occupies a synthetic list row.
+    setRetryCount((current) => current + 1);
+  }
 
   /**
    * SC-6-03 — the `201` body of a successful duplicate, inserted into the scenario array of the
@@ -294,9 +330,28 @@ export function ProjectListScreen() {
                   setStatus("");
                   setPage(0);
                 }}
+                createOpen={showCreateForm}
+                createPending={createSubmitting || state.kind !== "ready"}
+                onAddProject={() => setShowCreateForm((open) => !open)}
               />
             )}
           </div>
+
+          {state.kind === "ready" && showCreateForm && (
+            <ProjectCreateForm onCreated={addCreatedProject}
+              onCancel={() => setShowCreateForm(false)}
+              onSubmittingChange={setCreateSubmitting}
+              pendingKey={pendingCreateKey}
+              onPendingKeyChange={(key) => setPendingCreateKey(key)}
+              outcomeUnknown={createOutcomeUnknown}
+              onOutcomeUnknown={setCreateOutcomeUnknown}
+              onStartSeparateProject={() => {
+                clearPendingProjectCreateKey(recoveryStorage);
+                setPendingCreateKey(null);
+                setCreateOutcomeUnknown(false);
+              }}
+              recoveryStorage={recoveryStorage} />
+          )}
 
           {state.kind === "loading" && <p className="project-list__message">Loading projects…</p>}
           {/* A denied request renders a screen with no rows and no action controls — never data
@@ -482,10 +537,7 @@ export function ProjectListScreen() {
 }
 
 /**
- * Search, Filters and Add project as they appear in the mockup — rendered, focusable, announced,
- * and connected to nothing. No filtering runs on the client (Issue #3, out of scope 2: the list
- * is exactly the API's answer), and Add project does not call `POST /projects` even though the
- * endpoint exists (SC-1-01) — that screen is a separate task with its own criteria.
+ * Search, status and pagination controls address the server list; Add project opens the form.
  */
 interface ListToolbarProps {
   readonly search: string;
@@ -493,9 +545,12 @@ interface ListToolbarProps {
   readonly onSearchChange: (value: string) => void;
   readonly onStatusChange: (value: "" | ProjectListItem["status"]) => void;
   readonly onReset: () => void;
+  readonly createOpen: boolean;
+  readonly createPending: boolean;
+  readonly onAddProject: () => void;
 }
 
-function ListToolbar({ search, status, onSearchChange, onStatusChange, onReset }: ListToolbarProps) {
+function ListToolbar({ search, status, onSearchChange, onStatusChange, onReset, createOpen, createPending, onAddProject }: ListToolbarProps) {
   return (
     <div className="project-list__toolbar">
       <input
@@ -527,11 +582,12 @@ function ListToolbar({ search, status, onSearchChange, onStatusChange, onReset }
       <button
         type="button"
         className="button button--primary"
-        aria-disabled="true"
-        title={ADD_PROJECT_HINT}
-        onClick={handleNotYetImplemented}
+        aria-expanded={createOpen}
+        aria-controls="project-create-form"
+        disabled={createPending}
+        onClick={onAddProject}
       >
-        Add project
+        {createOpen ? "Close create form" : "Add project"}
       </button>
     </div>
   );

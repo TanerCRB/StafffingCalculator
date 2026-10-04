@@ -1,0 +1,7 @@
+.project-create-form { display: grid; gap: var(--sc-space-4); margin-bottom: var(--sc-space-5); padding: var(--sc-space-4); border: 1px solid var(--sc-color-border); border-radius: var(--sc-radius-md); background: var(--sc-color-surface); }
+.project-create-form h3 { margin: 0; font-size: var(--sc-font-size-lg); font-weight: var(--sc-font-weight-semibold); }
+.project-create-form__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--sc-space-3) var(--sc-space-4); }
+.project-create-form__fields label { display: grid; gap: var(--sc-space-1); font-size: var(--sc-font-size-sm); font-weight: var(--sc-font-weight-medium); }
+.project-create-form__description { grid-column: 1 / -1; }
+.project-create-form__actions { display: flex; flex-wrap: wrap; gap: var(--sc-space-2); }
+.project-create-form__error { margin: 0; padding: var(--sc-space-3); border-radius: var(--sc-radius-sm); background: var(--sc-color-attention-bg); color: var(--sc-color-attention-text); }

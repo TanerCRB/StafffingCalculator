@@ -20,6 +20,15 @@ export interface DeliveryPeriod {
   end: string;
 }
 
+export interface ProjectCreateRequest {
+  name: string;
+  client: string;
+  owner: string;
+  delivery_period: DeliveryPeriod;
+  reporting_currency: string;
+  description: string;
+}
+
 export interface ScenarioListItem {
   id: string;
   name: string;
