@@ -377,6 +377,12 @@ export async function editProject(projectId: string, body: ProjectEditRequest): 
   return write(`/projects/${projectId}`, "PATCH", body, isProjectDetailShape);
 }
 
+/** Copy a project and its scenarios (`POST /projects/{id}/copy`, SC-1-03). The server response is
+ * the copied project's detail, validated before the caller can add it to the visible list. */
+export async function copyProject(projectId: string): Promise<ProjectDetail> {
+  return write(`/projects/${projectId}/copy`, "POST", undefined, isProjectDetailShape);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

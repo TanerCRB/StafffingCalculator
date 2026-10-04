@@ -124,6 +124,43 @@ function stubFailedResponse(status: number) {
   return fetchMock;
 }
 
+function stubProjectCopyFlow(
+  source: ProjectListItem,
+  response: { readonly ok: boolean; readonly status: number; readonly body?: unknown },
+) {
+  const copiedProject = projectDetail({
+    ...source,
+    id: "99999999-9999-9999-9999-999999999999",
+    name: `${source.name} (copy)`,
+    status: "Active",
+  });
+  let copiedForList: ProjectListItem | null = null;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/projects" && init?.method === undefined) {
+      const search = (url.searchParams.get("search") ?? "").toLowerCase();
+      const status = url.searchParams.get("status");
+      const matching = [source, ...(copiedForList === null ? [] : [copiedForList])]
+        .filter((project) => status === null || project.status === status)
+        .filter((project) => search === "" || `${project.name} ${project.client}`.toLowerCase().includes(search))
+        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? matching.length);
+      return { ok: true, status: 200, json: async () => ({ projects: matching.slice(offset, offset + limit), total: matching.length }) };
+    }
+    if (url.pathname === `/projects/${source.id}/copy` && init?.method === "POST") {
+      const body = response.body ?? copiedProject;
+      if (response.ok && typeof body === "object" && body !== null && "id" in body) {
+        copiedForList = body as ProjectListItem;
+      }
+      return { ok: response.ok, status: response.status, json: async () => body };
+    }
+    return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, copiedProject };
+}
+
 function projectDetail(project: ProjectListItem, updatedAt = "2026-10-04T12:34:56.123456Z"): ProjectDetail {
   return {
     ...project,
@@ -208,6 +245,177 @@ describe("ProjectListScreen", () => {
     vi.useRealTimers();
   });
 
+  it("shows the validated copy and selected scenarios after reconciling the server list", async () => {
+    const serverCopy = projectDetail({
+      ...AURORA,
+      id: "99999999-9999-9999-9999-999999999999",
+      name: "Aurora server copy",
+      client: "Server returned client",
+      scenarios: AURORA.scenarios.map((scenario, index) => ({
+        ...scenario,
+        id: `dddddddd-0000-0000-0000-00000000000${index + 1}`,
+        name: `Server ${scenario.name}`,
+        status: "Draft",
+      })),
+    });
+    const { fetchMock } = stubProjectCopyFlow(AURORA, { ok: true, status: 201, body: serverCopy });
+    render(<ProjectListScreen />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+
+    const rows = await projectRows();
+    expect(rows).toHaveLength(1);
+    expect(rowFor(rows, "Aurora server copy").getByText("Server returned client")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Aurora server copy" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Server Aggressive ramp-up" })).toBeVisible();
+    expect(screen.getAllByText("Status: Draft")).toHaveLength(3);
+    expect(screen.queryByText("Status: Approved")).toBeNull();
+    expect(screen.queryByText("Project Owner")).toBeNull();
+    expect(screen.getByRole("searchbox", { name: "Search projects" })).toHaveValue("Aurora server copy");
+    expect(screen.getByRole("combobox", { name: "Filter projects by status" })).toHaveValue("");
+    expect(fetchMock.mock.calls.some(([input, init]) =>
+      new URL(String(input)).pathname === "/projects" && init?.method === undefined &&
+      new URL(String(input)).searchParams.get("search") === "Aurora server copy" &&
+      new URL(String(input)).searchParams.get("status") === null,
+    )).toBe(true);
+    const post = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(post).toHaveLength(1);
+    expect(new URL(String(post[0]?.[0])).pathname).toBe(`/projects/${AURORA.id}/copy`);
+    expect(post[0]?.[1]?.body).toBeUndefined();
+    expect(JSON.stringify(serverCopy)).toContain("Project Owner");
+  });
+
+  it("copies the project whose row action was selected", async () => {
+    const copiedProject = projectDetail({ ...HELIOS, id: "99999999-9999-9999-9999-999999999999", name: "Helios rollout (copy)" });
+    let listedCopy: ProjectListItem | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const path = url.pathname;
+      if (path === "/projects" && init?.method === undefined) {
+        const all = [AURORA, HELIOS, ...(listedCopy === null ? [] : [listedCopy])];
+        const search = (url.searchParams.get("search") ?? "").toLowerCase();
+        const projects = all.filter((project) => search === "" || `${project.name} ${project.client}`.toLowerCase().includes(search));
+        return { ok: true, status: 200, json: async () => ({ projects, total: projects.length }) };
+      }
+      if (path === `/projects/${HELIOS.id}/copy` && init?.method === "POST") {
+        listedCopy = copiedProject;
+        return { ok: true, status: 201, json: async () => copiedProject };
+      }
+      return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProjectListScreen />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Helios rollout" }));
+
+    expect(await screen.findByRole("button", { name: "Helios rollout (copy)" })).toHaveAttribute("aria-pressed", "true");
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(new URL(String(posts[0]?.[0])).pathname).toBe(`/projects/${HELIOS.id}/copy`);
+  });
+
+  it("clears an Archived filter and refreshes from the server when copying an archived project", async () => {
+    const { fetchMock } = stubProjectCopyFlow(HELIOS, { ok: true, status: 201 });
+    render(<ProjectListScreen />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Filter projects by status" }), {
+      target: { value: "Archived" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Helios rollout" }));
+
+    const copyButton = await screen.findByRole("button", { name: "Helios rollout (copy)" });
+    expect(copyButton).toHaveAttribute("aria-pressed", "true");
+    expect(rowFor(await projectRows(), "Helios rollout (copy)").getByText("Active")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Filter projects by status" })).toHaveValue("");
+    expect(screen.getByRole("searchbox", { name: "Search projects" })).toHaveValue("Helios rollout (copy)");
+    expect(fetchMock.mock.calls.some(([input, init]) => {
+      const url = new URL(String(input));
+      return url.pathname === "/projects" && init?.method === undefined &&
+        url.searchParams.get("search") === "Helios rollout (copy)" && url.searchParams.get("status") === null;
+    })).toBe(true);
+  });
+
+  it("keeps copied details selected and lets the user page to a copy with a repeated name", async () => {
+    const sourceProjects: ProjectListItem[] = Array.from({ length: 21 }, (_, index) => ({
+      ...AURORA,
+      id: `00000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`,
+      name: "Repeated project",
+    }));
+    const copiedProject = projectDetail({
+      ...sourceProjects[0]!,
+      id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      status: "Active",
+      scenarios: sourceProjects[0]!.scenarios.map((scenario) => ({ ...scenario, status: "Draft" as const })),
+    });
+    let serverCopy: ProjectListItem | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        const items = [...sourceProjects, ...(serverCopy === null ? [] : [serverCopy])]
+          .filter((project) => (url.searchParams.get("search") ?? "") === "" ||
+            project.name.toLowerCase().includes((url.searchParams.get("search") ?? "").toLowerCase()))
+          .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+        const offset = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number(url.searchParams.get("limit") ?? 20);
+        return { ok: true, status: 200, json: async () => ({ projects: items.slice(offset, offset + limit), total: items.length }) };
+      }
+      if (url.pathname === `/projects/${sourceProjects[0]!.id}/copy` && init?.method === "POST") {
+        serverCopy = copiedProject;
+        return { ok: true, status: 201, json: async () => copiedProject };
+      }
+      return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProjectListScreen />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Copy Repeated project" }))[0]!);
+
+    expect(await screen.findByText("Page 1 of 2")).toBeVisible();
+    expect(await screen.findByText(/its row is on another page/)).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Repeated project" })).toHaveLength(20);
+    expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(await screen.findByText("Page 2 of 2")).toBeVisible();
+    const selectedNames = screen.getAllByRole("button", { name: "Repeated project" })
+      .filter((button) => button.getAttribute("aria-pressed") === "true");
+    expect(selectedNames).toHaveLength(1);
+    expect(screen.queryByText(/its row is on another page/)).toBeNull();
+    const queriedOffsets = fetchMock.mock.calls
+      .filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)
+      .map(([input]) => Number(new URL(String(input)).searchParams.get("offset") ?? 0));
+    expect(queriedOffsets.filter((offset) => offset === 20)).toHaveLength(1);
+  });
+
+  it("does not add a phantom row when copy permission is denied", async () => {
+    const { fetchMock } = stubProjectCopyFlow(AURORA, { ok: false, status: 403, body: { detail: "Forbidden" } });
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+    expect(await screen.findByText(/you do not have permission to copy/)).toBeVisible();
+    expect(await projectRows()).toHaveLength(1);
+    expect(screen.queryByText("Aurora migration (copy)")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("explains the named unsupported-model refusal without adding a phantom row", async () => {
+    const detail = "The scenario's commercial terms use the model 'future_model', which this version of the application cannot copy. Nothing was copied; retry once every instance runs a version that supports it.";
+    const { fetchMock } = stubProjectCopyFlow(AURORA, { ok: false, status: 409, body: { detail } });
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+    expect(await screen.findByText(detail)).toBeVisible();
+    expect(await projectRows()).toHaveLength(1);
+    expect(screen.queryByText("Aurora migration (copy)")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("treats other copy conflicts as ordinary refusals", async () => {
+    stubProjectCopyFlow(AURORA, { ok: false, status: 409, body: { detail: "Project copy is currently unavailable." } });
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+    expect(await screen.findByText("Project copy is currently unavailable.")).toBeVisible();
+    expect(await projectRows()).toHaveLength(1);
+  });
+
   it("renders one row per project returned by the API, with name, client, delivery period and status", async () => {
     stubProjectListResponse([AURORA, HELIOS]);
 
@@ -265,8 +473,8 @@ describe("ProjectListScreen", () => {
         control.focus();
         expect(control).toHaveFocus();
 
-        if (label === "Edit") {
-          // SC-1-16 wires only Edit. Other project actions remain visibly unavailable.
+        if (label === "Edit" || label === "Copy") {
+          // SC-1-16 wires Edit; SC-1-19 wires Copy.
           expect(control).not.toHaveAttribute("aria-disabled");
           expect(control).not.toHaveAttribute("title");
         } else {
