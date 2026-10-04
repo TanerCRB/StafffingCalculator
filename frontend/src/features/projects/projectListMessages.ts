@@ -16,3 +16,13 @@ export const PROJECT_LIST_MESSAGES = {
   previous: "Previous",
   next: "Next",
 } as const;
+
+export const PROJECT_COPY_MESSAGES = {
+  copying: "Copying project…",
+  denied: "Project not copied — you do not have permission to copy this project.",
+  timedOut: "The copy request timed out. Check the project list before trying again.",
+  refused: "Project not copied — the server refused the copy.",
+  reconciling: "Project copied. Updating the server project list…",
+  copiedNotOnPage: "The project was copied, but its row is on another page. Use the project list pagination to locate it.",
+  unsupportedModel: (detail: string) => detail,
+} as const;

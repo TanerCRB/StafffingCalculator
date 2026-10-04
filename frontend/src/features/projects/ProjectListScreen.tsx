@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { ApiError, RequestTimeoutError, getProjects } from "../../api/client";
+import { ApiError, RequestTimeoutError, copyProject, getProjects } from "../../api/client";
 import type { ProjectDetail, ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
@@ -11,7 +11,7 @@ import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
-import { PROJECT_LIST_MESSAGES } from "./projectListMessages";
+import { PROJECT_COPY_MESSAGES, PROJECT_LIST_MESSAGES } from "./projectListMessages";
 import "./ProjectListScreen.css";
 
 /**
@@ -26,9 +26,9 @@ import "./ProjectListScreen.css";
  * filter, no client-side sort and no locally invented empty list — an empty list is something
  * only the server can say.
  *
- * View/Copy/Archive/Add scenario and the list toolbar (search, filters, add project) remain
- * rendered and keyboard reachable but unwired. Edit is implemented by SC-1-16; the other project
- * actions have separate write behavior and stay aria-disabled.
+ * View/Archive/Add scenario and the list toolbar (search, filters, add project) remain rendered
+ * and keyboard reachable but unwired. Edit is implemented by SC-1-16 and Copy by SC-1-19; the
+ * other project actions have separate write behavior and stay aria-disabled.
  *
  * Layout reference: `Wymagania/UI/Project List.jpeg` — a reference, not a specification (Issue #3,
  * out of scope 1). Colours and type come from `src/styles/tokens.css`, never from a literal here.
@@ -81,6 +81,16 @@ export function ProjectListScreen() {
   const [accessibleTotal, setAccessibleTotal] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [copyingProjectId, setCopyingProjectId] = useState<string | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [copiedProjectSnapshot, setCopiedProjectSnapshot] = useState<ProjectListItem | null>(null);
+  const copiedProjectSnapshotRef = useRef<ProjectListItem | null>(null);
+
+  function clearCopiedProjectSnapshot() {
+    copiedProjectSnapshotRef.current = null;
+    setCopiedProjectSnapshot(null);
+    setCopyMessage(null);
+  }
 
   useEffect(() => {
     // Leaving this screen ends the read, it does not merely stop listening to it (SC-1-09, K-05).
@@ -105,11 +115,21 @@ export function ProjectListScreen() {
       status: status || undefined,
       limit: 20,
       offset: page * 20,
-    })
+      })
       .then((response) => {
         if (!left) {
+          const copied = copiedProjectSnapshotRef.current;
+          const copyIsOnPage = copied !== null &&
+            response.projects.some((project) => project.id === copied.id);
           const total = response.total;
           setState({ kind: "ready", projects: response.projects, total });
+          if (copyIsOnPage) {
+            copiedProjectSnapshotRef.current = null;
+            setCopiedProjectSnapshot(null);
+            setCopyMessage(null);
+          } else if (copied !== null && search === copied.name && status === "") {
+            setCopyMessage(PROJECT_COPY_MESSAGES.copiedNotOnPage);
+          }
           if (search.trim() === "" && status === "") setAccessibleTotal(total);
         }
       })
@@ -128,7 +148,8 @@ export function ProjectListScreen() {
   }, [page, retryCount, search, status]);
 
   const projects = state.kind === "ready" ? state.projects : [];
-  const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ??
+    (copiedProjectSnapshot?.id === selectedProjectId ? copiedProjectSnapshot : undefined);
 
   /**
    * SC-6-03 — the `201` body of a successful duplicate, inserted into the scenario array of the
@@ -185,13 +206,61 @@ export function ProjectListScreen() {
     if (actionKey === "edit") {
       setSelectedProjectId(projectId);
       setEditingProjectId(projectId);
+    } else if (actionKey === "copy") {
+      void copyProjectRow(projectId);
     } else {
       handleNotYetImplemented();
     }
   }
 
+  async function copyProjectRow(projectId: string) {
+    if (copyingProjectId !== null) return;
+    setCopyingProjectId(projectId);
+    setCopyMessage(PROJECT_COPY_MESSAGES.copying);
+    try {
+      const detail = await copyProject(projectId);
+      const listItem: ProjectListItem = {
+        id: detail.id,
+        name: detail.name,
+        client: detail.client,
+        delivery_period: detail.delivery_period,
+        reporting_currency: detail.reporting_currency,
+        description: detail.description,
+        status: detail.status,
+        scenarios: detail.scenarios,
+      };
+      copiedProjectSnapshotRef.current = listItem;
+      setCopiedProjectSnapshot(listItem);
+      setSelectedProjectId(listItem.id);
+      setEditingProjectId(null);
+      setCopyMessage(PROJECT_COPY_MESSAGES.reconciling);
+      setPage(0);
+      setStatus("");
+      setSearch(detail.name);
+      // Reconcile ordering, filters and the total from the server's current page. Keep the
+      // validated response selected until its server-paginated row is opened (ADR-0009).
+      setRetryCount((count) => count + 1);
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setCopyMessage(PROJECT_COPY_MESSAGES.denied);
+      } else if (error instanceof RequestTimeoutError) {
+        setCopyMessage(PROJECT_COPY_MESSAGES.timedOut);
+      } else if (
+        error instanceof ApiError && error.status === 409 && error.detail !== undefined &&
+        /^The scenario's commercial terms use the model .+, which this version of the application cannot copy\. Nothing was copied; retry once every instance runs a version that supports it\.$/.test(error.detail)
+      ) {
+        setCopyMessage(PROJECT_COPY_MESSAGES.unsupportedModel(error.detail));
+      } else {
+        setCopyMessage(error instanceof ApiError ? error.detail ?? PROJECT_COPY_MESSAGES.refused : PROJECT_COPY_MESSAGES.refused);
+      }
+    } finally {
+      setCopyingProjectId(null);
+    }
+  }
+
   return (
     <section className="project-list" aria-labelledby="project-list-heading">
+      {copyMessage !== null && <p role="status" className="project-list__message">{copyMessage}</p>}
       <div className="project-list__grid">
         <div className="card project-list__main">
           <div className="project-list__toolbar-row">
@@ -210,14 +279,17 @@ export function ProjectListScreen() {
                 search={search}
                 status={status}
                 onSearchChange={(value) => {
+                  clearCopiedProjectSnapshot();
                   setPage(0);
                   setSearch(value);
                 }}
                 onStatusChange={(value) => {
+                  clearCopiedProjectSnapshot();
                   setPage(0);
                   setStatus(value);
                 }}
                 onReset={() => {
+                  clearCopiedProjectSnapshot();
                   setSearch("");
                   setStatus("");
                   setPage(0);
@@ -292,6 +364,7 @@ export function ProjectListScreen() {
                         className="project-list__name-button"
                         aria-pressed={project.id === selectedProjectId}
                         onClick={() => {
+                          clearCopiedProjectSnapshot();
                           setSelectedProjectId(project.id);
                           setEditingProjectId(null);
                         }}
@@ -321,11 +394,12 @@ export function ProjectListScreen() {
                             type="button"
                             className="button button--quiet"
                             aria-label={`${action.label} ${project.name}`}
-                            aria-disabled={action.key === "edit" ? undefined : "true"}
-                            title={action.key === "edit" ? undefined : NOT_IMPLEMENTED_HINT}
+                            aria-disabled={action.key === "edit" || action.key === "copy" ? undefined : "true"}
+                            disabled={action.key === "copy" && copyingProjectId !== null}
+                            title={action.key === "edit" || action.key === "copy" ? undefined : NOT_IMPLEMENTED_HINT}
                             onClick={() => onRowAction(action.key, project.id)}
                           >
-                            {action.label}
+                            {action.key === "copy" && copyingProjectId === project.id ? PROJECT_COPY_MESSAGES.copying : action.label}
                           </button>
                         ))}
                       </div>
@@ -348,14 +422,18 @@ export function ProjectListScreen() {
                 className="button button--secondary"
                 aria-label={PROJECT_LIST_MESSAGES.previousPage}
                 disabled={page === 0 || refreshing}
-                onClick={() => setPage((current) => Math.max(0, current - 1))}
+                onClick={() => {
+                  setPage((current) => Math.max(0, current - 1));
+                }}
               >{PROJECT_LIST_MESSAGES.previous}</button>
               <button
                 type="button"
                 className="button button--secondary"
                 aria-label={PROJECT_LIST_MESSAGES.nextPage}
                 disabled={(page + 1) * 20 >= state.total || refreshing}
-                onClick={() => setPage((current) => current + 1)}
+                onClick={() => {
+                  setPage((current) => current + 1);
+                }}
               >{PROJECT_LIST_MESSAGES.next}</button>
             </nav>
           )}
