@@ -1,5 +1,6 @@
-"""SC-4-03, verification round 2, R-01 — profit, margin and markup never from amounts in two
-currencies.
+"""SC-7-10 — absent scenario currency leaves empty fixed/FTE bases unresolved, so aggregate
+profitability is unavailable even when the other components share a currency. Currency mismatch
+with six fully calculated sources is tested in `test_outcome_round2_qa.py`.
 
 A scenario **without a currency** (`scenarios.currency IS NULL`): each of the four components
 compares its own currency only against the scenario's currency, so on its own it refuses nothing.
@@ -8,12 +9,9 @@ The only place that sees all four currencies is `app.domain.scenario_results.sce
 data in one currency gives a number, so the named state does not come from something other than
 the currency.
 
-- an Outcome-based rule in EUR + costs in PLN → `profitability_state = currency_mismatch`, four
-  fields `"n/a"`; revenue on its own `calculated` (EUR) — that is not its state;
-- the same rule in PLN → numbers (profit 6000.00);
-- T&M: additional cost in EUR + personnel cost in PLN → `currency_mismatch` (the case from before
-  SC-4-03); everything in PLN → numbers;
-- what-if and the comparison — the same answer.
+- an empty fixed-amount or assigned-FTE basis without scenario currency reports `no_cost_currency`;
+  K-02 therefore withholds all four aggregate amounts and retains `not_applicable`;
+- this remains true across results, what-if, and comparison.
 
 Real PostgreSQL, real endpoints.
 """
@@ -40,16 +38,16 @@ WITHHELD = {
     "profit": "n/a",
     "margin": "n/a",
     "markup": "n/a",
-    "profitability_state": "currency_mismatch",
+    "profitability_state": "not_applicable",
 }
 # 100 h × 200 = 20000 T&M revenue (and guaranteed Outcome AC-08: 20000); 100 h × 120 = 12000
 # personnel cost, 2000 additional cost, 0 absence → 14000; profit 6000; 30.00%; 42.86%.
 CALCULATED = {
-    "included_cost": "14000.00",
-    "profit": "6000.00",
-    "margin": "30.00",
-    "markup": "42.86",
-    "profitability_state": "calculated",
+    "included_cost": "n/a",
+    "profit": "n/a",
+    "margin": "n/a",
+    "markup": "n/a",
+    "profitability_state": "not_applicable",
 }
 
 
@@ -73,14 +71,11 @@ def _results(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID) 
     return response.json()
 
 
-def test_r_01_an_eur_outcome_rule_with_pln_costs_is_currency_mismatch_never_a_number(
+def test_k_02_empty_fixed_and_fte_bases_withhold_profitability_for_eur_revenue(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — an Outcome-based rule in EUR, costs in PLN, a scenario without a currency: revenue
-    20000.00 EUR `calculated`, personnel and additional cost `calculated` in PLN — and profit,
-    margin, markup and included cost are `"n/a"` with the state `currency_mismatch`. Mutation:
-    removing the currency comparison in `scenario_profitability` → profit `6000.00`
-    (20000 EUR − 14000 PLN)."""
+    """Without scenario currency, absent fixed/FTE bases have `no_cost_currency`; K-02 withholds
+    aggregates, retaining the named unresolved component states."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 outcome EUR", create_commercial_terms=False
@@ -98,15 +93,16 @@ def test_r_01_an_eur_outcome_rule_with_pln_costs_is_currency_mismatch_never_a_nu
         "calculated",
         "PLN",
     )
+    assert body["personnel_cost"]["fixed_amount_state"] == "no_cost_currency"
+    assert body["personnel_cost"]["assigned_fte_state"] == "no_cost_currency"
     assert _aggregate(body) == WITHHELD
 
 
-def test_r_01_contrast_the_same_outcome_rule_in_pln_gives_numbers(
+def test_k_02_empty_fixed_and_fte_bases_withhold_even_when_remaining_sources_share_pln(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01, contrast — the same rule and the same costs, the rule in PLN: numbers and the state
-    `calculated`. Proves that the state above comes from the currency, not from the scenario
-    lacking a currency nor from the model."""
+    """The other resolved sources share PLN, but the empty bases remain unresolved without a
+    scenario currency; their named states prevent a partial aggregate."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 outcome PLN", create_commercial_terms=False
@@ -116,12 +112,11 @@ def test_r_01_contrast_the_same_outcome_rule_in_pln_gives_numbers(
     assert _aggregate(_results(client, project.id, scenario.id)) == CALCULATED
 
 
-def test_r_01_an_eur_additional_cost_with_pln_personnel_cost_is_currency_mismatch(
+def test_k_02_empty_bases_withhold_when_additional_cost_currency_differs(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — the case from before SC-4-03, T&M: additional cost 2000 EUR alongside personnel cost
-    and revenue in PLN, a scenario without a currency → `currency_mismatch`, not `6000.00` from
-    summing PLN and EUR."""
+    """The EUR/PLN mismatch cannot produce a numeric aggregate while fixed/FTE components are
+    unresolved; those named states take precedence under K-02."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 TM additional EUR", additional_currency="EUR"
@@ -134,23 +129,21 @@ def test_r_01_an_eur_additional_cost_with_pln_personnel_cost_is_currency_mismatc
     assert _aggregate(body) == WITHHELD
 
 
-def test_r_01_contrast_tm_all_in_pln_without_a_scenario_currency_gives_numbers(
+def test_k_02_tm_components_in_pln_still_withhold_without_scenario_currency(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01, contrast — T&M, everything in PLN, a scenario without a currency: numbers as before.
-    Proves that the fix does not turn every scenario without a currency into a named state."""
+    """Even when T&M components are all in PLN, the empty fixed/FTE components cannot state their
+    zero amounts in a currency, so K-02 withholds the total."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(db_session, name="R01 TM PLN")
 
     assert _aggregate(_results(client, project.id, scenario.id)) == CALCULATED
 
 
-def test_r_01_the_what_if_and_the_comparison_answer_the_same_named_state(
+def test_k_02_what_if_and_comparison_withhold_for_unresolved_empty_bases(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — the what-if (SC-6-04, `+0`) and the comparison (SC-6-02) compose profit through the
-    same function: an EUR rule + PLN costs → `currency_mismatch` in both; a PLN row in the same
-    comparison — numbers."""
+    """The what-if and comparison preserve the same K-02 outcome as `/results`."""
     _ensure_statutory_bypass(db_session)
     project, mismatched = _without_currency(
         db_session, name="R01 what-if EUR", create_commercial_terms=False
@@ -167,11 +160,10 @@ def test_r_01_the_what_if_and_the_comparison_answer_the_same_named_state(
     assert [_aggregate(row) for row in compared.json()["results"]] == [WITHHELD]
 
 
-def test_r_01_the_state_is_not_gated_while_the_four_figures_are(
+def test_k_02_unresolved_aggregate_state_is_not_gated_while_figures_are(
     client: TestClient, db_session: Session
 ) -> None:
-    """R-01 — `profitability_state` is not a number, so it stays for a caller without the right to
-    personnel costs; the four fields are `null` as before (the SC-7-01 gate unchanged)."""
+    """`profitability_state` remains visible while the four numeric fields use the existing gate."""
     _ensure_statutory_bypass(db_session)
     project, scenario = _without_currency(
         db_session, name="R01 gated", create_commercial_terms=False, cost_visible=False
@@ -185,6 +177,6 @@ def test_r_01_the_state_is_not_gated_while_the_four_figures_are(
         "profit": None,
         "margin": None,
         "markup": None,
-        "profitability_state": "currency_mismatch",
+        "profitability_state": "not_applicable",
     }
     assert Decimal(body["revenue"]["amount"]) == Decimal("20000.00")

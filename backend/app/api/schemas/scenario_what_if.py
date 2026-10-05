@@ -28,12 +28,12 @@ hold, never a negative one it could not.
 """
 
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Query
 
-from app.api.schemas.common import DecimalString
-from app.api.schemas.scenario_results import ScenarioResults
+from app.api.schemas.common import DecimalString, Iso4217Code
+from app.api.schemas.scenario_results import ScenarioResultsBase
 from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
 SALARY_RAISE_PERCENT_FLOOR = Decimal("-100")
@@ -63,7 +63,7 @@ SalaryRaisePercentQuery = Annotated[
 ]
 
 
-class ScenarioWhatIfSalaryRaiseResults(ScenarioResults):
+class ScenarioWhatIfSalaryRaiseResults(ScenarioResultsBase):
     """`GET …/scenarios/{id}/what-if` — the same fields `ScenarioResults` carries (revenue,
     personnel_cost, additional_cost, included_cost, profit, margin, markup, profitability_state),
     next to the hypothetical raise that produced them.
@@ -98,8 +98,27 @@ BillableUtilizationDecreaseQuery = Annotated[
 ]
 
 
-class ScenarioWhatIfBillableUtilizationResults(ScenarioResults):
+class ScenarioWhatIfBillableUtilizationResults(ScenarioResultsBase):
     """`GET .../what-if/billable-utilization` with a T&M revenue-input substitution."""
 
     billable_utilization_decrease_percentage_points: DecimalString
     """The requested decrease is echoed in the response."""
+
+
+class ScenarioWhatIfDelayedStartResults(ScenarioResultsBase):
+    """`GET .../what-if/delayed-start` result for a whole-calendar-month shift."""
+
+    delay_months: int
+
+
+ExchangeRateReplacementRateQuery = Annotated[
+    Decimal,
+    Query(gt=0, max_digits=20, decimal_places=10, description="Positive temporary exchange rate."),
+]
+
+
+class ScenarioWhatIfExchangeRateResults(ScenarioResultsBase):
+    source_currency: Iso4217Code
+    target_currency: Iso4217Code
+    replacement_rate: DecimalString
+    exchange_rate_what_if_state: Literal["calculated", "not_applicable"]

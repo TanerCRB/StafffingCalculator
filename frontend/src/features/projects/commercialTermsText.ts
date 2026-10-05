@@ -15,6 +15,7 @@
 import { ApiError, RequestTimeoutError } from "../../api/client";
 import {
   OUTCOME_BASED,
+  FIXED_PRICE,
   STORY_POINTS,
   TIME_AND_MATERIAL,
   type OutcomeCategory,
@@ -141,6 +142,7 @@ const MODEL_LABELS: ReadonlyMap<string, string> = new Map([
   [TIME_AND_MATERIAL, "Time & Material"],
   [STORY_POINTS, "Story Points"],
   [OUTCOME_BASED, "Outcome-based"],
+  [FIXED_PRICE, "Fixed Price"],
 ]);
 
 /**
@@ -155,6 +157,13 @@ export function commercialModelName(modelType: string): string {
 
 /** The label of the only write this section offers (and its accessible name, with the scenario). */
 export const SET_TIME_AND_MATERIAL = "Set Time & Material";
+export const SET_FIXED_PRICE = "Set Fixed Price";
+export const EDIT_FIXED_PRICE = "Edit agreed price";
+export const SAVE_FIXED_PRICE = "Save price";
+export const AGREED_PRICE_LABEL = "Agreed price:";
+export const FIXED_PRICE_CURRENCY_LABEL = "Currency:";
+export const FIXED_PRICE_PRICE_LABEL = "Agreed price";
+export const FIXED_PRICE_CURRENCY_FIELD_LABEL = "Currency";
 
 /** Presentation of the status the server just reported (ADR-0009, addendum 2026-09-23, point 4),
  * shown where the action would be — not a rule of this screen's own. */
@@ -175,6 +184,7 @@ export const UNRESOLVED_MONTHS_LABEL = "Months without a rate:";
 /** Where a model priced from its own rule takes its revenue — in place of the Time & Material lines
  * above, which would name hours, windows and months these models never read (SC-4-07, K-01). */
 export const RULE_SOURCE_LABELS: Readonly<Record<Exclude<RevenueModelKind, "catalog">, string>> = {
+  [FIXED_PRICE]: "Revenue taken from: the Fixed Price rule's agreed price",
   [STORY_POINTS]:
     "Revenue taken from: the Story Points rule — its price per point and accepted points, " +
     "not hours and not catalogue rates",

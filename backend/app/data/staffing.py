@@ -103,6 +103,7 @@ from app.core.identity import CallerIdentity
 from app.data.absence_budget import BudgetKey, budgets_for_months, statutory_leave_type
 from app.data.column_copy import values_to_copy
 from app.data.project_reads import CallerProjectView, project_for_caller
+from app.data.rate_windows import shift_calendar_month_date
 from app.data.risk_copy import copied_risk_ids, remapped
 from app.data.scenario_guard import unapproved_scenario
 from app.data.working_calendar import basis_by_location
@@ -357,6 +358,19 @@ def scenario_view_in_scope(
     return None
 
 
+def ensure_allocation_months_fit_shift(
+    session: Session, scenario_id: uuid.UUID, months: int
+) -> None:
+    """Refuse a staffing-month shift that cannot be represented by the application's date type."""
+    period_months = session.scalars(
+        sa.select(StaffingPositionAllocation.period_month)
+        .join(StaffingPosition, StaffingPosition.id == StaffingPositionAllocation.position_id)
+        .where(StaffingPosition.scenario_id == scenario_id)
+    ).all()
+    for period_month in period_months:
+        shift_calendar_month_date(period_month, months)
+
+
 @dataclass(frozen=True)
 class StaffingPositionView:
     """One position, its month rows, its absences — and the capacity derived for each month.
@@ -412,7 +426,9 @@ def _views_of(
 
 
 def budget_keys_and_months(
-    positions: Sequence[StaffingPosition], bases: Mapping[uuid.UUID, CalendarBasis]
+    positions: Sequence[StaffingPosition],
+    bases: Mapping[uuid.UUID, CalendarBasis],
+    allocation_months: Mapping[tuple[uuid.UUID, date], date] | None = None,
 ) -> tuple[list[BudgetKey], list[date]]:
     """The (calendar, engagement type) pairs and the months whose budgets these positions read.
 
@@ -430,7 +446,14 @@ def budget_keys_and_months(
         if basis is None:
             continue
         keys.append((basis.calendar_id, position.engagement_type_id))
-        months.extend(allocation.period_month for allocation in position.allocations)
+        months.extend(
+            allocation.period_month
+            if allocation_months is None
+            else allocation_months.get(
+                (position.id, allocation.period_month), allocation.period_month
+            )
+            for allocation in position.allocations
+        )
     return keys, months
 
 
@@ -439,6 +462,7 @@ def position_view(
     basis: CalendarBasis | None,
     budgets: Mapping[tuple[BudgetKey, date], AbsenceBudget],
     statutory: StatutoryLeaveType | None,
+    allocation_months: Mapping[date, date] | None = None,
 ) -> StaffingPositionView:
     """One position's view: its months, its absences and the capacity of each month.
 
@@ -486,7 +510,12 @@ def position_view(
     absorbed: dict[uuid.UUID, int] = {}
     capacity: dict[date, MonthCapacity] = {}
     for allocation in position.allocations:
-        budget = None if key is None else budgets.get((key, allocation.period_month))
+        period_month = (
+            allocation.period_month
+            if allocation_months is None
+            else allocation_months.get(allocation.period_month, allocation.period_month)
+        )
+        budget = None if key is None else budgets.get((key, period_month))
         share = None
         if budget is not None and basis is not None:
             if budget.budget_id not in absorbed:
@@ -495,16 +524,16 @@ def position_view(
                 )
             share = month_budget_share(
                 budget,
-                period_month=allocation.period_month,
+                period_month=period_month,
                 headcount=position.headcount,
                 standard_hours_per_day=basis.standard_hours_per_day,
                 statutory_leave_named=statutory is not None,
                 manual_statutory_days_in_window=absorbed[budget.budget_id],
             )
-        capacity[allocation.period_month] = month_capacity(
+        capacity[period_month] = month_capacity(
             basis,
             headcount=position.headcount,
-            period_month=allocation.period_month,
+            period_month=period_month,
             absences=spans,
             budget_share=share,
         )

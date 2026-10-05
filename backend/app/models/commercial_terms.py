@@ -71,6 +71,8 @@ SC-4-02):
    (`app.data.commercial_terms.update_fixed_price`, point 7 of the addendum).
 """
 
+import hashlib
+import json
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -354,9 +356,7 @@ class TmTerms(Base):
 
     __tablename__ = "tm_terms"
 
-    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), primary_key=True
-    )
+    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
     model_type: Mapped[str] = mapped_column(
         String(MODEL_TYPE_LENGTH),
         nullable=False,
@@ -404,9 +404,7 @@ class StoryPointsTerms(Base):
 
     __tablename__ = "story_points_terms"
 
-    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), primary_key=True
-    )
+    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
     model_type: Mapped[str] = mapped_column(
         String(MODEL_TYPE_LENGTH),
         nullable=False,
@@ -486,9 +484,7 @@ class OutcomeTerms(Base):
 
     __tablename__ = "outcome_terms"
 
-    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), primary_key=True
-    )
+    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
     model_type: Mapped[str] = mapped_column(
         String(MODEL_TYPE_LENGTH),
         nullable=False,
@@ -547,9 +543,7 @@ class OutcomeTerms(Base):
             for category in OUTCOME_CATEGORIES
         ),
         CheckConstraint(OUTCOME_PROBABILITIES_EXPRESSION, name="probabilities_sum_to_100"),
-        CheckConstraint(
-            OUTCOME_UNITS_WITH_UNIT_RATE_EXPRESSION, name="units_given_with_unit_rate"
-        ),
+        CheckConstraint(OUTCOME_UNITS_WITH_UNIT_RATE_EXPRESSION, name="units_given_with_unit_rate"),
         ForeignKeyConstraint(
             ["commercial_terms_id", "model_type"],
             ["commercial_terms.id", "commercial_terms.model_type"],
@@ -574,9 +568,7 @@ class FixedPriceTerms(Base):
 
     __tablename__ = "fixed_price_terms"
 
-    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), primary_key=True
-    )
+    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
     model_type: Mapped[str] = mapped_column(
         String(MODEL_TYPE_LENGTH),
         nullable=False,
@@ -615,3 +607,58 @@ class FixedPriceTerms(Base):
             name=FIXED_PRICE_TYPE_AGREEMENT_FOREIGN_KEY,
         ),
     )
+
+
+def fixed_price_adjustment_request_fingerprint(
+    kind: str, amount: Decimal, currency: str
+) -> str:
+    normalized_amount = format(Decimal(str(amount)).normalize(), "f")
+    payload = json.dumps(
+        [kind, normalized_amount, currency], ensure_ascii=True, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("ascii")).hexdigest()
+
+
+def _adjustment_fingerprint_default(context) -> str:
+    values = context.get_current_parameters()
+    return fixed_price_adjustment_request_fingerprint(
+        values["kind"], values["amount"], values["currency"]
+    )
+
+
+class FixedPriceAdjustment(Base):
+    """A separately decided, signed contribution to one Fixed Price rule's revenue."""
+
+    __tablename__ = "fixed_price_adjustment"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), nullable=False, default=uuid.uuid4
+    )
+    request_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=_adjustment_fingerprint_default
+    )
+    commercial_terms_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("fixed_price_terms.commercial_terms_id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, server_default="pending")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "commercial_terms_id", "request_id", name="uq_fixed_price_adjustment_request"
+        ),
+        Index("ix_fixed_price_adjustment_terms_status", "commercial_terms_id", "status"),
+        CheckConstraint("kind IN ('increase', 'decrease')", name="kind_known"),
+        CheckConstraint("amount >= 0", name="amount_non_negative"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="status_known"),
+        CheckConstraint(
+            "char_length(currency) = 3 AND currency = upper(currency)", name="currency_valid"
+        ),
+    )
+
+    terms: Mapped[FixedPriceTerms] = relationship()

@@ -27,6 +27,7 @@ import app.data.scenario_what_if as scenario_what_if_module
 from app.core.identity import CallerIdentity, Permission
 from app.data.personnel_cost import scenario_cost_for_caller as real_scenario_cost_for_caller
 from app.models import ScenarioStatus
+from app.models.exchange_rate import ExchangeRate
 from tests.conftest import (
     BACKEND_ROOT,
     IN_SCOPE_USER,
@@ -47,6 +48,7 @@ from tests.test_scenario_results import (
     MAR,
     _ensure_statutory_bypass,
     _full_scenario,
+    _results,
     results_path,
 )
 
@@ -67,6 +69,21 @@ def what_if_path(
     return (
         f"/projects/{project_id}/scenarios/{scenario_id}/what-if"
         f"?salary_raise_percent={salary_raise_percent}"
+    )
+
+
+def exchange_rate_what_if_path(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    source_currency: str,
+    target_currency: str,
+    replacement_rate: str,
+) -> str:
+    return (
+        f"/projects/{project_id}/scenarios/{scenario_id}/what-if/exchange-rate"
+        f"?source_currency={source_currency}&target_currency={target_currency}"
+        f"&replacement_rate={replacement_rate}"
     )
 
 
@@ -617,3 +634,175 @@ def test_r_01_exactly_minus_100_percent_is_accepted_and_zeroes_the_rate_not_nega
     assert body["personnel_cost"]["state"] == "calculated"
     assert body["personnel_cost"]["amount"] == "0.00"
     assert not body["personnel_cost"]["amount"].startswith("-")
+
+
+def test_k_01_replacement_exchange_rate_recalculates_the_existing_scenario_result(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(
+        db_session, name="ExchangeRateWhatIf", currency="USD", rate_currency="PLN"
+    )
+    scenario.start_date = MAR
+    db_session.add(
+        ExchangeRate(
+            source_currency="PLN", target_currency="USD", effective_from=MAR,
+            effective_to=date(2026, 3, 31), rate=Decimal("0.5000000000"),
+            source="SC-6-07 test",
+        )
+    )
+    db_session.flush()
+
+    baseline = _results(client, project.id, scenario.id)
+    with caller_holding(*EVERYTHING):
+        response = client.get(exchange_rate_what_if_path(
+            project.id, scenario.id, source_currency="PLN", target_currency="USD",
+            replacement_rate="0.8000000000",
+        ))
+        current_rate = client.get(exchange_rate_what_if_path(
+            project.id, scenario.id, source_currency="PLN", target_currency="USD",
+            replacement_rate="0.5000000000",
+        ))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["exchange_rate_what_if_state"] == "calculated"
+    assert body["revenue"]["amount"] == "16000.00"
+    assert body["included_cost"] == "11200.00"
+    assert body["profit"] == "4800.00"
+    assert baseline["revenue"]["amount"] == "10000.00"
+    assert current_rate.status_code == 200, current_rate.text
+    current_body = current_rate.json()
+    assert current_body["exchange_rate_what_if_state"] == "calculated"
+    assert current_body["revenue"]["amount"] == baseline["revenue"]["amount"]
+    assert current_body["included_cost"] == baseline["included_cost"]
+    assert current_body["profit"] == baseline["profit"]
+
+
+def test_k_02_exchange_rate_what_if_leaves_saved_result_identical(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(
+        db_session, name="ExchangeRateNoWrite", currency="USD", rate_currency="PLN"
+    )
+    scenario.start_date = MAR
+    db_session.add(
+        ExchangeRate(
+            source_currency="PLN", target_currency="USD", effective_from=MAR,
+            effective_to=date(2026, 3, 31), rate=Decimal("0.5000000000"),
+            source="SC-6-07 test",
+        )
+    )
+    db_session.flush()
+    before = _results(client, project.id, scenario.id)
+
+    with caller_holding(*EVERYTHING):
+        response = client.get(exchange_rate_what_if_path(
+            project.id, scenario.id, source_currency="PLN", target_currency="USD",
+            replacement_rate="0.8000000000",
+        ))
+    assert response.status_code == 200, response.text
+
+    assert _results(client, project.id, scenario.id) == before
+
+
+def test_k_03_exchange_rate_what_if_hides_out_of_scope_and_approved_scenarios(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    mine_project, mine_scenario, _ = _full_scenario(
+        db_session, name="MineExchangeRateWhatIf", currency="USD", rate_currency="PLN"
+    )
+    theirs_project = make_project(
+        db_session, name="TheirsExchangeRateWhatIf", accessible_to=(OUT_OF_SCOPE_USER,)
+    )
+    theirs_scenario = make_scenario(db_session, theirs_project, name="Theirs", currency="USD")
+    approved_project = make_project(
+        db_session, name="ApprovedExchangeRateWhatIf", accessible_to=(IN_SCOPE_USER,),
+        cost_visible_to=(IN_SCOPE_USER,),
+    )
+    approved_scenario = make_scenario(
+        db_session, approved_project, name="Approved", status=ScenarioStatus.APPROVED,
+        currency="USD",
+    )
+
+    def path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+        return exchange_rate_what_if_path(
+            project_id, scenario_id, source_currency="PLN", target_currency="USD",
+            replacement_rate="0.8000000000",
+        )
+
+    with caller_holding(*EVERYTHING):
+        mine_response = client.get(path(mine_project.id, mine_scenario.id))
+        responses = [
+            client.get(path(theirs_project.id, theirs_scenario.id)),
+            client.get(path(approved_project.id, approved_scenario.id)),
+            client.get(path(mine_project.id, uuid.uuid4())),
+        ]
+    assert mine_response.status_code == 200, mine_response.text
+    for response in responses:
+        assert response.status_code == 404, response.text
+        assert response.json() == {"detail": SCENARIO_WHAT_IF_NOT_FOUND_DETAIL}
+    assert len({response.content for response in responses}) == 1
+
+
+def test_k_04_unaffected_currency_pair_returns_not_applicable(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(
+        db_session, name="UnaffectedExchangeRateWhatIf", currency="USD", rate_currency="PLN"
+    )
+    scenario.start_date = MAR
+    db_session.add(
+        ExchangeRate(
+            source_currency="PLN", target_currency="USD", effective_from=MAR,
+            effective_to=date(2026, 3, 31), rate=Decimal("0.5000000000"),
+            source="SC-6-07 test",
+        )
+    )
+    db_session.flush()
+
+    with caller_holding(*EVERYTHING):
+        response = client.get(exchange_rate_what_if_path(
+            project.id, scenario.id, source_currency="EUR", target_currency="USD",
+            replacement_rate="0.9000000000",
+        ))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["exchange_rate_what_if_state"] == "not_applicable"
+
+
+def test_exchange_rate_state_does_not_disclose_hidden_personnel_cost_currency(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(
+        db_session,
+        name="HiddenPersonnelCurrencyWhatIf",
+        currency="USD",
+        rate_currency="PLN",
+        additional_currency="USD",
+        create_commercial_terms=False,
+    )
+    db_session.add(
+        ExchangeRate(
+            source_currency="PLN", target_currency="USD", effective_from=MAR,
+            effective_to=date(2026, 3, 31), rate=Decimal("0.5000000000"),
+            source="SC-6-07 test",
+        )
+    )
+    db_session.flush()
+
+    with caller_holding(*WITHOUT_PERSONNEL_COSTS_READ):
+        response = client.get(exchange_rate_what_if_path(
+            project.id, scenario.id, source_currency="PLN", target_currency="USD",
+            replacement_rate="0.8000000000",
+        ))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["personnel_cost"]["amount"] is None
+    assert body["additional_cost"]["amount"] is not None
+    assert body["exchange_rate_what_if_state"] == "not_applicable"

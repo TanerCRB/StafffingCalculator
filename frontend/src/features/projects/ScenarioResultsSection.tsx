@@ -5,6 +5,8 @@ import {
   RESULTS_NOT_APPLICABLE,
   type AdditionalCostSource,
   type GatedResultField,
+  type PaidAbsenceCostState,
+  type PersonnelCostState,
   type PersonnelCostSource,
   type ScenarioResults,
 } from "../../api/contracts/scenarioResults";
@@ -21,7 +23,12 @@ import {
   INCLUDED_COST_LABEL,
   MARGIN_LABEL,
   MARKUP_LABEL,
+  NEGATIVE_PROFIT_INDICATOR,
   PERSONNEL_COST_LABEL,
+  PERSONNEL_COST_RATE_LABEL,
+  COST_RATE_UNIT_LABELS,
+  PAID_ABSENCE_COST_LABEL,
+  PAID_ABSENCE_COST_STATE_MESSAGES,
   PERSONNEL_COST_STATE_MESSAGES,
   PROFIT_LABEL,
   PROFITABILITY_CURRENCY_MISMATCH,
@@ -112,6 +119,16 @@ const READ_FAILURE_MESSAGES: Readonly<Record<Exclude<ReadState["kind"], "loading
  * it names is a live one, and the very next read is the expected way past it. */
 const RETRYABLE: ReadonlySet<ReadState["kind"]> = new Set(["conflict", "timed-out", "unreadable", "failed"]);
 
+/** The API has already validated this fixed-point decimal string. Compare its exact sign without
+ * converting money to a JavaScript number; a signed zero is still zero. */
+function isNegativeProfit(value: GatedResultField): boolean {
+  if (value === null || value === RESULTS_NOT_APPLICABLE) {
+    return false;
+  }
+  const decimal = value.trim();
+  return decimal.startsWith("-") && /[1-9]/.test(decimal.slice(1));
+}
+
 export interface ScenarioResultsSectionProps {
   readonly projectId: string;
   readonly scenarioId: string;
@@ -194,10 +211,14 @@ export function ScenarioResultsSection({
             {PROFITABILITY_CURRENCY_MISMATCH}
           </p>
         )}
-        <PersonnelCostLine source={results.personnel_cost} />
+        <PersonnelCostLine source={results.personnel_cost} component="base" />
+        <PersonnelCostLine source={results.personnel_cost} component="paid_absence" />
         <AdditionalCostLine source={results.additional_cost} />
         <GatedMoneyLine label={INCLUDED_COST_LABEL} value={results.included_cost} currency={revenueCurrency} />
         <GatedMoneyLine label={PROFIT_LABEL} value={results.profit} currency={revenueCurrency} />
+        {isNegativeProfit(results.profit) && (
+          <p role="status" className="scenario-results__negative-profit">{NEGATIVE_PROFIT_INDICATOR}</p>
+        )}
         <GatedPercentLine label={MARGIN_LABEL} value={results.margin} />
         <GatedPercentLine label={MARKUP_LABEL} value={results.markup} />
       </>
@@ -244,25 +265,41 @@ function RevenueLine({ revenue }: { revenue: RevenueRead }) {
  * gate that is open but a `state` naming a cause renders that cause, never the generic sentence
  * (K-03).
  */
-function PersonnelCostLine({ source }: { source: PersonnelCostSource }) {
-  if (source.amount === null) {
+function PersonnelCostLine({ source, component }: { source: PersonnelCostSource; component: "base" | "paid_absence" }) {
+  const isBase = component === "base";
+  const state = isBase ? source.state : source.paid_absence_state;
+  const amount = isBase ? source.amount : source.paid_absence_amount;
+  const currency = isBase ? source.currency : source.paid_absence_currency;
+  const label = isBase ? PERSONNEL_COST_LABEL : PAID_ABSENCE_COST_LABEL;
+  if (amount === null) {
     return (
-      <p className="scenario-card__gaps" data-personnel-cost-state="unavailable">
-        {PERSONNEL_COST_LABEL} {RESULTS_FIELD_UNAVAILABLE}
+      <p className="scenario-card__gaps" data-personnel-cost-state="unavailable" data-cost-component={component}>
+        {label} {RESULTS_FIELD_UNAVAILABLE}
       </p>
     );
   }
-  if (source.state !== "calculated") {
+  if (state !== "calculated") {
+    const message = isBase
+      ? PERSONNEL_COST_STATE_MESSAGES[state as Exclude<PersonnelCostState, "calculated">]
+      : PAID_ABSENCE_COST_STATE_MESSAGES[state as Exclude<PaidAbsenceCostState, "calculated">];
     return (
-      <p className="scenario-card__gaps" data-personnel-cost-state={source.state}>
-        {PERSONNEL_COST_STATE_MESSAGES[source.state]}
+      <p className="scenario-card__gaps" data-personnel-cost-state={state} data-cost-component={component}>
+        {message}
       </p>
     );
   }
   return (
-    <p className="scenario-card__metric" data-personnel-cost-state="calculated">
-      {PERSONNEL_COST_LABEL} {formatMoneyString(source.amount, source.currency ?? "")}
-    </p>
+    <>
+      <p className="scenario-card__metric" data-personnel-cost-state="calculated" data-cost-component={component}>
+        {label} {formatMoneyString(amount, currency ?? "")}
+      </p>
+      {isBase && source.assumptions_used?.rate_windows.map((window, index) => (
+        <p className="scenario-card__metric" data-cost-rate-window key={`${window.default_cost_rate}-${window.currency}-${index}`}>
+          {PERSONNEL_COST_RATE_LABEL} {formatMoneyString(window.default_cost_rate, window.currency)}
+          {window.cost_rate_unit ? ` ${COST_RATE_UNIT_LABELS[window.cost_rate_unit]}` : ""}
+        </p>
+      ))}
+    </>
   );
 }
 

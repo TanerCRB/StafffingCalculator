@@ -525,3 +525,24 @@ aneksów, poza tym, co punkty 1–5 niżej nazywają wprost jako rozszerzenie za
     they cannot read; both responses (`ProjectDetail`, `ScenarioListItem`) contain no position and no
     cost figure. Named, accepted consequence, the same one `fixed_amount` has carried since SC-5-03;
     nothing worse.
+
+### Draft addendum — 2026-10-02 — SC-7-10 (Issue #181): F-10 cost components and assigned-FTE plausibility
+
+**Status: Draft — pending approval**
+
+Gate 1 decisions accepted on 2026-10-02. This draft proposes the architecture direction for those decisions; it does not record implementation evidence.
+
+1. **F-10 sums the resolved cost components once.** `included_cost` comprises the worked-time base personnel cost, paid-absence cost, fixed-amount component, assigned-FTE component, and additional cost. `profit`, `margin`, and `markup` continue to derive from that total using ADR-0002 rounding and ratio rules.
+2. **No partial profitability.** If any required source component is not `calculated`, `included_cost`, `profit`, `margin`, and `markup` are non-numeric. Each component retains its own named state; that state identifies the excluded component. There is no substitute zero or combined representative state.
+3. **Approved inputs remain frozen.** Approved results use the existing snapshot rate and calendar inputs. Fixed amount and assigned FTE remain scenario-owned inputs protected by the approved-scenario write guard. No live lookup fills a missing snapshot value.
+4. **R-01 remains accepted without a hard cap.** An `assigned_fte` above `headcount` remains stored and priced as supplied. A machine-readable plausibility marker identifies the above-headcount case without changing the input or calculated amount. The marker is subject to the existing personnel-cost visibility boundary.
+
+| Control | Acceptance criterion |
+|---|---|
+| SC-7-10 K-01 | Each resolved F-10 cost component contributes exactly once to `included_cost` and derived profitability. |
+| SC-7-10 K-02 | Any required component not in `calculated` state (including an empty fixed-amount or assigned-FTE basis with `no_cost_currency` when the scenario declares no currency) withholds all four aggregate amounts while preserving its named state. |
+| SC-7-10 K-03 | Approved results use frozen inputs and remain unchanged after live catalogue/calendar edits. |
+| SC-7-10 K-04 | Existing named component states identify exclusions; no extra exclusion field is required. |
+| SC-7-10 K-05 | Above-headcount `assigned_fte` remains accepted and unchanged, with a visible plausibility marker under the personnel-cost gate. |
+
+**Gate 1 decision recorded:** the user approved the machine-readable marker in the backend response under the existing personnel-cost visibility boundary, with frontend presentation out of scope. This addendum remains a draft pending formal adoption.

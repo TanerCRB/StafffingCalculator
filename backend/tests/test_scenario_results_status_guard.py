@@ -806,6 +806,7 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
                         "currency": "PLN",
                         "surcharge_percent": "0.000",
                         "includes_surcharge": False,
+                        "cost_rate_unit": "hour",
                     }
                 ],
                 "unresolved_months": [],
@@ -850,6 +851,7 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
                 "unresolved_months": [],
                 "currencies": [],
             },
+            "assigned_fte_above_headcount_position_ids": [],
         },
         "additional_cost": {
             "state": "calculated",
@@ -878,6 +880,8 @@ def _expected_t_and_m_results(ids: dict[str, str]) -> dict[str, Any]:
         "profit": "6000.00",
         "margin": "30.00",
         "markup": "42.86",
+        "expected_profit": "n/a",
+        "expected_margin": "n/a",
     }
 
 
@@ -920,6 +924,8 @@ def test_k_05_t_and_m_what_if_body_is_the_1739f1e_literal(
         response = client.get(what_if_path(ids["project_id"], ids["scenario_id"], "10"))
 
     expected = _expected_t_and_m_results(ids)
+    expected.pop("expected_profit")
+    expected.pop("expected_margin")
     expected["personnel_cost"]["amount"] = "13200.00"
     expected["personnel_cost"]["fully_loaded_amount"] = "13200.00"
     expected["personnel_cost"]["assumptions_used"]["rate_source"] = "what_if_hypothetical"

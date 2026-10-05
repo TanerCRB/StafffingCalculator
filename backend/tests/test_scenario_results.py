@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 
 from app.core.identity import Permission
 from app.models.catalog import AbsenceType
+from app.models.exchange_rate import ExchangeRate
 from app.models.project import Project
 from app.models.scenario import Scenario
 from tests.conftest import (
@@ -105,6 +106,7 @@ def _full_scenario(
     mid_month_cost_change: bool = False,
     create_commercial_terms: bool = True,
     currency: str = "PLN",
+    rate_currency: str | None = None,
 ) -> tuple[Project, Scenario, DimensionTuple]:
     """One scenario with all three components wired: a rate, a T&M rule, one additional cost — and,
     when `absence_period` is given, one booked, cost-generating absence (the paid-absence cost's
@@ -135,17 +137,19 @@ def _full_scenario(
     if mid_month_cost_change:
         make_rate(
             session, dimensions, effective_from=date(2026, 1, 1), effective_to=date(2026, 3, 15),
-            default_cost_rate=COST_RATE, default_selling_rate=SELLING_RATE, currency=currency,
+            default_cost_rate=COST_RATE, default_selling_rate=SELLING_RATE,
+            currency=rate_currency or currency,
         )
         make_rate(
             session, dimensions, effective_from=date(2026, 3, 16),
             default_cost_rate=Decimal("130.0000"), default_selling_rate=SELLING_RATE,
-            currency=currency,
+            currency=rate_currency or currency,
         )
     else:
         make_rate(
             session, dimensions, effective_from=date(2026, 1, 1),
-            default_cost_rate=COST_RATE, default_selling_rate=SELLING_RATE, currency=currency,
+            default_cost_rate=COST_RATE, default_selling_rate=SELLING_RATE,
+            currency=rate_currency or currency,
         )
     if create_commercial_terms:
         make_commercial_terms(session, scenario)
@@ -209,6 +213,109 @@ def test_k_01_ac_01_arithmetic_on_a_live_call_catches_a_margin_markup_argument_s
     assert body2["included_cost"] == "17000.00"
     assert body2["profit"] == "3000.00"
     assert body2["margin"] == "15.00"
+
+
+def test_exchange_rate_composes_revenue_personnel_and_additional_cost_in_scenario_currency(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, dimensions = _full_scenario(
+        db_session,
+        name="Converted",
+        currency="USD",
+        rate_currency="PLN",
+        additional_currency="PLN",
+        absence_period=(date(2026, 3, 2), date(2026, 3, 4)),
+    )
+    scenario.start_date = MAR
+    make_staffing_position(
+        db_session,
+        scenario,
+        dimensions,
+        headcount=1,
+        cost_basis="fixed_amount",
+        fixed_amount=Decimal("1000.00"),
+        fixed_amount_currency="PLN",
+    )
+    fte_position = make_staffing_position(
+        db_session,
+        scenario,
+        dimensions,
+        cost_basis="assigned_fte",
+        assigned_fte=Decimal("1.00"),
+    )
+    make_allocation(
+        db_session,
+        fte_position,
+        period_month=MAR,
+        planned_allocation_hours=Decimal("100.00"),
+        billable_hours=Decimal("0.00"),
+    )
+    rate = ExchangeRate(
+        source_currency="PLN",
+        target_currency="USD",
+        effective_from=MAR,
+        effective_to=date(2026, 3, 31),
+        rate=Decimal("0.5000000000"),
+        source="Test rate",
+    )
+    db_session.add(rate)
+    db_session.flush()
+
+    body = _results(client, project.id, scenario.id)
+
+    assert body["revenue"]["amount"] == "10000.00", body["revenue"]
+    assert body["revenue"]["currency"] == "USD"
+    assert body["personnel_cost"]["amount"] == "6000.00"
+    assert body["personnel_cost"]["currency"] == "USD"
+    assert body["personnel_cost"]["paid_absence_amount"] == "1350.00"
+    assert body["personnel_cost"]["fully_loaded_amount"] == "6000.00"
+    assert body["personnel_cost"]["paid_absence_fully_loaded_amount"] == "1350.00"
+    assert body["personnel_cost"]["fixed_amount_amount"] == "500.00"
+    assert body["personnel_cost"]["fixed_amount_currency"] == "USD"
+    assert body["personnel_cost"]["assigned_fte_amount"] == "9900.00"
+    assert body["personnel_cost"]["assigned_fte_currency"] == "USD"
+    assert body["additional_cost"]["amount"] == "1000.00"
+    assert body["additional_cost"]["currency"] == "USD"
+    assert body["included_cost"] == "18750.00"
+    assert body["profit"] == "-8750.00"
+    assert body["margin"] == "-87.50"
+    assert body["markup"] == "-46.67"
+
+    with caller_holding(*EVERYTHING):
+        approved = client.post(f"/projects/{project.id}/scenarios/{scenario.id}/approve")
+    assert approved.status_code == 200, approved.text
+    rate.rate = Decimal("0.8000000000")
+    db_session.flush()
+
+    frozen = _results(client, project.id, scenario.id)
+    assert frozen["revenue"]["amount"] == "10000.00"
+    assert frozen["personnel_cost"]["amount"] == "6000.00"
+    assert frozen["additional_cost"]["amount"] == "1000.00"
+    assert frozen["profit"] == "-8750.00"
+
+
+def test_no_scenario_currency_does_not_sum_mixed_currency_additional_costs(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(db_session, name="No target currency")
+    scenario.currency = None
+    category = make_cost_category(db_session, name="Foreign expense")
+    make_additional_cost(
+        db_session,
+        scenario,
+        category,
+        amount=Decimal("100.00"),
+        start_month=MAR,
+        currency="USD",
+    )
+
+    body = _results(client, project.id, scenario.id)
+
+    assert body["additional_cost"]["state"] == "currency_mismatch"
+    assert body["profit"] == "n/a"
+    assert body["profitability_state"] == "not_applicable"
 
 
 # --- K-02: zero revenue is margin "n/a", profit and markup still numeric --------------------------
@@ -346,7 +453,7 @@ def test_k_04_perturbing_two_components_at_once_moves_profit_by_minus_the_sum_of
     [
         ("revenue", "no_commercial_terms"),
         ("base_cost", "no_cost_rate"),
-        ("additional_cost", "currency_mismatch"),
+            ("additional_cost", "missing_exchange_rate"),
     ],
 )
 def test_k_05_one_named_unresolvable_source_withholds_the_aggregate_and_names_only_itself(

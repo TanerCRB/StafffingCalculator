@@ -239,12 +239,32 @@ def test_fa_9_the_amount_and_the_assumptions_need_both_halves_the_state_stays_vi
     assert cost["assigned_fte_currency"] == "PLN"
     if visible:
         assert cost["assigned_fte_amount"] == MARKER_AMOUNT
+        assert cost["assigned_fte_above_headcount_position_ids"] == []
         lines = cost["assigned_fte_assumptions_used"]["lines"]
         assert [line["assigned_fte"] for line in lines] == [MARKER_FTE]
         assert isinstance(lines[0]["assigned_fte"], str)  # a decimal string, never a JSON float
     else:
         assert cost["assigned_fte_amount"] is None
         assert cost["assigned_fte_assumptions_used"] is None
+        assert cost["assigned_fte_above_headcount_position_ids"] is None
+
+
+def test_assigned_fte_above_headcount_marker_is_machine_readable_and_uses_cost_gate(
+    client: TestClient, db_session: Session
+) -> None:
+    project, scenario, dimensions = _setup(db_session, suffix="fte-plausibility")
+    position = _fte_position(db_session, scenario, dimensions, fte="2.50")
+
+    visible = _cost(client, project.id, scenario.id)
+    hidden = _cost(
+        client,
+        project.id,
+        scenario.id,
+        *(p for p in Permission if p is not Permission.PERSONNEL_COSTS_READ),
+    )
+
+    assert visible["assigned_fte_above_headcount_position_ids"] == [str(position.id)]
+    assert hidden["assigned_fte_above_headcount_position_ids"] is None
 
 
 def test_fa_9_a_named_state_is_visible_to_a_caller_who_may_not_see_amounts(
@@ -502,25 +522,14 @@ def test_fa_1_the_patch_request_refuses_an_inconsistent_fte_and_changes_nothing(
     assert (stored.cost_basis, stored.assigned_fte) == ("assigned_fte", Decimal("0.7500"))
 
 
-_BARE_TOKEN_500 = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pre-existing, application-wide: FastAPI's default 422 handler cannot serialise the "
-        "rejected input `nan`/`inf` (`Out of range float values are not JSON compliant`), so a "
-        "bare JSON NaN/Infinity in ANY numeric field is refused but answered 500, "
-        "not 422. No custom RequestValidationError handler exists in app/. Not fixed here (a "
-        "behaviour change across every endpoint); strict, so it flips when someone fixes it."
-    ),
-)
-
 _NON_FINITE_FORMS = [
     pytest.param('"NaN"', id="string-nan"),
     pytest.param('"Infinity"', id="string-infinity"),
     pytest.param('"-Infinity"', id="string-negative-infinity"),
     pytest.param('"sNaN"', id="string-signalling-nan"),
-    pytest.param("NaN", id="json-nan", marks=_BARE_TOKEN_500),
-    pytest.param("Infinity", id="json-infinity", marks=_BARE_TOKEN_500),
-    pytest.param("-Infinity", id="json-negative-infinity", marks=_BARE_TOKEN_500),
+    pytest.param("NaN", id="json-nan"),
+    pytest.param("Infinity", id="json-infinity"),
+    pytest.param("-Infinity", id="json-negative-infinity"),
 ]
 
 
@@ -545,6 +554,8 @@ def test_fa_1_a_non_finite_fte_is_a_422_on_post_and_writes_nothing(
         )
 
     assert refused.status_code == 422, refused.text
+    if literal in {"NaN", "Infinity", "-Infinity"}:
+        assert literal.lower() not in refused.text.lower()
     assert count_positions(db_session) == before
 
 
@@ -567,8 +578,31 @@ def test_fa_1_a_non_finite_fte_is_a_422_on_patch_and_changes_nothing(
         )
 
     assert refused.status_code == 422, refused.text
+    if literal in {"NaN", "Infinity", "-Infinity"}:
+        assert literal.lower() not in refused.text.lower()
     stored = _row(db_session, position.id)
     assert (stored.cost_basis, stored.assigned_fte) == ("assigned_fte", Decimal("0.7500"))
+
+
+def test_k_04_ordinary_validation_error_keeps_the_standard_422_detail_shape(
+    client: TestClient, db_session: Session
+) -> None:
+    """K-04: handling a non-finite number does not alter ordinary Pydantic 422 responses."""
+    project, scenario, dimensions = _setup(db_session, suffix="ordinary-422-shape")
+    body = staffing_position_payload(
+        dimensions, cost_basis="assigned_fte", assigned_fte="0.12345"
+    )
+
+    with caller_holding(*WRITER_WITH_COSTS):
+        refused = client.post(staffing_path(project.id, scenario.id), json=body)
+
+    assert refused.status_code == 422
+    [detail] = refused.json()["detail"]
+    assert set(detail) == {"type", "loc", "msg", "input", "ctx"}
+    assert detail["type"] == "decimal_max_places"
+    assert detail["loc"] == ["body", "assigned_fte"]
+    assert detail["ctx"] == {"decimal_places": 4}
+    assert detail["input"] == "0.12345"
 
 
 # --- a basis switch is one statement that clears what the new basis must not carry ---------------

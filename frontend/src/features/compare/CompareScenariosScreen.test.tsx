@@ -36,6 +36,7 @@ import { CompareScenariosScreen } from "./CompareScenariosScreen";
 const ALPHA = "aaaaaaaa-0000-0000-0000-000000000001";
 const BETA = "aaaaaaaa-0000-0000-0000-000000000002";
 const GAMMA = "aaaaaaaa-0000-0000-0000-000000000003";
+const FIXED = "aaaaaaaa-0000-0000-0000-000000000006";
 
 function scenario(id: string, name: string, status: ScenarioStatus = "Draft") {
   return {
@@ -100,6 +101,21 @@ function revenueCalculated(amount: string, currency: string): RevenueRead {
   };
 }
 
+function fixedPriceRevenue(amount: string, currency: string): RevenueRead {
+  return {
+    ...revenueCalculated(amount, currency),
+    assumptions_used: {
+      model_type: "fixed_price",
+      hours_source: "not_applicable",
+      vendor_axis: "not_applicable",
+      rate_source: "fixed_price_terms",
+      rate_windows: [],
+      unresolved_months: [],
+      currencies: [],
+    },
+  };
+}
+
 function revenueWithheld(state: WithheldRevenueState): RevenueRead {
   return {
     state,
@@ -113,15 +129,15 @@ function revenueWithheld(state: WithheldRevenueState): RevenueRead {
 }
 
 function personnelCostCalculated(amount: string, currency: string): PersonnelCostSource {
-  return { state: "calculated", amount, currency };
+  return { state: "calculated", amount, currency, assumptions_used: { rate_windows: [] }, paid_absence_state: "calculated", paid_absence_amount: "25.00", paid_absence_currency: currency };
 }
 
 function personnelCostWithheld(state: Exclude<PersonnelCostState, "calculated">): PersonnelCostSource {
-  return { state, amount: "n/a", currency: null };
+  return { state, amount: "n/a", currency: null, assumptions_used: { rate_windows: [] }, paid_absence_state: state, paid_absence_amount: "n/a", paid_absence_currency: null };
 }
 
 function personnelCostGated(): PersonnelCostSource {
-  return { state: "calculated", amount: null, currency: null };
+  return { state: "calculated", amount: null, currency: null, assumptions_used: null, paid_absence_state: "calculated", paid_absence_amount: null, paid_absence_currency: null };
 }
 
 function additionalCostCalculated(amount: string, currency: string): AdditionalCostSource {
@@ -187,7 +203,8 @@ function stubBackend(backend: Backend) {
     if (path === "/health") {
       answer = { status: 200, body: { status: "ok" } };
     } else if (path === "/projects") {
-      answer = { status: 200, body: { projects: backend.projects ?? [PROJECT] } };
+      const projects = backend.projects ?? [PROJECT];
+      answer = { status: 200, body: { projects, total: projects.length } };
     } else if (COMPARE_PATH.test(path)) {
       compareCalls += 1;
       const configured = backend.compare;
@@ -350,7 +367,7 @@ describe("K-01 — no mixing of data between rows", () => {
             baseResults(ALPHA),
             // A malformed second row: `personnel_cost.state` is not one of PERSONNEL_COST_STATES.
             // A first-row-only shape check would let this through; a per-element one must not.
-            { ...baseResults(BETA), personnel_cost: { state: "not_a_real_state", amount: "n/a", currency: null } },
+            { ...baseResults(BETA), personnel_cost: { state: "not_a_real_state", amount: "n/a", currency: null, paid_absence_state: "calculated", paid_absence_amount: "10.00", paid_absence_currency: "PLN" } },
           ],
         },
       },
@@ -367,6 +384,32 @@ describe("K-01 — no mixing of data between rows", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+});
+
+// --- Fixed Price revenue --------------------------------------------------------------------------
+
+describe("Fixed Price revenue", () => {
+  it("renders the server-calculated Fixed Price amount and currency in Compare", async () => {
+    const fixedProject: ProjectListItem = {
+      ...PROJECT,
+      scenarios: [...PROJECT.scenarios, scenario(FIXED, "Fixed")],
+    };
+    stubBackend({
+      projects: [fixedProject],
+      compare: {
+        status: 200,
+        body: { results: [baseResults(FIXED, { revenue: fixedPriceRevenue("150000.0100", "PLN") })] },
+      },
+    });
+    render(<CompareScenariosScreen />);
+    await openProject();
+    check("Fixed");
+    compareSelected();
+
+    await screen.findByRole("table");
+    expect(within(rows()[0]).getByText("150000.01 PLN")).toBeVisible();
+    expect(within(rows()[0]).queryByText("150000.0100 PLN")).toBeNull();
   });
 });
 
@@ -624,7 +667,7 @@ describe("abort/unmount — leaving the screen ends its reads, it does not merel
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const path = new URL(url).pathname;
       if (path === "/projects") {
-        return Promise.resolve(response(200, { projects: [PROJECT] }));
+        return Promise.resolve(response(200, { projects: [PROJECT], total: 1 }));
       }
       compareSignal = init?.signal as AbortSignal;
       return new Promise<never>((_resolve, reject) => {

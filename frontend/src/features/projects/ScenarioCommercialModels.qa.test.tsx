@@ -44,7 +44,7 @@ function unknownModelRevenue(state: string) {
     amount: "n/a",
     currency: null,
     assumptions_used: {
-      model_type: "fixed_price",
+      model_type: "future_model",
       hours_source: "billable_hours",
       vendor_axis: "internal",
       rate_source: "live_catalog",
@@ -67,7 +67,15 @@ function resultsBody(revenue: Record<string, unknown>) {
     scenario_id: SCENARIO,
     scenario_status: "Draft",
     revenue,
-    personnel_cost: { state: "calculated", amount: "15000.00", currency: "PLN" },
+    personnel_cost: {
+      state: "calculated",
+      amount: "15000.00",
+      currency: "PLN",
+      assumptions_used: { rate_windows: [] },
+      paid_absence_state: "calculated",
+      paid_absence_amount: "0.00",
+      paid_absence_currency: "PLN",
+    },
     additional_cost: { state: "calculated", amount: "0.00", currency: "PLN" },
     included_cost: "n/a",
     profit: "n/a",
@@ -88,7 +96,7 @@ function stubBackend(terms: unknown, results?: unknown) {
       if (path === "/health") {
         body = { status: "ok" };
       } else if (path === "/projects") {
-        body = { projects: [PROJECT] };
+        body = { projects: [PROJECT], total: 1 };
       } else if (path === "/catalog/rates") {
         body = { rates: [], total: 0 };
       } else if (path.startsWith("/catalog/dimensions/")) {
@@ -132,7 +140,7 @@ afterEach(() => {
 describe("QA SC-4-07 — an unknown stored model is readable only as the named unsupported_model_type state", () => {
   it("reads an unknown model under the unsupported_model_type state as that named state, in both sections", async () => {
     const revenue = unknownModelRevenue("unsupported_model_type");
-    stubBackend(termsBody({ ...RULE, model_type: "fixed_price", outcome_terms: null }, revenue), resultsBody(revenue));
+    stubBackend(termsBody({ ...RULE, model_type: "future_model", outcome_terms: null }, revenue), resultsBody(revenue));
 
     await openProject();
     const rules = await openSection("Commercial terms", "Loading commercial terms.");
@@ -146,7 +154,7 @@ describe("QA SC-4-07 — an unknown stored model is readable only as the named u
 
   it("reads the same unknown model under a currency_mismatch state as unreadable in both sections — only the state differs", async () => {
     const revenue = unknownModelRevenue("currency_mismatch");
-    stubBackend(termsBody({ ...RULE, model_type: "fixed_price", outcome_terms: null }, revenue), resultsBody(revenue));
+    stubBackend(termsBody({ ...RULE, model_type: "future_model", outcome_terms: null }, revenue), resultsBody(revenue));
 
     await openProject();
     const rules = await openSection("Commercial terms", "Loading commercial terms.");

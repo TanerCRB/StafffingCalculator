@@ -73,6 +73,7 @@ from app.api.schemas.commercial_terms import (
     RevenueAssumptionsRead,
     RevenueRead,
     ScenarioCommercialTerms,
+    StoryPointsCommercialTermsRead,
     UnresolvedMonthRead,
 )
 from app.api.schemas.people import PersonList, PersonRead
@@ -105,9 +106,11 @@ from app.api.schemas.risk import (
     ScenarioRisks,
 )
 from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
-from app.api.schemas.scenario_results import ScenarioResults
+from app.api.schemas.scenario_results import ScenarioResults, ScenarioResultsBase
 from app.api.schemas.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationResults,
+    ScenarioWhatIfDelayedStartResults,
+    ScenarioWhatIfExchangeRateResults,
     ScenarioWhatIfSalaryRaiseResults,
 )
 from app.api.schemas.staffing import (
@@ -134,6 +137,8 @@ from app.data.risk_reserve import ReservePage
 from app.data.scenario_results import ScenarioResultsView
 from app.data.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationView,
+    ScenarioWhatIfDelayedStartView,
+    ScenarioWhatIfExchangeRateView,
     ScenarioWhatIfView,
 )
 from app.data.staffing import StaffingPositionView
@@ -172,7 +177,7 @@ from app.domain.risk_reserve import (
     ReserveTotalResult,
 )
 from app.domain.scenario_readiness import assess
-from app.domain.scenario_results import scenario_profitability
+from app.domain.scenario_results import scenario_expected_profitability, scenario_profitability
 from app.models.catalog import (
     AbsenceBudget,
     AbsenceType,
@@ -253,6 +258,7 @@ SCENARIO_COST_FIELDS: frozenset[str] = frozenset(
         # `fixed_amount_state`/`fixed_amount_currency` do.
         "assigned_fte_amount",
         "assigned_fte_assumptions_used",
+        "assigned_fte_above_headcount_position_ids",
     }
 )
 """Fields of a scenario's personnel cost that carry a personnel cost (SC-5-01, SC-5-06, SC-5-02).
@@ -273,7 +279,14 @@ that a cost exists and why it may not be stateable — the refusal is of the *fi
 scenario (point 1)."""
 
 SCENARIO_PROFITABILITY_FIELDS: frozenset[str] = frozenset(
-    {"profit", "margin", "markup", "included_cost"}
+    {
+        "profit",
+        "margin",
+        "markup",
+        "included_cost",
+        "expected_profit",
+        "expected_margin",
+    }
 )
 """Fields of a scenario's whole-life result that mix a personnel cost into one number (SC-7-01,
 ADR-0005 addendum 2026-09-24).
@@ -286,10 +299,9 @@ disagree about whether this caller may see this scenario's personnel costs.
 
 **Not `revenue` and not `additional_cost`.** Neither one is a personnel cost by itself (SC-4-01,
 point 3; SC-5-05, point 1), and each keeps answering under `RESULTS_READ` alone. What earns a place
-in this set is that `profit`, `margin`, `markup` and `included_cost` cannot be split back into a
-personnel and a non-personnel part after they are computed — a caller who may not see the personnel
-cost may not be handed a profit either, because a profit and a personnel cost one subtraction apart
-is the same leak `SCENARIO_COST_FIELDS` exists to close."""
+in this set is that profitability figures cannot be split back into a personnel and a non-personnel
+part after they are computed — a caller who may not see the personnel cost may not be handed a
+profit or expected profit either, because each and the personnel cost are one subtraction apart."""
 
 _PROJECT_STATUS_LABELS = {
     ProjectStatus.ACTIVE: "Active",
@@ -378,9 +390,7 @@ def _common_project_fields(view: CallerProjectView) -> dict[str, Any]:
 
 
 def _shape_project(view: CallerProjectView, caller: CallerIdentity) -> ProjectListItem:
-    return _without_personnel_costs(
-        ProjectListItem(**_common_project_fields(view)), view, caller
-    )
+    return _without_personnel_costs(ProjectListItem(**_common_project_fields(view)), view, caller)
 
 
 def shape_project_detail(view: CallerProjectView, caller: CallerIdentity) -> ProjectDetail:
@@ -455,7 +465,7 @@ def _without_personnel_costs[ProjectItemT: ProjectListItem](
 
 
 def shape_project_list(
-    views: Sequence[CallerProjectView], caller: CallerIdentity
+    views: Sequence[CallerProjectView], caller: CallerIdentity, *, total: int | None = None
 ) -> ProjectListResponse:
     """Shape an already access-filtered sequence of projects.
 
@@ -467,7 +477,10 @@ def shape_project_list(
     where a per-caller shortcut would be invisible, because with one accessible project the two
     readings agree.
     """
-    return ProjectListResponse(projects=[_shape_project(view, caller) for view in views])
+    return ProjectListResponse(
+        projects=[_shape_project(view, caller) for view in views],
+        total=len(views) if total is None else total,
+    )
 
 
 # --- the catalogue (SC-2-01) --------------------------------------------------------------------
@@ -543,9 +556,7 @@ def shape_working_calendar(calendar: WorkingCalendar) -> WorkingCalendarEntry:
         name=calendar.name,
         standard_hours_per_day=calendar.standard_hours_per_day,
         week_pattern=calendar.week_pattern,
-        days=[
-            WorkingCalendarDayEntry(day=row.day, kind=row.kind.value) for row in calendar.days
-        ],
+        days=[WorkingCalendarDayEntry(day=row.day, kind=row.kind.value) for row in calendar.days],
         updated_at=calendar.updated_at,
     )
 
@@ -652,9 +663,7 @@ def shape_absence_type(absence_type: AbsenceType) -> AbsenceTypeEntry:
 
 def shape_absence_type_list(absence_types: Sequence[AbsenceType]) -> AbsenceTypeList:
     """Every absence type through the function above — no second construction path."""
-    return AbsenceTypeList(
-        absence_types=[shape_absence_type(entry) for entry in absence_types]
-    )
+    return AbsenceTypeList(absence_types=[shape_absence_type(entry) for entry in absence_types])
 
 
 def shape_catalog_rate(rate: CatalogDefaultRate, caller: CallerIdentity) -> CatalogRate:
@@ -904,9 +913,7 @@ def shape_staffing_absence_list(
     absences: Sequence[StaffingPositionAbsence],
 ) -> StaffingAbsenceList:
     """An already scope-filtered sequence of absences — every row through the function above."""
-    return StaffingAbsenceList(
-        absences=[shape_staffing_absence(absence) for absence in absences]
-    )
+    return StaffingAbsenceList(absences=[shape_staffing_absence(absence) for absence in absences])
 
 
 def shape_staffing_position_list(
@@ -956,7 +963,7 @@ def shape_scenario_commercial_terms(view: ScenarioCommercialView) -> ScenarioCom
 
 def _commercial_terms_read_of(
     view: ScenarioCommercialView,
-) -> CommercialTermsRead | FixedPriceCommercialTermsRead | None:
+) -> CommercialTermsRead | FixedPriceCommercialTermsRead | StoryPointsCommercialTermsRead | None:
     """The rule, in the shape of its model — chosen by `model_type`, never by which fields are set.
 
     A Fixed Price rule carries its agreed price as stored (SC-4-02); every other rule keeps the
@@ -977,6 +984,15 @@ def _commercial_terms_read_of(
             outcome_terms=None,
             agreed_price=None if price is None else price.amount,
             currency=None if price is None else price.currency,
+        )
+    if terms.model_type == "story_points":
+        details = view.story_points_terms
+        return StoryPointsCommercialTermsRead(
+            id=terms.id, model_type="story_points", updated_at=terms.updated_at,
+            outcome_terms=None,
+            price_per_point=None if details is None else details.price_per_point,
+            accepted_points=None if details is None else details.accepted_points,
+            currency=None if details is None else details.currency,
         )
     return CommercialTermsRead(
         id=terms.id,
@@ -1115,6 +1131,13 @@ def _without_scenario_personnel_costs(
     silently. Raised explicitly, so `python -O` cannot remove it, and before the conjunction reads
     a flag that may belong to somebody else.
     """
+    if _may_view_scenario_costs(view, caller):
+        return item
+    return item.model_copy(update=dict.fromkeys(SCENARIO_COST_FIELDS))
+
+
+def _may_view_scenario_costs(view: ScenarioCostView, caller: CallerIdentity) -> bool:
+    """Apply the scenario's existing per-caller cost conjunction (ADR-0005)."""
     if view.user_id != caller.user_id:
         raise AssertionError(
             "A scenario cost view built for one user is being shaped with another user's "
@@ -1122,9 +1145,7 @@ def _without_scenario_personnel_costs(
             "another caller's permission set. Build the view through app.data.personnel_cost for "
             "the caller the response is for."
         )
-    if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
-        return item
-    return item.model_copy(update=dict.fromkeys(SCENARIO_COST_FIELDS))
+    return caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs
 
 
 def _paid_absence_fields(answer: PaidAbsenceCostAnswer) -> dict[str, Any]:
@@ -1238,13 +1259,12 @@ def _assigned_fte_fields(answer: AssignedFteCostAnswer) -> dict[str, Any]:
                 currency=window.currency,
                 surcharge_percent=window.surcharge_percent,
                 includes_surcharge=window.includes_surcharge,
+                cost_rate_unit=window.cost_rate_unit,
             )
             for window in assumptions.rate_windows
         ],
         unresolved_months=[
-            UnresolvedCostMonthRead(
-                position_id=month.position_id, period_month=month.period_month
-            )
+            UnresolvedCostMonthRead(position_id=month.position_id, period_month=month.period_month)
             for month in assumptions.unresolved_months
         ],
         currencies=list(assumptions.currencies),
@@ -1319,13 +1339,12 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
                 currency=window.currency,
                 surcharge_percent=window.surcharge_percent,
                 includes_surcharge=window.includes_surcharge,
+                cost_rate_unit=window.cost_rate_unit,
             )
             for window in assumptions.rate_windows
         ],
         unresolved_months=[
-            UnresolvedCostMonthRead(
-                position_id=month.position_id, period_month=month.period_month
-            )
+            UnresolvedCostMonthRead(position_id=month.position_id, period_month=month.period_month)
             for month in assumptions.unresolved_months
         ],
         currencies=list(assumptions.currencies),
@@ -1347,6 +1366,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             **paid_absence_fully_loaded,
             **fixed_amount,
             **assigned_fte,
+            assigned_fte_above_headcount_position_ids=list(view.assigned_fte_above_headcount_position_ids),
         )
     return PersonnelCostRead(
         state=answer.reason,
@@ -1359,6 +1379,7 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         **paid_absence_fully_loaded,
         **fixed_amount,
         **assigned_fte,
+        assigned_fte_above_headcount_position_ids=list(view.assigned_fte_above_headcount_position_ids),
     )
 
 
@@ -1489,9 +1510,7 @@ def shape_catalog_rate_list(
     catalogue" for however many rows fit in one page — exactly the field this parameter exists so a
     client never has to guess at.
     """
-    return CatalogRateList(
-        rates=[shape_catalog_rate(rate, caller) for rate in rates], total=total
-    )
+    return CatalogRateList(rates=[shape_catalog_rate(rate, caller) for rate in rates], total=total)
 
 
 # --- a scenario's whole-life profit, margin and markup (SC-7-01) --------------------------------
@@ -1504,9 +1523,9 @@ def shape_catalog_rate_list(
 # for the four aggregate fields only, and does not touch any of the other three.
 
 
-def _without_scenario_profitability(
-    item: ScenarioResults, view: ScenarioCostView, caller: CallerIdentity
-) -> ScenarioResults:
+def _without_scenario_profitability[ScenarioResultPayload: ScenarioResultsBase](
+    item: ScenarioResultPayload, view: ScenarioCostView, caller: CallerIdentity
+) -> ScenarioResultPayload:
     """Remove `SCENARIO_PROFITABILITY_FIELDS` unless *both* halves of the SC-1-08 conjunction say
     yes — the same conjunction, and the same `ScenarioCostView`, `_without_scenario_personnel_costs`
     already applies to this payload's `personnel_cost` field.
@@ -1524,16 +1543,12 @@ def _without_scenario_profitability(
     set would widen the gate silently. Raised explicitly, so `python -O` cannot remove it, and
     before the conjunction reads a flag that may belong to somebody else.
     """
-    if view.user_id != caller.user_id:
-        raise AssertionError(
-            "A scenario cost view built for one user is being shaped with another user's "
-            "identity: the profitability gate would combine one caller's assignment flag with "
-            "another caller's permission set. Build the view through app.data.scenario_results "
-            "for the caller the response is for."
-        )
-    if caller.has(Permission.PERSONNEL_COSTS_READ) and view.can_view_personnel_costs:
+    if _may_view_scenario_costs(view, caller):
         return item
-    return item.model_copy(update=dict.fromkeys(SCENARIO_PROFITABILITY_FIELDS))
+    fields = type(item).model_fields
+    return item.model_copy(
+        update={field: None for field in SCENARIO_PROFITABILITY_FIELDS if field in fields}
+    )
 
 
 def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) -> ScenarioResults:
@@ -1549,6 +1564,7 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
     `view.additional_cost`) — never from the already-gated `PersonnelCostRead`, so the arithmetic
     cannot accidentally run on a `null` the gate produced.
     """
+    view = _with_exchange_rates(view)
     cost_view = view.cost_view
     revenue = _revenue_read_of(view.revenue)
     personnel_cost = _without_scenario_personnel_costs(
@@ -1556,8 +1572,10 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte,
     )
+    expected_profitability = scenario_expected_profitability(view.revenue, profitability)
     result = ScenarioResults(
         scenario_id=view.scenario.id,
         scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
@@ -1569,8 +1587,193 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
         margin=profitability.margin,
         markup=profitability.markup,
         profitability_state=profitability.state,
+        expected_profit=expected_profitability.expected_profit,
+        expected_margin=expected_profitability.expected_margin,
     )
     return _without_scenario_profitability(result, cost_view, caller)
+
+
+def _with_exchange_rates(view: ScenarioResultsView) -> ScenarioResultsView:
+    """Apply directed rates to the four complete components before shaping their response."""
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from app.domain.additional_cost import AdditionalCostResult, AdditionalCostUnavailable
+    from app.domain.assigned_fte_cost import AssignedFteCostResult, AssignedFteCostUnavailable
+    from app.domain.exchange_rates import PeriodMoney, convert_component_periods
+    from app.domain.fixed_amount_cost import FixedAmountCostResult, FixedAmountCostUnavailable
+    from app.domain.paid_absence_cost import (
+        FullyLoadedPaidAbsenceCostResult,
+        FullyLoadedPaidAbsenceCostUnavailable,
+        PaidAbsenceCostResult,
+        PaidAbsenceCostUnavailable,
+    )
+    from app.domain.personnel_cost import (
+        FullyLoadedPersonnelCostResult,
+        FullyLoadedPersonnelCostUnavailable,
+        PersonnelCostResult,
+        PersonnelCostUnavailable,
+    )
+    from app.domain.revenue import RevenueResult, RevenueUnavailable
+
+    target = view.scenario.currency
+    if target is None:
+        return view
+
+    def convert(
+        items: tuple[tuple[Any, Decimal, str], ...], amount: Decimal, currency: str
+    ) -> Decimal | None:
+        periods = tuple(PeriodMoney(period, value, source) for period, value, source in items)
+        if not periods:
+            periods = (PeriodMoney(None, amount, currency),)
+        return convert_component_periods(
+            periods,
+            view.exchange_rates,
+            target_currency=target,
+            fallback_period=view.scenario.start_date,
+        )
+
+    revenue = view.revenue
+    if isinstance(revenue, RevenueResult):
+        amount = convert(revenue.period_amounts, revenue.revenue, revenue.currency)
+        if amount is None:
+            revenue = RevenueUnavailable("missing_exchange_rate", revenue.assumptions_used)
+        else:
+            expected = revenue.expected_revenue
+            if isinstance(expected, Decimal):
+                expected = convert((), expected, revenue.currency)
+            categories = tuple(
+                replace(category, revenue=convert((), category.revenue, revenue.currency))
+                for category in revenue.category_revenues
+            )
+            if expected is None or any(category.revenue is None for category in categories):
+                revenue = RevenueUnavailable("missing_exchange_rate", revenue.assumptions_used)
+            else:
+                revenue = replace(
+                    revenue,
+                    revenue=amount,
+                    currency=target,
+                    expected_revenue=expected,
+                    category_revenues=categories,
+                )
+
+    cost = view.cost_view.cost
+    if isinstance(cost, PersonnelCostResult):
+        amount = convert(cost.period_amounts, cost.cost, cost.currency)
+        cost = (
+            replace(cost, cost=amount, currency=target)
+            if amount is not None
+            else PersonnelCostUnavailable("missing_exchange_rate", cost.assumptions_used)
+        )
+
+    fully_loaded_cost = view.cost_view.fully_loaded_cost
+    if isinstance(fully_loaded_cost, FullyLoadedPersonnelCostResult):
+        amount = convert(
+            fully_loaded_cost.period_amounts, fully_loaded_cost.cost, fully_loaded_cost.currency
+        )
+        surcharge = convert(
+            fully_loaded_cost.surcharge_period_amounts,
+            fully_loaded_cost.surcharge_amount,
+            fully_loaded_cost.currency,
+        )
+        fully_loaded_cost = (
+            replace(fully_loaded_cost, cost=amount, surcharge_amount=surcharge, currency=target)
+            if amount is not None and surcharge is not None
+            else FullyLoadedPersonnelCostUnavailable(
+                "missing_exchange_rate", fully_loaded_cost.assumptions_used
+            )
+        )
+
+    absence = view.cost_view.paid_absence
+    if isinstance(absence, PaidAbsenceCostResult):
+        amount = convert(absence.period_amounts, absence.cost, absence.currency)
+        budget = convert(absence.budget_period_amounts, absence.budget_cost, absence.currency)
+        absence = (
+            replace(absence, cost=amount, budget_cost=budget, currency=target)
+            if amount is not None and budget is not None
+            else PaidAbsenceCostUnavailable("missing_exchange_rate", absence.assumptions_used)
+        )
+
+    fully_loaded_absence = view.cost_view.fully_loaded_paid_absence
+    if isinstance(fully_loaded_absence, FullyLoadedPaidAbsenceCostResult):
+        amount = convert(
+            fully_loaded_absence.period_amounts,
+            fully_loaded_absence.cost,
+            fully_loaded_absence.currency,
+        )
+        surcharge = convert(
+            fully_loaded_absence.surcharge_period_amounts,
+            fully_loaded_absence.surcharge_amount,
+            fully_loaded_absence.currency,
+        )
+        fully_loaded_absence = (
+            replace(fully_loaded_absence, cost=amount, surcharge_amount=surcharge, currency=target)
+            if amount is not None and surcharge is not None
+            else FullyLoadedPaidAbsenceCostUnavailable(
+                "missing_exchange_rate", fully_loaded_absence.assumptions_used
+            )
+        )
+
+    assigned_fte = view.cost_view.assigned_fte
+    if isinstance(assigned_fte, AssignedFteCostResult):
+        amount = convert(assigned_fte.period_amounts, assigned_fte.cost, assigned_fte.currency)
+        assigned_fte = (
+            replace(assigned_fte, cost=amount, currency=target)
+            if amount is not None
+            else AssignedFteCostUnavailable("missing_exchange_rate", assigned_fte.assumptions_used)
+        )
+
+    fixed_amount = view.cost_view.fixed_amount
+    if isinstance(fixed_amount, FixedAmountCostResult):
+        amount = convert(fixed_amount.period_amounts, fixed_amount.cost, fixed_amount.currency)
+        fixed_amount = (
+            replace(fixed_amount, cost=amount, currency=target)
+            if amount is not None
+            else FixedAmountCostUnavailable("missing_exchange_rate", fixed_amount.assumptions_used)
+        )
+
+    additional = view.additional_cost
+    if isinstance(additional, AdditionalCostResult):
+        amount = convert(additional.period_amounts, additional.amount, additional.currency)
+        additional = (
+            replace(additional, amount=amount, currency=target)
+            if amount is not None
+            else AdditionalCostUnavailable("missing_exchange_rate", additional.assumptions_used)
+        )
+
+    return replace(
+        view,
+        revenue=revenue,
+        cost_view=replace(
+            view.cost_view,
+            cost=cost,
+            paid_absence=absence,
+            fully_loaded_cost=fully_loaded_cost,
+            fully_loaded_paid_absence=fully_loaded_absence,
+            assigned_fte=assigned_fte,
+            fixed_amount=fixed_amount,
+        ),
+        additional_cost=additional,
+    )
+
+
+def shape_scenario_results_for_export(
+    view: ScenarioResultsView, caller: CallerIdentity
+) -> dict[str, Any]:
+    """Return the existing result shape, omitting gated fields from downloadable artifacts.
+
+    Calculation and access decisions remain in the normal response-shaping path. Files omit the
+    gated paths (instead of serializing the API's null placeholders) while retaining genuine nulls
+    on every ungated field.
+    """
+    result = shape_scenario_results(view, caller).model_dump(mode="json")
+    if not _may_view_scenario_costs(view.cost_view, caller):
+        personnel = result["personnel_cost"]
+        for field in SCENARIO_COST_FIELDS:
+            personnel.pop(field, None)
+        for field in SCENARIO_PROFITABILITY_FIELDS:
+            result.pop(field, None)
+    return result
 
 
 def shape_scenario_what_if_billable_utilization(
@@ -1584,7 +1787,8 @@ def shape_scenario_what_if_billable_utilization(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte
     )
     result = ScenarioWhatIfBillableUtilizationResults(
         scenario_id=view.scenario.id,
@@ -1635,7 +1839,8 @@ def shape_scenario_what_if_salary_raise(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte
     )
     result = ScenarioWhatIfSalaryRaiseResults(
         scenario_id=view.scenario.id,
@@ -1651,6 +1856,52 @@ def shape_scenario_what_if_salary_raise(
         profitability_state=profitability.state,
     )
     return _without_scenario_profitability(result, cost_view, caller)
+
+
+def shape_scenario_what_if_delayed_start(
+    view: ScenarioWhatIfDelayedStartView, caller: CallerIdentity
+) -> ScenarioWhatIfDelayedStartResults:
+    cost_view = view.cost_view
+    revenue = _revenue_read_of(view.revenue)
+    personnel_cost = _without_scenario_personnel_costs(
+        _personnel_cost_read_of(cost_view), cost_view, caller
+    )
+    additional_cost = _additional_cost_total_read_of(view.additional_cost)
+    profitability = scenario_profitability(
+        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
+        cost_view.fixed_amount, cost_view.assigned_fte
+    )
+    result = ScenarioWhatIfDelayedStartResults(
+        scenario_id=view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        delay_months=view.delay_months,
+        revenue=revenue,
+        personnel_cost=personnel_cost,
+        additional_cost=additional_cost,
+        included_cost=profitability.included_cost,
+        profit=profitability.profit,
+        margin=profitability.margin,
+        markup=profitability.markup,
+        profitability_state=profitability.state,
+    )
+    return _without_scenario_profitability(result, cost_view, caller)
+
+
+def shape_scenario_what_if_exchange_rate(
+    view: ScenarioWhatIfExchangeRateView, caller: CallerIdentity
+) -> ScenarioWhatIfExchangeRateResults:
+    result = shape_scenario_results(view.results, caller)
+    return ScenarioWhatIfExchangeRateResults(
+        **result.model_dump(),
+        source_currency=view.source_currency,
+        target_currency=view.target_currency,
+        replacement_rate=view.replacement_rate,
+        exchange_rate_what_if_state=(
+            view.state
+            if _may_view_scenario_costs(view.results.cost_view, caller)
+            else view.public_state
+        ),
+    )
 
 
 # --- risks and reserves (F-09 pt 4-5, SC-6-08; ADR-0021) ------------------------------------------

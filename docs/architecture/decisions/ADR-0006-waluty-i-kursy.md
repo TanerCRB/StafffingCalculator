@@ -57,3 +57,36 @@ ranges"). To poprawka nazewnicza wobec `valid_from`/`valid_to` użytych wyżej w
 zmiana mechanizmu: `exchange_rates` przyjmuje tę samą nazwę przy pierwszej migracji, która tę
 tabelę tworzy (jeszcze nie zaimplementowana). Semantyka (przedział, brak nakładania dla tej samej
 pary walut) zostaje bez zmian.
+
+### 2026-09-30 — Project-level overrides and ordered currency pairs (SC-1-13)
+
+**Status:** Draft — pending approval
+
+> Human Gate 1 decisions confirmed on 2026-09-30: convert all supported result components;
+> treat a currency pair as directed and do not infer a reciprocal rate; include project-level
+> overrides in the organization → project → scenario hierarchy; use the rate effective in each
+> component's own period in a multi-period result.
+
+1. **Project-level exchange-rate overrides are supported.** F-02 permits organization defaults to
+   be overridden at project or scenario level. A project override is the middle level between the
+   organization default and a scenario override. The most specific applicable saved value wins:
+   scenario, then project, then organization. The source is carried as `project_override` in
+   addition to the existing `org_default`, `scenario_override`, and `manual_entry` values.
+2. **A pair is ordered.** A stored rate applies only from its configured source currency to its
+   configured target currency. The system does not invert a rate or silently use a row for the
+   reverse pair. A reverse conversion requires its own applicable rate.
+3. **Saved scenarios remain reproducible.** When an effective rate is selected for a saved
+   scenario, its value and source are copied into the scenario. Later changes to organization or
+   project defaults do not alter that saved value, consistent with ADR-0004.
+4. **Result completeness is preserved.** All supported revenue and cost components are converted
+   to the scenario currency before profitability is calculated. If a required pair has no
+   applicable rate, the result is explicitly unavailable; no partial total or implicit 1:1 rate
+   is returned.
+
+5. **Effective rates are resolved for each component period.** A multi-period result uses the rate
+   effective in each revenue or cost component's own period. A rate change affects the periods it
+   covers; the scenario start date does not pin one rate across the entire result.
+
+| Control | Acceptance criterion |
+|---|---|
+| FX-1 | Every supported result component uses the directed rate for its own period and converts to the scenario currency before aggregation; missing required coverage produces an unavailable result, never a partial total. |

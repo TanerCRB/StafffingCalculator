@@ -150,9 +150,7 @@ def test_k_16_an_approved_scenario_keeps_the_hours_it_was_approved_with_after_th
     )
     make_allocation(db_session, second_position, period_month=MARCH)
 
-    approved = client.post(
-        approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
-    )
+    approved = client.post(approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
     assert approved.status_code == 200, approved.text
     assert approved.json()["snapshot"]["working_calendars"] == 1
     assert approved.json()["snapshot"]["working_calendar_days"] == 2
@@ -287,6 +285,11 @@ def test_k_16_no_snapshot_column_is_a_foreign_key_to_the_row_it_copied(
         "approved_snapshot_catalog_default_rate.source_location_id",
         "approved_snapshot_catalog_default_rate.source_engagement_type_id",
         "approved_snapshot_catalog_default_rate.source_vendor_id",
+        "approved_snapshot_exchange_rate.source_rate_id",
+        "approved_snapshot_exchange_rate.source_scope",
+        "approved_snapshot_exchange_rate.source_project_id",
+        "approved_snapshot_exchange_rate.source_scenario_id",
+        "approved_snapshot_exchange_rate.source_currency",
     }
 
 
@@ -356,17 +359,13 @@ def test_two_positions_in_one_location_freeze_that_calendar_once(
     scenario = make_scenario(db_session, project, name="Baseline")
     dimensions = make_dimension_tuple(db_session, calendar=calendar)
     holiday = make_absence_type(db_session, name="Paid holiday")
-    first = make_staffing_position(
-        db_session, scenario, dimensions, headcount=1, start_date=MARCH
-    )
+    first = make_staffing_position(db_session, scenario, dimensions, headcount=1, start_date=MARCH)
     second = make_staffing_position(
         db_session, scenario, dimensions, headcount=1, start_date=date(2026, 4, 1)
     )
     make_allocation(db_session, first, period_month=MARCH)
     make_allocation(db_session, second, period_month=date(2026, 4, 1))
-    make_absence(
-        db_session, first, holiday, start_date=date(2026, 3, 2), end_date=date(2026, 3, 6)
-    )
+    make_absence(db_session, first, holiday, start_date=date(2026, 3, 2), end_date=date(2026, 3, 6))
     make_absence(
         db_session, first, holiday, start_date=date(2026, 3, 9), end_date=date(2026, 3, 13)
     )
@@ -393,6 +392,7 @@ def test_two_positions_in_one_location_freeze_that_calendar_once(
         # deliberate canary growth. Zero because this fixture has no catalogue rate; the
         # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
         "catalog_default_rates": 0,
+        "exchange_rates": 0,
     }, (
         "the snapshot holds one row per position that reaches a thing instead of one row per "
         "thing. These rows are never updated or deleted, so the duplicates are permanent."
@@ -503,6 +503,7 @@ def test_two_locations_sharing_one_calendar_freeze_two_rows_and_one_set_of_days(
         # deliberate canary growth. Zero because this fixture has no catalogue rate; the
         # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
         "catalog_default_rates": 0,
+        "exchange_rates": 0,
     }, (
         "the deduplication collapsed rows that differ: two locations are two calendar rows (they "
         "carry different source_location_id) and two absence types are two rows"
@@ -565,6 +566,7 @@ def test_k_17_approval_writes_no_snapshot_of_the_scenarios_own_absences(
         # deliberate canary growth. Zero because this fixture has no catalogue rate; the
         # proof that the windows read *are* frozen is K-08 in `test_commercial_revenue.py`.
         "catalog_default_rates": 0,
+        "exchange_rates": 0,
     }, "the contrast is void: this approval snapshotted nothing"
 
     # The absence type is in.
@@ -674,8 +676,12 @@ def test_k_17_the_size_of_a_snapshot_does_not_grow_with_the_number_of_absence_in
 
     # Monday to Friday of four separate March weeks, so the four absences of the second scenario are
     # four distinct rows rather than one long one.
-    weeks = [(date(2026, 3, 2), date(2026, 3, 6)), (date(2026, 3, 9), date(2026, 3, 13)),
-             (date(2026, 3, 16), date(2026, 3, 20)), (date(2026, 3, 23), date(2026, 3, 27))]
+    weeks = [
+        (date(2026, 3, 2), date(2026, 3, 6)),
+        (date(2026, 3, 9), date(2026, 3, 13)),
+        (date(2026, 3, 16), date(2026, 3, 20)),
+        (date(2026, 3, 23), date(2026, 3, 27)),
+    ]
 
     def scenario_booking(name: str, bookings: list[tuple[date, date, AbsenceType]]):
         scenario = make_scenario(db_session, project, name=name)
@@ -696,12 +702,8 @@ def test_k_17_the_size_of_a_snapshot_does_not_grow_with_the_number_of_absence_in
         return scenario
 
     one_absence = scenario_booking("One absence", [(*weeks[0], holiday)])
-    four_absences = scenario_booking(
-        "Four absences", [(*week, holiday) for week in weeks]
-    )
-    two_types = scenario_booking(
-        "Two types", [(*weeks[0], holiday), (*weeks[1], sick)]
-    )
+    four_absences = scenario_booking("Four absences", [(*week, holiday) for week in weeks])
+    two_types = scenario_booking("Two types", [(*weeks[0], holiday), (*weeks[1], sick)])
 
     small = _every_snapshot_row_of(db_session, one_absence.id)
     large = _every_snapshot_row_of(db_session, four_absences.id)
@@ -745,8 +747,9 @@ def test_k_17_a_copy_of_an_approved_scenario_holds_no_snapshot_row(
     """
     project, scenario, _, _ = _approvable_scenario(db_session)
     assert (
-        client.post(approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
-        .status_code
+        client.post(
+            approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
+        ).status_code
         == 200
     )
     assert count_snapshot_rows(db_session, scenario.id) == 4
@@ -889,9 +892,7 @@ def test_k_07_approving_a_scenario_freezes_the_absence_budget_of_every_frozen_ca
 
     before = draft_capacity()
 
-    approved = client.post(
-        approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
-    )
+    approved = client.post(approve_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
 
     assert approved.status_code == 200, approved.text
     counts = approved.json()["snapshot"]
@@ -1123,9 +1124,7 @@ def test_k_07_a_scenario_whose_location_has_no_calendar_freezes_neither_a_calend
         effective_to=BUDGET_WINDOW[1],
     )
     # Named in the catalogue, and read by nothing this scenario plans — see the docstring.
-    make_absence_type(
-        db_session, name=STATUTORY_LEAVE_TYPE_NAME, is_statutory_leave=True
-    )
+    make_absence_type(db_session, name=STATUTORY_LEAVE_TYPE_NAME, is_statutory_leave=True)
     project = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Remote only")
     unattached = make_dimension_tuple(db_session, suffix=" (remote)")
@@ -1318,9 +1317,7 @@ def _frozen_statutory_types(session: Session, scenario_id: uuid.UUID) -> list[st
     )
 
 
-def _budgeted_scenario_without_bookings(
-    session: Session, *, name: str, suffix: str, calendar
-):
+def _budgeted_scenario_without_bookings(session: Session, *, name: str, suffix: str, calendar):
     """A scenario with one position, one planned month and a budget — and **no** booked absence."""
     dimensions = make_dimension_tuple(session, suffix=suffix, calendar=calendar)
     make_absence_budget(
@@ -1333,9 +1330,7 @@ def _budgeted_scenario_without_bookings(
     )
     project = make_project(session, name=name, accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(session, project, name="Baseline")
-    position = make_staffing_position(
-        session, scenario, dimensions, headcount=1, start_date=MARCH
-    )
+    position = make_staffing_position(session, scenario, dimensions, headcount=1, start_date=MARCH)
     make_allocation(session, position, period_month=MARCH)
     return project, scenario
 
@@ -1375,9 +1370,7 @@ def test_the_snapshot_distinguishes_a_named_statutory_type_from_none_even_with_n
     named_calendar = make_working_calendar(
         db_session, name="Poland 7.5h (named)", standard_hours_per_day=Decimal("7.50")
     )
-    make_absence_type(
-        db_session, name=STATUTORY_LEAVE_TYPE_NAME, is_statutory_leave=True
-    )
+    make_absence_type(db_session, name=STATUTORY_LEAVE_TYPE_NAME, is_statutory_leave=True)
     project, scenario = _budgeted_scenario_without_bookings(
         db_session, name="Aurora (named)", suffix=" (named)", calendar=named_calendar
     )
@@ -1387,9 +1380,7 @@ def test_the_snapshot_distinguishes_a_named_statutory_type_from_none_even_with_n
     assert response.status_code == 200, response.text
     assert response.json()["snapshot"]["absence_budgets"] == 1
     assert (
-        db_session.execute(
-            sa.text("SELECT count(*) FROM staffing_position_absence")
-        ).scalar_one()
+        db_session.execute(sa.text("SELECT count(*) FROM staffing_position_absence")).scalar_one()
         == 0
     ), "the premise of this half is that nothing was booked at all"
     assert _frozen_statutory_types(db_session, scenario.id) == [STATUTORY_LEAVE_TYPE_NAME], (
@@ -1508,9 +1499,7 @@ def test_k_07_m_3_the_flagged_type_is_frozen_by_the_location_calendar_not_by_a_f
     assert counts["absence_types"] == 1, counts
 
     # 2. No calendar in the planned location — the contrast.
-    remote, remote_counts = approve_a_scenario_planning_march(
-        "No calendar", dimensions=no_calendar
-    )
+    remote, remote_counts = approve_a_scenario_planning_march("No calendar", dimensions=no_calendar)
 
     assert remote_counts["working_calendars"] == 0, remote_counts
     assert _frozen_statutory_types(db_session, remote.id) == [], (

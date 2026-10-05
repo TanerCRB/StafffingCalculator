@@ -23,6 +23,8 @@ import {
 } from "./contracts/catalog";
 import {
   EXPECTED_REVENUE_STATES,
+  FIXED_PRICE,
+  FIXED_PRICE_RATE_SOURCE,
   OUTCOME_BASED,
   OUTCOME_CATEGORIES,
   RATE_SOURCES,
@@ -34,13 +36,18 @@ import {
   TIME_AND_MATERIAL,
   type CommercialTermsCreateRequest,
   type ExpectedRevenueState,
+  type FixedPriceTermsEditRequest,
   type ScenarioCommercialTerms,
 } from "./contracts/commercialTerms";
 import { isDecimalString } from "../lib/money";
 import type { HealthResponse } from "./contracts/health";
 import type {
+  ProjectCreateRequest,
   ProjectListItem,
+  ProjectListQuery,
   ProjectListResponse,
+  ProjectDetail,
+  ProjectEditRequest,
   ProjectStatus,
   ScenarioListItem,
   ScenarioStatus,
@@ -48,6 +55,7 @@ import type {
 import {
   ADDITIONAL_COST_STATES,
   PERSONNEL_COST_STATES,
+  PAID_ABSENCE_COST_STATES,
   PROFITABILITY_STATES,
   RESULTS_NOT_APPLICABLE,
   type AdditionalCostSource,
@@ -309,16 +317,31 @@ export async function getHealth(): Promise<HealthResponse> {
  * user actually moved to; a `cancelled` flag that only blocks `setState` does nothing about that,
  * and reads as cancellation in a review.
  */
-export async function getProjects(signal?: AbortSignal): Promise<ProjectListResponse> {
+export async function getProjects(
+  signal?: AbortSignal,
+  query: ProjectListQuery = {},
+): Promise<ProjectListResponse> {
+  const params = new URLSearchParams();
+  const search = query.search?.trim();
+  if (search) params.set("search", search);
+  if (query.status) params.set("status", query.status);
+  params.set("limit", String(query.limit ?? 20));
+  params.set("offset", String(query.offset ?? 0));
+  const suffix = params.toString();
   return requestWithDeadline(
-    `${API_BASE_URL}/projects`,
+    `${API_BASE_URL}/projects?${suffix}`,
     { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
     async (response) => {
       if (!response.ok) {
         throw new ApiError(response.status, `GET /projects failed: ${response.status}`);
       }
       const payload = (await response.json()) as ProjectListResponse | null;
-      if (!Array.isArray(payload?.projects) || !payload.projects.every(isProjectListItemShape)) {
+      if (
+        !Array.isArray(payload?.projects) ||
+        !payload.projects.every(isProjectListItemShape) ||
+        !Number.isSafeInteger(payload.total) ||
+        payload.total < 0
+      ) {
         // A payload that does not match the contract is an error, not an empty list: an empty
         // list is a statement ("you have no projects") and may only come from the server.
         //
@@ -328,7 +351,7 @@ export async function getProjects(signal?: AbortSignal): Promise<ProjectListResp
         // blank page this check exists to prevent.
         throw new ApiError(
           response.status,
-          "GET /projects returned a payload without a valid project list",
+          "GET /projects returned a payload without a valid project page",
         );
       }
       return payload;
@@ -336,6 +359,42 @@ export async function getProjects(signal?: AbortSignal): Promise<ProjectListResp
     REQUEST_TIMEOUT_MS,
     signal,
   );
+}
+
+function isProjectDetailShape(value: unknown): value is ProjectDetail {
+  return isRecord(value) && isProjectListItemShape(value) && typeof value.owner === "string" &&
+    typeof value.updated_at === "string" &&
+    (typeof value.target_margin_percent === "string" || value.target_margin_percent === null) &&
+    (typeof value.overload_threshold_percent === "string" || value.overload_threshold_percent === null);
+}
+
+export async function getProject(projectId: string, signal?: AbortSignal): Promise<ProjectDetail> {
+  const path = `/projects/${projectId}`;
+  return requestWithDeadline(`${API_BASE_URL}${path}`, { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } }, async (response) => {
+    if (!response.ok) throw await refusalOf(response, `GET ${path}`);
+    const payload: unknown = await response.json();
+    if (!isProjectDetailShape(payload)) throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+    return payload;
+  }, REQUEST_TIMEOUT_MS, signal);
+}
+
+export async function editProject(projectId: string, body: ProjectEditRequest): Promise<ProjectDetail> {
+  return write(`/projects/${projectId}`, "PATCH", body, isProjectDetailShape);
+}
+
+/** Copy a project and its scenarios (`POST /projects/{id}/copy`, SC-1-03). The server response is
+ * the copied project's detail, validated before the caller can add it to the visible list. */
+export async function copyProject(projectId: string): Promise<ProjectDetail> {
+  return write(`/projects/${projectId}/copy`, "POST", undefined, isProjectDetailShape);
+}
+
+/** Archive a project through its one-way action endpoint (SC-1-04). */
+export async function archiveProject(projectId: string): Promise<ProjectDetail> {
+  return write(`/projects/${projectId}/archive`, "POST", undefined, isProjectDetailShape);
+}
+
+export async function createProject(body: ProjectCreateRequest, idempotencyKey: string): Promise<ProjectDetail> {
+  return write("/projects", "POST", body, isProjectDetailShape, { "Idempotency-Key": idempotencyKey });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -874,11 +933,12 @@ async function write<T>(
   method: "POST" | "PATCH",
   body: unknown,
   isShape: (value: unknown) => boolean,
+  extraHeaders: Record<string, string> = {},
 ): Promise<T> {
   const what = `${method} ${path}`;
   return requestWithDeadline(
     `${API_BASE_URL}${path}`,
-    { method, headers: JSON_REQUEST_HEADERS, body: JSON.stringify(body) },
+    { method, headers: { ...JSON_REQUEST_HEADERS, ...extraHeaders }, body: JSON.stringify(body) },
     async (response) => {
       if (!response.ok) {
         throw await refusalOf(response, what);
@@ -1003,6 +1063,14 @@ function isRevenueSourcePairing(value: Record<string, unknown>, revenueState: un
       value.hours_source === SOURCE_NOT_APPLICABLE &&
       value.vendor_axis === SOURCE_NOT_APPLICABLE &&
       value.rate_source === SOURCE_NOT_APPLICABLE &&
+      noWindowsOrMonths
+    );
+  }
+  if (model === FIXED_PRICE) {
+    return (
+      value.hours_source === SOURCE_NOT_APPLICABLE &&
+      value.vendor_axis === SOURCE_NOT_APPLICABLE &&
+      value.rate_source === FIXED_PRICE_RATE_SOURCE &&
       noWindowsOrMonths
     );
   }
@@ -1168,6 +1236,13 @@ function isCommercialTermsShape(value: unknown): boolean {
   // Required, `null` included (ADR-0003, addendum SC-4-07, point 11): `null` for every model but
   // Outcome-based, and for an Outcome-based rule without its details row. Parameters under any other
   // model's name would be shown as that model's — so they are not a payload this client reads.
+  if (value.model_type === FIXED_PRICE) {
+    return (
+      value.outcome_terms === null &&
+      ((value.agreed_price === null && value.currency === null) ||
+        (isDecimalString(value.agreed_price) && typeof value.currency === "string"))
+    );
+  }
   if (value.outcome_terms === null) {
     return true;
   }
@@ -1280,6 +1355,19 @@ export async function createScenarioCommercialTerms(
   );
 }
 
+/** Edit a draft Fixed Price rule (`PATCH …/commercial-terms`). The backend compares `updated_at`
+ * inside its guarded write; the successful response is the refreshed rule and revenue rendered by
+ * the caller. */
+export async function editScenarioFixedPriceTerms(
+  projectId: string,
+  scenarioId: string,
+  body: FixedPriceTermsEditRequest,
+): Promise<ScenarioCommercialTerms> {
+  return write(commercialTermsPath(projectId, scenarioId), "PATCH", body, (value) =>
+    isScenarioCommercialTermsShape(value, scenarioId),
+  );
+}
+
 /** Add one default rate window (`POST /catalog/rates`). */
 export async function createCatalogRate(body: CatalogRateCreateRequest): Promise<CatalogRate> {
   return write("/catalog/rates", "POST", body, isCatalogRateShape);
@@ -1388,20 +1476,46 @@ function isGatedResultFieldShape(value: unknown): boolean {
  * revenue, applied here to its cost counterpart.
  */
 function isPersonnelCostSourceShape(value: unknown): value is PersonnelCostSource {
-  if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES)) {
+  if (!isRecord(value) || !isOneOf(value.state, PERSONNEL_COST_STATES) || !isOneOf(value.paid_absence_state, PAID_ABSENCE_COST_STATES)) {
+    return false;
+  }
+  const componentShape = (state: unknown, amount: unknown, currency: unknown) => {
+    if (amount === null) return isRequiredNullableString(currency);
+    if (typeof amount !== "string") return false;
+    if (amount === RESULTS_NOT_APPLICABLE) return state !== "calculated" && isRequiredNullableString(currency);
+    return state === "calculated" && isDecimalString(amount) && typeof currency === "string";
+  };
+  const assumptions = value.assumptions_used;
+  const assumptionsShape =
+    assumptions === null ||
+    (isRecord(assumptions) &&
+      Array.isArray(assumptions.rate_windows) &&
+      assumptions.rate_windows.every(
+        (window) =>
+          isRecord(window) &&
+          isDecimalString(window.default_cost_rate) &&
+          typeof window.currency === "string" &&
+          window.currency.length > 0 &&
+          (window.cost_rate_unit === undefined ||
+            isOneOf(window.cost_rate_unit, COST_RATE_UNITS)),
+      ));
+  if (!assumptionsShape) {
     return false;
   }
   const amount = value.amount;
   if (amount === null) {
-    return isRequiredNullableString(value.currency);
+    return assumptions === null && isRequiredNullableString(value.currency) &&
+      componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
   }
   if (typeof amount !== "string") {
     return false;
   }
   if (amount === RESULTS_NOT_APPLICABLE) {
-    return value.state !== "calculated" && isRequiredNullableString(value.currency);
+    return value.state !== "calculated" && isRequiredNullableString(value.currency) &&
+      componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
   }
-  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string";
+  return value.state === "calculated" && isDecimalString(amount) && typeof value.currency === "string" &&
+    componentShape(value.paid_absence_state, value.paid_absence_amount, value.paid_absence_currency);
 }
 
 /**

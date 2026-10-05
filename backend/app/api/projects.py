@@ -14,7 +14,7 @@ through `app.data.project_writes` (ADR-0001, addendum 2026-09-18).
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -27,8 +27,14 @@ from app.api.schemas.project import (
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.commercial_terms import CommercialTermsNotCopyable
-from app.data.project_reads import list_projects_for_caller, project_for_caller
+from app.data.project_reads import (
+    caller_has_accessible_projects,
+    list_projects_for_caller,
+    project_for_caller,
+)
 from app.data.project_writes import (
+    ProjectCopyRefused,
+    ProjectCreateIdempotencyConflict,
     ProjectEditRefused,
     archive_project,
     copy_project,
@@ -36,8 +42,25 @@ from app.data.project_writes import (
     update_project,
 )
 from app.db.session import get_session
+from app.models.project import ProjectStatus
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+DEFAULT_PROJECT_LIST_LIMIT = 20
+MAX_PROJECT_LIST_LIMIT = 100
+MAX_PROJECT_LIST_OFFSET = 1_000_000
+
+
+def _page_integer(raw: str | None, name: str, default: int, maximum: int) -> int:
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{name} must be an integer") from None
+    if value < (1 if name == "limit" else 0) or value > maximum:
+        raise HTTPException(status_code=422, detail=f"{name} is outside the allowed range")
+    return value
 
 PROJECT_NOT_FOUND_DETAIL = "Project not found."
 """One message, one status code, for both "no such project" and "not yours".
@@ -58,14 +81,36 @@ place."""
 def list_projects(
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_READ))],
     session: Annotated[Session, Depends(get_session)],
+    search: Annotated[str | None, Query()] = None,
+    project_status: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[str | None, Query()] = None,
+    offset: Annotated[str | None, Query()] = None,
 ) -> ProjectListResponse:
     """Projects in the caller's `project_access` scope, archived ones included and marked.
 
     The scope filter lives in `app.data.project_reads.accessible_projects` — the one shared
     read path ADR-0001 (addendum) requires. This endpoint writes no query of its own.
     """
-    views = list_projects_for_caller(session, caller)
-    return shape_project_list(views, caller)
+    caller_has_accessible_projects(session, caller)
+    effective_limit = _page_integer(
+        limit, "limit", DEFAULT_PROJECT_LIST_LIMIT, MAX_PROJECT_LIST_LIMIT
+    )
+    effective_offset = _page_integer(offset, "offset", 0, MAX_PROJECT_LIST_OFFSET)
+    status_by_label = {"Active": "active", "Archived": "archived"}
+    if project_status is not None and project_status not in status_by_label:
+        raise HTTPException(status_code=422, detail="status must be Active or Archived")
+    selected_status = (
+        ProjectStatus(status_by_label[project_status]) if project_status is not None else None
+    )
+    views, total = list_projects_for_caller(
+        session,
+        caller,
+        search=search,
+        status=selected_status,
+        limit=effective_limit,
+        offset=effective_offset,
+    )
+    return shape_project_list(views, caller, total=total)
 
 
 @router.post(
@@ -78,6 +123,7 @@ def create_project_endpoint(
     payload: ProjectCreateRequest,
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_CREATE))],
     session: Annotated[Session, Depends(get_session)],
+    idempotency_key: Annotated[uuid.UUID | None, Header(alias="Idempotency-Key")] = None,
 ) -> ProjectDetail:
     """Create a project and grant its creator access to it.
 
@@ -85,17 +131,24 @@ def create_project_endpoint(
     read-only viewer must not reach this endpoint. The permission is declared as a dependency —
     the endpoint has no way to run without the check having run first.
     """
-    created = create_project(
-        session,
-        caller,
-        name=payload.name,
-        client=payload.client,
-        owner=payload.owner,
-        delivery_period_start=payload.delivery_period.start,
-        delivery_period_end=payload.delivery_period.end,
-        reporting_currency=payload.reporting_currency,
-        description=payload.description,
-    )
+    try:
+        created = create_project(
+            session,
+            caller,
+            name=payload.name,
+            client=payload.client,
+            owner=payload.owner,
+            delivery_period_start=payload.delivery_period.start,
+            delivery_period_end=payload.delivery_period.end,
+            reporting_currency=payload.reporting_currency,
+            description=payload.description,
+            idempotency_key=idempotency_key,
+        )
+    except ProjectCreateIdempotencyConflict as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Idempotency key was already used for a different or unavailable project.",
+        ) from error
     return shape_project_detail(created, caller)
 
 
@@ -223,8 +276,9 @@ def archive_project_endpoint(
     responses={
         404: {"description": PROJECT_NOT_FOUND_DETAIL},
         409: {
-            "description": "Refused: a scenario's commercial terms use a model this version of the "
-            "application cannot copy. Nothing was copied."
+            "description": "Refused: a named database constraint rejected the copy, or "
+            "a scenario's commercial terms use a model this version cannot copy. "
+            "Nothing was copied."
         },
     },
 )
@@ -257,7 +311,7 @@ def copy_project_endpoint(
         )
     try:
         copy = copy_project(session, caller, source)
-    except CommercialTermsNotCopyable as refusal:
+    except (CommercialTermsNotCopyable, ProjectCopyRefused) as refusal:
         # R-03 (SC-4-01, gate 2): a readable, named refusal instead of an unhandled `500` — and it
         # is reached only for a project the caller can already see, so it confirms nothing.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None

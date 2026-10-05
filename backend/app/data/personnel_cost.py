@@ -74,6 +74,7 @@ from app.data.rate_windows import (
     days_covered_in_month,
     frozen_windows_overlapping,
     internal_catalog_windows_overlapping,
+    shifted_calendar_month,
 )
 from app.data.staffing import scenario_view_in_scope
 from app.data.working_calendar import basis_by_location, frozen_basis_by_location
@@ -186,7 +187,9 @@ def month_has_cost_rate(
     return sa.and_(covered, one_cost_rate)
 
 
-def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.Select:
+def costed_month_windows(
+    *, from_snapshot: bool, scenario_id: uuid.UUID, period_shift_months: int = 0
+) -> sa.Select:
     """Every (allocation, overlapping window) row of one scenario, each carrying
     `month_has_cost_rate`.
 
@@ -222,23 +225,26 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
     Callers filter on `month_has_cost_rate` **outside** this select (as a subquery), never inside
     it: a `WHERE` here would run before the window functions and change the partitions they see.
     """
+    period_month = shifted_calendar_month(
+        StaffingPositionAllocation.period_month, period_shift_months
+    )
     if from_snapshot:
         window = ApprovedSnapshotCatalogDefaultRate
         window_id = window.source_rate_id
         # The scenario's **own** frozen rows, re-asked the same predicate per month rather than
         # trusted as "whatever was frozen" (ADR-0004, addendum 2026-09-23 SC-5-01, point 4).
-        condition = frozen_windows_overlapping()
+        condition = frozen_windows_overlapping(period_month)
     else:
         window = CatalogDefaultRate
         window_id = window.id
-        condition = internal_catalog_windows_overlapping()
+        condition = internal_catalog_windows_overlapping(period_month)
     return (
         sa.select(
             StaffingPosition.scenario_id.label("scenario_id"),
             StaffingPosition.id.label("position_id"),
             StaffingPosition.location_id.label("position_location_id"),
             StaffingPositionAllocation.id.label("allocation_id"),
-            StaffingPositionAllocation.period_month.label("period_month"),
+            period_month.label("period_month"),
             StaffingPositionAllocation.planned_allocation_hours.label("planned_allocation_hours"),
             window_id.label("window_id"),
             window.effective_from.label("effective_from"),
@@ -250,7 +256,7 @@ def costed_month_windows(*, from_snapshot: bool, scenario_id: uuid.UUID) -> sa.S
             window.cost_rate_unit.label("cost_rate_unit"),
             month_has_cost_rate(
                 StaffingPositionAllocation.id,
-                StaffingPositionAllocation.period_month,
+                period_month,
                 window.valid_period,
                 window.default_cost_rate,
                 window.currency,
@@ -283,6 +289,7 @@ class NonWorkedTimePosition:
     position_id: uuid.UUID
     cost_basis: str
     assigned_fte: Decimal | None
+    headcount: Decimal
 
 
 def _non_worked_time_positions(session: Session, scenario: Scenario) -> list[NonWorkedTimePosition]:
@@ -296,7 +303,12 @@ def _non_worked_time_positions(session: Session, scenario: Scenario) -> list[Non
     `app.data.paid_absence_cost` (R-02): the next read is consistent.
     """
     statement = (
-        sa.select(StaffingPosition.id, StaffingPosition.cost_basis, StaffingPosition.assigned_fte)
+        sa.select(
+            StaffingPosition.id,
+            StaffingPosition.cost_basis,
+            StaffingPosition.assigned_fte,
+            StaffingPosition.headcount,
+        )
         .where(
             StaffingPosition.scenario_id == scenario.id,
             StaffingPosition.cost_basis != COST_BASIS_WORKED_TIME,
@@ -305,14 +317,15 @@ def _non_worked_time_positions(session: Session, scenario: Scenario) -> list[Non
     )
     return [
         NonWorkedTimePosition(
-            position_id=row.id, cost_basis=row.cost_basis, assigned_fte=row.assigned_fte
+            position_id=row.id, cost_basis=row.cost_basis, assigned_fte=row.assigned_fte,
+            headcount=row.headcount
         )
         for row in session.execute(statement)
     ]
 
 
 def _worked_months(
-    session: Session, scenario: Scenario
+    session: Session, scenario: Scenario, *, period_shift_months: int = 0
 ) -> tuple[str, list[WorkedMonth], list[NonWorkedTimePosition]]:
     """Every allocation row of the scenario with its cost rate — live catalogue or snapshot — and
     the positions the dispatch must take out of the worked-time formula.
@@ -350,9 +363,11 @@ def _worked_months(
     }
     not_worked_time_ids = {position.position_id for position in positions}
     source = APPROVED_SNAPSHOT if approved else LIVE_CATALOG
-    rows = costed_month_windows(from_snapshot=approved, scenario_id=scenario.id).subquery(
-        "costed_month_windows"
-    )
+    rows = costed_month_windows(
+        from_snapshot=approved,
+        scenario_id=scenario.id,
+        period_shift_months=period_shift_months,
+    ).subquery("costed_month_windows")
     statement = sa.select(rows).order_by(
         rows.c.period_month, rows.c.position_id, rows.c.effective_from, rows.c.window_id
     )
@@ -424,6 +439,7 @@ class CostInputs:
     """Every `assigned_fte` position, with or without allocation rows (a position with none is
     `no_planned_months`)."""
     assigned_fte_months: list[AssignedFteMonth]
+    non_worked_time_positions: list[NonWorkedTimePosition]
     """The allocation rows of `assigned_fte` positions, with their resolved rate and calendar."""
 
 
@@ -451,6 +467,7 @@ def dispatch_cost_inputs(
     }
     not_worked_time_ids = {position.position_id for position in positions}
     return CostInputs(
+        non_worked_time_positions=positions,
         worked_months=[month for month in months if month.position_id not in not_worked_time_ids],
         assigned_fte_lines=[
             AssignedFteLine(position_id=position_id, assigned_fte=fte)
@@ -560,10 +577,17 @@ class ScenarioCostView:
     fully_loaded_paid_absence: FullyLoadedPaidAbsenceCostAnswer
     """The paid-absence component's fully loaded cost (SC-5-02, criterion K-05) — beside
     `paid_absence`, never added to it, for the same reason `paid_absence` sits beside `cost`."""
+    assigned_fte_above_headcount_position_ids: tuple[uuid.UUID, ...] = ()
 
 
 def scenario_cost_for_caller(
-    session: Session, caller: CallerIdentity, project_id: uuid.UUID, scenario_id: uuid.UUID
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    period_shift_months: int = 0,
+    allow_exchange_rates: bool = False,
 ) -> ScenarioCostView | None:
     """The base personnel cost of one scenario — or `None`, with no way to tell why (K-05).
 
@@ -578,7 +602,10 @@ def scenario_cost_for_caller(
     # object loaded earlier in the same session may predate an approval committed since.
     session.refresh(scenario)
     status_at_read = scenario.status
-    source, months, positions = _worked_months(session, scenario)
+    allow_exchange_rates = allow_exchange_rates and scenario.currency is not None
+    source, months, positions = _worked_months(
+        session, scenario, period_shift_months=period_shift_months
+    )
     inputs = dispatch_cost_inputs(months, positions)
     # The paid-absence component is costed at **these** rates — the resolution of every
     # (position, month) of the shared grid, live or frozen by the same status — and asks no
@@ -586,29 +613,49 @@ def scenario_cost_for_caller(
     # (ADR-0013, addendum 2026-09-23 SC-5-06, point 3). Its hours are read from a different source,
     # and its amount is never added to the base amount (point 4).
     rates = {(month.position_id, month.period_month): month.rate for month in months}
-    absence_months = paid_absence_months(session, scenario, rates)
+    absence_months = paid_absence_months(
+        session, scenario, rates, period_shift_months=period_shift_months
+    )
     return ScenarioCostView(
         user_id=project_view.user_id,
         scenario=scenario,
         can_view_personnel_costs=project_view.can_view_personnel_costs,
         cost=base_personnel_cost(
-            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency
+            inputs.worked_months,
+            rate_source=source,
+            scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
-        paid_absence=paid_absence_cost(absence_months, scenario_currency=scenario.currency),
+        paid_absence=paid_absence_cost(
+            absence_months,
+            scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
+        ),
         fully_loaded_cost=fully_loaded_personnel_cost(
-            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency
+            inputs.worked_months, rate_source=source, scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         assigned_fte=assigned_fte_cost(
             inputs.assigned_fte_lines,
             inputs.assigned_fte_months,
             rate_source=source,
             scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         fixed_amount=fixed_amount_cost(
-            _fixed_amount_lines(session, scenario), scenario_currency=scenario.currency
+            _fixed_amount_lines(session, scenario), scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         fully_loaded_paid_absence=fully_loaded_paid_absence_cost(
-            absence_months, scenario_currency=scenario.currency
+            absence_months, scenario_currency=scenario.currency,
+            allow_currency_mismatch=allow_exchange_rates,
         ),
         status_at_read=status_at_read,
+        assigned_fte_above_headcount_position_ids=tuple(
+            position.position_id
+            for position in inputs.non_worked_time_positions
+            if position.cost_basis == COST_BASIS_ASSIGNED_FTE
+            and position.assigned_fte is not None
+            and position.assigned_fte > position.headcount
+        ),
     )

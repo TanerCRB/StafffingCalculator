@@ -1,30 +1,29 @@
 """One scenario's whole-life profit, margin and markup — the sum for the whole scenario, never per
 month (F-10, ADR-0002; SC-7-01, Issue #12).
 
-    included_cost = base_personnel_cost + paid_absence_cost + additional_cost
+    included_cost = base_personnel_cost + paid_absence_cost + fixed_amount_cost
+                    + assigned_fte_cost + additional_cost
     profit        = revenue − included_cost
     margin        = profit / revenue × 100%        (`app.core.money.ratio_percent`)
     markup        = profit / included_cost × 100%  (`app.core.money.ratio_percent`)
 
-A pure function over the **answers** the three already-proven calculations return — no `Session`,
-no clock, no catalogue lookup, and nothing recomputed: `revenue`, `base_cost`, `paid_absence` and
-`additional_cost` are handed in exactly as `app.domain.revenue`, `app.domain.personnel_cost`,
-`app.domain.paid_absence_cost` and `app.domain.additional_cost` produced them.
+A pure function over the answers the component calculations return — no `Session`, no clock, no
+catalogue lookup, and nothing recomputed.
 
-**This module sits above all four and is the only one that imports every one of them together**
-(ADR-0004, "fits", confirmed at gate 1 for SC-7-01) — not a fifth calculation, a composition of the
-four that already exist. None of the four imports this module or one another (rule 10 of the
+**This module composes the independently calculated answers** (ADR-0004, "fits", confirmed at gate
+1 for SC-7-01) — not a new cost calculation. None of the cost calculators imports this module or
+one another (rule 10 of the
 Invariant Guardian; the structural test of this task extends the existing ones in
 `tests/test_personnel_cost.py` and `tests/test_additional_cost.py`).
 
-**Never a number where a component is unavailable.** If any of the four answers is not its
+**Never a number where a component is unavailable.** If any required answer is not its
 `*Result` shape, the whole aggregate is `NOT_APPLICABLE` — never a partial sum and never `0`
 (ADR-0002, addendum SC-7-01). *Which* component and *why* is not repeated here: each answer already
 carries its own named state, and the API layer reports each one's `state` on its own payload
-(`app.api.response_shaping.shape_scenario_results`) rather than folding four reasons into one.
+(`app.api.response_shaping.shape_scenario_results`) rather than folding component reasons into one.
 
-**Never one number out of two currencies** (R-01 of the SC-4-03 verification, 2026-09-25). Each of
-the four components checks its currency only against the scenario's — and when the scenario
+**Never one number out of two currencies** (R-01 of the SC-4-03 verification, 2026-09-25). Each cost
+component checks its currency only against the scenario's — and when the scenario
 declares none (`NULL`), nothing below this layer compares the revenue's currency with the
 costs', or the costs' with one another. Hence one rule here, in the one place that composes a
 profit (`/results`, the what-if and the SC-6-02 comparison all call this function): four
@@ -39,9 +38,17 @@ from typing import Final, Literal
 
 from app.core.money import NOT_APPLICABLE, ratio_percent, round_money
 from app.domain.additional_cost import AdditionalCostAnswer, AdditionalCostResult
+from app.domain.assigned_fte_cost import AssignedFteCostAnswer, AssignedFteCostResult
+from app.domain.fixed_amount_cost import FixedAmountCostAnswer, FixedAmountCostResult
 from app.domain.paid_absence_cost import PaidAbsenceCostAnswer, PaidAbsenceCostResult
 from app.domain.personnel_cost import PersonnelCostAnswer, PersonnelCostResult
-from app.domain.revenue import CALCULATED, CURRENCY_MISMATCH, RevenueAnswer, RevenueResult
+from app.domain.revenue import (
+    CALCULATED,
+    CURRENCY_MISMATCH,
+    EXPECTED_CALCULATED,
+    RevenueAnswer,
+    RevenueResult,
+)
 
 PROFITABILITY_NOT_APPLICABLE: Final = "not_applicable"
 """At least one of the four components is not `calculated` — which one and why is its own `state`
@@ -72,6 +79,43 @@ class ScenarioProfitability:
     """Why the four fields above are `NOT_APPLICABLE` — or `calculated` when they are numbers."""
 
 
+@dataclass(frozen=True)
+class ScenarioExpectedProfitability:
+    """Expected profit and margin, when expected revenue and the included cost are both usable."""
+
+    expected_profit: Amount
+    expected_margin: Amount
+
+
+def scenario_expected_profitability(
+    revenue: RevenueAnswer, profitability: ScenarioProfitability
+) -> ScenarioExpectedProfitability:
+    """Calculate expected profit from the already-rounded expected revenue and included cost.
+
+    The revenue answer owns the named expected-revenue state (`no_probabilities` or
+    `not_applicable`). The composed profitability answer owns the cost availability and currency
+    checks. Reuse both answers so expected profitability cannot introduce a second currency or
+    component-availability rule.
+    """
+    if (
+        not isinstance(revenue, RevenueResult)
+        or revenue.expected_state != EXPECTED_CALCULATED
+        or profitability.state != CALCULATED
+        or not isinstance(revenue.expected_revenue, Decimal)
+        or not isinstance(profitability.included_cost, Decimal)
+    ):
+        return ScenarioExpectedProfitability(
+            expected_profit=NOT_APPLICABLE,
+            expected_margin=NOT_APPLICABLE,
+        )
+
+    expected_profit = round_money(revenue.expected_revenue - profitability.included_cost)
+    return ScenarioExpectedProfitability(
+        expected_profit=expected_profit,
+        expected_margin=ratio_percent(expected_profit, revenue.expected_revenue),
+    )
+
+
 def _withheld(state: ProfitabilityState) -> ScenarioProfitability:
     return ScenarioProfitability(
         profit=NOT_APPLICABLE,
@@ -87,17 +131,19 @@ def scenario_profitability(
     base_cost: PersonnelCostAnswer,
     paid_absence: PaidAbsenceCostAnswer,
     additional_cost: AdditionalCostAnswer,
+    fixed_amount: FixedAmountCostAnswer,
+    assigned_fte: AssignedFteCostAnswer,
 ) -> ScenarioProfitability:
     """Profit, margin, markup and the included cost — or `NOT_APPLICABLE` on all four.
 
-    1. **Any of the four not `calculated` → `NOT_APPLICABLE` on all four fields.** Never the sum of
-       the components that did resolve (the same rule every one of the four already applies to
+    1. **Any required component not `calculated` → `NOT_APPLICABLE` on all four fields.** Never
+       the sum of the components that did resolve (the same rule each component applies to
        itself, applied once more at this layer). State `not_applicable`.
-    1a. **Four `calculated` components in more than one currency → `NOT_APPLICABLE` on all four
-       fields**, state `currency_mismatch` (R-01, SC-4-03). Checked here and not in the four
+    1a. **Calculated components in more than one currency → `NOT_APPLICABLE` on all four fields**,
+       state `currency_mismatch` (R-01, SC-4-03). Checked here, not in the component calculators
        modules: only this layer holds all four currencies, and with no scenario currency none of
        them has anything to compare against.
-    2. **`included_cost`** — the three cost components, already each rounded once in their own
+    2. **`included_cost`** — the five cost components, already each rounded once in their own
        module, summed and rounded once more through `round_money`: the sum of three exact
        two-decimal amounts needs no correction, but this is still the one place that finishes the
        figure this layer reports, and it is rounded here rather than left unrounded (Invariant
@@ -112,6 +158,8 @@ def scenario_profitability(
         and isinstance(base_cost, PersonnelCostResult)
         and isinstance(paid_absence, PaidAbsenceCostResult)
         and isinstance(additional_cost, AdditionalCostResult)
+        and isinstance(fixed_amount, FixedAmountCostResult)
+        and isinstance(assigned_fte, AssignedFteCostResult)
     ):
         return _withheld(PROFITABILITY_NOT_APPLICABLE)
     currencies = {
@@ -119,11 +167,19 @@ def scenario_profitability(
         base_cost.currency,
         paid_absence.currency,
         additional_cost.currency,
+        fixed_amount.currency,
+        assigned_fte.currency,
     }
     if len(currencies) != 1:
         return _withheld(CURRENCY_MISMATCH)
 
-    included_cost = round_money(base_cost.cost + paid_absence.cost + additional_cost.amount)
+    included_cost = round_money(
+        base_cost.cost
+        + paid_absence.cost
+        + additional_cost.amount
+        + fixed_amount.cost
+        + assigned_fte.cost
+    )
     profit = round_money(revenue.revenue - included_cost)
     return ScenarioProfitability(
         profit=profit,

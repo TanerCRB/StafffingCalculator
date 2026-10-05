@@ -532,6 +532,9 @@ describe("colour contrast", () => {
       "ProjectListScreen.css .project-list__details-meta, .project-list__details-empty": [
         "--sc-color-surface-muted",
       ],
+      "ProjectListScreen.css .project-edit__error": ["--sc-color-surface-muted"],
+      "ProjectListScreen.css .project-edit__field": ["--sc-color-surface-muted"],
+      "ProjectListScreen.css .project-list__status-filter": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__gaps": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__metric": ["--sc-color-surface"],
       // The shell: the topbar and the rail are both white.
@@ -571,6 +574,7 @@ describe("colour contrast", () => {
     const foregroundsOn: Readonly<Record<string, readonly string[]>> = {
       // The catalogue form: its title and stated values in body text, labels and hints muted.
       "CatalogScreen.css .catalog__form": ["--sc-color-text", "--sc-color-text-muted"],
+      "ProjectCreateForm.css .project-create-form": ["--sc-color-text", "--sc-color-text-muted"],
       // A rate row: names, the muted period and "Internal", the link-style "Edit".
       "CatalogScreen.css .catalog__row > td": [
         "--sc-color-text",

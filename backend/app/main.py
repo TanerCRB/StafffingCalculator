@@ -1,5 +1,10 @@
+import math
+
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.additional_cost import router as additional_cost_router
 from app.api.catalog import router as catalog_router
@@ -28,6 +33,24 @@ assert_identity_mechanism_allowed(
 )
 
 app = FastAPI(title=settings.app_name)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request, exc: RequestValidationError) -> JSONResponse:
+    """Preserve the standard 422 body without echoing non-finite JSON numbers.
+
+    FastAPI's standard handler cannot serialize NaN or Infinity in Pydantic's `input` detail,
+    turning malformed numeric requests into 500 responses. Remove only that non-finite input;
+    ordinary validation errors retain their standard detail unchanged.
+    """
+    errors = exc.errors()
+    for error in errors:
+        value = error.get("input")
+        if isinstance(value, float) and not math.isfinite(value):
+            error.pop("input", None)
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,

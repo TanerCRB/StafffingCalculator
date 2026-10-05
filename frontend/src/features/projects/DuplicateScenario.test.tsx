@@ -137,7 +137,7 @@ function stubBackend(backend: Backend) {
     const method = init.method ?? "GET";
 
     if (path === "/projects" && method === "GET") {
-      return Promise.resolve(response(200, { projects: backend.projects }));
+      return Promise.resolve(response(200, { projects: backend.projects, total: backend.projects.length }));
     }
 
     const termsMatch = TERMS_PATH.exec(path);

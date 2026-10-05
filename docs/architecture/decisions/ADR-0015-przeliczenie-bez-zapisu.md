@@ -132,6 +132,38 @@ ADR-0013 definiuje formułę kosztu osobowego i zamknięty słownik `rate_source
 
 ## Aneksy
 
+### 2026-09-30 — SC-6-07 (Issue #102): wymiana waluty jako what-if bez zapisu
+
+> Draft — pending approval. Prepared for gate 1 of Issue #102 after the human approved the
+> refreshed criteria and the exchange-rate what-if boundary. This addendum records that boundary;
+> it does not introduce a new architectural decision.
+
+SC-6-07 applies the existing what-if boundary to one exchange-rate pair. A caller may provide a
+hypothetical replacement rate for one selected currency pair and receive the scenario result
+recalculated through the existing exchange conversion and result composition behavior. The
+replacement is an input to that calculation only: it does not alter persisted scenario state.
+
+1. **Scope:** one selected currency pair per request, using a direct replacement value. Automated
+   rate feeds, multiple changed pairs in one request, UI, and save-as-scenario are outside this
+   task.
+2. **Persistence boundary:** calculation is read-only with respect to scenario state. The observable
+   criterion is that `GET .../results` is identical before and after the what-if request. The
+   existing ADR-0015 requirements for an ephemeral substituted input and reuse of established
+   calculation behavior continue to apply.
+3. **Scenario eligibility and visibility:** only a draft scenario is eligible. An out-of-scope or
+   approved scenario receives the same 404 response as a missing scenario, preserving the existing
+   non-disclosure boundary.
+4. **No affected foreign-currency amount:** when the selected pair does not affect any amount in
+   the scenario, the response explicitly reports not-applicable; it does not imply a recalculated
+   monetary effect.
+5. **Conversion semantics:** the hypothetical calculation reuses the established exchange-rate
+   conversion and result composition rules. It does not create an independent conversion formula
+   or an automated source of rates (ADR-0006).
+
+**Reopening condition.** A request to change more than one pair at a time, persist or save the
+hypothetical result, include approved scenarios, or obtain rates from an automated feed requires a
+separate human decision before implementation.
+
 ### 2026-09-25 — SC-5-02 (Issue #77, narzuty): podstawienie what-if obejmuje narzut bez nowego kodu — konsekwencja rozstrzygnięta na bramce 1 (ADR-0013, Q3)
 
 Pkt 3 "Decyzji" wyżej już stwierdza: "Podwyżka dotyka WSZYSTKICH konsumentów wspólnego słownika
@@ -475,4 +507,86 @@ edit breaks the premise of the exemption: "the same before and after approval" h
 
 | Control | Acceptance criterion |
 |---|---|
-| A15-17 | A real two-connection PostgreSQL test pauses the what-if after it holds the caller-scoped draft `FOR SHARE` lock, starts a guarded staffing edit and proves the edit waits, then lets the what-if finish and verifies its result uses the pre-edit staffing state. After the what-if releases its lock and the edit commits, a subsequent what-if reflects the edited state. A companion interleaving in which the edit obtains `FOR UPDATE` first proves the what-if waits and reads the committed post-edit state. |
+
+### 2026-09-29 — SC-6-06 (Issue #101): delayed-start what-if shifts staffing periods, not stored data
+
+> Human gate-1 decision on Issue #101, recorded in Codex on 2026-09-29: `draft` only; preserve
+> named component states when shifted months lack required rate or calendar data; shift staffing-
+> linked calculations and leave independently dated additional costs in their saved periods.
+> The ADR remains **Draft — pending approval** until its normal approval process is complete.
+
+**Context.** SC-6-04 proves the salary-raise what-if, where existing monthly inputs are repriced.
+It does not prove a delayed-start what-if, which changes the calendar month used to resolve
+staffing-linked inputs. The exact target-month and unavailable-data behavior therefore needs an
+explicit boundary.
+
+**Decision.**
+
+1. **Scenario status remains `draft` only.** An `approved` scenario returns the same `404` shape as
+   an out-of-scope or nonexistent scenario. This preserves the SC-6-04/ADR-0015 rule and avoids
+   applying a hypothetical schedule to frozen approved inputs.
+2. **Delay means a forward shift by N whole calendar months.** Every staffing allocation month is
+   evaluated at that destination month; N=0 is the identity case. The simulation does not change
+   stored allocation periods, project or scenario dates, or project duration.
+3. **Resolve time-dependent inputs at the destination month.** Existing rate-window and calendar
+   rules apply there. If a required rate or calendar is unavailable, return the existing named
+   unavailable state for the affected component; do not substitute zero or a default. Existing
+   result-composition rules propagate unavailable states to dependent metrics while leaving
+   unrelated components available. This does not permit a partial numeric total for a component
+   whose inputs are incomplete.
+4. **Only staffing-linked calculations move.** Independently dated additional-cost rows remain at
+   their saved periods and are included under their existing rules. Moving those rows would model a
+   different variable: postponing every project cost, not delaying the staffing start.
+5. **Reuse the established what-if and result boundaries.** The shifted case follows ADR-0015's
+   compute-without-persist, result-state, access, personnel-cost-field-gating, and read-race rules.
+   No new scenario is written. This addendum sets semantics; it does not claim the delayed-start
+   behavior is proven.
+
+| Control | Acceptance criterion |
+|---|---|
+| A15-18 | N is a non-negative whole number of calendar months; every staffing allocation period is evaluated at month+N, and N=0 matches the unshifted result. |
+| A15-19 | Revenue, cost, profit, margin, and markup use the existing result semantics for the shifted staffing inputs; additional-cost rows remain at their saved periods. |
+| A15-20 | The what-if response does not persist or modify any scenario data, including staffing allocation periods. |
+| A15-21 | A required rate/calendar missing at a shifted destination yields the existing named unavailable state for affected components, with dependent and unrelated metrics following the existing result-state rules; no zero/default is invented. |
+| A15-22 | Only `draft` is accepted; `approved`, out-of-scope, and nonexistent scenarios have the same `404` shape, with existing access checks and personnel-cost field gating preserved. |
+| A15-23 | An approval or source-state change during the read cannot produce a mixed successful result; the existing what-if race refusal is preserved. |
+
+### 2026-09-30 — SC-6-06 clarification: absolute absence dates and status/source race scope
+
+**Status:** Draft — pending approval
+
+> Human Gate 1 decisions confirmed on 2026-09-30: saved absence dates remain absolute and are
+> evaluated for overlap with shifted staffing months; K-06 covers the existing scenario
+> status/source mismatch refusal only, without promising a stable live rate/calendar snapshot.
+
+1. **Saved absence dates do not shift.** The hypothetical shifts staffing allocation months only.
+   For each shifted staffing month, saved absence dates are evaluated for overlap with that
+   destination month under the existing paid-absence calculation. An absence whose saved dates do
+   not overlap the destination month does not move into it because of the staffing shift.
+2. **The race guarantee stays limited to the existing scenario status/source check.** A mixed
+   status/source read that the existing what-if race guard refuses remains refused. The request
+   does not guarantee one stable snapshot of live catalogue rates or calendars across its separate
+   component reads. SC-6-05's `FOR SHARE` serialization rule remains specific to that endpoint.
+
+| Control | Acceptance criterion |
+|---|---|
+| A15-24 | Saved absence dates remain unchanged; an absence affects a shifted staffing month only when its saved dates overlap that month. A mutation shifting absence dates with staffing is killed. |
+| A15-25 | The existing scenario status/source mismatch refusal remains in force; no request-wide live rate/calendar snapshot guarantee is made. |
+
+### 2026-09-30 — SC-6-06 clarification: supported commercial-model composition
+
+**Status:** Draft — pending approval
+
+> Human Gate 1 clarification confirmed on 2026-09-30: K-02 applies to the current one-commercial-
+> rule-per-scenario model. Combined simultaneous commercial models are out of scope until the data
+> model supports them.
+
+1. **Use only supported scenario composition.** For a scenario with its single supported
+   commercial rule, recalculate staffing-linked T&M revenue from the shifted destination-month
+   inputs. Revenue models independent of staffing retain their existing result semantics.
+   Profitability continues to use the existing result calculation. Do not add mixed-model
+   composition as part of SC-6-06.
+
+| Control | Acceptance criterion |
+|---|---|
+| A15-26 | Under the current one-commercial-rule-per-scenario model, T&M revenue uses the applicable shifted destination-month staffing inputs; staffing-independent revenue retains its existing semantics, and profitability follows the existing result calculation. Multiple simultaneous commercial models remain out of scope until supported by the data model. |

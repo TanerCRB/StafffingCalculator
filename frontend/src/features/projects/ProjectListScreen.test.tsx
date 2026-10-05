@@ -3,7 +3,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CALLER_ID_HEADER, REQUEST_TIMEOUT_MS } from "../../api/client";
-import type { ProjectListItem } from "../../api/contracts/projects";
+import type { ProjectDetail, ProjectListItem } from "../../api/contracts/projects";
 import { SCREEN_CRASH_MESSAGE } from "../../shell/ScreenErrorBoundary";
 import { ProjectListScreen } from "./ProjectListScreen";
 
@@ -113,13 +113,99 @@ const ROW_ACTION_LABELS = ["View", "Edit", "Copy", "Archive", "Add scenario"];
 function stubProjectListResponse(projects: ProjectListItem[]) {
   const fetchMock = vi
     .fn()
-    .mockResolvedValue({ ok: true, status: 200, json: async () => ({ projects }) });
+    .mockResolvedValue({ ok: true, status: 200, json: async () => ({ projects, total: projects.length }) });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
 function stubFailedResponse(status: number) {
   const fetchMock = vi.fn().mockResolvedValue({ ok: false, status });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function stubProjectCopyFlow(
+  source: ProjectListItem,
+  response: { readonly ok: boolean; readonly status: number; readonly body?: unknown },
+) {
+  const copiedProject = projectDetail({
+    ...source,
+    id: "99999999-9999-9999-9999-999999999999",
+    name: `${source.name} (copy)`,
+    status: "Active",
+  });
+  let copiedForList: ProjectListItem | null = null;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/projects" && init?.method === undefined) {
+      const search = (url.searchParams.get("search") ?? "").toLowerCase();
+      const status = url.searchParams.get("status");
+      const matching = [source, ...(copiedForList === null ? [] : [copiedForList])]
+        .filter((project) => status === null || project.status === status)
+        .filter((project) => search === "" || `${project.name} ${project.client}`.toLowerCase().includes(search))
+        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? matching.length);
+      return { ok: true, status: 200, json: async () => ({ projects: matching.slice(offset, offset + limit), total: matching.length }) };
+    }
+    if (url.pathname === `/projects/${source.id}/copy` && init?.method === "POST") {
+      const body = response.body ?? copiedProject;
+      if (response.ok && typeof body === "object" && body !== null && "id" in body) {
+        copiedForList = body as ProjectListItem;
+      }
+      return { ok: response.ok, status: response.status, json: async () => body };
+    }
+    return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, copiedProject };
+}
+
+function projectDetail(project: ProjectListItem, updatedAt = "2026-10-04T12:34:56.123456Z"): ProjectDetail {
+  return {
+    ...project,
+    owner: "Project Owner",
+    updated_at: updatedAt,
+    target_margin_percent: null,
+    overload_threshold_percent: null,
+  };
+}
+
+function stubProjectEditFlow(
+  listProject: ProjectListItem,
+  detail: ProjectDetail,
+  onPatch: (body: Record<string, unknown>) => { readonly ok: boolean; readonly status: number; readonly body: unknown },
+  getListProjects?: (search: string) => readonly ProjectListItem[],
+) {
+  let latestProject = listProject;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const path = url.pathname;
+    if (path === "/projects" && init?.method === undefined) {
+      const projects = getListProjects?.(url.searchParams.get("search") ?? "") ?? [latestProject];
+      return { ok: true, status: 200, json: async () => ({ projects, total: projects.length }) };
+    }
+    if (path === `/projects/${detail.id}` && init?.method === undefined) {
+      return { ok: true, status: 200, json: async () => detail };
+    }
+    if (path === `/projects/${detail.id}` && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      const response = onPatch(body);
+      if (response.ok && typeof response.body === "object" && response.body !== null) {
+        const updated = response.body as Partial<ProjectDetail>;
+        latestProject = {
+          ...latestProject,
+          name: updated.name ?? latestProject.name,
+          client: updated.client ?? latestProject.client,
+          delivery_period: updated.delivery_period ?? latestProject.delivery_period,
+          reporting_currency: updated.reporting_currency ?? latestProject.reporting_currency,
+          description: updated.description ?? latestProject.description,
+        };
+      }
+      return { ok: response.ok, status: response.status, json: async () => response.body };
+    }
+    return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+  });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -157,6 +243,271 @@ describe("ProjectListScreen", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  function stubArchiveFlow(archiveResponse: { ok: boolean; status: number; body?: unknown } | Promise<{ ok: boolean; status: number; body?: unknown }>) {
+    let listedProject = AURORA;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        return { ok: true, status: 200, json: async () => ({ projects: [listedProject], total: 1 }) };
+      }
+      if (url.pathname === `/projects/${AURORA.id}/archive` && init?.method === "POST") {
+        const result = await archiveResponse;
+        if (typeof result.body === "object" && result.body !== null && "status" in result.body) {
+          listedProject = { ...listedProject, status: "Archived" };
+        }
+        return { ok: result.ok, status: result.status, json: async () => result.body };
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("archives an active project and keeps it listed as Archived", async () => {
+    const archivedProject = projectDetail({ ...AURORA, status: "Archived" });
+    const fetchMock = stubArchiveFlow({ ok: true, status: 200, body: archivedProject });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    expect(rowFor(rows, AURORA.name).getByText("Active")).toBeVisible();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(await rowFor(await projectRows(), AURORA.name).findByText("Archived")).toBeVisible();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)).toHaveLength(2);
+  });
+
+  it("retains Active status when archive request is refused", async () => {
+    stubArchiveFlow({ ok: false, status: 403, body: { detail: "Archive denied" } });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(await screen.findByText("Project was not archived. Its status has not changed.")).toBeVisible();
+    expect(rowFor(await projectRows(), AURORA.name).getByText("Active")).toBeVisible();
+  });
+
+  it("checks the refreshed list when an archive request returns 5xx", async () => {
+    const fetchMock = stubArchiveFlow({
+      ok: false,
+      status: 503,
+      body: projectDetail({ ...AURORA, status: "Archived" }),
+    });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(await rowFor(await projectRows(), AURORA.name).findByText("Archived")).toBeVisible();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)).toHaveLength(2);
+  });
+
+  it("does not send duplicate archive requests while one is pending", async () => {
+    let resolveArchive!: (value: { ok: boolean; status: number; body?: unknown }) => void;
+    const pendingArchive = new Promise<{ ok: boolean; status: number; body?: unknown }>((resolve) => { resolveArchive = resolve; });
+    const fetchMock = stubArchiveFlow(pendingArchive);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    const archiveButton = rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` });
+    fireEvent.click(archiveButton);
+    fireEvent.click(archiveButton);
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1));
+
+    resolveArchive({ ok: true, status: 200, body: projectDetail({ ...AURORA, status: "Archived" }) });
+    expect(await rowFor(await projectRows(), AURORA.name).findByText("Archived")).toBeVisible();
+  });
+
+  it("explains archive cannot be undone before submission", async () => {
+    const confirmMock = vi.fn(() => false);
+    const fetchMock = stubArchiveFlow({ ok: true, status: 200, body: projectDetail({ ...AURORA, status: "Archived" }) });
+    vi.stubGlobal("confirm", confirmMock);
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(confirmMock).toHaveBeenCalledWith(expect.stringMatching(/cannot be undone/i));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("shows the validated copy and selected scenarios after reconciling the server list", async () => {
+    const serverCopy = projectDetail({
+      ...AURORA,
+      id: "99999999-9999-9999-9999-999999999999",
+      name: "Aurora server copy",
+      client: "Server returned client",
+      scenarios: AURORA.scenarios.map((scenario, index) => ({
+        ...scenario,
+        id: `dddddddd-0000-0000-0000-00000000000${index + 1}`,
+        name: `Server ${scenario.name}`,
+        status: "Draft",
+      })),
+    });
+    const { fetchMock } = stubProjectCopyFlow(AURORA, { ok: true, status: 201, body: serverCopy });
+    render(<ProjectListScreen />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+
+    const rows = await projectRows();
+    expect(rows).toHaveLength(1);
+    expect(rowFor(rows, "Aurora server copy").getByText("Server returned client")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Aurora server copy" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Server Aggressive ramp-up" })).toBeVisible();
+    expect(screen.getAllByText("Status: Draft")).toHaveLength(3);
+    expect(screen.queryByText("Status: Approved")).toBeNull();
+    expect(screen.queryByText("Project Owner")).toBeNull();
+    expect(screen.getByRole("searchbox", { name: "Search projects" })).toHaveValue("Aurora server copy");
+    expect(screen.getByRole("combobox", { name: "Filter projects by status" })).toHaveValue("");
+    expect(fetchMock.mock.calls.some(([input, init]) =>
+      new URL(String(input)).pathname === "/projects" && init?.method === undefined &&
+      new URL(String(input)).searchParams.get("search") === "Aurora server copy" &&
+      new URL(String(input)).searchParams.get("status") === null,
+    )).toBe(true);
+    const post = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(post).toHaveLength(1);
+    expect(new URL(String(post[0]?.[0])).pathname).toBe(`/projects/${AURORA.id}/copy`);
+    expect(post[0]?.[1]?.body).toBeUndefined();
+    expect(JSON.stringify(serverCopy)).toContain("Project Owner");
+  });
+
+  it("copies the project whose row action was selected", async () => {
+    const copiedProject = projectDetail({ ...HELIOS, id: "99999999-9999-9999-9999-999999999999", name: "Helios rollout (copy)" });
+    let listedCopy: ProjectListItem | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const path = url.pathname;
+      if (path === "/projects" && init?.method === undefined) {
+        const all = [AURORA, HELIOS, ...(listedCopy === null ? [] : [listedCopy])];
+        const search = (url.searchParams.get("search") ?? "").toLowerCase();
+        const projects = all.filter((project) => search === "" || `${project.name} ${project.client}`.toLowerCase().includes(search));
+        return { ok: true, status: 200, json: async () => ({ projects, total: projects.length }) };
+      }
+      if (path === `/projects/${HELIOS.id}/copy` && init?.method === "POST") {
+        listedCopy = copiedProject;
+        return { ok: true, status: 201, json: async () => copiedProject };
+      }
+      return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProjectListScreen />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Helios rollout" }));
+
+    expect(await screen.findByRole("button", { name: "Helios rollout (copy)" })).toHaveAttribute("aria-pressed", "true");
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(new URL(String(posts[0]?.[0])).pathname).toBe(`/projects/${HELIOS.id}/copy`);
+  });
+
+  it("clears an Archived filter and refreshes from the server when copying an archived project", async () => {
+    const { fetchMock } = stubProjectCopyFlow(HELIOS, { ok: true, status: 201 });
+    render(<ProjectListScreen />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Filter projects by status" }), {
+      target: { value: "Archived" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Helios rollout" }));
+
+    const copyButton = await screen.findByRole("button", { name: "Helios rollout (copy)" });
+    expect(copyButton).toHaveAttribute("aria-pressed", "true");
+    expect(rowFor(await projectRows(), "Helios rollout (copy)").getByText("Active")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Filter projects by status" })).toHaveValue("");
+    expect(screen.getByRole("searchbox", { name: "Search projects" })).toHaveValue("Helios rollout (copy)");
+    expect(fetchMock.mock.calls.some(([input, init]) => {
+      const url = new URL(String(input));
+      return url.pathname === "/projects" && init?.method === undefined &&
+        url.searchParams.get("search") === "Helios rollout (copy)" && url.searchParams.get("status") === null;
+    })).toBe(true);
+  });
+
+  it("keeps copied details selected and lets the user page to a copy with a repeated name", async () => {
+    const sourceProjects: ProjectListItem[] = Array.from({ length: 21 }, (_, index) => ({
+      ...AURORA,
+      id: `00000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`,
+      name: "Repeated project",
+    }));
+    const copiedProject = projectDetail({
+      ...sourceProjects[0]!,
+      id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      status: "Active",
+      scenarios: sourceProjects[0]!.scenarios.map((scenario) => ({ ...scenario, status: "Draft" as const })),
+    });
+    let serverCopy: ProjectListItem | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        const items = [...sourceProjects, ...(serverCopy === null ? [] : [serverCopy])]
+          .filter((project) => (url.searchParams.get("search") ?? "") === "" ||
+            project.name.toLowerCase().includes((url.searchParams.get("search") ?? "").toLowerCase()))
+          .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+        const offset = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number(url.searchParams.get("limit") ?? 20);
+        return { ok: true, status: 200, json: async () => ({ projects: items.slice(offset, offset + limit), total: items.length }) };
+      }
+      if (url.pathname === `/projects/${sourceProjects[0]!.id}/copy` && init?.method === "POST") {
+        serverCopy = copiedProject;
+        return { ok: true, status: 201, json: async () => copiedProject };
+      }
+      return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ProjectListScreen />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Copy Repeated project" }))[0]!);
+
+    expect(await screen.findByText("Page 1 of 2")).toBeVisible();
+    expect(await screen.findByText(/its row is on another page/)).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Repeated project" })).toHaveLength(20);
+    expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(await screen.findByText("Page 2 of 2")).toBeVisible();
+    const selectedNames = screen.getAllByRole("button", { name: "Repeated project" })
+      .filter((button) => button.getAttribute("aria-pressed") === "true");
+    expect(selectedNames).toHaveLength(1);
+    expect(screen.queryByText(/its row is on another page/)).toBeNull();
+    const queriedOffsets = fetchMock.mock.calls
+      .filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)
+      .map(([input]) => Number(new URL(String(input)).searchParams.get("offset") ?? 0));
+    expect(queriedOffsets.filter((offset) => offset === 20)).toHaveLength(1);
+  });
+
+  it("does not add a phantom row when copy permission is denied", async () => {
+    const { fetchMock } = stubProjectCopyFlow(AURORA, { ok: false, status: 403, body: { detail: "Forbidden" } });
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+    expect(await screen.findByText(/you do not have permission to copy/)).toBeVisible();
+    expect(await projectRows()).toHaveLength(1);
+    expect(screen.queryByText("Aurora migration (copy)")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("explains the named unsupported-model refusal without adding a phantom row", async () => {
+    const detail = "The scenario's commercial terms use the model 'future_model', which this version of the application cannot copy. Nothing was copied; retry once every instance runs a version that supports it.";
+    const { fetchMock } = stubProjectCopyFlow(AURORA, { ok: false, status: 409, body: { detail } });
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+    expect(await screen.findByText(detail)).toBeVisible();
+    expect(await projectRows()).toHaveLength(1);
+    expect(screen.queryByText("Aurora migration (copy)")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("treats other copy conflicts as ordinary refusals", async () => {
+    stubProjectCopyFlow(AURORA, { ok: false, status: 409, body: { detail: "Project copy is currently unavailable." } });
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Aurora migration" }));
+    expect(await screen.findByText("Project copy is currently unavailable.")).toBeVisible();
+    expect(await projectRows()).toHaveLength(1);
   });
 
   it("renders one row per project returned by the API, with name, client, delivery period and status", async () => {
@@ -213,13 +564,23 @@ describe("ProjectListScreen", () => {
         // Reachable by keyboard: a real control in the tab order that can hold focus — not an
         // icon or a CSS class that only looks like a button.
         expect(control.tabIndex).toBe(0);
-        control.focus();
-        expect(control).toHaveFocus();
+        if (!control.hasAttribute("disabled")) {
+          control.focus();
+          expect(control).toHaveFocus();
+        }
 
-        // Rendered, announced as not yet actionable, and wired to nothing (SC-1-02..04).
-        expect(control).toHaveAttribute("aria-disabled", "true");
-        expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
-        fireEvent.click(control);
+        if (label === "Edit" || label === "Copy" || (label === "Archive" && project.status === "Active")) {
+          // SC-1-16 wires Edit, SC-1-19 wires Copy, and SC-1-20 wires archive for Active projects.
+          expect(control).not.toHaveAttribute("aria-disabled");
+          expect(control).not.toHaveAttribute("title");
+        } else if (label === "Archive") {
+          expect(control).toHaveAttribute("aria-disabled", "true");
+          expect(control).not.toHaveAttribute("title");
+        } else {
+          expect(control).toHaveAttribute("aria-disabled", "true");
+          expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
+          fireEvent.click(control);
+        }
       }
     }
 
@@ -302,45 +663,54 @@ describe("ProjectListScreen", () => {
 
   // --- Restyle (layout pass over the same data) ----------------------------------------------
 
-  it("shows search, filters and add-project as reachable controls that are wired to nothing", async () => {
+  it("keeps search, status and reset keyboard reachable while Add project opens the create form", async () => {
     const fetchMock = stubProjectListResponse([AURORA, HELIOS]);
 
     render(<ProjectListScreen />);
     await projectRows();
 
     const search = screen.getByRole("searchbox", { name: "Search projects" });
-    const filters = screen.getByRole("button", { name: "Filters" });
+    const status = screen.getByRole("combobox", { name: "Filter projects by status" });
+    const reset = screen.getByRole("button", { name: "Reset filters" });
     const addProject = screen.getByRole("button", { name: "Add project" });
 
-    for (const control of [search, filters, addProject]) {
+    for (const control of [search, status, reset, addProject]) {
       // Visible and in the tab order — the shape of the product ahead of its implementation
       // (F-13), not a hidden control.
       expect(control).toBeVisible();
       expect(control.tabIndex).toBe(0);
       control.focus();
       expect(control).toHaveFocus();
-      expect(control).toHaveAttribute("aria-disabled", "true");
-      expect(control).toHaveAttribute("title", expect.stringContaining("Not implemented yet"));
     }
+    expect(addProject).toBeVisible();
+    expect(addProject.tabIndex).toBe(0);
+    addProject.focus();
+    expect(addProject).toHaveFocus();
+    expect(addProject).not.toHaveAttribute("aria-disabled");
+    expect(addProject).not.toHaveAttribute("title");
 
-    // The box does not accept input it cannot honour. `readOnly` is the affordance, not the
-    // mechanism: what makes typing harmless is that there is no change handler and no state behind
-    // it (asserted below). Both are pinned, because a box a user can type into that silently
-    // ignores every keystroke is a different, worse lie than one that refuses the keystroke.
-    expect(search).toHaveAttribute("readonly");
+    expect(search).not.toHaveAttribute("readonly");
 
-    fireEvent.click(filters);
     fireEvent.click(addProject);
+    expect(screen.getByRole("heading", { name: "Create a project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close create form" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close create form" }));
+    expect(screen.queryByRole("heading", { name: "Create a project" })).not.toBeInTheDocument();
     // Typing in the box filters nothing: the list is the API's answer, never a client-side
     // subset (Issue #3, out of scope 2). Both projects are still there, including the one whose
     // name does not contain the typed text.
+    expect(addProject).toHaveAttribute("aria-expanded", "false");
     fireEvent.change(search, { target: { value: "Aurora" } });
-
-    const rows = await projectRows();
-    expect(rows).toHaveLength(2);
-    expect(rowFor(rows, "Helios rollout").getByText("Contoso")).toBeInTheDocument();
-    // Nothing was fetched, created or re-read beyond the initial list request.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    fireEvent.change(status, { target: { value: "Archived" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    fireEvent.click(reset);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(search).toHaveValue("");
+    expect(status).toHaveValue("");
   });
 
   it("renders no search, filters or add-project controls when the API denies the request", async () => {
@@ -541,10 +911,11 @@ describe("ProjectListScreen", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Loading projects…")).toBeNull();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    // A screen that gave up waiting has no list, so it offers no controls over one either.
+    // The initial read never produced a list, so search controls remain hidden. Retry is available.
     expect(screen.queryByRole("searchbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add project" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 
   it("stops waiting when the response headers arrive but the body never finishes", async () => {
@@ -630,7 +1001,7 @@ describe("ProjectListScreen", () => {
         vi.fn().mockResolvedValue({
           ok: true,
           status: 200,
-          json: async () => ({ projects: [row, HELIOS] }),
+          json: async () => ({ projects: [row, HELIOS], total: 2 }),
         }),
       );
 
@@ -727,7 +1098,9 @@ describe("ProjectListScreen", () => {
    * `replaceWith`, when given, is the answer the *second* call gets — the one `StrictMode` issues
    * after abandoning the first.
    */
-  function stubAbortableProjectListRead(replaceWith?: { readonly projects: ProjectListItem[] }) {
+  function stubAbortableProjectListRead(
+    replaceWith?: { readonly projects: ProjectListItem[]; readonly total: number },
+  ) {
     const fetchMock = vi.fn((_url: string, init: RequestInit) => {
       return new Promise<unknown>((resolve, reject) => {
         const answer = fetchMock.mock.calls.length === 2 ? replaceWith : undefined;
@@ -796,7 +1169,7 @@ describe("ProjectListScreen", () => {
     const answer = (projects: ProjectListItem[]) => ({
       ok: true,
       status: 200,
-      json: async () => ({ projects }),
+      json: async () => ({ projects, total: projects.length }),
     });
     // Neither argument is read here: which read this is depends only on the order it arrived in,
     // and the signal is inspected by the test through `fetchMock.mock.calls`.
@@ -852,7 +1225,7 @@ describe("ProjectListScreen", () => {
     // The contrast to the test above: the guard silences the read the screen walked away from, not
     // every read. A guard written as `if (false)` would satisfy that test for ever and leave this
     // screen loading until the tab is closed.
-    const fetchMock = stubAbortableProjectListRead({ projects: [AURORA, HELIOS] });
+    const fetchMock = stubAbortableProjectListRead({ projects: [AURORA, HELIOS], total: 2 });
 
     render(
       <StrictMode>
@@ -864,5 +1237,158 @@ describe("ProjectListScreen", () => {
     expect(await projectRows()).toHaveLength(2);
     await waitFor(() => expect(screen.queryByText("Loading projects…")).toBeNull());
     expect(screen.queryByText("Projects could not be loaded.")).toBeNull();
+  });
+
+  it.each(["2026-10-04T12:34:56.123456Z", "2026-11-19T03:02:01.000007Z"])(
+    "sends the unmodified detail token with a project edit (%s)",
+    async (token) => {
+      const detail = projectDetail(VESTA, token);
+      const fetchMock = stubProjectEditFlow(VESTA, detail, () => ({
+        ok: true,
+        status: 200,
+        body: { ...detail, name: "Vesta discovery edited", updated_at: "2026-10-04T12:35:00.000001Z" },
+      }));
+
+      render(<ProjectListScreen />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit Vesta discovery" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Project name" }), {
+        target: { value: "Vesta discovery edited" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+      await screen.findByText("Project updated.");
+      const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+      expect(patchCall).toBeDefined();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
+        updated_at: token,
+        name: "Vesta discovery edited",
+      });
+    },
+  );
+
+  it("renders the accepted PATCH values in the project row", async () => {
+    const detail = projectDetail(VESTA);
+    stubProjectEditFlow(VESTA, detail, () => ({
+      ok: true,
+      status: 200,
+      body: { ...detail, name: "Vesta refreshed", client: "Fabrikam Updated" },
+    }));
+
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Vesta discovery" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Project name" }), {
+      target: { value: "Vesta refreshed" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Client" }), {
+      target: { value: "Fabrikam Updated" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await screen.findByText("Project updated.");
+    const rows = await projectRows();
+    const updatedRow = rowFor(rows, "Vesta refreshed");
+    expect(updatedRow.getByText("Fabrikam Updated")).toBeVisible();
+    expect(screen.queryByText("Vesta discovery")).toBeNull();
+  });
+
+  it("re-reads the active search after editing a field that removes the project from its results", async () => {
+    let currentProject = VESTA;
+    const detail = projectDetail(VESTA);
+    const fetchMock = stubProjectEditFlow(
+      VESTA,
+      detail,
+      () => {
+        currentProject = { ...currentProject, name: "Northwind launch" };
+        return { ok: true, status: 200, body: { ...detail, name: currentProject.name } };
+      },
+      (search) => currentProject.name.toLowerCase().includes(search.toLowerCase()) ? [currentProject] : [],
+    );
+
+    render(<ProjectListScreen />);
+    await screen.findByRole("table");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search projects" }), {
+      target: { value: "Vesta discovery" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Vesta discovery" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Project name" }), {
+      target: { value: "Northwind launch" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByText("No projects match your search and filters.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit Northwind launch" })).toBeNull();
+    const listReads = fetchMock.mock.calls.filter(([input, init]) =>
+      new URL(String(input)).pathname === "/projects" && init?.method === undefined,
+    );
+    expect(listReads.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("keeps entered values and explains a stale edit refusal", async () => {
+    const detail = projectDetail(VESTA);
+    stubProjectEditFlow(VESTA, detail, () => ({
+      ok: false,
+      status: 409,
+      body: { detail: "Project changed since it was loaded." },
+    }));
+
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Vesta discovery" }));
+    const nameInput = await screen.findByRole("textbox", { name: "Project name" });
+    fireEvent.change(nameInput, { target: { value: "My unsaved project name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This project changed while you were editing");
+    expect(nameInput).toHaveValue("My unsaved project name");
+    expect(screen.queryByText("Project updated.")).toBeNull();
+    expect(rowFor(await projectRows(), "Vesta discovery").getByText("Vesta discovery")).toBeVisible();
+  });
+
+  it("explains approved-scenario field freezes and contrasts an editable draft project", async () => {
+    const approved = { ...AURORA, scenarios: AURORA.scenarios.map((scenario) => ({ ...scenario, status: "Approved" as const })) };
+    const approvedDetail = projectDetail(approved);
+    const refusedFetch = stubProjectEditFlow(approved, approvedDetail, () => ({
+      ok: false,
+      status: 409,
+      body: { detail: "Project fields are frozen by an approved scenario." },
+    }));
+
+    const firstRender = render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Aurora migration" }));
+    expect(await screen.findByText(/may be frozen while an approved scenario exists/)).toBeVisible();
+    const approvedStart = await screen.findByLabelText("Delivery period start");
+    expect(approvedStart).toBeEnabled();
+    fireEvent.change(approvedStart, { target: { value: "2026-02-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("cannot be edited while this project has an approved scenario");
+    expect(approvedStart).toHaveValue("2026-02-01");
+    expect(screen.queryByText("Project updated.")).toBeNull();
+    expect(rowFor(await projectRows(), "Aurora migration").getByText("2026-01-01 – 2026-12-31")).toBeVisible();
+    const refusedPatch = refusedFetch.mock.calls.find(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(String(refusedPatch?.[1]?.body))).toMatchObject({
+      updated_at: approvedDetail.updated_at,
+      delivery_period: { start: "2026-02-01", end: approvedDetail.delivery_period.end },
+    });
+
+    firstRender.unmount();
+    const draftProject = { ...approved, scenarios: approved.scenarios.map((scenario) => ({ ...scenario, status: "Draft" as const })) };
+    const draftDetail = projectDetail(draftProject);
+    const fetchMock = stubProjectEditFlow(draftProject, draftDetail, (body) => ({
+      ok: true,
+      status: 200,
+      body: { ...draftDetail, delivery_period: body.delivery_period as ProjectDetail["delivery_period"] },
+    }));
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Aurora migration" }));
+    expect(screen.queryByText(/may be frozen while an approved scenario exists/)).toBeNull();
+    const start = await screen.findByLabelText("Delivery period start");
+    expect(start).toBeEnabled();
+    fireEvent.change(start, { target: { value: "2026-02-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Project updated.");
+    const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
+      updated_at: draftDetail.updated_at,
+      delivery_period: { start: "2026-02-01", end: draftDetail.delivery_period.end },
+    });
   });
 });
