@@ -83,6 +83,12 @@ class Permission(StrEnum):
     ORGANIZATION_DEFAULTS_WRITE = "organization_defaults:write"
     """Change organization defaults; does not imply read permission (ADR-0022)."""
 
+    SCENARIO_ASSUMPTIONS_READ = "scenario_assumptions:read"
+    """Read a scenario's own assumption overrides, within assigned projects (ADR-0022)."""
+
+    SCENARIO_ASSUMPTIONS_WRITE = "scenario_assumptions:write"
+    """Change draft scenario assumption overrides; does not imply read permission (ADR-0022)."""
+
     STAFFING_READ = "staffing:read"
     """Reading a scenario's staffing positions and their monthly hours (F-04, SC-3-01).
 
