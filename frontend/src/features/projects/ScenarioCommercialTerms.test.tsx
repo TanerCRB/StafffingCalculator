@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../App";
 import { REQUEST_TIMEOUT_MS } from "../../api/client";
 import type {
+  OutcomeTermsRead,
   RevenueAssumptionsRead,
   RevenueRead,
   ScenarioCommercialTerms,
@@ -31,6 +32,13 @@ import {
   SAVE_REFUSED_UNSTATED,
   SAVE_UNRESOLVED,
   SAVE_UNRESOLVED_UNREADABLE_ANSWER,
+  DELETE_COMMERCIAL_RULE,
+  EDIT_OUTCOME_BASED,
+  EDIT_STORY_POINTS,
+  SAVE_COMMERCIAL_RULE,
+  SET_TIME_AND_MATERIAL,
+  SET_OUTCOME_BASED,
+  SET_STORY_POINTS,
 } from "./commercialTermsText";
 
 /**
@@ -231,6 +239,7 @@ interface Backend {
   readonly writes?: Record<string, Answer>;
   /** The `PATCH` answer per scenario id. */
   readonly edits?: Record<string, Answer>;
+  readonly deletions?: Record<string, Answer>;
 }
 
 function response(status: number, body: unknown) {
@@ -271,6 +280,8 @@ function stubBackend(backend: Backend) {
       answer = backend.writes?.[match[2]];
     } else if (match !== null && method === "PATCH") {
       answer = backend.edits?.[match[2]];
+    } else if (match !== null && method === "DELETE") {
+      answer = backend.deletions?.[match[2]];
     }
     if (answer === undefined) {
       throw new Error(`No answer stubbed for ${method} ${path}`);
@@ -293,7 +304,7 @@ function stubBackend(backend: Backend) {
 
 type FetchMock = ReturnType<typeof stubBackend>;
 
-function termsCalls(fetchMock: FetchMock, scenarioId: string, method: "GET" | "POST" | "PATCH") {
+function termsCalls(fetchMock: FetchMock, scenarioId: string, method: "GET" | "POST" | "PATCH" | "DELETE") {
   return fetchMock.mock.calls.filter(([url, init]) => {
     const match = TERMS_PATH.exec(new URL(url).pathname);
     return match?.[2] === scenarioId && ((init?.method ?? "GET") === method);
@@ -526,7 +537,7 @@ describe("K-03 — the rule's presence decides whether 'Set Time & Material' is 
     expect(control).toHaveFocus();
   });
 
-  it("names the Time & Material model and offers no way to set it again", async () => {
+  it("names the Time & Material model without offering it again", async () => {
     stubBackend({
       reads: {
         [BASELINE]: { status: 200, body: withRule(BASELINE, calculated("100.00", "PLN")) },
@@ -541,7 +552,7 @@ describe("K-03 — the rule's presence decides whether 'Set Time & Material' is 
 
     expect(within(terms).getByText("Commercial model: Time & Material")).toBeVisible();
     expect(setButton("Baseline")).toBeNull();
-    expect(within(terms).queryAllByRole("button")).toHaveLength(0);
+    expect(within(terms).queryByRole("button", { name: `${SET_TIME_AND_MATERIAL} for Baseline` })).toBeNull();
   });
 
   it("shows a model this version does not know by the server's word, as the unsupported state and not as a broken read", async () => {
@@ -1043,6 +1054,189 @@ describe("SC-4-10 K-05 — Fixed Price write refusals and unresolved outcomes st
     expect(unresolved).toHaveAttribute("data-write-outcome", "unresolved");
     expect(within(terms).queryByText(SAVED)).toBeNull();
     expect(within(terms).getByText("Commercial model: not set")).toBeVisible();
+  });
+});
+
+describe("SC-4-11 K-01/K-02 — Outcome-based and Story Points draft rules are created and fully replaced", () => {
+  it("creates and fully replaces Outcome-based terms, rendering the server's parameters and revenue", async () => {
+    const assumptions: RevenueAssumptionsRead = {
+      model_type: "outcome_based", hours_source: "not_applicable", vendor_axis: "not_applicable",
+      rate_source: "not_applicable", rate_windows: [], unresolved_months: [], currencies: ["PLN"],
+    };
+    const parameters = {
+      currency: "PLN", fixed_fee: "1000.0000", success_bonus: null, unit_rate: null,
+      revenue_min: null, revenue_max: null,
+      categories: Object.fromEntries(["not_achieved", "partial", "achieved", "exceeded"].map((category) => [category, { units: null, probability: "25.00" }])) as OutcomeTermsRead["categories"],
+    };
+    const serverTerms: ScenarioCommercialTerms = {
+      scenario_id: BASELINE, scenario_status: "Draft",
+      commercial_terms: { ...RULE, model_type: "outcome_based", outcome_terms: parameters },
+      revenue: { state: "calculated", amount: "1000.00", currency: "PLN", assumptions_used: assumptions,
+        expected_state: "calculated", expected_amount: "1000.00", category_revenues: [
+          { category: "not_achieved", units: null, probability: "25.00", amount: "0.00" },
+          { category: "partial", units: null, probability: "25.00", amount: "0.00" },
+          { category: "achieved", units: null, probability: "25.00", amount: "0.00" },
+          { category: "exceeded", units: null, probability: "25.00", amount: "0.00" },
+        ] },
+    };
+    const fetchMock = stubBackend({
+      reads: { [BASELINE]: { status: 200, body: noRule(BASELINE) }, [STRETCH]: { hang: true }, [SIGNED]: { hang: true } },
+      writes: { [BASELINE]: { status: 201, body: serverTerms } },
+      edits: { [BASELINE]: { status: 200, body: { ...serverTerms,
+        commercial_terms: { ...serverTerms.commercial_terms!, outcome_terms: { ...parameters, fixed_fee: "2000.0000" } },
+        revenue: { ...serverTerms.revenue, amount: "2000.00", expected_amount: "2000.00",
+          category_revenues: serverTerms.revenue.category_revenues.map((item) => ({ ...item, amount: "0.00" })) },
+      } } },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    fireEvent.click(within(terms).getByRole("button", { name: `${SET_OUTCOME_BASED} for Baseline` }));
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Rule currency for Baseline" }), { target: { value: "PLN" } });
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Fixed fee for Baseline" }), { target: { value: "1000.0000" } });
+    for (const category of ["Not achieved", "Partially achieved", "Achieved", "Exceeded"]) {
+      fireEvent.change(within(terms).getByRole("textbox", { name: `${category} probability for Baseline` }), { target: { value: "25.00" } });
+    }
+    fireEvent.click(within(terms).getByRole("button", { name: SAVE_COMMERCIAL_RULE }));
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "POST")).toHaveLength(1));
+    expect(JSON.parse(String(termsCalls(fetchMock, BASELINE, "POST")[0][1]?.body))).toMatchObject({ model_type: "outcome_based", fixed_fee: "1000.0000" });
+    expect(await within(terms).findByText("Fixed fee: 1000.0000 PLN")).toBeVisible();
+    expect(within(terms).getByText("Guaranteed revenue: 1000.00 PLN")).toBeVisible();
+
+    fireEvent.click(within(terms).getByRole("button", { name: `${EDIT_OUTCOME_BASED} for Baseline` }));
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Fixed fee for Baseline" }), { target: { value: "2500.0000" } });
+    fireEvent.click(within(terms).getByRole("button", { name: SAVE_COMMERCIAL_RULE }));
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "PATCH")).toHaveLength(1));
+    expect(JSON.parse(String(termsCalls(fetchMock, BASELINE, "PATCH")[0][1]?.body))).toMatchObject({ model_type: "outcome_based", updated_at: RULE.updated_at, fixed_fee: "2500.0000" });
+    expect(await within(terms).findByText("Fixed fee: 2000.0000 PLN")).toBeVisible();
+    expect(within(terms).getByText("Guaranteed revenue: 2000.00 PLN")).toBeVisible();
+  });
+
+  it("creates and fully replaces Story Points terms, with the server revenue after changing accepted points", async () => {
+    const assumptions: RevenueAssumptionsRead = {
+      model_type: "story_points", hours_source: "not_applicable", vendor_axis: "not_applicable",
+      rate_source: "story_points_terms", rate_windows: [], unresolved_months: [], currencies: ["PLN"],
+    };
+    const pointsResponse = (acceptedPoints: number): ScenarioCommercialTerms => ({
+      scenario_id: BASELINE, scenario_status: "Draft",
+      commercial_terms: { ...RULE, model_type: "story_points", price_per_point: "25.0000", accepted_points: acceptedPoints, currency: "PLN", outcome_terms: null },
+      revenue: { state: "calculated", amount: `${acceptedPoints * 25}.00`, currency: "PLN", assumptions_used: assumptions,
+        expected_state: "not_applicable", expected_amount: "n/a", category_revenues: [] },
+    });
+    const fetchMock = stubBackend({
+      reads: { [BASELINE]: { status: 200, body: noRule(BASELINE) }, [STRETCH]: { hang: true }, [SIGNED]: { hang: true } },
+      writes: { [BASELINE]: { status: 201, body: pointsResponse(100) } },
+      edits: { [BASELINE]: { status: 200, body: pointsResponse(120) } },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    fireEvent.click(within(terms).getByRole("button", { name: `${SET_STORY_POINTS} for Baseline` }));
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Price per point for Baseline" }), { target: { value: "25.0000" } });
+    fireEvent.change(within(terms).getByRole("spinbutton", { name: "Accepted points for Baseline" }), { target: { value: "100" } });
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Currency for Baseline" }), { target: { value: "PLN" } });
+    fireEvent.click(within(terms).getByRole("button", { name: SAVE_COMMERCIAL_RULE }));
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "POST")).toHaveLength(1));
+    expect(JSON.parse(String(termsCalls(fetchMock, BASELINE, "POST")[0][1]?.body))).toMatchObject({ model_type: "story_points", price_per_point: "25.0000", accepted_points: 100 });
+    expect(await within(terms).findByText("Accepted points: 100")).toBeVisible();
+    expect(within(terms).getByText("Revenue: 2500.00 PLN")).toBeVisible();
+    fireEvent.click(within(terms).getByRole("button", { name: `${EDIT_STORY_POINTS} for Baseline` }));
+    fireEvent.change(within(terms).getByRole("spinbutton", { name: "Accepted points for Baseline" }), { target: { value: "120" } });
+    fireEvent.click(within(terms).getByRole("button", { name: SAVE_COMMERCIAL_RULE }));
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "PATCH")).toHaveLength(1));
+    expect(JSON.parse(String(termsCalls(fetchMock, BASELINE, "PATCH")[0][1]?.body))).toMatchObject({ model_type: "story_points", updated_at: RULE.updated_at, accepted_points: 120 });
+    expect(await within(terms).findByText("Accepted points: 120")).toBeVisible();
+    expect(within(terms).getByText("Revenue: 3000.00 PLN")).toBeVisible();
+  });
+});
+
+describe("SC-4-11 K-03/K-05 — draft rules can be removed; approved rules have no write actions", () => {
+  it.each(["time_and_material", "fixed_price", "story_points", "outcome_based"] as const)("removes a %s rule using its read marker and renders the re-read empty state", async (modelType) => {
+    const first = withRule(BASELINE, calculated("100.00", "PLN"), modelType);
+    const modelAssumptions: RevenueAssumptionsRead = modelType === "story_points"
+      ? { model_type: "story_points", hours_source: "not_applicable", vendor_axis: "not_applicable", rate_source: "story_points_terms", rate_windows: [], unresolved_months: [], currencies: ["PLN"] }
+      : modelType === "outcome_based"
+        ? { model_type: "outcome_based", hours_source: "not_applicable", vendor_axis: "not_applicable", rate_source: "not_applicable", rate_windows: [], unresolved_months: [], currencies: ["PLN"] }
+        : modelType === "fixed_price" ? FIXED_PRICE_ASSUMPTIONS : TM_ASSUMPTIONS;
+    first.revenue = { ...first.revenue, assumptions_used: modelAssumptions };
+    if (modelType === "story_points") Object.assign(first.commercial_terms!, { price_per_point: "1.0000", accepted_points: 100, currency: "PLN" });
+    if (modelType === "outcome_based") Object.assign(first.commercial_terms!, { outcome_terms: { currency: "PLN", fixed_fee: "100.0000", success_bonus: null, unit_rate: null, revenue_min: null, revenue_max: null, categories: Object.fromEntries(["not_achieved", "partial", "achieved", "exceeded"].map((category) => [category, { units: null, probability: null }])) } });
+    if (modelType === "outcome_based") {
+      first.revenue = {
+        state: "calculated", amount: "100.00", currency: "PLN",
+        assumptions_used: modelAssumptions,
+        expected_state: "no_probabilities", expected_amount: "n/a",
+        category_revenues: ["not_achieved", "partial", "achieved", "exceeded"].map((category) => ({ category, units: null, probability: null, amount: "0.00" })) as RevenueRead["category_revenues"],
+      };
+    }
+    const fetchMock = stubBackend({
+      reads: { [BASELINE]: (count) => count === 1 ? { status: 200, body: first } : { status: 200, body: noRule(BASELINE) }, [STRETCH]: { hang: true }, [SIGNED]: { hang: true } },
+      deletions: { [BASELINE]: { status: 204 } },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    fireEvent.click(within(terms).getByRole("button", { name: `${DELETE_COMMERCIAL_RULE} for Baseline` }));
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "DELETE")).toHaveLength(1));
+    expect(JSON.parse(String(termsCalls(fetchMock, BASELINE, "DELETE")[0][1]?.body))).toEqual({ updated_at: RULE.updated_at });
+    expect(await within(terms).findByText("Commercial model: not set")).toBeVisible();
+  });
+
+  it("keeps the current rule visible when deletion is refused", async () => {
+    const fetchMock = stubBackend({
+      reads: { [BASELINE]: { status: 200, body: fixedPriceTerms(BASELINE, "Draft", "150000.0050", "PLN", fixedPriceRevenue()) }, [STRETCH]: { hang: true }, [SIGNED]: { hang: true } },
+      deletions: { [BASELINE]: { status: 409, body: { detail: FROZEN_DETAIL } } },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    fireEvent.click(within(terms).getByRole("button", { name: `${DELETE_COMMERCIAL_RULE} for Baseline` }));
+    await waitFor(() => expect(termsCalls(fetchMock, BASELINE, "DELETE")).toHaveLength(1));
+    expect(within(terms).getByText("Commercial model: Fixed Price")).toBeVisible();
+    expect(within(terms).queryByText("Commercial model: not set")).toBeNull();
+    expect(within(terms).queryByText(SAVED)).toBeNull();
+  });
+
+  it("does not show create, edit, or delete controls for an approved scenario", async () => {
+    const approved = withRule(BASELINE, calculated("2500.00", "PLN"), "story_points");
+    approved.scenario_status = "Approved";
+    Object.assign(approved.commercial_terms!, { price_per_point: "25.0000", accepted_points: 100, currency: "PLN" });
+    approved.revenue = {
+      ...approved.revenue,
+      assumptions_used: { model_type: "story_points", hours_source: "not_applicable", vendor_axis: "not_applicable", rate_source: "story_points_terms", rate_windows: [], unresolved_months: [], currencies: ["PLN"] },
+    };
+    stubBackend({ reads: { [BASELINE]: { status: 200, body: approved }, [STRETCH]: { hang: true }, [SIGNED]: { hang: true } } });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    expect(within(terms).queryByRole("button", { name: `${DELETE_COMMERCIAL_RULE} for Baseline` })).toBeNull();
+    expect(within(terms).queryByRole("button", { name: `${EDIT_STORY_POINTS} for Baseline` })).toBeNull();
+    expect(within(terms).queryByRole("button", { name: `${SET_STORY_POINTS} for Baseline` })).toBeNull();
+  });
+});
+
+describe("SC-4-11 K-04 — create refusals are distinct from a saved rule", () => {
+  it.each([
+    [422, SAVE_INVALID],
+    [403, SAVE_DENIED],
+    [409, SAVE_REFUSED_UNSTATED],
+  ] as const)("shows %s as a refusal, not a successful save", async (status, expected) => {
+    const fetchMock = stubBackend({
+      reads: { [BASELINE]: { status: 200, body: noRule(BASELINE) }, [STRETCH]: { hang: true }, [SIGNED]: { hang: true } },
+      writes: { [BASELINE]: { status, body: { detail: status === 409 ? "unclassified conflict" : "request refused" } } },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const terms = await settledSection("Baseline");
+    fireEvent.click(within(terms).getByRole("button", { name: `${SET_STORY_POINTS} for Baseline` }));
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Price per point for Baseline" }), { target: { value: "25.0000" } });
+    fireEvent.change(within(terms).getByRole("spinbutton", { name: "Accepted points for Baseline" }), { target: { value: "100" } });
+    fireEvent.change(within(terms).getByRole("textbox", { name: "Currency for Baseline" }), { target: { value: "PLN" } });
+    fireEvent.click(within(terms).getByRole("button", { name: SAVE_COMMERCIAL_RULE }));
+    expect(await within(terms).findByText(expected)).toHaveAttribute("data-write-outcome", "refused");
+    expect(within(terms).queryByText(SAVED)).toBeNull();
+    expect(within(terms).getByText("Commercial model: not set")).toBeVisible();
+    expect(termsCalls(fetchMock, BASELINE, "POST")).toHaveLength(1);
   });
 });
 

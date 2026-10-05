@@ -508,12 +508,14 @@ def test_k_09_the_calendar_and_absence_type_dictionaries_are_the_sixth_and_seven
         # Added by SC-1-22, ADR-0022: organization-default access has its own pair.
         Permission.ORGANIZATION_DEFAULTS_READ,
         Permission.ORGANIZATION_DEFAULTS_WRITE,
+        Permission.SCENARIO_ASSUMPTIONS_READ,
+        Permission.SCENARIO_ASSUMPTIONS_WRITE,
     }, (
         "the permission vocabulary changed in SC-3-02. ADR-0005's addendum of 2026-09-22 (point 3) "
         "decides that calendars and absence types are the sixth and seventh dictionaries of the "
         "catalogue and take no permission of their own."
     )
-    assert len(Permission) == 19
+    assert len(Permission) == 21
 
 
 def test_k_09_the_two_new_dictionaries_hold_a_caller_with_no_identity_out_as_well(

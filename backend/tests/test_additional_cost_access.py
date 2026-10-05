@@ -331,9 +331,11 @@ def test_k_09_placeholder_set_unchanged_and_org_defaults_not_granted() -> None:
     # `PEOPLE_READ`/`PEOPLE_WRITE` (ADR-0005, addendum 2026-09-27, point 3) — permissions of the
     # person register, not of this task's additional-cost tables; neither joins the placeholder
     # (the line below is unchanged).
-    assert len(Permission) == 19
+    assert len(Permission) == 21
     assert Permission.ORGANIZATION_DEFAULTS_READ not in PLACEHOLDER_PERMISSIONS
     assert Permission.ORGANIZATION_DEFAULTS_WRITE not in PLACEHOLDER_PERMISSIONS
+    assert Permission.SCENARIO_ASSUMPTIONS_READ not in PLACEHOLDER_PERMISSIONS
+    assert Permission.SCENARIO_ASSUMPTIONS_WRITE not in PLACEHOLDER_PERMISSIONS
     assert Permission.COMMERCIAL_ADJUSTMENT_APPROVE not in PLACEHOLDER_PERMISSIONS
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
     assert {Permission.STAFFING_READ, Permission.STAFFING_WRITE} <= PLACEHOLDER_PERMISSIONS

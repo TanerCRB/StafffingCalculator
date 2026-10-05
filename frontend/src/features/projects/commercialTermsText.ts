@@ -158,8 +158,29 @@ export function commercialModelName(modelType: string): string {
 /** The label of the only write this section offers (and its accessible name, with the scenario). */
 export const SET_TIME_AND_MATERIAL = "Set Time & Material";
 export const SET_FIXED_PRICE = "Set Fixed Price";
+export const SET_STORY_POINTS = "Set Story Points";
+export const SET_OUTCOME_BASED = "Set Outcome-based";
 export const EDIT_FIXED_PRICE = "Edit agreed price";
+export const EDIT_STORY_POINTS = "Edit Story Points rule";
+export const EDIT_OUTCOME_BASED = "Edit Outcome-based rule";
+export const DELETE_COMMERCIAL_RULE = "Remove commercial rule";
 export const SAVE_FIXED_PRICE = "Save price";
+export const SAVE_COMMERCIAL_RULE = "Save commercial rule";
+export const DELETE_DENIED = "Not removed — you do not have permission to change commercial terms.";
+export const DELETE_CONFLICT = "Not removed — the scenario or rule changed. Read the commercial terms again.";
+export const DELETE_UNRESOLVED = "Removal outcome unresolved — read the commercial terms again before deciding whether to retry.";
+export const STORY_POINTS_PRICE_LABEL = "Price per point";
+export const STORY_POINTS_ACCEPTED_LABEL = "Accepted points";
+export const OUTCOME_UNITS_INPUT_LABEL = "Units";
+export const OUTCOME_PROBABILITY_INPUT_LABEL = "Probability";
+export const OUTCOME_FIELD_LABELS: Readonly<Record<string, string>> = {
+  currency: "Rule currency",
+  fixed_fee: "Fixed fee",
+  success_bonus: "Success bonus",
+  unit_rate: "Rate per unit",
+  revenue_min: "Minimum revenue",
+  revenue_max: "Maximum revenue",
+};
 export const AGREED_PRICE_LABEL = "Agreed price:";
 export const FIXED_PRICE_CURRENCY_LABEL = "Currency:";
 export const FIXED_PRICE_PRICE_LABEL = "Agreed price";

@@ -50,13 +50,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_permission
+from app.api.deps import require_permission, require_permissions
 from app.api.response_shaping import shape_duplicated_scenario, shape_scenario_assumptions
 from app.api.schemas.project import ScenarioListItem
 from app.api.schemas.scenario import (
     ApprovedSnapshotCounts,
     ScenarioApproval,
+    ScenarioAssumptionOverridesRead,
     ScenarioAssumptions,
+    ScenarioAssumptionsPatch,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.assumptions import scenario_assumptions_for_caller
@@ -65,6 +67,11 @@ from app.data.scenario_approval import (
     ScenarioApprovalRefused,
     ScenarioApprovalRejected,
     approve_scenario,
+)
+from app.data.scenario_assumption_writes import (
+    ScenarioAssumptionWriteRefused,
+    ScenarioAssumptionWriteRejected,
+    update_scenario_assumption_overrides,
 )
 from app.data.scenario_duplication import (
     NoAvailableDuplicateName,
@@ -182,6 +189,64 @@ def read_assumptions(
     if view is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
     return shape_scenario_assumptions(view)
+
+
+@router.patch(
+    "/assumptions",
+    response_model=ScenarioAssumptionOverridesRead,
+    responses={
+        404: {"description": SCENARIO_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the scenario is approved, the marker is stale, or the "
+            "database rejected the value."
+        },
+    },
+)
+def edit_scenario_assumptions(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    payload: ScenarioAssumptionsPatch,
+    caller: Annotated[
+        CallerIdentity,
+        Depends(
+            require_permissions(
+                Permission.SCENARIO_ASSUMPTIONS_READ,
+                Permission.SCENARIO_ASSUMPTIONS_WRITE,
+            )
+        ),
+    ],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioAssumptionOverridesRead:
+    """Partially save draft-only overrides under both the dedicated read and write grants.
+
+    The response contains the authoritative stored values and fresh row marker. Scenario scope is
+    resolved in the data layer before status or concurrency refusals can be diagnosed, retaining
+    404 for out-of-scope and mismatched scenario IDs.
+    """
+    try:
+        edited = update_scenario_assumption_overrides(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            expected_updated_at=payload.updated_at,
+            changes=payload.changes(),
+        )
+    except ScenarioAssumptionWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except ScenarioAssumptionWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if edited is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
+    return ScenarioAssumptionOverridesRead(
+        id=edited.id,
+        status="Draft" if edited.status.value == "draft" else "Approved",
+        target_margin_percent=edited.target_margin_percent,
+        overload_threshold_percent=edited.overload_threshold_percent,
+        updated_at=edited.updated_at,
+    )
 
 
 @router.post(

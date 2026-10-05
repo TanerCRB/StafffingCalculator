@@ -16,6 +16,9 @@ import { NOT_APPLICABLE } from "../../lib/money";
 import { SCREEN_CRASH_MESSAGE } from "../../shell/ScreenErrorBoundary";
 import {
   EXPECTED_NO_PROBABILITIES,
+  DELETE_COMMERCIAL_RULE,
+  EDIT_OUTCOME_BASED,
+  EDIT_STORY_POINTS,
   NO_RATE_WINDOWS,
   OUTCOME_CATEGORY_LABELS,
   RATE_SOURCE_LABELS,
@@ -209,6 +212,7 @@ function rule(modelType: string, outcomeTerms: OutcomeTermsRead | null = null): 
     model_type: modelType,
     updated_at: "2026-09-25T10:00:00Z",
     outcome_terms: outcomeTerms,
+    ...(modelType === "story_points" ? { price_per_point: "250.0000", accepted_points: 100, currency: "PLN" } : {}),
     ...(modelType === "fixed_price" ? { agreed_price: "150000.0050", currency: "PLN" } : {}),
   };
 }
@@ -362,8 +366,9 @@ describe("K-01 — Story Points and Outcome-based scenarios are readable in both
     for (const line of T_AND_M_LINES) {
       expect(within(rules).queryByText(line)).toBeNull();
     }
-    // A rule exists: no creation action of any model is offered (Q1 = A).
-    expect(within(rules).queryAllByRole("button")).toHaveLength(0);
+    // The rule stays its current model; only same-model edit and removal are offered.
+    expect(within(rules).getByRole("button", { name: `${EDIT_STORY_POINTS} for Points deal` })).toBeVisible();
+    expect(within(rules).getByRole("button", { name: `${DELETE_COMMERCIAL_RULE} for Points deal` })).toBeVisible();
     expect(within(rules).queryByText(READ_UNREADABLE)).toBeNull();
 
     expect(within(figures).getByText("Revenue: 25000.00 PLN")).toBeVisible();
@@ -387,7 +392,8 @@ describe("K-01 — Story Points and Outcome-based scenarios are readable in both
     for (const line of T_AND_M_LINES) {
       expect(within(rules).queryByText(line)).toBeNull();
     }
-    expect(within(rules).queryAllByRole("button")).toHaveLength(0);
+    expect(within(rules).getByRole("button", { name: `${EDIT_OUTCOME_BASED} for Outcome deal` })).toBeVisible();
+    expect(within(rules).getByRole("button", { name: `${DELETE_COMMERCIAL_RULE} for Outcome deal` })).toBeVisible();
     expect(within(figures).getByText("Guaranteed revenue: 20000.00 PLN")).toBeVisible();
     expectScreenAlive("Outcome deal");
   });
