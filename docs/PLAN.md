@@ -3108,3 +3108,9 @@ history / this file's own change log, not as tracked product work.
 - [x] **SC-1-23** — Save scenario draft assumption overrides (Issue #255).
   **Reserved 2026-10-05 after Gate 1 approval.** Implement field-level PATCH semantics: omitted fields remain unchanged; explicit `null` clears only that override and resumes project-then-organization inheritance. Preserve the approved-scenario data-layer guard, scoped scenario read/write permissions, validation, and stale-marker conflict behavior.
   **Done 2026-10-05:** [PR #261](https://github.com/TanerCRB/StafffingCalculator/pull/261), merged as `f73f1e6`. Evidence: `backend/tests/test_scenario_assumption_overrides.py` (K1-K6, including project-scope revocation); backend suite 1,602 passed, Ruff clean, push-hook frontend tests passed, and GitHub CI passed 2/2. QA mutation results: [Issue #255 QA report](https://github.com/TanerCRB/StafffingCalculator/issues/255#issuecomment-5999475878) and the capability mutation log below.
+
+- [ ] **SC-1-24** — Expose the scenario concurrency marker with resolved assumptions.
+  **Reserved candidate 2026-10-05; scope awaits Gate 1.**
+  *Done when:* The authorized scenario assumptions read returns its current `updated_at` marker with both resolved values and sources; a client can use it for the first draft save/reset, and a stale marker still receives the existing conflict response without writing. Current authorization, project scope, and ADR-0012 resolution behavior remain unchanged.
+  **Out of scope (explicit):** Frontend (Issue #235); changes to PATCH semantics or permissions; runtime authentication/provider changes; other assumptions; scenario-list token; migrations.
+  **Basis:** F-02; SC-1-10 and SC-1-23; ADR-0005, ADR-0007, ADR-0009, ADR-0012, ADR-0022; Issues #235 and #255.
