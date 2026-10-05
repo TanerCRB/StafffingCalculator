@@ -17,13 +17,15 @@ snapshot row would still look like an audit trail while being a coincidence.
 """
 
 import uuid
-from typing import Literal
+from decimal import Decimal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.api.schemas.common import DecimalString
 from app.api.schemas.project import ScenarioStatusLabel
 from app.core.money import NOT_APPLICABLE
+from app.models.organization_defaults import PERCENT_PRECISION, PERCENT_SCALE
 
 NotApplicableValue = Literal[NOT_APPLICABLE]
 
@@ -104,3 +106,50 @@ class ScenarioAssumptions(BaseModel):
     status: ScenarioStatusLabel
     target_margin_percent: ResolvedAssumptionRead
     overload_threshold_percent: ResolvedAssumptionRead
+
+
+ScenarioTargetMargin = Annotated[
+    DecimalString, Field(max_digits=PERCENT_PRECISION, decimal_places=PERCENT_SCALE)
+]
+ScenarioOverloadThreshold = Annotated[
+    DecimalString,
+    Field(gt=0, max_digits=PERCENT_PRECISION, decimal_places=PERCENT_SCALE),
+]
+
+
+class ScenarioAssumptionsPatch(BaseModel):
+    """Partial edit of the two scenario-level assumption overrides.
+
+    Omitted fields remain unchanged; explicit null removes only that scenario override so the
+    existing resolver can inherit from project then organization. The opaque scenario timestamp
+    is required for every edit (ADR-0007/ADR-0009).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    updated_at: AwareDatetime
+    target_margin_percent: ScenarioTargetMargin | None = None
+    overload_threshold_percent: ScenarioOverloadThreshold | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_override(self) -> "ScenarioAssumptionsPatch":
+        if not ({"target_margin_percent", "overload_threshold_percent"} & self.model_fields_set):
+            raise ValueError("At least one scenario assumption must be supplied")
+        return self
+
+    def changes(self) -> dict[str, Decimal | None]:
+        return {
+            name: getattr(self, name)
+            for name in ("target_margin_percent", "overload_threshold_percent")
+            if name in self.model_fields_set
+        }
+
+
+class ScenarioAssumptionOverridesRead(BaseModel):
+    """Persisted scenario overrides and the authoritative concurrency marker after PATCH."""
+
+    id: uuid.UUID
+    status: ScenarioStatusLabel
+    target_margin_percent: DecimalString | None
+    overload_threshold_percent: DecimalString | None
+    updated_at: AwareDatetime
