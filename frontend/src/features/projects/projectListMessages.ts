@@ -26,3 +26,11 @@ export const PROJECT_COPY_MESSAGES = {
   copiedNotOnPage: "The project was copied, but its row is on another page. Use the project list pagination to locate it.",
   unsupportedModel: (detail: string) => detail,
 } as const;
+
+export const PROJECT_ARCHIVE_MESSAGES = {
+  confirmation: (name: string) => `Archive ${name}? This action cannot be undone. The project will remain visible as Archived.`,
+  archiving: "Archiving project…",
+  reconciling: "Project archived. Refreshing the project list…",
+  unresolved: "The archive result is unknown. Refreshing the project list to check.",
+  refused: "Project was not archived. Its status has not changed.",
+} as const;

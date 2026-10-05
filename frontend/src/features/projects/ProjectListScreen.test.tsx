@@ -245,6 +245,100 @@ describe("ProjectListScreen", () => {
     vi.useRealTimers();
   });
 
+  function stubArchiveFlow(archiveResponse: { ok: boolean; status: number; body?: unknown } | Promise<{ ok: boolean; status: number; body?: unknown }>) {
+    let listedProject = AURORA;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        return { ok: true, status: 200, json: async () => ({ projects: [listedProject], total: 1 }) };
+      }
+      if (url.pathname === `/projects/${AURORA.id}/archive` && init?.method === "POST") {
+        const result = await archiveResponse;
+        if (typeof result.body === "object" && result.body !== null && "status" in result.body) {
+          listedProject = { ...listedProject, status: "Archived" };
+        }
+        return { ok: result.ok, status: result.status, json: async () => result.body };
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("archives an active project and keeps it listed as Archived", async () => {
+    const archivedProject = projectDetail({ ...AURORA, status: "Archived" });
+    const fetchMock = stubArchiveFlow({ ok: true, status: 200, body: archivedProject });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    expect(rowFor(rows, AURORA.name).getByText("Active")).toBeVisible();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(await rowFor(await projectRows(), AURORA.name).findByText("Archived")).toBeVisible();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)).toHaveLength(2);
+  });
+
+  it("retains Active status when archive request is refused", async () => {
+    stubArchiveFlow({ ok: false, status: 403, body: { detail: "Archive denied" } });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(await screen.findByText("Project was not archived. Its status has not changed.")).toBeVisible();
+    expect(rowFor(await projectRows(), AURORA.name).getByText("Active")).toBeVisible();
+  });
+
+  it("checks the refreshed list when an archive request returns 5xx", async () => {
+    const fetchMock = stubArchiveFlow({
+      ok: false,
+      status: 503,
+      body: projectDetail({ ...AURORA, status: "Archived" }),
+    });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(await rowFor(await projectRows(), AURORA.name).findByText("Archived")).toBeVisible();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)).toHaveLength(2);
+  });
+
+  it("does not send duplicate archive requests while one is pending", async () => {
+    let resolveArchive!: (value: { ok: boolean; status: number; body?: unknown }) => void;
+    const pendingArchive = new Promise<{ ok: boolean; status: number; body?: unknown }>((resolve) => { resolveArchive = resolve; });
+    const fetchMock = stubArchiveFlow(pendingArchive);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    const archiveButton = rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` });
+    fireEvent.click(archiveButton);
+    fireEvent.click(archiveButton);
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1));
+
+    resolveArchive({ ok: true, status: 200, body: projectDetail({ ...AURORA, status: "Archived" }) });
+    expect(await rowFor(await projectRows(), AURORA.name).findByText("Archived")).toBeVisible();
+  });
+
+  it("explains archive cannot be undone before submission", async () => {
+    const confirmMock = vi.fn(() => false);
+    const fetchMock = stubArchiveFlow({ ok: true, status: 200, body: projectDetail({ ...AURORA, status: "Archived" }) });
+    vi.stubGlobal("confirm", confirmMock);
+    render(<ProjectListScreen />);
+
+    const rows = await projectRows();
+    fireEvent.click(rowFor(rows, AURORA.name).getByRole("button", { name: `Archive ${AURORA.name}` }));
+
+    expect(confirmMock).toHaveBeenCalledWith(expect.stringMatching(/cannot be undone/i));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
   it("shows the validated copy and selected scenarios after reconciling the server list", async () => {
     const serverCopy = projectDetail({
       ...AURORA,
@@ -470,12 +564,17 @@ describe("ProjectListScreen", () => {
         // Reachable by keyboard: a real control in the tab order that can hold focus — not an
         // icon or a CSS class that only looks like a button.
         expect(control.tabIndex).toBe(0);
-        control.focus();
-        expect(control).toHaveFocus();
+        if (!control.hasAttribute("disabled")) {
+          control.focus();
+          expect(control).toHaveFocus();
+        }
 
-        if (label === "Edit" || label === "Copy") {
-          // SC-1-16 wires Edit; SC-1-19 wires Copy.
+        if (label === "Edit" || label === "Copy" || (label === "Archive" && project.status === "Active")) {
+          // SC-1-16 wires Edit, SC-1-19 wires Copy, and SC-1-20 wires archive for Active projects.
           expect(control).not.toHaveAttribute("aria-disabled");
+          expect(control).not.toHaveAttribute("title");
+        } else if (label === "Archive") {
+          expect(control).toHaveAttribute("aria-disabled", "true");
           expect(control).not.toHaveAttribute("title");
         } else {
           expect(control).toHaveAttribute("aria-disabled", "true");
