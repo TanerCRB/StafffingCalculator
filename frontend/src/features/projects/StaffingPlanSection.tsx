@@ -6,6 +6,10 @@ import {
   getCatalogAbsenceTypes,
   getCatalogDimension,
   getStaffingPositions,
+  createStaffingPosition,
+  editStaffingPositionDetails,
+  createStaffingAllocation,
+  editStaffingAllocation,
 } from "../../api/client";
 import type {
   AbsenceBudgetState,
@@ -14,6 +18,7 @@ import type {
   StaffingAllocation,
   StaffingPositionRead,
 } from "../../api/contracts/staffing";
+import type { ScenarioStatus } from "../../api/contracts/projects";
 import { formatEffectivePeriod, formatCalendarMonth } from "../../lib/dates";
 import { formatHoursString } from "../../lib/hours";
 import {
@@ -42,18 +47,20 @@ import {
   STAFFING_REFUSED,
   STAFFING_TIMED_OUT,
   STAFFING_UNREADABLE,
+  ADD_STAFFING_POSITION, EDIT_POSITION, EDIT_MONTH, ADD_MONTH, CANCEL_EDIT, SAVE_POSITION, SAVE_MONTH,
+  DIMENSIONS_UNAVAILABLE, WRITE_FORBIDDEN, WRITE_CONFLICT, WRITE_INVALID, WRITE_TIMEOUT, WRITE_FAILED,
+  STAFFING_FORM_LABELS,
 } from "./staffingPlanText";
 
 /**
- * SC-3-04 (Issue #135) — the scenario's staffing plan: positions, their four catalogue dimensions,
- * headcount, period, monthly hours, derived capacity, leave budget and planned absences, as a
- * third section of the scenario card (beside `ScenarioCommercialTermsSection`/
+ * SC-3-04/SC-3-09 — the scenario's staffing plan: positions, their four catalogue dimensions,
+ * headcount, period, monthly hours, derived capacity, leave budget and planned absences, with
+ * position and allocation writes for draft scenarios, as a third section of the scenario card (beside `ScenarioCommercialTermsSection`/
  * `ScenarioResultsSection`).
  *
- * **Read only, and that is structural, not a style choice this component happens to follow**
- * (K-07): nothing below renders a `button`, a `textbox` or a `spinbutton`, under any state
- * including a retryable read failure — unlike `ScenarioResultsSection`'s "Read again" control. This
- * screen does not write, so there is nothing here to invite one.
+ * Staffing reads remain independently gated by STAFFING_READ. Draft writes use the backend's
+ * STAFFING_WRITE dependency and return the refreshed position, including its next opaque marker.
+ * This client currently has no permission preflight, so a denied write is rendered as a refusal.
  *
  * **Two independent reads, not one** (gate 1, ADR-0005 addendum 2026-09-26 SC-3-04):
  *
@@ -184,19 +191,26 @@ function catalogName(catalog: CatalogReadState, dimension: CatalogDimensionKey, 
 export interface StaffingPlanSectionProps {
   readonly projectId: string;
   readonly scenarioId: string;
+  readonly scenarioStatus: ScenarioStatus;
 }
 
 /**
- * No `scenarioName` prop, unlike its two siblings: both of those use it only to build the
- * accessible name of a button several cards would otherwise share (`aria-label`), and this section
- * renders no button (K-07). `aria-labelledby={headingId}` already gives each mounted instance its
- * own accessible name, `useId()` being unique per instance — nothing here needs a second source of
- * uniqueness.
+ * `aria-labelledby={headingId}` gives each mounted instance its own accessible name, and the
+ * section's position-specific controls use labels inside the card.
  */
-export function StaffingPlanSection({ projectId, scenarioId }: StaffingPlanSectionProps) {
+export function StaffingPlanSection({ projectId, scenarioId, scenarioStatus }: StaffingPlanSectionProps) {
   const headingId = useId();
   const [staffing, setStaffing] = useState<StaffingReadState>({ kind: "loading" });
   const [catalog, setCatalog] = useState<CatalogReadState>({ kind: "loading" });
+  const canEdit = scenarioStatus !== "Approved";
+
+  function acceptPosition(updated: StaffingPositionRead) {
+    setStaffing((previous) => previous.kind === "ready"
+      ? { kind: "ready", positions: previous.positions.some((item) => item.id === updated.id)
+        ? previous.positions.map((item) => item.id === updated.id ? updated : item)
+        : [...previous.positions, updated] }
+      : previous);
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -252,17 +266,22 @@ export function StaffingPlanSection({ projectId, scenarioId }: StaffingPlanSecti
     );
   } else if (staffing.positions.length === 0) {
     body = (
-      <p className="scenario-card__gaps" data-staffing-state="empty">
-        {STAFFING_EMPTY}
-      </p>
+      <>
+        <p className="scenario-card__gaps" data-staffing-state="empty">{STAFFING_EMPTY}</p>
+        {canEdit && <NewPositionForm projectId={projectId} scenarioId={scenarioId} catalog={catalog} onSaved={acceptPosition} />}
+      </>
     );
   } else {
     body = (
-      <ul className="staffing-plan__positions">
-        {staffing.positions.map((position) => (
-          <StaffingPositionCard key={position.id} position={position} catalog={catalog} />
-        ))}
-      </ul>
+      <>
+        {canEdit && <NewPositionForm projectId={projectId} scenarioId={scenarioId} catalog={catalog} onSaved={acceptPosition} />}
+        <ul className="staffing-plan__positions">
+          {staffing.positions.map((position) => (
+            <StaffingPositionCard key={position.id} position={position} catalog={catalog} canEdit={canEdit}
+              projectId={projectId} scenarioId={scenarioId} onSaved={acceptPosition} />
+          ))}
+        </ul>
+      </>
     );
   }
 
@@ -298,12 +317,26 @@ function CatalogDimensionLine({
 function StaffingPositionCard({
   position,
   catalog,
+  canEdit,
+  projectId,
+  scenarioId,
+  onSaved,
 }: {
   position: StaffingPositionRead;
   catalog: CatalogReadState;
+  canEdit: boolean;
+  projectId: string;
+  scenarioId: string;
+  onSaved: (position: StaffingPositionRead) => void;
 }) {
+  const [editing, setEditing] = useState(false);
   return (
     <li className="staffing-plan__position">
+      {canEdit && <button type="button" className="button button--secondary" onClick={() => setEditing((value) => !value)}>
+        {editing ? CANCEL_EDIT : EDIT_POSITION}
+      </button>}
+      {editing && <PositionEditForm projectId={projectId} scenarioId={scenarioId} position={position} catalog={catalog}
+        onSaved={(saved) => { onSaved(saved); setEditing(false); }} />}
       <CatalogDimensionLine label={ROLE_LABEL} dimension="roles" id={position.role_id} catalog={catalog} />
       <CatalogDimensionLine
         label={SENIORITY_LABEL}
@@ -336,10 +369,12 @@ function StaffingPositionCard({
       ) : (
         <ul className="staffing-plan__allocations">
           {position.allocations.map((allocation) => (
-            <AllocationLine key={allocation.id} allocation={allocation} />
+            <AllocationLine key={allocation.id} allocation={allocation} position={position} canEdit={canEdit}
+              projectId={projectId} scenarioId={scenarioId} onSaved={onSaved} />
           ))}
         </ul>
       )}
+      {canEdit && <NewAllocationForm projectId={projectId} scenarioId={scenarioId} position={position} onSaved={onSaved} />}
       <p className="staffing-plan__absences-heading">{ABSENCES_HEADING}</p>
       {position.absences.length === 0 ? (
         <p className="scenario-card__gaps" data-absences-state="empty">
@@ -356,10 +391,19 @@ function StaffingPositionCard({
   );
 }
 
-function AllocationLine({ allocation }: { allocation: StaffingAllocation }) {
+function AllocationLine({ allocation, position, canEdit, projectId, scenarioId, onSaved }: {
+  allocation: StaffingAllocation; position: StaffingPositionRead; canEdit: boolean;
+  projectId: string; scenarioId: string; onSaved: (position: StaffingPositionRead) => void;
+}) {
+  const [editing, setEditing] = useState(false);
   return (
     <li className="staffing-plan__allocation">
       <p className="staffing-plan__allocation-month">{formatCalendarMonth(allocation.period_month)}</p>
+      {canEdit && <button type="button" className="button button--secondary" onClick={() => setEditing((value) => !value)}>
+        {editing ? CANCEL_EDIT : EDIT_MONTH}
+      </button>}
+      {editing && <AllocationEditForm projectId={projectId} scenarioId={scenarioId} position={position}
+        allocation={allocation} onSaved={(saved) => { onSaved(saved); setEditing(false); }} />}
       <p className="scenario-card__metric">
         {AVAILABILITY_HOURS_LABEL} {formatHoursString(allocation.availability_hours)}
       </p>
@@ -373,6 +417,126 @@ function AllocationLine({ allocation }: { allocation: StaffingAllocation }) {
       <AbsenceBudgetLine allocation={allocation} />
     </li>
   );
+}
+
+function StaffingWriteFeedback({ error }: { error: unknown }) {
+  const message = error instanceof ApiError && error.status === 403
+    ? WRITE_FORBIDDEN
+    : error instanceof ApiError && error.status === 409
+      ? WRITE_CONFLICT
+      : error instanceof ApiError && error.status === 422
+        ? WRITE_INVALID
+        : error instanceof RequestTimeoutError
+          ? WRITE_TIMEOUT
+          : WRITE_FAILED;
+  return <p role="alert" className="scenario-card__gaps">{message}</p>;
+}
+
+function NewPositionForm({ projectId, scenarioId, catalog, onSaved }: {
+  projectId: string; scenarioId: string; catalog: CatalogReadState;
+  onSaved: (position: StaffingPositionRead) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [saving, setSaving] = useState(false);
+  if (catalog.kind !== "ready") return null;
+  const first = (key: CatalogDimensionKey) => [...catalog.names[key].keys()][0] ?? "";
+  return <div className="staffing-plan__editor">
+    {!open ? <button type="button" className="button button--primary" onClick={() => setOpen(true)}>{ADD_STAFFING_POSITION}</button> :
+      <form onSubmit={(event) => {
+        event.preventDefault(); const data = new FormData(event.currentTarget); setSaving(true); setError(null);
+        void createStaffingPosition(projectId, scenarioId, {
+          role_id: String(data.get("role_id")), seniority_id: String(data.get("seniority_id")),
+          location_id: String(data.get("location_id")), engagement_type_id: String(data.get("engagement_type_id")),
+          headcount: Number(data.get("headcount")), start_date: String(data.get("start_date")),
+          end_date: String(data.get("end_date")) || null, allocations: [],
+        }).then(onSaved).then(() => setOpen(false)).catch(setError).finally(() => setSaving(false));
+      }}>
+        <DimensionSelect name="role_id" label={STAFFING_FORM_LABELS.role} values={catalog.names.roles} initial={first("roles")} />
+        <DimensionSelect name="seniority_id" label={STAFFING_FORM_LABELS.seniority} values={catalog.names.seniorities} initial={first("seniorities")} />
+        <DimensionSelect name="location_id" label={STAFFING_FORM_LABELS.location} values={catalog.names.locations} initial={first("locations")} />
+        <DimensionSelect name="engagement_type_id" label={STAFFING_FORM_LABELS.engagementType} values={catalog.names.engagementTypes} initial={first("engagementTypes")} />
+        <label>{STAFFING_FORM_LABELS.headcount}<input name="headcount" type="number" min="1" max="10000" required defaultValue="1" /></label>
+        <label>{STAFFING_FORM_LABELS.startDate}<input name="start_date" type="date" required /></label>
+        <label>{STAFFING_FORM_LABELS.endDate}<input name="end_date" type="date" /></label>
+        <button className="button button--primary" disabled={saving}>{SAVE_POSITION}</button>
+        {error !== null && <StaffingWriteFeedback error={error} />}
+      </form>}
+  </div>;
+}
+
+function DimensionSelect({ name, label, values, initial }: {
+  name: string; label: string; values: ReadonlyMap<string, string>; initial: string;
+}) {
+  return <label>{label}<select name={name} required defaultValue={initial}>
+    {!values.has(initial) && <option value={initial}>{CATALOG_NAME_UNKNOWN}</option>}
+    {[...values].map(([id, text]) => <option key={id} value={id}>{text}</option>)}
+  </select></label>;
+}
+
+function PositionEditForm({ projectId, scenarioId, position, catalog, onSaved }: {
+  projectId: string; scenarioId: string; position: StaffingPositionRead; catalog: CatalogReadState;
+  onSaved: (position: StaffingPositionRead) => void;
+}) {
+  const [error, setError] = useState<unknown>(null); const [saving, setSaving] = useState(false);
+  if (catalog.kind !== "ready") return <p role="status">{DIMENSIONS_UNAVAILABLE}</p>;
+  return <form onSubmit={(event) => {
+    event.preventDefault(); const data = new FormData(event.currentTarget); setSaving(true); setError(null);
+    void editStaffingPositionDetails(projectId, scenarioId, position.id, {
+      updated_at: position.updated_at, role_id: String(data.get("role_id")), seniority_id: String(data.get("seniority_id")),
+      location_id: String(data.get("location_id")), engagement_type_id: String(data.get("engagement_type_id")),
+      headcount: Number(data.get("headcount")), start_date: String(data.get("start_date")), end_date: String(data.get("end_date")) || null,
+    }).then(onSaved).catch(setError).finally(() => setSaving(false));
+  }}>
+    <DimensionSelect name="role_id" label={STAFFING_FORM_LABELS.role} values={catalog.names.roles} initial={position.role_id} />
+    <DimensionSelect name="seniority_id" label={STAFFING_FORM_LABELS.seniority} values={catalog.names.seniorities} initial={position.seniority_id} />
+    <DimensionSelect name="location_id" label={STAFFING_FORM_LABELS.location} values={catalog.names.locations} initial={position.location_id} />
+    <DimensionSelect name="engagement_type_id" label={STAFFING_FORM_LABELS.engagementType} values={catalog.names.engagementTypes} initial={position.engagement_type_id} />
+    <label>{STAFFING_FORM_LABELS.headcount}<input name="headcount" type="number" min="1" max="10000" required defaultValue={position.headcount} /></label>
+    <label>{STAFFING_FORM_LABELS.startDate}<input name="start_date" type="date" required defaultValue={position.start_date} /></label>
+    <label>{STAFFING_FORM_LABELS.endDate}<input name="end_date" type="date" defaultValue={position.end_date ?? ""} /></label>
+        <button className="button button--primary" disabled={saving}>{SAVE_POSITION}</button>{error !== null && <StaffingWriteFeedback error={error} />}
+  </form>;
+}
+
+function AllocationFields({ position, allocation }: { position: StaffingPositionRead; allocation?: StaffingAllocation }) {
+  return <>
+    {!allocation && <label>{STAFFING_FORM_LABELS.month}<input name="period_month" type="month" required min={position.start_date.slice(0, 7)} max={position.end_date?.slice(0, 7)} /></label>}
+    <label>{STAFFING_FORM_LABELS.availabilityHours}<input name="availability_hours" type="number" min="0" step="0.01" required defaultValue={allocation?.availability_hours} /></label>
+    <label>{STAFFING_FORM_LABELS.plannedAllocationHours}<input name="planned_allocation_hours" type="number" min="0" step="0.01" required defaultValue={allocation?.planned_allocation_hours} /></label>
+    <label>{STAFFING_FORM_LABELS.billableHours}<input name="billable_hours" type="number" min="0" step="0.01" required defaultValue={allocation?.billable_hours} /></label>
+  </>;
+}
+
+function NewAllocationForm({ projectId, scenarioId, position, onSaved }: {
+  projectId: string; scenarioId: string; position: StaffingPositionRead; onSaved: (position: StaffingPositionRead) => void;
+}) {
+  const [open, setOpen] = useState(false); const [error, setError] = useState<unknown>(null); const [saving, setSaving] = useState(false);
+  return <div className="staffing-plan__editor">{!open ? <button type="button" className="button button--secondary" onClick={() => setOpen(true)}>{ADD_MONTH}</button> :
+    <form onSubmit={(event) => {
+      event.preventDefault(); const data = new FormData(event.currentTarget); setSaving(true); setError(null);
+      const month = String(data.get("period_month"));
+      void createStaffingAllocation(projectId, scenarioId, position.id, { updated_at: position.updated_at,
+        period_month: `${month}-01`, availability_hours: String(data.get("availability_hours")),
+        planned_allocation_hours: String(data.get("planned_allocation_hours")), billable_hours: String(data.get("billable_hours")),
+      }).then(onSaved).then(() => setOpen(false)).catch(setError).finally(() => setSaving(false));
+    }}><AllocationFields position={position} /><button className="button button--primary" disabled={saving}>{SAVE_MONTH}</button>
+      {error !== null && <StaffingWriteFeedback error={error} />}</form>}</div>;
+}
+
+function AllocationEditForm({ projectId, scenarioId, position, allocation, onSaved }: {
+  projectId: string; scenarioId: string; position: StaffingPositionRead; allocation: StaffingAllocation;
+  onSaved: (position: StaffingPositionRead) => void;
+}) {
+  const [error, setError] = useState<unknown>(null); const [saving, setSaving] = useState(false);
+  return <form onSubmit={(event) => {
+    event.preventDefault(); const data = new FormData(event.currentTarget); setSaving(true); setError(null);
+    void editStaffingAllocation(projectId, scenarioId, position.id, allocation.period_month, {
+      updated_at: position.updated_at, availability_hours: String(data.get("availability_hours")),
+      planned_allocation_hours: String(data.get("planned_allocation_hours")), billable_hours: String(data.get("billable_hours")),
+    }).then(onSaved).catch(setError).finally(() => setSaving(false));
+  }}><AllocationFields position={position} allocation={allocation} /><button className="button button--primary" disabled={saving}>{SAVE_MONTH}</button>
+    {error !== null && <StaffingWriteFeedback error={error} />}</form>;
 }
 
 /**

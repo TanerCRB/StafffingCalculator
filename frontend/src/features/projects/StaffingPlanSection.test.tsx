@@ -14,6 +14,7 @@ import {
   ABSENCES_EMPTY,
   ALLOCATIONS_EMPTY,
   CATALOG_NAME_UNAVAILABLE,
+  CATALOG_NAME_UNKNOWN,
   DERIVED_CAPACITY_STATE_MESSAGES,
   STAFFING_EMPTY,
   STAFFING_REFUSED,
@@ -142,6 +143,7 @@ interface Backend {
   /** Set to render a "Set Time & Material" button on the sibling commercial-terms section, for the
    * K-07 contrast. Left hanging (no rule ever resolved) otherwise. */
   readonly commercialTermsAnswer?: Answer;
+  readonly staffingWrite?: (method: string, path: string, body: Record<string, unknown>) => unknown;
 }
 
 function response(status: number, body: unknown) {
@@ -216,6 +218,11 @@ function stubBackend(backend: Backend) {
         staffingReadCounts.set(scenarioId, count);
         const configured = backend.staffing?.[scenarioId];
         answer = typeof configured === "function" ? configured(count) : (configured ?? { hang: true });
+      } else if (path.includes("/staffing-positions") && method !== "GET" && backend.staffingWrite !== undefined) {
+        answer = {
+          status: 200,
+          body: backend.staffingWrite(method, path, JSON.parse(String(init.body)) as Record<string, unknown>),
+        };
       }
     }
     if (answer === undefined) {
@@ -733,7 +740,7 @@ describe("R-01 — the five catalogue-name reads coalesce across concurrently mo
 // --- K-07 -----------------------------------------------------------------------------------------
 
 describe("K-07 — the section renders no interactive element, under any state", () => {
-  it("offers no button/textbox/spinbutton for a healthy Draft scenario, unlike the sibling commercial-terms section", async () => {
+  it("offers staffing edit controls only for a Draft scenario, alongside the sibling write action", async () => {
     stubBackend({
       staffing: { [BASELINE]: { status: 200, body: { positions: [position({ absences: [absence()] })] } } },
       commercialTermsAnswer: {
@@ -770,9 +777,125 @@ describe("K-07 — the section renders no interactive element, under any state",
     // The contrast: the sibling section on the very same, still-Draft card does offer a button.
     expect(await within(card("Baseline")).findByRole("button", { name: new RegExp(SET_TIME_AND_MATERIAL) })).toBeVisible();
 
-    expect(within(staffing).queryAllByRole("button")).toHaveLength(0);
+    expect(within(staffing).getByRole("button", { name: "Add staffing position" })).toBeVisible();
+    expect(within(staffing).getByRole("button", { name: "Edit position" })).toBeVisible();
+    expect(within(staffing).getByRole("button", { name: "Edit month" })).toBeVisible();
+    expect(within(staffing).getByRole("button", { name: "Add month" })).toBeVisible();
     expect(within(staffing).queryAllByRole("textbox")).toHaveLength(0);
     expect(within(staffing).queryAllByRole("spinbutton")).toHaveLength(0);
+  });
+
+  it("saves a complete position edit with the opaque marker and renders the server's saved position", async () => {
+    let saved = position();
+    const fetchMock = stubBackend({
+      staffing: { [BASELINE]: { status: 200, body: { positions: [saved] } } },
+      staffingWrite: (_method, _path, body) => {
+        saved = { ...saved, ...body, updated_at: "2026-01-02T00:00:00.123456+00:00", allocations: saved.allocations, absences: saved.absences } as StaffingPositionRead;
+        return saved;
+      },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const staffing = await settledStaffing("Baseline");
+    fireEvent.click(within(staffing).getByRole("button", { name: "Edit position" }));
+    fireEvent.change(within(staffing).getByRole("spinbutton", { name: "Headcount" }), { target: { value: "4" } });
+    fireEvent.click(within(staffing).getByRole("button", { name: "Save position" }));
+    expect(await within(staffing).findByText("Headcount: 4")).toBeVisible();
+    const request = (fetchMock.mock.calls as unknown[][]).find(([, init]) =>
+      (init as RequestInit).method === "PATCH" && String((init as RequestInit).body).includes('"headcount":4'));
+    expect(request).toBeDefined();
+    expect((request?.[1] as RequestInit).body).toContain('"updated_at":"2026-01-01T00:00:00.123456+00:00"');
+    expect((request?.[1] as RequestInit).body).not.toMatch(/cost|fte|person/i);
+  });
+
+  it("preserves an unknown catalogue dimension when editing another position field", async () => {
+    const unknownRoleId = "cccccccc-0000-0000-0000-000000000099";
+    let saved = position({ role_id: unknownRoleId });
+    const fetchMock = stubBackend({
+      staffing: { [BASELINE]: { status: 200, body: { positions: [saved] } } },
+      catalogPartial: { roles: { status: 200, body: { entries: [] } } },
+      staffingWrite: (_method, _path, body) => {
+        saved = { ...saved, ...body, allocations: saved.allocations, absences: saved.absences } as StaffingPositionRead;
+        return saved;
+      },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const staffing = await settledStaffing("Baseline");
+    fireEvent.click(within(staffing).getByRole("button", { name: "Edit position" }));
+    const role = within(staffing).getByLabelText("Role") as HTMLSelectElement;
+    expect(role.value).toBe(unknownRoleId);
+    expect(within(role).getByRole("option", { name: CATALOG_NAME_UNKNOWN })).toBeInTheDocument();
+    fireEvent.change(within(staffing).getByRole("spinbutton", { name: "Headcount" }), { target: { value: "4" } });
+    fireEvent.click(within(staffing).getByRole("button", { name: "Save position" }));
+    expect(await within(staffing).findByText("Headcount: 4")).toBeVisible();
+    const request = (fetchMock.mock.calls as unknown[][]).find(([, init]) =>
+      (init as RequestInit).method === "PATCH" && String((init as RequestInit).body).includes('"headcount":4'));
+    expect((request?.[1] as RequestInit).body).toContain(`"role_id":"${unknownRoleId}"`);
+  });
+
+  it("creates a staffing position from catalog dimensions without cost or person fields", async () => {
+    let created: StaffingPositionRead | undefined;
+    const fetchMock = stubBackend({
+      staffing: { [BASELINE]: { status: 200, body: { positions: [] } } },
+      staffingWrite: (_method, _path, body) => {
+        created = position({ ...body, id: "dddddddd-0000-0000-0000-000000000099", updated_at: "2026-01-03T00:00:00.123456+00:00", allocations: [], absences: [] } as Partial<StaffingPositionRead>);
+        return created;
+      },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const staffing = await settledStaffing("Baseline");
+    fireEvent.click(within(staffing).getByRole("button", { name: "Add staffing position" }));
+    fireEvent.change(within(staffing).getByLabelText("Headcount"), { target: { value: "3" } });
+    fireEvent.change(within(staffing).getByLabelText("Start date"), { target: { value: "2026-04-01" } });
+    fireEvent.click(within(staffing).getByRole("button", { name: "Save position" }));
+    expect(await within(staffing).findByText("Headcount: 3")).toBeVisible();
+    const create = (fetchMock.mock.calls as unknown[][]).find(([url, init]) =>
+      String(url).endsWith("/staffing-positions") && (init as RequestInit).method === "POST");
+    expect(create).toBeDefined();
+    expect((create?.[1] as RequestInit).body).toContain('"role_id":"cccccccc-0000-0000-0000-000000000001"');
+    expect((create?.[1] as RequestInit).body).not.toMatch(/cost|fte|person/i);
+  });
+
+  it("adds and edits a month, carrying each returned position marker into the next write", async () => {
+    let saved = position({ allocations: [] });
+    let version = 1;
+    const fetchMock = stubBackend({
+      staffing: { [BASELINE]: { status: 200, body: { positions: [saved] } } },
+      staffingWrite: (method, path, body) => {
+        if (method === "POST") {
+          saved = { ...saved, updated_at: `2026-01-0${++version}T00:00:00.123456+00:00`, allocations: [allocation({
+            period_month: String(body.period_month), availability_hours: String(body.availability_hours),
+            planned_allocation_hours: String(body.planned_allocation_hours), billable_hours: String(body.billable_hours),
+          })] };
+        } else if (path.includes("/allocations/")) {
+          saved = { ...saved, updated_at: `2026-01-0${++version}T00:00:00.123456+00:00`, allocations: saved.allocations.map((row) => ({
+            ...row, availability_hours: String(body.availability_hours), planned_allocation_hours: String(body.planned_allocation_hours),
+            billable_hours: String(body.billable_hours),
+          })) };
+        }
+        return saved;
+      },
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const staffing = await settledStaffing("Baseline");
+    fireEvent.click(within(staffing).getByRole("button", { name: "Add month" }));
+    fireEvent.change(within(staffing).getByLabelText("Month"), { target: { value: "2026-02" } });
+    fireEvent.change(within(staffing).getByLabelText("Availability hours"), { target: { value: "132.00" } });
+    fireEvent.change(within(staffing).getByLabelText("Planned allocation hours"), { target: { value: "120.00" } });
+    fireEvent.change(within(staffing).getByLabelText("Billable hours"), { target: { value: "110.00" } });
+    fireEvent.click(within(staffing).getByRole("button", { name: "Save month" }));
+    expect(await within(staffing).findByText("2026-02")).toBeVisible();
+    fireEvent.click(within(staffing).getByRole("button", { name: "Edit month" }));
+    fireEvent.change(within(staffing).getByLabelText("Availability hours"), { target: { value: "140.00" } });
+    fireEvent.click(within(staffing).getByRole("button", { name: "Save month" }));
+    expect(await within(staffing).findByText(/Availability:.*140/)).toBeVisible();
+    const writes = (fetchMock.mock.calls as unknown[][]).filter(([, init]) => (init as RequestInit).method === "POST" || (init as RequestInit).method === "PATCH");
+    expect(writes).toHaveLength(2);
+    expect((writes[0][1] as RequestInit).body).toContain('"updated_at":"2026-01-01T00:00:00.123456+00:00"');
+    expect((writes[1][1] as RequestInit).body).toContain('"updated_at":"2026-01-02T00:00:00.123456+00:00"');
   });
 
   it("offers no button/textbox/spinbutton for an Approved scenario, and none for every non-computable state at once", async () => {

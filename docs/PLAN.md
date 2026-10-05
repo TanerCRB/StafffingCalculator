@@ -987,6 +987,12 @@ history / this file's own change log, not as tracked product work.
   and mutation records are listed in the [SC-3-08 capability and mutation registry](architecture/capabilities.md#capabilities)
   and [QA report on Issue #165](https://github.com/TanerCRB/StafffingCalculator/issues/165#issuecomment-5954378260).
 
+- [x] **SC-3-09** — Edit staffing positions and monthly allocations through the UI (Issue #234).
+  *Done when:* Backend and frontend tests prove authorized position create/edit and monthly allocation add/edit with read-after-write; callers without `STAFFING_WRITE` or project scope cannot change data; invalid supported hours or period, stale position and allocation markers, and approved-scenario writes are refused without changing persisted values; the new UI workflows and responses expose no personnel-cost fields.
+  **Out of scope (explicit):** FTE-based inputs; new calculation formulas; catalogue maintenance; working-calendar editing and absence management; named-person assignments pending separate privacy assessment.
+  **Basis:** F-04; `docs/PLAN.md` SC-3-01 and SC-3-04; Issue #234; ADR-0001, ADR-0004, ADR-0005, ADR-0007, and ADR-0009 (Draft — pending approval); docs/architecture/capabilities.md.
+  **Done 2026-10-05:** [PR #252](https://github.com/TanerCRB/StafffingCalculator/pull/252) merged. Proof: `backend/tests/test_staffing_position_edit.py` (K-01–K-06), `frontend/src/features/projects/StaffingPlanSection.test.tsx` (position/allocation writes, marker handling, unknown catalogue dimensions, and cost/person/FTE-free requests); mutation runs are recorded in [PR #252](https://github.com/TanerCRB/StafffingCalculator/pull/252) and the SC-3-09 mutation rows in `docs/architecture/capabilities.md`.
+
 - [x] **SC-2-05** — Dostosuj wygląd ekranu Roles & rates (katalog) do makiety UI-15 i rozbuduj rail
   nawigacji `AppShell` do pełnej listy 11 wpisów z tej samej makiety, bez zmiany zachowania ani
   kontraktów API (Issue #59).
