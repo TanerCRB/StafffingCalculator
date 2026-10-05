@@ -384,6 +384,11 @@ export async function copyProject(projectId: string): Promise<ProjectDetail> {
   return write(`/projects/${projectId}/copy`, "POST", undefined, isProjectDetailShape);
 }
 
+/** Archive a project through its one-way action endpoint (SC-1-04). */
+export async function archiveProject(projectId: string): Promise<ProjectDetail> {
+  return write(`/projects/${projectId}/archive`, "POST", undefined, isProjectDetailShape);
+}
+
 export async function createProject(body: ProjectCreateRequest, idempotencyKey: string): Promise<ProjectDetail> {
   return write("/projects", "POST", body, isProjectDetailShape, { "Idempotency-Key": idempotencyKey });
 }

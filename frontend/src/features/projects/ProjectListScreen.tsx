@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { ApiError, RequestTimeoutError, copyProject, getProjects } from "../../api/client";
+import { ApiError, RequestTimeoutError, archiveProject, copyProject, getProjects } from "../../api/client";
 import type { ProjectDetail, ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
@@ -11,7 +11,7 @@ import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
-import { PROJECT_COPY_MESSAGES, PROJECT_LIST_MESSAGES } from "./projectListMessages";
+import { PROJECT_ARCHIVE_MESSAGES, PROJECT_COPY_MESSAGES, PROJECT_LIST_MESSAGES } from "./projectListMessages";
 import { ProjectCreateForm } from "./ProjectCreateForm";
 import { clearPendingProjectCreateKey, readPendingProjectCreateKey } from "./projectCreateOperation";
 import "./ProjectListScreen.css";
@@ -79,6 +79,9 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
   const [refreshing, setRefreshing] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [copyingProjectId, setCopyingProjectId] = useState<string | null>(null);
+  const [archivingProjectId, setArchivingProjectId] = useState<string | null>(null);
+  const archivingProjectIdRef = useRef<string | null>(null);
+  const [archiveMessage, setArchiveMessage] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [copiedProjectSnapshot, setCopiedProjectSnapshot] = useState<ProjectListItem | null>(null);
   const copiedProjectSnapshotRef = useRef<ProjectListItem | null>(null);
@@ -129,6 +132,7 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
             response.projects.some((project) => project.id === created.id);
           const total = response.total;
           setState({ kind: "ready", projects: response.projects, total });
+          setArchiveMessage(null);
           if (copyIsOnPage) {
             copiedProjectSnapshotRef.current = null;
             setCopiedProjectSnapshot(null);
@@ -244,8 +248,35 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
       setEditingProjectId(projectId);
     } else if (actionKey === "copy") {
       void copyProjectRow(projectId);
+    } else if (actionKey === "archive") {
+      const project = projects.find((candidate) => candidate.id === projectId);
+      if (project?.status === "Active") void archiveProjectRow(project);
     } else {
       handleNotYetImplemented();
+    }
+  }
+
+  async function archiveProjectRow(project: ProjectListItem) {
+    if (archivingProjectIdRef.current !== null || project.status !== "Active") return;
+    if (!window.confirm(PROJECT_ARCHIVE_MESSAGES.confirmation(project.name))) return;
+    archivingProjectIdRef.current = project.id;
+    setArchivingProjectId(project.id);
+    setArchiveMessage(PROJECT_ARCHIVE_MESSAGES.archiving);
+    try {
+      const archived = await archiveProject(project.id);
+      if (archived.status !== "Archived") throw new Error("Archive response did not report Archived status");
+      setArchiveMessage(PROJECT_ARCHIVE_MESSAGES.reconciling);
+      setRetryCount((count) => count + 1);
+    } catch (error) {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        setArchiveMessage(PROJECT_ARCHIVE_MESSAGES.refused);
+      } else {
+        setArchiveMessage(PROJECT_ARCHIVE_MESSAGES.unresolved);
+        setRetryCount((count) => count + 1);
+      }
+    } finally {
+      archivingProjectIdRef.current = null;
+      setArchivingProjectId(null);
     }
   }
 
@@ -381,6 +412,7 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
           {state.kind === "ready" && refreshing && (
             <p role="status" className="project-list__message">{PROJECT_LIST_MESSAGES.updating}</p>
           )}
+          {archiveMessage !== null && <p role="status">{archiveMessage}</p>}
 
           {state.kind === "ready" && !refreshing && projects.length === 0 && (
             <p role="status" className="project-list__message">
@@ -449,12 +481,12 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
                             type="button"
                             className="button button--quiet"
                             aria-label={`${action.label} ${project.name}`}
-                            aria-disabled={action.key === "edit" || action.key === "copy" ? undefined : "true"}
-                            disabled={action.key === "copy" && copyingProjectId !== null}
-                            title={action.key === "edit" || action.key === "copy" ? undefined : NOT_IMPLEMENTED_HINT}
+                            aria-disabled={action.key === "edit" || action.key === "copy" || (action.key === "archive" && project.status === "Active") ? undefined : "true"}
+                            disabled={(action.key === "copy" && copyingProjectId !== null) || (action.key === "archive" && (project.status !== "Active" || archivingProjectId !== null))}
+                            title={action.key === "edit" || action.key === "copy" || action.key === "archive" ? undefined : NOT_IMPLEMENTED_HINT}
                             onClick={() => onRowAction(action.key, project.id)}
                           >
-                            {action.key === "copy" && copyingProjectId === project.id ? PROJECT_COPY_MESSAGES.copying : action.label}
+                            {action.key === "copy" && copyingProjectId === project.id ? PROJECT_COPY_MESSAGES.copying : action.key === "archive" && archivingProjectId === project.id ? PROJECT_ARCHIVE_MESSAGES.archiving : action.label}
                           </button>
                         ))}
                       </div>
