@@ -3111,6 +3111,6 @@ history / this file's own change log, not as tracked product work.
 
 - [ ] **SC-8-02** — Browse scenario versions and approval history (F-12, Issue #239).
   **Reserved 2026-10-05 after Gate 1 approval.**
-  *Done when:* Mutation-checked tests using synthetic development/test data prove server-side project-scope denial and concealment; exact individual personnel-cost field gating with a permission contrast; display of existing `scenario_approved` timestamp and actor identifier labeled as an unverified placeholder; access to saved version key inputs distinct from the current draft; and synthetic-only test/demo evidence.
+  *Done when:* Mutation-checked tests with synthetic development/test data prove that reading history requires `PROJECT_READ`, a separate history-read permission, and project assignment; denied project scope is concealed; individual personnel-cost fields require both cost gates; approval metadata identifies its actor as an unverified placeholder; and saved inputs remain distinct from the current draft.
   **Out of scope (explicit):** Creating history events, changing immutable snapshots, and comparing versions — separate capabilities. Authenticated author attribution and real personal data remain excluded until authentication/attribution is approved, the data controller/DPO resolves legal basis, and the retention/deletion owner establishes policy for actor identifiers.
   **Basis:** Issue #239; `Wymagania/Requirements_EN.md` F-12 and F-13; SC-8-01; ADR-0004, ADR-0005, ADR-0017, ADR-0019; `docs/architecture/capabilities.md`.
