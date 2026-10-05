@@ -26,7 +26,7 @@ the same file — never a silent edit of the original text.
 | [ADR-0006](ADR-0006-waluty-i-kursy.md) | Waluty i kursy wymiany | Accepted |
 | [ADR-0007](ADR-0007-wspolbiezna-edycja.md) | Współbieżna edycja i ochrona przed zgubioną aktualizacją | Accepted |
 | [ADR-0008](ADR-0008-przedzialy-obowiazywania.md) | Przedziały obowiązywania i ich egzekwowanie w bazie | Accepted |
-| [ADR-0009](ADR-0009-zapis-z-interfejsu.md) | Zapis z interfejsu przeglądarki | Draft — pending approval |
+| [ADR-0009](ADR-0009-zapis-z-interfejsu.md) | Zapis z interfejsu przeglądarki | Accepted |
 | [ADR-0010](ADR-0010-awaria-renderu-frontendu.md) | Awaria renderu frontendu: granica błędu i kształt odpowiedzi | Draft — pending approval |
 | [ADR-0011](ADR-0011-zasoby-wizualne-frontendu.md) | Zasoby graficzne frontendu: ikony i referencje wizualne | Accepted |
 | [ADR-0012](ADR-0012-zalozenia-lancuch-nadpisan.md) | Założenia konfigurowalne: łańcuch organizacja → projekt → scenariusz i źródło wartości | Accepted |
@@ -39,3 +39,4 @@ the same file — never a silent edit of the original text.
 | [ADR-0019](ADR-0019-dane-osobowe-rejestr-osob.md) | Dane osobowe: rejestr osób nazwanych i przypisanie osoby do pozycji obsady (F-03) | Accepted |
 | [ADR-0020](ADR-0020-external-holiday-import-and-outbound-calls.md) | External holiday import and the outbound-call boundary (F-05, SC-3-08) | Draft — pending approval |
 | [ADR-0021](ADR-0021-risk-representation-and-double-counting-signal.md) | Risk representation (cost event or reserve) and the double-representation signal (F-09 pt 4–5) | Accepted |
+| [ADR-0022](ADR-0022-role-and-permission-assignment.md) | Application roles and permission assignment | Accepted |
