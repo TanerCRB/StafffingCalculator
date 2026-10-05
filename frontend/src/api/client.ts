@@ -63,6 +63,10 @@ import {
   type StaffingAllocation,
   type StaffingPositionList,
   type StaffingPositionRead,
+  type StaffingPositionCreateRequest,
+  type StaffingPositionDetailsEditRequest,
+  type StaffingAllocationCreateRequest,
+  type StaffingAllocationEditRequest,
 } from "./contracts/staffing";
 
 const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -1719,5 +1723,50 @@ export async function getStaffingPositions(
     },
     REQUEST_TIMEOUT_MS,
     signal,
+  );
+}
+
+function staffingPositionPath(projectId: string, scenarioId: string, positionId: string): string {
+  return `${staffingPositionsPath(projectId, scenarioId)}/${positionId}`;
+}
+
+export async function createStaffingPosition(
+  projectId: string,
+  scenarioId: string,
+  body: StaffingPositionCreateRequest,
+): Promise<StaffingPositionRead> {
+  return write(staffingPositionsPath(projectId, scenarioId), "POST", body, isStaffingPositionShape);
+}
+
+export async function editStaffingPositionDetails(
+  projectId: string,
+  scenarioId: string,
+  positionId: string,
+  body: StaffingPositionDetailsEditRequest,
+): Promise<StaffingPositionRead> {
+  return write(`${staffingPositionPath(projectId, scenarioId, positionId)}/details`, "PATCH", body, isStaffingPositionShape);
+}
+
+export async function createStaffingAllocation(
+  projectId: string,
+  scenarioId: string,
+  positionId: string,
+  body: StaffingAllocationCreateRequest,
+): Promise<StaffingPositionRead> {
+  return write(`${staffingPositionPath(projectId, scenarioId, positionId)}/allocations`, "POST", body, isStaffingPositionShape);
+}
+
+export async function editStaffingAllocation(
+  projectId: string,
+  scenarioId: string,
+  positionId: string,
+  periodMonth: string,
+  body: StaffingAllocationEditRequest,
+): Promise<StaffingPositionRead> {
+  return write(
+    `${staffingPositionPath(projectId, scenarioId, positionId)}/allocations/${periodMonth}`,
+    "PATCH",
+    body,
+    isStaffingPositionShape,
   );
 }

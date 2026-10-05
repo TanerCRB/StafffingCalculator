@@ -378,10 +378,9 @@ function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps
               scenarioId={scenario.id}
               scenarioName={scenario.name}
             />
-            {/* SC-3-04: a third, independent read on the same card — its own two state machines
-                (positions, catalogue names), its own abort on unmount/re-select (ADR-0010,
-                point 7). Read only, no `scenarioName`: it mounts no button (K-07). */}
-            <StaffingPlanSection projectId={project.id} scenarioId={scenario.id} />
+            {/* SC-3-09 adds writes to the existing staffing read. Backend permission checks remain
+                authoritative; this client has no permission preflight endpoint. */}
+            <StaffingPlanSection projectId={project.id} scenarioId={scenario.id} scenarioStatus={scenario.status} />
             {/* SC-6-03: available regardless of scenario.status — duplication never writes to the
                 source, so it is not subject to the approved-immutability hiding rule above (K-02). */}
             <DuplicateScenarioControl

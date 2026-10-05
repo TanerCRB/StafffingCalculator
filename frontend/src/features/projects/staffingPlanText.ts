@@ -34,6 +34,24 @@ export const ABSENCE_BUDGET_LABEL = "Leave budget:";
 export const ABSENCES_HEADING = "Planned absences:";
 export const ABSENCES_EMPTY = "No planned absences.";
 export const ALLOCATIONS_EMPTY = "No months planned yet.";
+export const ADD_STAFFING_POSITION = "Add staffing position";
+export const EDIT_POSITION = "Edit position";
+export const EDIT_MONTH = "Edit month";
+export const ADD_MONTH = "Add month";
+export const CANCEL_EDIT = "Cancel";
+export const SAVE_POSITION = "Save position";
+export const SAVE_MONTH = "Save month";
+export const DIMENSIONS_UNAVAILABLE = "Staffing dimensions are unavailable.";
+export const WRITE_FORBIDDEN = "You do not have permission to change staffing.";
+export const WRITE_CONFLICT = "Staffing changed or this scenario is approved. Reload the plan and try again.";
+export const WRITE_INVALID = "Check the staffing values and period.";
+export const WRITE_TIMEOUT = "The save timed out. Reload the plan before retrying.";
+export const WRITE_FAILED = "Staffing could not be saved. Reload the plan before retrying.";
+export const STAFFING_FORM_LABELS = {
+  role: "Role", seniority: "Seniority", location: "Location", engagementType: "Engagement type",
+  headcount: "Headcount", startDate: "Start date", endDate: "End date", month: "Month",
+  availabilityHours: "Availability hours", plannedAllocationHours: "Planned allocation hours", billableHours: "Billable hours",
+} as const;
 
 // --- Reading the position list (K-05, K-06) ------------------------------------------------------
 

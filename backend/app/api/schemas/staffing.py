@@ -168,6 +168,12 @@ class StaffingAllocationEntry(BaseModel):
         return self
 
 
+class StaffingAllocationCreateRequest(StaffingAllocationEntry):
+    """One monthly allocation added to an existing position, plus its position token (SC-3-09)."""
+
+    updated_at: AwareDatetime
+
+
 class StaffingPositionCreateRequest(BaseModel):
     """The body of `POST …/staffing-positions`: one position, with the months it plans for.
 
@@ -465,6 +471,43 @@ class StaffingPositionCostBasisEditRequest(BaseModel):
         changed = self.__pydantic_fields_set__ - {"updated_at"}
         return {
             field: getattr(self, field) for field in POSITION_COST_BASIS_FIELDS if field in changed
+        }
+
+
+class StaffingPositionDetailsEditRequest(BaseModel):
+    """Full editable non-cost details and the position's concurrency marker (SC-3-09).
+
+    Requiring the complete tuple makes a form submit an explicit replacement based on the read it
+    displays; `updated_at` prevents a stale form from overwriting a newer position. Cost fields are
+    deliberately absent and rejected by `extra="forbid"`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    updated_at: AwareDatetime
+    role_id: uuid.UUID
+    seniority_id: uuid.UUID
+    location_id: uuid.UUID
+    engagement_type_id: uuid.UUID
+    headcount: Annotated[int, Field(gt=0, le=MAX_HEADCOUNT)]
+    start_date: date
+    end_date: date | None
+
+    @model_validator(mode="after")
+    def _period_is_ordered(self) -> Self:
+        if self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError("end_date must not be earlier than start_date")
+        return self
+
+    def changes(self) -> dict[str, Any]:
+        return {
+            "role_id": self.role_id,
+            "seniority_id": self.seniority_id,
+            "location_id": self.location_id,
+            "engagement_type_id": self.engagement_type_id,
+            "headcount": self.headcount,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
         }
 
 
