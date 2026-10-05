@@ -171,6 +171,10 @@ class Permission(StrEnum):
     here (point 6 above): the endpoint answers with the duplicate's own representation, so in
     practice this also reads it."""
 
+    SCENARIO_HISTORY_READ = "scenario_history:read"
+    """Read a scenario's approval history. Requires PROJECT_READ separately and never
+    bypasses project_access scope (ADR-0022, Issue #239)."""
+
     PEOPLE_READ = "people:read"
     """Reading the register of named persons (F-03, SC-2-06; ADR-0019; ADR-0005, addendum 2026-09-27
     SC-2-06, point 3) — and seeing *which* person a staffing position is assigned to.

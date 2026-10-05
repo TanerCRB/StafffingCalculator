@@ -77,6 +77,11 @@ from app.core.identity import CallerIdentity, Permission
 # dimension arrives with the authentication ADR. Scope is not widened: the duplicate's target is
 # always the source's own project, resolved through `scenario_in_scope`/`project_for_caller`.
 #
+# SCENARIO_HISTORY_READ joins only to make this history read reachable with the fixed
+# development/test placeholder (SC-8-02, ADR-0022 addendum 2026-10-05). This is not a production
+# role assignment: production grants remain unproven and the endpoint independently requires
+# PROJECT_READ plus this permission, while project_access continues to enforce project scope.
+#
 # `PEOPLE_READ` and `PEOPLE_WRITE` (SC-2-06) do **not** join, and that absence is the decision
 # (ADR-0005, addendum 2026-09-27 SC-2-06, point 4; ADR-0019, point 4; Q-3 = a). The person register
 # is the first personal-data register of this system: granting it to "whoever the header says" would
@@ -99,6 +104,9 @@ PLACEHOLDER_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.COMMERCIAL_WRITE,
         Permission.RESULTS_READ,
         Permission.SCENARIO_COPY,
+        # SC-8-02 reachability only. This development/test placeholder grant is not a
+        # production role assignment; authentication/role policy remains a separate decision.
+        Permission.SCENARIO_HISTORY_READ,
     }
 )
 

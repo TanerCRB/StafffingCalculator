@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ from app.api.deps import (
     PlaceholderIdentityNotAllowedError,
     assert_identity_mechanism_allowed,
     get_caller_identity,
+    require_permissions,
 )
 from app.core.config import Settings
 from app.core.identity import CallerIdentity, Permission
@@ -104,6 +106,32 @@ def test_project_create_denies_caller_holding_only_project_read(
     assert count_projects(db_session) == 0
 
 
+def test_scenario_history_requires_project_read_and_its_dedicated_permission() -> None:
+    """Neither the project read grant nor the history grant substitutes for the other."""
+    dependency = require_permissions(
+        Permission.PROJECT_READ, Permission.SCENARIO_HISTORY_READ
+    )
+    project_reader = CallerIdentity(
+        user_id=IN_SCOPE_USER, permissions=frozenset({Permission.PROJECT_READ})
+    )
+    history_only = CallerIdentity(
+        user_id=IN_SCOPE_USER, permissions=frozenset({Permission.SCENARIO_HISTORY_READ})
+    )
+    both = CallerIdentity(
+        user_id=IN_SCOPE_USER,
+        permissions=frozenset({Permission.PROJECT_READ, Permission.SCENARIO_HISTORY_READ}),
+    )
+
+    with pytest.raises(HTTPException) as project_reader_denied:
+        dependency(caller=project_reader)
+    with pytest.raises(HTTPException) as history_only_denied:
+        dependency(caller=history_only)
+
+    assert project_reader_denied.value.status_code == 403
+    assert history_only_denied.value.status_code == 403
+    assert dependency(caller=both) is both
+
+
 def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() -> None:
     """The placeholder grants exactly the five project actions, catalogue and staffing — no more.
 
@@ -168,6 +196,8 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             Permission.RESULTS_READ,
             # SC-6-01 (Issue #11, gate 1 decision 2) — re-armed around the new set, not loosened.
             Permission.SCENARIO_COPY,
+            # SC-8-02 development/test reachability only; not a production grant claim.
+            Permission.SCENARIO_HISTORY_READ,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
