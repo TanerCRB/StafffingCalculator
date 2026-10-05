@@ -3048,6 +3048,11 @@ history / this file's own change log, not as tracked product work.
   **Basis:** Issue #178; PR #176 QA/reviewer findings; `docs/architecture/capabilities.md` SC-5-04 known gap; ADR-0005 and ADR-0009.
   **Done 2026-10-02:** [PR #217](https://github.com/TanerCRB/StafffingCalculator/pull/217), merged as `a0fc84f`. Evidence: `backend/tests/test_assigned_fte_api.py` covers the bare-token POST/PATCH cases, finite create contrast, and unchanged ordinary 422 shape; `backend/tests/test_additional_cost.py::test_k_03_bare_non_finite_amount_is_rejected_without_echo_or_write` covers all three amount tokens, no echo/no write, and a persisted finite amount. Full backend suite: 1560 passed; Ruff passed; frontend suite: 433 passed; required CI passed 2/2. QA mutation killed 9 cases and was restored; see the mutation log and PR #217.
 
+- [ ] **SC-5-13** — Manage fixed-amount costs for a scenario (Issue #236).
+  *Done when:* Analyst criteria K-01–K-07 prove fixed-amount cost listing and management, correct refusal behavior, result visibility, and keyed write replay/concurrency against real PostgreSQL; frontend retries reuse the same key.
+  **Out of scope (explicit):** New formulas, categories and charge bases — revisit under SC-5-07+ when specified; charts/PDF export — separate Block 7 work; general idempotency for other write endpoints — each endpoint establishes its own contract.
+  **Basis:** Issue #236; F-08; SC-5-05; ADR-0014 and ADR-0009; `docs/architecture/capabilities.md`.
+
 - [x] **SC-1-15** — Return a named refusal when a project copy cannot be written (Issue #179), a follow-up to SC-1-03 exposed by SC-5-04.
   *Done when:* Backend tests prove that a classified database refusal during POST /projects/{id}/copy returns a named 409 containing the reported SQLSTATE and actual constraint identifier without row values or a partial copied aggregate; an unclassified failure remains a 500; an accepted copy retains its existing response and complete aggregate. Mutations removing classification, diagnostic identity, or rollback fail the tests.
   **Out of scope (explicit):** Changing copy permissions (ADR-0005); changing the accepted SC-5-04 mixed-version rollout (Issue #79 H-7).
