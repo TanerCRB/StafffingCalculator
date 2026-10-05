@@ -26,7 +26,7 @@ the same file — never a silent edit of the original text.
 | [ADR-0006](ADR-0006-waluty-i-kursy.md) | Waluty i kursy wymiany | Accepted |
 | [ADR-0007](ADR-0007-wspolbiezna-edycja.md) | Współbieżna edycja i ochrona przed zgubioną aktualizacją | Accepted |
 | [ADR-0008](ADR-0008-przedzialy-obowiazywania.md) | Przedziały obowiązywania i ich egzekwowanie w bazie | Accepted |
-| [ADR-0009](ADR-0009-zapis-z-interfejsu.md) | Zapis z interfejsu przeglądarki | Draft — pending approval |
+| [ADR-0009](ADR-0009-zapis-z-interfejsu.md) | Zapis z interfejsu przeglądarki | Accepted |
 | [ADR-0010](ADR-0010-awaria-renderu-frontendu.md) | Awaria renderu frontendu: granica błędu i kształt odpowiedzi | Draft — pending approval |
 | [ADR-0011](ADR-0011-zasoby-wizualne-frontendu.md) | Zasoby graficzne frontendu: ikony i referencje wizualne | Accepted |
 | [ADR-0012](ADR-0012-zalozenia-lancuch-nadpisan.md) | Założenia konfigurowalne: łańcuch organizacja → projekt → scenariusz i źródło wartości | Accepted |
