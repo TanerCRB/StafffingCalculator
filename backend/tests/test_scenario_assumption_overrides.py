@@ -1,7 +1,7 @@
 """SC-1-23 K1-K6: scoped, independent, draft-only scenario override persistence."""
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -67,6 +67,75 @@ def _patch(
         json={"updated_at": token.isoformat(), **changes},
         headers=as_caller(IN_SCOPE_USER),
     )
+
+
+def test_k_01_resolved_assumptions_marker_supports_first_override_and_rejects_stale_token(
+    client: TestClient, db_session: Session
+) -> None:
+    project = make_project(db_session, name="K1 resolved marker", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Draft")
+
+    with caller_holding(*OVERRIDE_PERMISSIONS, Permission.PROJECT_READ):
+        initial_read = client.get(_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
+        assert initial_read.status_code == 200, initial_read.text
+        response_marker = datetime.fromisoformat(
+            initial_read.json()["updated_at"].replace("Z", "+00:00")
+        )
+        assert response_marker == _token(db_session, scenario.id)
+        assert initial_read.json()["target_margin_percent"] == {
+            "value": "n/a",
+            "state": "no_value",
+            "source": None,
+        }
+
+        first_write = client.patch(
+            _path(project.id, scenario.id),
+            json={
+                "updated_at": initial_read.json()["updated_at"],
+                "target_margin_percent": "25.000",
+            },
+            headers=as_caller(IN_SCOPE_USER),
+        )
+        assert first_write.status_code == 200, first_write.text
+        current_read = client.get(_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
+        assert current_read.status_code == 200, current_read.text
+        assert current_read.json()["updated_at"] == first_write.json()["updated_at"]
+        assert current_read.json()["target_margin_percent"]["value"] == "25.000"
+
+        stale_write = client.patch(
+            _path(project.id, scenario.id),
+            json={
+                "updated_at": (response_marker - timedelta(days=1)).isoformat(),
+                "target_margin_percent": None,
+            },
+            headers=as_caller(IN_SCOPE_USER),
+        )
+    assert stale_write.status_code == 409
+    assert _stored(db_session, scenario.id)[0] == Decimal("25.000")
+
+
+def test_k_01_marker_tracks_persisted_timestamp_without_changing_resolution(
+    client: TestClient, db_session: Session
+) -> None:
+    project = make_project(db_session, name="K1 marker contrast", accessible_to=(IN_SCOPE_USER,))
+    scenario = make_scenario(db_session, project, name="Draft")
+    with caller_holding(Permission.PROJECT_READ):
+        before = client.get(_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
+        assert before.status_code == 200, before.text
+
+        changed_marker = _token(db_session, scenario.id) + timedelta(seconds=1)
+        db_session.execute(
+            sa.update(Scenario).where(Scenario.id == scenario.id).values(updated_at=changed_marker)
+        )
+        db_session.commit()
+
+        after = client.get(_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
+    assert after.status_code == 200, after.text
+    assert after.json()["updated_at"] != before.json()["updated_at"]
+    actual_marker = datetime.fromisoformat(after.json()["updated_at"].replace("Z", "+00:00"))
+    assert actual_marker == changed_marker
+    assert after.json()["target_margin_percent"] == before.json()["target_margin_percent"]
+    assert after.json()["overload_threshold_percent"] == before.json()["overload_threshold_percent"]
 
 
 def test_k_01_scenario_override_write_requires_both_grants_and_project_scope(
