@@ -22,14 +22,67 @@ were already narrowed to the caller by `app.data.project_reads`, which is the on
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.domain.assumptions import OrganizationDefaultValues
 from app.models.approved_snapshot import ApprovedSnapshotOrganizationDefaults
 from app.models.organization_defaults import OrganizationDefaults
 from app.models.scenario import Scenario, ScenarioStatus
+
+
+class OrganizationDefaultsConcurrentEditConflict(RuntimeError):
+    """The singleton is no longer in the state named by the caller's marker."""
+
+
+def update_organization_defaults(
+    session: Session,
+    *,
+    expected_updated_at: datetime | None,
+    changes: Mapping[str, Decimal | None],
+) -> OrganizationDefaults:
+    """Atomically write the singleton only if its current marker matches the request.
+
+    `None` names the absent-row state. PostgreSQL `ON CONFLICT DO NOTHING` makes the first
+    write create-if-absent under concurrent requests; a competing insert is a stale conflict.
+    Existing-row writes compare `updated_at` in the `UPDATE` predicate, never in Python.
+    """
+    if expected_updated_at is None:
+        values: dict[str, object] = {
+            "id": 1,
+            "target_margin_percent": None,
+            "overload_threshold_percent": None,
+            **changes,
+        }
+        statement = (
+            pg_insert(OrganizationDefaults)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[OrganizationDefaults.id])
+            .returning(OrganizationDefaults)
+        )
+    else:
+        statement = (
+            sa.update(OrganizationDefaults)
+            .where(
+                OrganizationDefaults.id == 1,
+                OrganizationDefaults.updated_at == expected_updated_at,
+            )
+            .values(**changes, updated_at=sa.func.clock_timestamp())
+            .returning(OrganizationDefaults)
+        )
+
+    row = session.execute(statement).scalars().one_or_none()
+    if row is None:
+        raise OrganizationDefaultsConcurrentEditConflict(
+            "Writing the organization defaults failed: condition=updated_at_marker. "
+            "The row changed since it was read (concurrency marker). Re-read it and edit again."
+        )
+    session.commit()
+    return row
 
 
 @dataclass(frozen=True)
