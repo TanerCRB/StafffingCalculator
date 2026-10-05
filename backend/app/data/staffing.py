@@ -149,7 +149,24 @@ EDITABLE_POSITION_FIELDS: frozenset[str] = frozenset(
 2026-09-25 SC-5-03 and 2026-09-29 SC-5-04): the personnel-cost basis of the position itself and the
 figure each basis stores. An allow-list, for the same reason
 `EDITABLE_ALLOCATION_FIELDS` is one — the four dimension ids, `headcount` and the two dates have no
-edit path at all yet, and this set must not silently grow to include them."""
+edit path in this cost-basis operation, and this set must not silently grow to include them. SC-3-09
+gives those non-cost fields their own `EDITABLE_POSITION_DETAILS_FIELDS` allow-list."""
+
+EDITABLE_POSITION_DETAILS_FIELDS: frozenset[str] = frozenset(
+    {
+        "role_id",
+        "seniority_id",
+        "location_id",
+        "engagement_type_id",
+        "headcount",
+        "start_date",
+        "end_date",
+    }
+)
+"""The non-cost staffing fields editable through the position-details path (SC-3-09).
+
+Cost-basis values remain on their existing endpoint and allow-list so ordinary staffing editors
+cannot write a field whose visibility is governed by the personnel-cost ADRs."""
 
 
 class StaffingWriteFailed(WriteFailed):
@@ -1244,6 +1261,69 @@ def update_position_cost_basis(
     return _position_by_id(session, position_id)
 
 
+def update_position_details(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    changes: Mapping[str, Any],
+) -> StaffingPositionView | None:
+    """Edit the position's dimensions, headcount and period, or refuse.
+
+    The request names the full editable details tuple. This single `UPDATE` keeps the existing
+    position marker and approved-scenario guard in the statement that writes the fields; the
+    returned view is then read from the database for the write response.
+    """
+    forbidden = sorted(set(changes) - EDITABLE_POSITION_DETAILS_FIELDS)
+    if forbidden:
+        raise AllocationFieldNotEditable(
+            "These position details cannot be edited through this function: "
+            + ", ".join(forbidden)
+            + f". Editable: {', '.join(sorted(EDITABLE_POSITION_DETAILS_FIELDS))}."
+        )
+    if set(changes) != EDITABLE_POSITION_DETAILS_FIELDS:
+        missing = sorted(EDITABLE_POSITION_DETAILS_FIELDS - set(changes))
+        raise AllocationFieldNotEditable(
+            "A position details edit must name every editable field. Missing: "
+            + ", ".join(missing)
+            + "."
+        )
+
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+        return None
+
+    statement = (
+        sa.update(_POSITION_TABLE)
+        .where(
+            _POSITION_TABLE.c.id == position_id,
+            _POSITION_TABLE.c.scenario_id == scenario_id,
+            _POSITION_TABLE.c.updated_at == expected_updated_at,
+            _POSITION_TABLE.c.scenario_id.in_(unapproved_scenario(scenario_id)),
+        )
+        .values(updated_at=sa.func.now(), **dict(changes))
+        .returning(_POSITION_TABLE.c.id)
+    )
+
+    try:
+        applied = session.execute(statement).one_or_none()
+        if applied is None:
+            raise _diagnose_position_refusal(
+                session,
+                scenario_id,
+                position_id,
+                expected_updated_at=expected_updated_at,
+                changes=changes,
+            )
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    return _position_by_id(session, position_id)
+
+
 def _diagnose_position_refusal(
     session: Session,
     scenario_id: uuid.UUID,
@@ -1328,6 +1408,88 @@ def _diagnose_position_refusal(
     return ConcurrentStaffingEditConflict(
         "The staffing position changed since it was read. Re-read it and apply the edit again."
     )
+
+
+def create_allocation(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    *,
+    expected_updated_at: datetime,
+    period_month: date,
+    availability_hours: Decimal,
+    planned_allocation_hours: Decimal,
+    billable_hours: Decimal,
+) -> StaffingPositionView | None:
+    """Add one month to an existing position under its shared token and scenario guard.
+
+    The position-token rotation and allocation insert are one data-modifying CTE statement. A
+    duplicate month or a database constraint refusal rolls back the token rotation with the insert.
+    """
+    if scenario_in_scope(session, caller, project_id, scenario_id) is None:
+        return None
+
+    guarded_position = (
+        sa.update(_POSITION_TABLE)
+        .where(
+            _POSITION_TABLE.c.id == position_id,
+            _POSITION_TABLE.c.scenario_id == scenario_id,
+            _POSITION_TABLE.c.updated_at == expected_updated_at,
+            _POSITION_TABLE.c.scenario_id.in_(unapproved_scenario(scenario_id)),
+        )
+        .values(updated_at=sa.func.now())
+        .returning(_POSITION_TABLE.c.id)
+        .cte("guarded_position")
+    )
+    source = sa.select(
+        sa.literal(uuid.uuid4(), type_=_ALLOCATION_TABLE.c.id.type).label("id"),
+        guarded_position.c.id.label("position_id"),
+        sa.literal(period_month, type_=_ALLOCATION_TABLE.c.period_month.type).label(
+            "period_month"
+        ),
+        sa.literal(
+            availability_hours, type_=_ALLOCATION_TABLE.c.availability_hours.type
+        ).label("availability_hours"),
+        sa.literal(
+            planned_allocation_hours, type_=_ALLOCATION_TABLE.c.planned_allocation_hours.type
+        ).label("planned_allocation_hours"),
+        sa.literal(billable_hours, type_=_ALLOCATION_TABLE.c.billable_hours.type).label(
+            "billable_hours"
+        ),
+    ).select_from(guarded_position)
+    statement = (
+        sa.insert(_ALLOCATION_TABLE)
+        .from_select(
+            [
+                "id",
+                "position_id",
+                "period_month",
+                "availability_hours",
+                "planned_allocation_hours",
+                "billable_hours",
+            ],
+            source,
+        )
+        .returning(_ALLOCATION_TABLE.c.id)
+    )
+
+    try:
+        inserted = session.execute(statement).one_or_none()
+        if inserted is None:
+            raise _diagnose_position_refusal(
+                session,
+                scenario_id,
+                position_id,
+                expected_updated_at=expected_updated_at,
+                changes={},
+            )
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise _failure(error) from None
+    return _position_by_id(session, position_id)
 
 
 # --- the named person of a position (F-03, SC-2-06; ADR-0019; ADR-0004/0005 addendumy 2026-09-27) -

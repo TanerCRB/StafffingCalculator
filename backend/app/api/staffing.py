@@ -75,9 +75,11 @@ from app.api.schemas.staffing import (
     StaffingAbsenceCreateRequest,
     StaffingAbsenceDeleteRequest,
     StaffingAbsenceList,
+    StaffingAllocationCreateRequest,
     StaffingAllocationEditRequest,
     StaffingPositionCostBasisEditRequest,
     StaffingPositionCreateRequest,
+    StaffingPositionDetailsEditRequest,
     StaffingPositionList,
     StaffingPositionPersonAssignmentRequest,
     StaffingPositionRead,
@@ -95,6 +97,7 @@ from app.data.staffing import (
     StaffingWriteRejected,
     assign_person,
     create_absence,
+    create_allocation,
     create_position,
     delete_absence,
     list_absences,
@@ -103,6 +106,7 @@ from app.data.staffing import (
     scenario_view_in_scope,
     update_allocation,
     update_position_cost_basis,
+    update_position_details,
 )
 from app.db.session import get_session
 from app.models.staffing import COST_BASIS_ASSIGNED_FTE, COST_BASIS_FIXED_AMOUNT
@@ -497,9 +501,8 @@ def edit_staffing_allocation(
     through the scope-filtered read path first, so a stale token on an invisible scenario cannot
     answer `409` and thereby confirm that it exists.
 
-    A month that has no row yet is a `404`, not an insert: creating a month is part of creating the
-    position (`POST`), because a second inserting path would need its own run of the `approved`
-    guard and SC-3-01 gives it none. That is a named functional limit of this task, not an accident.
+    A month that has no row yet is a `404`, not an update. New rows use the sibling `POST
+    /{position_id}/allocations`, which applies the same position token and approved-scenario guard.
     """
     try:
         edited = update_allocation(
@@ -583,6 +586,103 @@ def edit_staffing_position_cost_basis(
     _require_personnel_cost_write_access(session, caller, project_id, scenario_id)
     try:
         edited = update_position_cost_basis(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            position_id,
+            expected_updated_at=payload.updated_at,
+            changes=payload.changes(),
+        )
+    except PositionNotFound:
+        raise _not_found() from None
+    except StaffingWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except StaffingWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if edited is None:
+        raise _not_found()
+    return shape_staffing_position(edited, caller)
+
+
+@router.post(
+    "/{position_id}/allocations",
+    response_model=StaffingPositionRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add one monthly allocation to a staffing position",
+    responses={
+        404: {"description": STAFFING_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the scenario is approved, the position changed since it was "
+            "read, the month already exists, or the database refused the write."
+        },
+    },
+)
+def add_staffing_allocation(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    payload: StaffingAllocationCreateRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> StaffingPositionRead:
+    """Add one month while comparing and rotating the position's shared `updated_at` token."""
+    try:
+        added = create_allocation(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            position_id,
+            expected_updated_at=payload.updated_at,
+            period_month=payload.period_month,
+            availability_hours=payload.availability_hours,
+            planned_allocation_hours=payload.planned_allocation_hours,
+            billable_hours=payload.billable_hours,
+        )
+    except PositionNotFound:
+        raise _not_found() from None
+    except StaffingWriteRejected as refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
+    except StaffingWriteRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Refused by the database. {refusal}"
+        ) from None
+    if added is None:
+        raise _not_found()
+    return shape_staffing_position(added, caller)
+
+
+@router.patch(
+    "/{position_id}/details",
+    response_model=StaffingPositionRead,
+    summary="Edit the dimensions, headcount and period of one staffing position",
+    responses={
+        404: {"description": STAFFING_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the scenario is approved, the position changed since it was "
+            "read (ADR-0007 concurrency token), or the database refused the details."
+        },
+    },
+)
+def edit_staffing_position_details(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    position_id: uuid.UUID,
+    payload: StaffingPositionDetailsEditRequest,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_WRITE))],
+    session: Annotated[Session, Depends(get_session)],
+) -> StaffingPositionRead:
+    """Replace the non-cost details of one position using its current `updated_at` token.
+
+    Permission is required by this route's dependency. Project and scenario scope, the approved
+    guard, and the concurrency comparison are resolved by `update_position_details` in the data
+    layer. The response uses the ordinary staffing shape, which has no personnel-cost fields.
+    """
+    try:
+        edited = update_position_details(
             session,
             caller,
             project_id,

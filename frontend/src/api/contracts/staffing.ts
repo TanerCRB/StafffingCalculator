@@ -124,3 +124,33 @@ export interface StaffingPositionRead {
 export interface StaffingPositionList {
   positions: StaffingPositionRead[];
 }
+
+export interface StaffingPositionDetailsEditRequest {
+  updated_at: string;
+  role_id: string;
+  seniority_id: string;
+  location_id: string;
+  engagement_type_id: string;
+  headcount: number;
+  start_date: string;
+  end_date: string | null;
+}
+
+export interface StaffingPositionCreateRequest extends Omit<StaffingPositionDetailsEditRequest, "updated_at"> {
+  allocations: StaffingAllocationCreateRequest[];
+}
+
+export interface StaffingAllocationCreateRequest {
+  updated_at: string;
+  period_month: string;
+  availability_hours: string;
+  planned_allocation_hours: string;
+  billable_hours: string;
+}
+
+export interface StaffingAllocationEditRequest {
+  updated_at: string;
+  availability_hours?: string;
+  planned_allocation_hours?: string;
+  billable_hours?: string;
+}
