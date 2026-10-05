@@ -1,6 +1,7 @@
 """SQLAlchemy models. Importing this package registers every table on `Base.metadata`."""
 
 from app.models.additional_cost import AdditionalCost
+from app.models.additional_cost_create_idempotency import AdditionalCostCreateIdempotency
 from app.models.approved_snapshot import (
     SNAPSHOT_TABLES,
     ApprovedSnapshotAbsenceBudget,
@@ -54,6 +55,7 @@ __all__ = [
     "AbsenceBudget",
     "AbsenceType",
     "AdditionalCost",
+    "AdditionalCostCreateIdempotency",
     "ApprovedSnapshotAbsenceBudget",
     "ApprovedSnapshotAbsenceType",
     "ApprovedSnapshotCatalogDefaultRate",

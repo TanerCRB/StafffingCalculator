@@ -26,7 +26,7 @@ criterion K-08).
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -130,6 +130,7 @@ def create_scenario_additional_cost(
     payload: AdditionalCostCreateRequest,
     caller: Annotated[CallerIdentity, Depends(require_permission(Permission.STAFFING_WRITE))],
     session: Annotated[Session, Depends(get_session)],
+    idempotency_key: Annotated[uuid.UUID | None, Header(alias="Idempotency-Key")] = None,
 ) -> AdditionalCostRead:
     """Create one cost in one guarded statement — or refuse.
 
@@ -158,6 +159,7 @@ def create_scenario_additional_cost(
             start_month=payload.start_month,
             end_month=payload.end_month,
             funding_source=payload.funding_source,
+            idempotency_key=idempotency_key,
         )
     except AdditionalCostNotFound:
         raise _not_found() from None

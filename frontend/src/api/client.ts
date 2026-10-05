@@ -1,4 +1,13 @@
 import {
+  ADDITIONAL_COST_FUNDING_SOURCES,
+  ADDITIONAL_COST_TYPES,
+  type AdditionalCostCreateRequest,
+  type AdditionalCostDeleteRequest,
+  type AdditionalCostEditRequest,
+  type AdditionalCostRead,
+  type ScenarioAdditionalCosts,
+} from "./contracts/additionalCosts";
+import {
   BUDGET_REGIME_NOT_APPLICABLE,
   COST_RATE_UNITS,
   STATUTORY_LEAVE_STATES,
@@ -8,6 +17,7 @@ import {
   type CatalogAbsenceTypeEntry,
   type CatalogAbsenceTypeList,
   type CatalogDimension,
+  type CatalogDimensionPath,
   type CatalogRate,
   type CatalogRateCreateRequest,
   type CatalogRateEditRequest,
@@ -635,7 +645,7 @@ export async function getCatalogRates(signal?: AbortSignal): Promise<CatalogRate
  * call site.
  */
 export async function getCatalogDimension(
-  dimension: CatalogDimension,
+  dimension: CatalogDimensionPath,
   signal?: AbortSignal,
 ): Promise<DimensionEntryList> {
   const path = `/catalog/dimensions/${dimension}`;
@@ -1365,6 +1375,111 @@ export async function editScenarioFixedPriceTerms(
 ): Promise<ScenarioCommercialTerms> {
   return write(commercialTermsPath(projectId, scenarioId), "PATCH", body, (value) =>
     isScenarioCommercialTermsShape(value, scenarioId),
+  );
+}
+
+// --- A scenario's additional costs (SC-5-13, ADR-0014) ------------------------------------------
+
+function additionalCostsPath(projectId: string, scenarioId: string): string {
+  return `/projects/${projectId}/scenarios/${scenarioId}/additional-costs`;
+}
+
+function isAdditionalCostReadShape(value: unknown): value is AdditionalCostRead {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.category_id === "string" &&
+    typeof value.category_name === "string" &&
+    isRequiredNullableString(value.position_id) &&
+    isRequiredNullableString(value.risk_id) &&
+    isDecimalString(value.amount) &&
+    typeof value.currency === "string" &&
+    ADDITIONAL_COST_TYPES.includes(value.cost_type as (typeof ADDITIONAL_COST_TYPES)[number]) &&
+    typeof value.start_month === "string" &&
+    isRequiredNullableString(value.end_month) &&
+    ADDITIONAL_COST_FUNDING_SOURCES.includes(
+      value.funding_source as (typeof ADDITIONAL_COST_FUNDING_SOURCES)[number],
+    ) &&
+    isConcurrencyMarker(value.updated_at)
+  );
+}
+
+function isScenarioAdditionalCostsShape(value: unknown, scenarioId: string): value is ScenarioAdditionalCosts {
+  return (
+    isRecord(value) &&
+    value.scenario_id === scenarioId &&
+    (value.scenario_status === "Draft" || value.scenario_status === "Approved") &&
+    Array.isArray(value.costs) &&
+    value.costs.every(isAdditionalCostReadShape)
+  );
+}
+
+export async function getScenarioAdditionalCosts(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+): Promise<ScenarioAdditionalCosts> {
+  const path = additionalCostsPath(projectId, scenarioId);
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isScenarioAdditionalCostsShape(payload, scenarioId)) {
+        throw new ApiError(response.status, `GET ${path} returned a payload without valid costs`);
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
+export async function createScenarioAdditionalCost(
+  projectId: string,
+  scenarioId: string,
+  body: AdditionalCostCreateRequest,
+  idempotencyKey: string,
+): Promise<AdditionalCostRead> {
+  return write(
+    additionalCostsPath(projectId, scenarioId),
+    "POST",
+    body,
+    isAdditionalCostReadShape,
+    { "Idempotency-Key": idempotencyKey },
+  );
+}
+
+export async function editScenarioAdditionalCost(
+  projectId: string,
+  scenarioId: string,
+  costId: string,
+  body: AdditionalCostEditRequest,
+): Promise<AdditionalCostRead> {
+  return write(
+    `${additionalCostsPath(projectId, scenarioId)}/${costId}`,
+    "PATCH",
+    body,
+    isAdditionalCostReadShape,
+  );
+}
+
+export async function deleteScenarioAdditionalCost(
+  projectId: string,
+  scenarioId: string,
+  costId: string,
+  body: AdditionalCostDeleteRequest,
+): Promise<void> {
+  const path = `${additionalCostsPath(projectId, scenarioId)}/${costId}`;
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { method: "DELETE", headers: JSON_REQUEST_HEADERS, body: JSON.stringify(body) },
+    async (response) => {
+      if (!response.ok) throw await refusalOf(response, `DELETE ${path}`);
+    },
   );
 }
 

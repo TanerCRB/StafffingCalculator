@@ -155,3 +155,19 @@ ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0008; 
 ### 2026-09-29 - optional risk link and the pointer to ADR-0021 (SC-6-08)
 
 The section "Czego ten dokument nie rozstrzyga" deferred risk reserves (F-09); they are decided in ADR-0021. `additional_cost` gains a nullable `risk_id` with the composite foreign key `fk_additional_cost_risk_same_scenario` `(risk_id, scenario_id)` -> `scenario_risk(id, scenario_id)` (no `ON DELETE` action). The link never enters the sum: the cost line and the point 7 total are unchanged, and detecting a double representation alters no figure. The read gains `risk_id` (the id of the linked risk, or null). The ADR-0014 R-04 risk (a retried `POST` duplicates a row) applies to reserves unchanged.
+
+### Addendum 2026-10-05 (Issue #236, SC-5-13 — additional-cost write idempotency)
+
+**Status:** Draft — pending approval
+
+The first F-11 additional-cost write form resolves the duplicate-`POST` risk recorded in point 4. This addendum applies to additional-cost creates and does not change other write endpoints.
+
+1. **Key scope and authorization.** The idempotency key is scoped to the authenticated caller. The endpoint checks the caller’s current permission to write additional costs before looking up or replaying a prior outcome. A caller without that permission is refused, even when a matching key has a stored outcome.
+2. **Replay and key reuse.** For the same caller, key, and request payload, a retry reuses the original outcome and does not create another cost row. Reusing a caller’s key with a different payload returns `409 Conflict` and performs no write.
+3. **Concurrent retries and atomicity.** Concurrent requests with the same caller, key, and payload converge on one persisted cost row. The cost row and idempotency outcome are committed atomically; a failed operation cannot commit only one of them.
+4. **Persistence and retention.** The key outcome is persisted while the corresponding cost exists. It stores no request body. Its request fingerprint and outcome are not written to logs. Removing the cost also removes its idempotency outcome.
+5. **Scope and compatibility.** Requests without an idempotency key retain existing behavior and receive no retry-idempotency guarantee. This addendum does not change edit concurrency or calculation behavior.
+
+| Control | Acceptance criterion |
+|---|---|
+| D-11 | Repeating a create with the same caller, key, and payload, including concurrent retries, leaves exactly one cost row; a different payload with the same key returns `409` and writes nothing; omitting the key retains legacy behavior. |

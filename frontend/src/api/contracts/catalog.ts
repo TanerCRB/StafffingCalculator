@@ -130,6 +130,10 @@ export const CATALOG_DIMENSIONS = [
 
 export type CatalogDimension = (typeof CATALOG_DIMENSIONS)[number];
 
+/** `cost-categories` shares the backend dictionary route but is not part of the rates screen's
+ * five editable dimensions. */
+export type CatalogDimensionPath = CatalogDimension | "cost-categories";
+
 /**
  * One row of `GET /catalog/absence-types` (SC-3-04, Issue #135), as much of the backend's
  * `AbsenceTypeEntry` as this client reads: an id and a name, to resolve a staffing absence's
