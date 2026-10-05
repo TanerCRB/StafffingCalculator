@@ -537,6 +537,11 @@ describe("colour contrast", () => {
       "ProjectListScreen.css .project-list__status-filter": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__gaps": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__metric": ["--sc-color-surface"],
+      "ScenarioAdditionalCostsSection.css .additional-costs__details": ["--sc-color-surface"],
+      "ScenarioAdditionalCostsSection.css .additional-costs__details strong": ["--sc-color-surface"],
+      "ScenarioAdditionalCostsSection.css .additional-costs__empty": ["--sc-color-surface"],
+      "ScenarioAdditionalCostsSection.css .additional-costs__form label": ["--sc-color-surface-muted"],
+      "ScenarioAdditionalCostsSection.css .additional-costs__title": ["--sc-color-surface"],
       // The shell: the topbar and the rail are both white.
       "AppShell.css .app-shell__subtitle": ["--sc-color-surface"],
       "AppShell.css .app-shell__breadcrumb-list": ["--sc-color-surface"],
@@ -605,6 +610,8 @@ describe("colour contrast", () => {
       ],
       // The orange accent bar on a scenario card: a 4px stripe, no text.
       "ProjectListScreen.css .scenario-card::before": [],
+      "ScenarioAdditionalCostsSection.css .additional-costs__form": ["--sc-color-text", "--sc-color-text-muted"],
+      "ScenarioAdditionalCostsSection.css .additional-costs__row": ["--sc-color-text", "--sc-color-text-muted"],
       // The page under every screen: headings and body text, and the catalogue's descriptions.
       "AppShell.css .app-shell": ["--sc-color-text", "--sc-color-text-muted"],
       "AppShell.css .app-shell__topbar": ["--sc-color-text", "--sc-color-text-muted"],

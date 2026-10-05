@@ -36,6 +36,8 @@ advertise a gate that does not exist. The named risk of that decision (a recruit
 `headcount = 1` position points at one person) is ADR-0005's, addendum SC-5-05, point 2.
 """
 
+import hashlib
+import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -44,6 +46,7 @@ from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -55,6 +58,7 @@ from app.data.staffing import ADDITIONAL_COST_COLUMNS_NOT_COPIED, scenario_in_sc
 from app.data.write_errors import WriteFailed, WriteRefused, failure_for
 from app.domain.additional_cost import AdditionalCostAnswer, CostLine, additional_cost_total
 from app.models.additional_cost import AdditionalCost
+from app.models.additional_cost_create_idempotency import AdditionalCostCreateIdempotency
 from app.models.catalog import CatalogCostCategory
 from app.models.risk import ScenarioRisk
 from app.models.scenario import Scenario, ScenarioStatus
@@ -119,6 +123,10 @@ class AdditionalCostNotFound(RuntimeError):
     facts *inside* this layer while the API answers both with one body — the division
     `app.data.staffing.AbsenceNotFound` makes.
     """
+
+
+class AdditionalCostIdempotencyConflict(AdditionalCostWriteRejected):
+    """A caller reused a create key for a different payload."""
 
 
 class AdditionalCostFieldNotEditable(RuntimeError):
@@ -324,6 +332,7 @@ def create_additional_cost(
     start_month: date,
     end_month: date | None,
     funding_source: str,
+    idempotency_key: uuid.UUID | None = None,
 ) -> AdditionalCostRow | None:
     """Insert one cost — or refuse, or answer `None` ("no such scenario for this caller").
 
@@ -354,6 +363,49 @@ def create_additional_cost(
     """
     if scenario_in_scope(session, caller, project_id, scenario_id) is None:
         return None
+
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "scenario_id": str(scenario_id),
+                "category_id": str(category_id),
+                "position_id": str(position_id) if position_id else None,
+                "risk_id": str(risk_id) if risk_id else None,
+                "amount": format(amount, "f"),
+                "currency": currency,
+                "cost_type": cost_type,
+                "start_month": start_month.isoformat(),
+                "end_month": end_month.isoformat() if end_month else None,
+                "funding_source": funding_source,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    if idempotency_key is not None:
+        prior = session.execute(
+            sa.select(
+                AdditionalCostCreateIdempotency.request_fingerprint,
+                AdditionalCostCreateIdempotency.cost_id,
+            ).where(
+                AdditionalCostCreateIdempotency.caller_user_id == caller.user_id,
+                AdditionalCostCreateIdempotency.key == idempotency_key,
+            )
+        ).one_or_none()
+        if prior is not None:
+            if prior.request_fingerprint != fingerprint:
+                raise AdditionalCostIdempotencyConflict(
+                    "Idempotency key was used with another request."
+                )
+            replay = session.execute(
+                sa.select(AdditionalCost).where(
+                    AdditionalCost.id == prior.cost_id,
+                    AdditionalCost.scenario_id == scenario_id,
+                )
+            ).scalar_one_or_none()
+            if replay is None:
+                return None
+            return _row_by_id(session, replay.id)
 
     cost_id = uuid.uuid4()
     open_scenario = unapproved_scenario(scenario_id).subquery("open_scenario")
@@ -428,6 +480,42 @@ def create_additional_cost(
             # `app.data.staffing.create_position`. Not a `SQLAlchemyError`, so it passes the
             # `except` below untouched.
             raise _diagnose_insert_refusal(session, scenario_id, position_id, risk_id)
+        if idempotency_key is not None:
+            claim = (
+                pg_insert(AdditionalCostCreateIdempotency)
+                .values(
+                    caller_user_id=caller.user_id,
+                    key=idempotency_key,
+                    request_fingerprint=fingerprint,
+                    cost_id=cost_id,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        AdditionalCostCreateIdempotency.caller_user_id,
+                        AdditionalCostCreateIdempotency.key,
+                    ]
+                )
+                .returning(AdditionalCostCreateIdempotency.cost_id)
+            )
+            claimed = session.execute(claim).scalar_one_or_none()
+            if claimed is None:
+                prior = session.execute(
+                    sa.select(
+                        AdditionalCostCreateIdempotency.request_fingerprint,
+                        AdditionalCostCreateIdempotency.cost_id,
+                    ).where(
+                        AdditionalCostCreateIdempotency.caller_user_id == caller.user_id,
+                        AdditionalCostCreateIdempotency.key == idempotency_key,
+                    )
+                ).one()
+                session.execute(sa.delete(_COST_TABLE).where(_COST_TABLE.c.id == cost_id))
+                if prior.request_fingerprint != fingerprint:
+                    session.rollback()
+                    raise AdditionalCostIdempotencyConflict(
+                        "Idempotency key was used with another request."
+                    )
+                session.commit()
+                return _row_by_id(session, prior.cost_id)
         session.commit()
     except SQLAlchemyError as error:
         session.rollback()

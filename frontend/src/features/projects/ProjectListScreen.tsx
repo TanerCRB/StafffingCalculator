@@ -7,6 +7,7 @@ import { formatPercentString } from "../../lib/money";
 import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
 import { DuplicateScenarioControl } from "./DuplicateScenarioControl";
 import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
+import { ScenarioAdditionalCostsSection } from "./ScenarioAdditionalCostsSection";
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
@@ -679,6 +680,12 @@ function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps
               projectId={project.id}
               scenarioId={scenario.id}
               scenarioName={scenario.name}
+            />
+            <ScenarioAdditionalCostsSection
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioName={scenario.name}
+              reportingCurrency={project.reporting_currency}
             />
             {/* SC-7-02: a second, independent read on the same card — its own state machine, its
                 own abort on unmount/re-select (ADR-0010, point 7). Q1 = option A: no new router, no

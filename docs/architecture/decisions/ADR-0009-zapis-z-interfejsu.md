@@ -297,3 +297,20 @@ edycję (bramka 1, P-1) czyni to ryzyko silniejsze niż w pierwotnej mapie archi
 nadpisuje istniejący wiersz *w miejscu*, nie dokłada nowego okna obok. Pierwsze zadanie, które
 rozstrzyga stawkę do zapisanej kalkulacji, dziedziczy edytowalny domyślny bez migawki i musi
 odtworzyć to pytanie samodzielnie, jeśli nie zostanie tu zapisane — co niniejszym jest zrobione.
+
+### Addendum 2026-10-05 (Issue #236, SC-5-13 — additional-cost create retries)
+
+**Status:** Draft — pending approval
+
+This addendum extends the browser-write contract only for creation of an additional cost. The timeout remains an uncertain outcome. The cost form retries the same logical create using the same key; it does not silently create a second cost.
+
+1. **Retry key.** The browser supplies an `Idempotency-Key` for an additional-cost create and reuses that key when retrying the same logical create after an uncertain response.
+2. **Authorization and replay.** The backend checks current cost-write permission before looking up or replaying a prior result. A denied request remains denied even if a matching key has a stored outcome.
+3. **Payload mismatch.** A request that reuses a key with a different payload receives `409 Conflict` and performs no write.
+4. **Named outcomes and privacy.** The screen does not report a refused or uncertain write as saved. Error handling follows point 6: refusal messages and diagnostics do not expose submitted values.
+5. **Legacy requests.** Requests without an idempotency key keep existing behavior and make no retry-idempotency promise.
+
+| Control | Acceptance criterion |
+|---|---|
+| A9-236-1 | The browser reuses one key for retries of one logical create; the same caller and payload replay one created cost, while a different payload with that key receives `409` and no write. |
+| A9-236-2 | Current write permission is checked before replay; removing the key-backed cost removes its retained idempotency outcome; a request without a key follows legacy behavior. |
