@@ -11,8 +11,8 @@
 //   * **Money crosses the boundary as a fixed-point string** (ADR-0002). `revenue.amount` is such a
 //     string when `state` is `"calculated"` and the literal `"n/a"` otherwise — never `0`, never
 //     `null`. It is formatted by `lib/money.ts` and nothing else.
-//   * **`model_type` is closed on the request and open on the response.** The server creates only
-//     what it can price (`"time_and_material"`), but a row of a later model can exist while this code
+//   * **`model_type` is closed on the request and open on the response.** The request lists the
+//     models this client can create, but a row of a later model can exist while this code
 //     runs (ADR-0001, mixed-version window). Such a rule is the named state
 //     `unsupported_model_type`, not a payload this client cannot read.
 
@@ -35,14 +35,42 @@ export interface FixedPriceTermsCreateRequest {
   currency: string;
 }
 
+export interface StoryPointsTermsCreateRequest {
+  model_type: typeof STORY_POINTS;
+  price_per_point: string;
+  accepted_points: number;
+  currency: string;
+}
+
+export interface OutcomeBasedTermsCreateRequest {
+  model_type: typeof OUTCOME_BASED;
+  currency: string;
+  fixed_fee: string;
+  success_bonus: string | null;
+  unit_rate: string | null;
+  revenue_min: string | null;
+  revenue_max: string | null;
+  categories: Record<OutcomeCategory, OutcomeCategoryRead>;
+}
+
 export type CommercialTermsCreateRequest =
   | TimeAndMaterialTermsCreateRequest
+  | StoryPointsTermsCreateRequest
+  | OutcomeBasedTermsCreateRequest
   | FixedPriceTermsCreateRequest;
 
 /** Fixed Price edits replace the agreed price and carry the rule's concurrency marker. */
 export interface FixedPriceTermsEditRequest {
   updated_at: string;
   agreed_price: string;
+}
+
+export type CommercialTermsEditRequest =
+  | (StoryPointsTermsCreateRequest & { updated_at: string })
+  | (OutcomeBasedTermsCreateRequest & { updated_at: string });
+
+export interface CommercialTermsDeleteRequest {
+  updated_at: string;
 }
 
 /** Every `revenue.state` the backend can emit — exactly the backend's `RevenueState` literal. */
@@ -128,11 +156,14 @@ export interface CommercialTermsRead {
   id: string;
   /** Open on purpose (`StoredModelType`): whatever the stored row says. */
   model_type: string;
-  /** ADR-0007's marker. Carried, not used: this task has no edit path (ADR-0003, point 2). */
+  /** ADR-0007 concurrency marker used by draft edit and delete operations. */
   updated_at: string;
   /** The Outcome-based rule's parameters — `null` for every other model, and for an Outcome-based
    * rule without its details row (then `revenue.state` is `incomplete_commercial_terms`). */
   outcome_terms: OutcomeTermsRead | null;
+  /** Story Points only; null when its details row is incomplete. */
+  price_per_point?: string | null;
+  accepted_points?: number | null;
   /** Fixed Price only; null with an incomplete details row. */
   agreed_price?: string | null;
   /** Fixed Price only; null with an incomplete details row. */

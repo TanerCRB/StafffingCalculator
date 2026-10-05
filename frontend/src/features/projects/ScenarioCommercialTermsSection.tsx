@@ -4,6 +4,8 @@ import {
   ApiError,
   RequestTimeoutError,
   createScenarioCommercialTerms,
+  deleteScenarioCommercialTerms,
+  editScenarioCommercialTerms,
   editScenarioFixedPriceTerms,
   getScenarioCommercialTerms,
 } from "../../api/client";
@@ -12,6 +14,9 @@ import {
   OUTCOME_BASED,
   OUTCOME_CATEGORIES,
   TIME_AND_MATERIAL,
+  STORY_POINTS,
+  type CommercialTermsCreateRequest,
+  type CommercialTermsEditRequest,
   catalogAssumptionsOf,
   revenueModelKind,
   type CalculatedRevenueRead,
@@ -55,6 +60,9 @@ import {
   READ_TIMED_OUT,
   READ_UNREADABLE,
   EDIT_FIXED_PRICE,
+  EDIT_OUTCOME_BASED,
+  EDIT_STORY_POINTS,
+  DELETE_COMMERCIAL_RULE,
   FIXED_PRICE_CURRENCY_FIELD_LABEL,
   FIXED_PRICE_PRICE_LABEL,
   REVENUE_LABEL,
@@ -70,7 +78,18 @@ import {
   SAVING,
   SET_TIME_AND_MATERIAL,
   SET_FIXED_PRICE,
+  SET_OUTCOME_BASED,
+  SET_STORY_POINTS,
   SAVE_FIXED_PRICE,
+  SAVE_COMMERCIAL_RULE,
+  DELETE_DENIED,
+  DELETE_CONFLICT,
+  DELETE_UNRESOLVED,
+  STORY_POINTS_PRICE_LABEL,
+  STORY_POINTS_ACCEPTED_LABEL,
+  OUTCOME_FIELD_LABELS,
+  OUTCOME_UNITS_INPUT_LABEL,
+  OUTCOME_PROBABILITY_INPUT_LABEL,
   SUCCESS_BONUS_LABEL,
   UNIT_RATE_LABEL,
   UNRESOLVED_MONTHS_LABEL,
@@ -94,10 +113,9 @@ import {
  *     arrived as, in the currency it arrived with (ADR-0002; K-02);
  *   * after a save, the `201` body — never a state assembled when the button was pressed (ADR-0009,
  *     addendum 2026-09-23; K-05);
- *   * "Set Time & Material" only where the read said there is no rule and the scenario is not
- *     approved — presentation of the server's answer, while the `409` for a scenario approved in
- *     between stays a handled ending of its own (K-03, K-06). A Story Points or Outcome-based rule
- *     is a rule: no creation form for either model exists here (SC-4-07, Q1 = A).
+ *   * create controls only where the read said there is no rule and the scenario is not approved;
+ *     same-model replacement and removal carry the read's concurrency marker and stay hidden for
+ *     approved scenarios (SC-4-11, ADR-0003/0004).
  *
  * SC-4-07 (Issue #125): which lines a revenue gets is chosen by `assumptions_used.model_type`, never
  * by `rate_source` (ADR-0003, addendum SC-4-07, point 3). Outcome-based shows the guaranteed and the
@@ -126,6 +144,12 @@ type FixedPriceFormState = {
   mode: "create" | "edit";
   agreedPrice: string;
   currency: string;
+};
+
+type RuleFormState = {
+  mode: "create" | "edit";
+  modelType: typeof STORY_POINTS | typeof OUTCOME_BASED;
+  values: Record<string, string>;
 };
 
 function writeFailure(error: unknown): Extract<WriteState, { kind: "refused" | "unresolved" }> {
@@ -184,6 +208,7 @@ export function ScenarioCommercialTermsSection({
   const [read, setRead] = useState<ReadState>({ kind: "loading" });
   const [write, setWrite] = useState<WriteState>({ kind: "idle" });
   const [fixedPriceForm, setFixedPriceForm] = useState<FixedPriceFormState | null>(null);
+  const [ruleForm, setRuleForm] = useState<RuleFormState | null>(null);
   /** Bumped by "Read commercial terms again" — the read effect depends on it. */
   const [readRequest, setReadRequest] = useState(0);
   const mounted = useRef(true);
@@ -282,11 +307,108 @@ export function ScenarioCommercialTermsSection({
     }
   }
 
+  async function saveRule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (ruleForm === null) return;
+    const values = ruleForm.values;
+    const body = ruleForm.modelType === STORY_POINTS
+      ? {
+          model_type: STORY_POINTS,
+          price_per_point: values.price_per_point ?? "",
+          accepted_points: Number(values.accepted_points),
+          currency: values.currency ?? "",
+          ...(ruleForm.mode === "edit" && read.kind === "ready" && read.terms.commercial_terms !== null
+            ? { updated_at: read.terms.commercial_terms.updated_at } : {}),
+        }
+      : {
+          model_type: OUTCOME_BASED,
+          currency: values.currency ?? "",
+          fixed_fee: values.fixed_fee ?? "",
+          success_bonus: values.success_bonus || null,
+          unit_rate: values.unit_rate || null,
+          revenue_min: values.revenue_min || null,
+          revenue_max: values.revenue_max || null,
+          categories: Object.fromEntries(OUTCOME_CATEGORIES.map((category) => [category, {
+            units: values[`${category}.units`] || null,
+            probability: values[`${category}.probability`] || null,
+          }])) as Record<OutcomeCategory, OutcomeCategoryRead>,
+          ...(ruleForm.mode === "edit" && read.kind === "ready" && read.terms.commercial_terms !== null
+            ? { updated_at: read.terms.commercial_terms.updated_at } : {}),
+        };
+    setWrite({ kind: "saving" });
+    try {
+      const terms = ruleForm.mode === "create"
+        ? await createScenarioCommercialTerms(projectId, scenarioId, body as CommercialTermsCreateRequest)
+        : await editScenarioCommercialTerms(projectId, scenarioId, body as CommercialTermsEditRequest);
+      if (!mounted.current) return;
+      setRead({ kind: "ready", terms });
+      setRuleForm(null);
+      setWrite({ kind: "saved" });
+    } catch (error: unknown) {
+      if (mounted.current) setWrite(writeFailure(error));
+    }
+  }
+
+  async function removeRule() {
+    if (read.kind !== "ready" || read.terms.commercial_terms === null) return;
+    setWrite({ kind: "saving" });
+    try {
+      await deleteScenarioCommercialTerms(projectId, scenarioId, {
+        updated_at: read.terms.commercial_terms.updated_at,
+      });
+      if (!mounted.current) return;
+      setRuleForm(null);
+      setFixedPriceForm(null);
+      setWrite({ kind: "idle" });
+      setRead({ kind: "loading" });
+      setReadRequest((count) => count + 1);
+    } catch (error: unknown) {
+      if (mounted.current) {
+        const message = error instanceof RequestTimeoutError
+          ? DELETE_UNRESOLVED
+          : error instanceof ApiError && error.status === 403
+            ? DELETE_DENIED
+            : error instanceof ApiError && error.status === 409
+              ? DELETE_CONFLICT
+              : describeCommercialTermsWriteFailure(error);
+        setWrite({ kind: error instanceof RequestTimeoutError ? "unresolved" : "refused", message });
+      }
+    }
+  }
+
   function readAgain() {
     setRead({ kind: "loading" });
     setWrite({ kind: "idle" });
     setFixedPriceForm(null);
+    setRuleForm(null);
     setReadRequest((count) => count + 1);
+  }
+
+  function startRuleForm(modelType: typeof STORY_POINTS | typeof OUTCOME_BASED, mode: "create" | "edit") {
+    const current = read.kind === "ready" ? read.terms.commercial_terms : null;
+    const initial: Record<string, string> = {};
+    if (mode === "edit" && current !== null) {
+      if (modelType === STORY_POINTS && current.model_type === STORY_POINTS) {
+        initial.price_per_point = current.price_per_point ?? "";
+        initial.accepted_points = current.accepted_points?.toString() ?? "";
+        initial.currency = current.currency ?? "";
+      } else if (modelType === OUTCOME_BASED && current.model_type === OUTCOME_BASED && current.outcome_terms !== null) {
+        const outcome = current.outcome_terms;
+        initial.currency = outcome.currency;
+        initial.fixed_fee = outcome.fixed_fee;
+        initial.success_bonus = outcome.success_bonus ?? "";
+        initial.unit_rate = outcome.unit_rate ?? "";
+        initial.revenue_min = outcome.revenue_min ?? "";
+        initial.revenue_max = outcome.revenue_max ?? "";
+        for (const category of OUTCOME_CATEGORIES) {
+          initial[`${category}.units`] = outcome.categories[category].units ?? "";
+          initial[`${category}.probability`] = outcome.categories[category].probability ?? "";
+        }
+      }
+    }
+    setWrite({ kind: "idle" });
+    setFixedPriceForm(null);
+    setRuleForm({ mode, modelType, values: initial });
   }
 
   const readAgainButton = (
@@ -321,7 +443,7 @@ export function ScenarioCommercialTermsSection({
     const { terms } = read;
     const noRule = terms.commercial_terms === null;
     const offerSet =
-      noRule &&
+      noRule && ruleForm === null &&
       terms.scenario_status !== "Approved" &&
       (write.kind === "idle" || write.kind === "saving");
     const fixedPriceTerms =
@@ -331,6 +453,9 @@ export function ScenarioCommercialTermsSection({
       terms.scenario_status !== "Approved" &&
       typeof fixedPriceTerms.agreed_price === "string" &&
       typeof fixedPriceTerms.currency === "string";
+    const storyPointsTerms = terms.commercial_terms?.model_type === STORY_POINTS ? terms.commercial_terms : null;
+    const hasOutcomeRule = terms.commercial_terms?.model_type === OUTCOME_BASED;
+    const canWriteDraft = terms.scenario_status !== "Approved";
     body = (
       <>
         <p className="scenario-card__metric">
@@ -355,6 +480,12 @@ export function ScenarioCommercialTermsSection({
               {AGREED_PRICE_LABEL} {formatRuleAmountString(fixedPriceTerms.agreed_price, fixedPriceTerms.currency)}
             </p>
           )}
+        {storyPointsTerms !== null && typeof storyPointsTerms.price_per_point === "string" && typeof storyPointsTerms.currency === "string" && typeof storyPointsTerms.accepted_points === "number" && (
+          <>
+            <p className="scenario-card__metric">{STORY_POINTS_PRICE_LABEL}: {formatRuleAmountString(storyPointsTerms.price_per_point, storyPointsTerms.currency)}</p>
+            <p className="scenario-card__metric">{STORY_POINTS_ACCEPTED_LABEL}: {storyPointsTerms.accepted_points}</p>
+          </>
+        )}
         {noRule && terms.scenario_status === "Approved" && (
           <p className="scenario-card__metric">{APPROVED_SCENARIO_NOTE}</p>
         )}
@@ -381,7 +512,43 @@ export function ScenarioCommercialTermsSection({
             >
               {SET_FIXED_PRICE}
             </button>
+            <button type="button" aria-label={`${SET_STORY_POINTS} for ${scenarioName}`} className="button button--secondary" disabled={write.kind === "saving"} onClick={() => startRuleForm(STORY_POINTS, "create")}>{SET_STORY_POINTS}</button>
+            <button type="button" aria-label={`${SET_OUTCOME_BASED} for ${scenarioName}`} className="button button--secondary" disabled={write.kind === "saving"} onClick={() => startRuleForm(OUTCOME_BASED, "create")}>{SET_OUTCOME_BASED}</button>
           </div>
+        )}
+        {canWriteDraft && storyPointsTerms !== null && ruleForm === null && (
+          <div className="commercial-terms__actions"><button type="button" aria-label={`${EDIT_STORY_POINTS} for ${scenarioName}`} className="button button--secondary" disabled={write.kind === "saving"} onClick={() => startRuleForm(STORY_POINTS, "edit")}>{EDIT_STORY_POINTS}</button></div>
+        )}
+        {canWriteDraft && hasOutcomeRule && ruleForm === null && (
+          <div className="commercial-terms__actions"><button type="button" aria-label={`${EDIT_OUTCOME_BASED} for ${scenarioName}`} className="button button--secondary" disabled={write.kind === "saving"} onClick={() => startRuleForm(OUTCOME_BASED, "edit")}>{EDIT_OUTCOME_BASED}</button></div>
+        )}
+        {canWriteDraft && terms.commercial_terms !== null && ruleForm === null && fixedPriceForm === null && (
+          <div className="commercial-terms__actions"><button type="button" aria-label={`${DELETE_COMMERCIAL_RULE} for ${scenarioName}`} className="button button--secondary" disabled={write.kind === "saving"} onClick={() => void removeRule()}>{DELETE_COMMERCIAL_RULE}</button></div>
+        )}
+        {ruleForm !== null && (
+          <form className="commercial-terms__form" onSubmit={(event) => void saveRule(event)}>
+            {ruleForm.modelType === STORY_POINTS ? (
+              <>
+                <label>{STORY_POINTS_PRICE_LABEL}<input className="input" inputMode="decimal" required aria-label={`${STORY_POINTS_PRICE_LABEL} for ${scenarioName}`} value={ruleForm.values.price_per_point ?? ""} onChange={(event) => setRuleForm((current) => current === null ? null : { ...current, values: { ...current.values, price_per_point: event.target.value } })} /></label>
+                <label>{STORY_POINTS_ACCEPTED_LABEL}<input className="input" inputMode="numeric" type="number" min="0" step="1" required aria-label={`${STORY_POINTS_ACCEPTED_LABEL} for ${scenarioName}`} value={ruleForm.values.accepted_points ?? ""} onChange={(event) => setRuleForm((current) => current === null ? null : { ...current, values: { ...current.values, accepted_points: event.target.value } })} /></label>
+                <label>{FIXED_PRICE_CURRENCY_FIELD_LABEL}<input className="input" maxLength={3} required aria-label={`${FIXED_PRICE_CURRENCY_FIELD_LABEL} for ${scenarioName}`} value={ruleForm.values.currency ?? ""} onChange={(event) => setRuleForm((current) => current === null ? null : { ...current, values: { ...current.values, currency: event.target.value } })} /></label>
+              </>
+            ) : (
+              <>
+                {Object.entries(OUTCOME_FIELD_LABELS).map(([field, label]) => (
+                  <label key={field}>{label}<input className="input" inputMode={field === "currency" ? "text" : "decimal"} required={field === "currency" || field === "fixed_fee"} aria-label={`${label} for ${scenarioName}`} value={ruleForm.values[field] ?? ""} onChange={(event) => setRuleForm((current) => current === null ? null : { ...current, values: { ...current.values, [field]: event.target.value } })} /></label>
+                ))}
+                {OUTCOME_CATEGORIES.map((category) => (
+                  <fieldset key={category}><legend>{OUTCOME_CATEGORY_LABELS[category]}</legend>
+                    <label>{OUTCOME_UNITS_INPUT_LABEL}<input className="input" inputMode="decimal" aria-label={`${OUTCOME_CATEGORY_LABELS[category]} units for ${scenarioName}`} value={ruleForm.values[`${category}.units`] ?? ""} onChange={(event) => setRuleForm((current) => current === null ? null : { ...current, values: { ...current.values, [`${category}.units`]: event.target.value } })} /></label>
+                    <label>{OUTCOME_PROBABILITY_INPUT_LABEL}<input className="input" inputMode="decimal" aria-label={`${OUTCOME_CATEGORY_LABELS[category]} probability for ${scenarioName}`} value={ruleForm.values[`${category}.probability`] ?? ""} onChange={(event) => setRuleForm((current) => current === null ? null : { ...current, values: { ...current.values, [`${category}.probability`]: event.target.value } })} /></label>
+                  </fieldset>
+                ))}
+              </>
+            )}
+            <button type="submit" className="button button--primary" disabled={write.kind === "saving"}>{SAVE_COMMERCIAL_RULE}</button>
+            <button type="button" className="button button--secondary" disabled={write.kind === "saving"} onClick={() => setRuleForm(null)}>Cancel</button>
+          </form>
         )}
         {canEditFixedPrice && fixedPriceForm === null && write.kind !== "refused" && write.kind !== "unresolved" && (
           <div className="commercial-terms__actions">

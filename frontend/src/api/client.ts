@@ -35,6 +35,8 @@ import {
   STORY_POINTS_RATE_SOURCE,
   TIME_AND_MATERIAL,
   type CommercialTermsCreateRequest,
+  type CommercialTermsDeleteRequest,
+  type CommercialTermsEditRequest,
   type ExpectedRevenueState,
   type FixedPriceTermsEditRequest,
   type ScenarioCommercialTerms,
@@ -1243,6 +1245,13 @@ function isCommercialTermsShape(value: unknown): boolean {
         (isDecimalString(value.agreed_price) && typeof value.currency === "string"))
     );
   }
+  if (value.model_type === STORY_POINTS) {
+    return value.outcome_terms === null &&
+      ((value.price_per_point === undefined && value.accepted_points === undefined && value.currency === undefined) ||
+        (value.price_per_point === null && value.accepted_points === null && value.currency === null) ||
+        (isDecimalString(value.price_per_point) && Number.isInteger(value.accepted_points) &&
+          (value.accepted_points as number) >= 0 && typeof value.currency === "string"));
+  }
   if (value.outcome_terms === null) {
     return true;
   }
@@ -1367,6 +1376,36 @@ export async function editScenarioFixedPriceTerms(
     isScenarioCommercialTermsShape(value, scenarioId),
   );
 }
+
+/** Fully replace a draft Outcome-based or Story Points rule, retaining its model type. */
+export async function editScenarioCommercialTerms(
+  projectId: string,
+  scenarioId: string,
+  body: CommercialTermsEditRequest,
+): Promise<ScenarioCommercialTerms> {
+  return write(commercialTermsPath(projectId, scenarioId), "PATCH", body, (value) =>
+    isScenarioCommercialTermsShape(value, scenarioId),
+  );
+}
+
+/** Delete a draft rule with the marker returned by the read. */
+export async function deleteScenarioCommercialTerms(
+  projectId: string,
+  scenarioId: string,
+  body: CommercialTermsDeleteRequest,
+): Promise<void> {
+  const path = commercialTermsPath(projectId, scenarioId);
+  await requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { method: "DELETE", headers: { ...JSON_REQUEST_HEADERS, [CALLER_ID_HEADER]: CALLER_USER_ID }, body: JSON.stringify(body) },
+    async (response) => {
+      if (!response.ok) throw await refusalOf(response, `DELETE ${path}`);
+      if (response.status !== 204) throw new ApiError(response.status, `DELETE ${path} returned an unexpected response`);
+    },
+    REQUEST_TIMEOUT_MS,
+  );
+}
+
 
 /** Add one default rate window (`POST /catalog/rates`). */
 export async function createCatalogRate(body: CatalogRateCreateRequest): Promise<CatalogRate> {
