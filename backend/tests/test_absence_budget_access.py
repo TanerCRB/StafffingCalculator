@@ -243,12 +243,15 @@ def test_k_09_the_permission_vocabulary_did_not_grow_in_this_task(
         Permission.PEOPLE_WRITE,
         # Added by SC-4-09: decision authority for Fixed Price adjustments; not placeholder-granted.
         Permission.COMMERCIAL_ADJUSTMENT_APPROVE,
+        # Added by SC-1-22, ADR-0022: organization defaults are independent of catalog/project.
+        Permission.ORGANIZATION_DEFAULTS_READ,
+        Permission.ORGANIZATION_DEFAULTS_WRITE,
     }, (
         "the permission vocabulary changed in SC-3-03. ADR-0005's addendum of 2026-09-22 (SC-3-03, "
         "point 2) decides that the absence budget is the eighth table of the catalogue and takes "
         "no permission of its own."
     )
-    assert len(Permission) == 17
+    assert len(Permission) == 19
 
 
 def test_the_budget_carrying_staffing_read_is_not_gated_on_the_personnel_cost_permission(
