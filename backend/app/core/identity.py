@@ -77,6 +77,12 @@ class Permission(StrEnum):
     maintained by an organisation administrator and read by everyone who plans staffing. Each of
     the two has its own mandatory refusal test (ADR-0005, "Konsekwencje")."""
 
+    ORGANIZATION_DEFAULTS_READ = "organization_defaults:read"
+    """Read the deployment's singleton defaults row (ADR-0022)."""
+
+    ORGANIZATION_DEFAULTS_WRITE = "organization_defaults:write"
+    """Change organization defaults; does not imply read permission (ADR-0022)."""
+
     STAFFING_READ = "staffing:read"
     """Reading a scenario's staffing positions and their monthly hours (F-04, SC-3-01).
 

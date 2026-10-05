@@ -1,6 +1,6 @@
 # ADR-0009 — Zapis z interfejsu przeglądarki
 
-**Status:** Draft — pending approval
+**Status:** Accepted (human approval 2026-10-05, Issue #235 Gate 1)
 
 > Ten dokument powstał w odpowiedzi na pytanie bramki 1 P-3 (Issue #49), rozstrzygnięte jako "ADR
 > teraz". Luki `[LUKA …]` z pierwszego projektu zostały wypełnione rozstrzygnięciami bramki 1

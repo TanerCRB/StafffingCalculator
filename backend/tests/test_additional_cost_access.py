@@ -318,21 +318,22 @@ def test_k_09_the_category_dictionary_is_catalog_read_and_catalog_write_only(
     assert categories() == 2
 
 
-def test_k_09_the_placeholder_permission_set_is_unchanged_and_no_permission_was_added() -> None:
-    """K-09 — no new permission (Q-7 = B) and no widening of the placeholder *by this task*: the
+def test_k_09_placeholder_set_unchanged_and_org_defaults_not_granted() -> None:
+    """K-09 — no widening of the placeholder *by this task*: the
     same set the existing canary (`test_access_control.py::
     test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity`) asserts, and the
-    same fourteen members of `Permission` (`test_catalog_access.py`,
+    same seventeen members of `Permission` before SC-1-22 (`test_catalog_access.py`,
     `test_absence_budget_access.py`) — twelve plus `RESULTS_READ` (SC-7-01, a permission of its
-    own scenario-results endpoint) plus `SCENARIO_COPY` (SC-6-01, Issue #11, a scenario action) —
-    both unrelated to this task's additional-cost tables and, like every other action permission,
-    also joined to `PLACEHOLDER_PERMISSIONS` so their endpoints stay reachable. Repeated here so
-    this task's own suite states its claim rather than borrowing it."""
+    own scenario-results endpoint), `SCENARIO_COPY` (SC-6-01), and `COMMERCIAL_ADJUSTMENT_APPROVE`
+    — all unrelated to this task's additional-cost tables. SC-1-22 adds two org-default permissions;
+    neither is added to `PLACEHOLDER_PERMISSIONS`."""
     # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: 14 -> 16 for
     # `PEOPLE_READ`/`PEOPLE_WRITE` (ADR-0005, addendum 2026-09-27, point 3) — permissions of the
     # person register, not of this task's additional-cost tables; neither joins the placeholder
     # (the line below is unchanged).
-    assert len(Permission) == 17
+    assert len(Permission) == 19
+    assert Permission.ORGANIZATION_DEFAULTS_READ not in PLACEHOLDER_PERMISSIONS
+    assert Permission.ORGANIZATION_DEFAULTS_WRITE not in PLACEHOLDER_PERMISSIONS
     assert Permission.COMMERCIAL_ADJUSTMENT_APPROVE not in PLACEHOLDER_PERMISSIONS
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
     assert {Permission.STAFFING_READ, Permission.STAFFING_WRITE} <= PLACEHOLDER_PERMISSIONS
