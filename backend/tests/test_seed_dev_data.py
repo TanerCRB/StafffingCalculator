@@ -52,7 +52,7 @@ from scripts.seed_dev_data import (
 )
 from tests.conftest import as_caller
 
-SEED_CALLER = "seed-dev-tester"
+SEED_CALLER = "synthetic-00000000-0000-4000-8000-000000000004"
 """A caller id chosen for this test suite only — distinct from any string the script might carry as
 a hard-coded fallback. If `run_seed` (or a future edit of it) ever stopped granting access to the
 `caller_user_id` argument and granted it to some other, invented identity instead, K-01's test below

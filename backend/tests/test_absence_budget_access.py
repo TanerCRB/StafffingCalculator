@@ -241,6 +241,8 @@ def test_k_09_the_permission_vocabulary_did_not_grow_in_this_task(
         # explicitly *not* a catalogue dictionary — so this canary's claim holds unchanged.
         Permission.PEOPLE_READ,
         Permission.PEOPLE_WRITE,
+        # SC-8-02: separate scenario-history permission per ADR-0022; unrelated to this budget.
+        Permission.SCENARIO_HISTORY_READ,
         # Added by SC-4-09: decision authority for Fixed Price adjustments; not placeholder-granted.
         Permission.COMMERCIAL_ADJUSTMENT_APPROVE,
         # Added by SC-1-22, ADR-0022: organization defaults are independent of catalog/project.
@@ -253,7 +255,7 @@ def test_k_09_the_permission_vocabulary_did_not_grow_in_this_task(
         "point 2) decides that the absence budget is the eighth table of the catalogue and takes "
         "no permission of its own."
     )
-    assert len(Permission) == 21
+    assert len(Permission) == 22
 
 
 def test_the_budget_carrying_staffing_read_is_not_gated_on_the_personnel_cost_permission(

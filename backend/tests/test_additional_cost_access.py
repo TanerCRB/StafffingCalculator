@@ -318,20 +318,19 @@ def test_k_09_the_category_dictionary_is_catalog_read_and_catalog_write_only(
     assert categories() == 2
 
 
-def test_k_09_placeholder_set_unchanged_and_org_defaults_not_granted() -> None:
-    """K-09 — no widening of the placeholder *by this task*: the
-    same set the existing canary (`test_access_control.py::
-    test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity`) asserts, and the
-    same seventeen members of `Permission` before SC-1-22 (`test_catalog_access.py`,
-    `test_absence_budget_access.py`) — twelve plus `RESULTS_READ` (SC-7-01, a permission of its
-    own scenario-results endpoint), `SCENARIO_COPY` (SC-6-01), and `COMMERCIAL_ADJUSTMENT_APPROVE`
-    — all unrelated to this task's additional-cost tables. SC-1-22 adds two org-default permissions;
-    neither is added to `PLACEHOLDER_PERMISSIONS`."""
+def test_k_09_history_permission_does_not_grant_cost_or_org_defaults() -> None:
+    """K-09 â€” history access grants no permission to the additional-cost tables.
+
+    SC-8-02 adds a dedicated history-read permission to the development/test placeholder, but
+    additional costs remain governed by their existing staffing permissions. Organization-default
+    and personnel-cost permissions stay outside that placeholder set.
+    """
     # Re-armed in SC-2-06 (Issue #31, gate 1 decision 6), not loosened: 14 -> 16 for
     # `PEOPLE_READ`/`PEOPLE_WRITE` (ADR-0005, addendum 2026-09-27, point 3) — permissions of the
     # person register, not of this task's additional-cost tables; neither joins the placeholder
     # (the line below is unchanged).
-    assert len(Permission) == 21
+    # SC-8-02 adds only the separate scenario-history permission, not an additional-cost one.
+    assert len(Permission) == 22
     assert Permission.ORGANIZATION_DEFAULTS_READ not in PLACEHOLDER_PERMISSIONS
     assert Permission.ORGANIZATION_DEFAULTS_WRITE not in PLACEHOLDER_PERMISSIONS
     assert Permission.SCENARIO_ASSUMPTIONS_READ not in PLACEHOLDER_PERMISSIONS
@@ -339,6 +338,8 @@ def test_k_09_placeholder_set_unchanged_and_org_defaults_not_granted() -> None:
     assert Permission.COMMERCIAL_ADJUSTMENT_APPROVE not in PLACEHOLDER_PERMISSIONS
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
     assert {Permission.STAFFING_READ, Permission.STAFFING_WRITE} <= PLACEHOLDER_PERMISSIONS
+    # SC-8-02 keeps history permission explicit; it is not part of the placeholder set.
+    assert Permission.SCENARIO_HISTORY_READ not in PLACEHOLDER_PERMISSIONS
     assert len(PLACEHOLDER_PERMISSIONS) == 13
 
 

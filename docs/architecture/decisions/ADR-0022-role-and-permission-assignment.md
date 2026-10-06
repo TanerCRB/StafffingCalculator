@@ -1,4 +1,4 @@
-﻿# ADR-0022 — Application roles and permission assignment
+# ADR-0022 — Application roles and permission assignment
 
 **Status:** Accepted (human approval 2026-10-05, Issue #253)
 
@@ -106,3 +106,12 @@ policy does not claim that any grant workflow or enforcement is implemented.
 
 F-13, NF-04, NF-11, F-12, AC-06; ADR-0004, ADR-0005 (including the 2026-10-01 routing
 addendum), ADR-0018, ADR-0019; Issues #150, #235, and #253.
+### Addendum 2026-10-05 (Issue #239, SC-8-02 — history-read access)
+
+**Status:** Accepted by the human on 2026-10-05 (Gate 1 reply B).
+
+Reading scenario history requires a dedicated history-read permission in addition to `PROJECT_READ`. The read remains scoped to the caller’s assigned project through `project_access`; a history permission does not grant access to unassigned projects, and an out-of-scope project remains indistinguishable from a missing project. Authentication or project assignment alone does not grant history access.
+
+History access does not grant individual personnel-cost visibility. Any such values remain subject to both `PERSONNEL_COSTS_READ` and the target project’s `project_access.can_view_personnel_costs` gate.
+
+This resolves ADR-0022 Q9 for SC-8-02. The synthetic-only, unverified-placeholder boundary and prerequisites for real personal data remain those in ADR-0019’s SC-8-02 addendum. This decision does not authorize additional event types, change snapshot immutability, or permit version comparison.

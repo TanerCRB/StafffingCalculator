@@ -399,3 +399,23 @@ wszystkie naraz.
 | PD-K7 | Odpowiedź pozycji dla wołającego bez `PEOPLE_READ` jest identyczna w całości, łącznie z `updated_at`, przed i po przypisaniu oraz zdjęciu przypisania tej pozycji. |
 | PD-K8 | `POST /people` bez `id` → `422` bez zapisu; ponowienie z tym samym `id` (to samo imię i inne imię) → `409` o identycznym ciele, bez imienia, bez zapisu i bez zmiany istniejącego wiersza; nowe `id` → `201` (kontrast). |
 | PD-K9 | Zapis z pominięciem API imienia z wiodącym lub końcowym znakiem z zestawu spacja, `\t`, `\n`, `\r`, `\v`, `\f` odrzucony przez `ck_person_full_name_canonical`; imię z białym znakiem wewnątrz przyjęte (kontrast). |
+
+### 2026-10-05 - SC-8-02 (Issue #239): audit actor identifiers - Gate 1
+
+**Status:** Accepted at Gate 1 by the human on 2026-10-05. This addendum accepts the synthetic-only and unverified-placeholder boundary; it does not determine a legal basis or retention period.
+
+**Scope and data category.** `audit_log.performed_by` is the request-context actor identifier associated with an action, database timestamp, scenario, and project. Treat this field as personal data when it can identify or be linked to a real person. The current value is an unauthenticated development/test placeholder and is not reliable evidence of which person approved a scenario.
+
+**Task boundary accepted at Gate 1 for Issue #239.** SC-8-02 may expose only synthetic development/test actor identifiers, clearly labeled as unverified placeholders. It must not expose real actor identities or be represented as authenticated attribution. No real personal data may be used in implementation fixtures, demonstrations, or test environments for this task.
+
+The history read is project-scoped and must enforce that scope server-side. Opening saved snapshot inputs is a separate read surface; individual personnel-cost fields remain subject to both `PERSONNEL_COSTS_READ` and the per-project `can_view_personnel_costs` permission. This paragraph records the approved scope boundary, not proof that either read path or its controls are implemented.
+
+**Prerequisites before real actor identifiers or real personal data are used.** All applicable prerequisites in section 8 remain cumulative. In addition:
+
+1. The data controller/DPO records the legal-basis decision for processing actor identifiers (PD-1).
+2. The responsible retention/deletion owner establishes the retention and deletion policy for audit actor identifiers, including treatment of backups (PD-2). This draft does not set a period.
+3. An approved authentication and attribution policy replaces the placeholder and defines how historical placeholder rows are distinguished from authenticated actors.
+
+Until these conditions and the existing section 8 conditions are satisfied, real actor identifiers remain excluded. The append-only behavior of `audit_log` is unchanged; this draft creates no correction, deletion, or retention mechanism.
+
+**Basis:** Issue #239 (accepted scope at analysis); ADR-0004, 2026-09-27 SC-8-01 addendum (`audit_log` shape and placeholder identity); ADR-0005 (placeholder authentication boundary); ADR-0019 sections 1 and 8 (PD-1/PD-2 and real-data prerequisites).
