@@ -30,8 +30,9 @@ You stop working and ask a human:
 2. **The task requires a change to, or a deviation from, an accepted architectural decision.**
    You go back to the Architect.
 3. **A database schema change outside an Alembic migration file.**
-4. **Any write to the repository, any merge** — even when it seems obvious and even when you
-   were asked for it earlier in the same session.
+4. **A merge, or a write outside the assigned task worktree or outside the files needed to meet
+   the approved acceptance criteria.** You may write implementation and tests inside the clean,
+   assigned worktree; do not commit or merge.
 5. **A change to a file concerning personal data** (named-person assignments, individual
    cost/rate figures) without reference to the relevant architectural decision.
 6. **An existing test starts failing because of your change.** You do not weaken it and you do
