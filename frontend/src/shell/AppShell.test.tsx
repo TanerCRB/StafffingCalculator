@@ -29,14 +29,15 @@ const ALL_RAIL_ENTRIES = [
   "Versions & approval",
 ];
 
-/** The six screens this application still marks as planned after SC-1-21. */
+/** The five screens this application still marks as planned after SC-7-11. */
 const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
   (label) =>
     label !== "Projects" &&
     label !== "Compare scenarios" &&
     label !== "Roles & rates" &&
     label !== "Working calendars" &&
-    label !== "Organization defaults",
+    label !== "Organization defaults" &&
+    label !== "Overview",
 );
 
 interface ShellOptions {
@@ -219,8 +220,8 @@ describe("AppShell", () => {
     // SC-2-05 (Issue #59, gate-1 decision Q-1) rewrote this test. Until then the rail had two
     // entries and this asserted that the mockup's other screens were absent. The rail now shows the
     // mockup's eleven entries, so the claim — the rail says truthfully what exists — is asserted
-    // the other way round and more strictly: every entry is pinned by name and position. The five
-    // live entries navigate; the six planned entries use the one convention
+    // the other way round and more strictly: every entry is pinned by name and position. The six
+    // live entries navigate; the five planned entries use the one convention
     // `lib/notImplemented.ts` owns, and do nothing when pressed.
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -230,7 +231,7 @@ describe("AppShell", () => {
     const entries = within(rail()).getAllByRole("listitem");
     expect(entries.map((entry) => entry.textContent)).toEqual(ALL_RAIL_ENTRIES);
 
-    // The six planned entries: a button each, reachable and announced, marked as not available
+    // The five planned entries: a button each, reachable and announced, marked as not available
     // with the tooltip every such control carries, and naming why.
     for (const label of PLANNED_RAIL_ENTRIES) {
       const entry = within(rail()).getByRole("button", { name: label });
@@ -241,7 +242,7 @@ describe("AppShell", () => {
       expect(entry, label).not.toHaveAttribute("aria-current");
     }
 
-    // The five that exist carry none of that.
+    // The six that exist carry none of that.
     const projects = within(rail()).getByRole("button", { name: "Projects" });
     expect(projects).not.toHaveAttribute("aria-disabled");
     expect(projects.getAttribute("title")).toBeNull();
@@ -255,6 +256,9 @@ describe("AppShell", () => {
     const organizationDefaults = within(rail()).getByRole("button", { name: "Organization defaults" });
     expect(organizationDefaults).not.toHaveAttribute("aria-disabled");
     expect(organizationDefaults.getAttribute("title")).toBeNull();
+    const overview = within(rail()).getByRole("button", { name: "Overview" });
+    expect(overview).not.toHaveAttribute("aria-disabled");
+    expect(overview.getAttribute("title")).toBeNull();
 
     // Pressing a planned entry navigates nowhere and reads nothing.
     for (const label of PLANNED_RAIL_ENTRIES) {
@@ -303,11 +307,25 @@ describe("AppShell", () => {
     );
 
     // The rest name the requirement and the Issue that owns it.
-    expect(hint("Overview")).toContain("F-10 and F-11 (Issues #12, #13)");
     expect(hint("Additional costs")).toContain("F-08 (Issue #10)");
     expect(hint("Commercial terms")).toContain("F-06 (Issue #8)");
     expect(hint("Assumptions")).toContain("F-02 (Issue #4)");
     expect(hint("Versions & approval")).toContain("F-12 (Issue #14)");
+  });
+
+  it("offers Overview as a live project screen and reports the navigation choice", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const onNavigate = vi.fn();
+    renderShell("ok", { onNavigate });
+
+    const entry = within(rail()).getByRole("button", { name: "Overview" });
+    expect(entry).not.toHaveAttribute("aria-disabled");
+    expect(entry.getAttribute("title")).toBeNull();
+    fireEvent.click(entry);
+
+    expect(onNavigate).toHaveBeenCalledWith("overview");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("leaves the topbar as it was — no identity, no workspace badge, no currency footer from the mockup", () => {
@@ -321,25 +339,23 @@ describe("AppShell", () => {
     expect(screen.getByTestId("backend-status")).toHaveTextContent("Backend: ok");
   });
 
-  it("does not move focus when a planned entry is pressed, because nothing was navigated to", () => {
+  it("moves focus to the Overview heading when its live project entry is pressed", () => {
+    const onNavigate = vi.fn();
     const { rerender } = render(
-      <AppShell backendStatus="ok" activeScreen="projects" onNavigate={() => {}}>
+      <AppShell backendStatus="ok" activeScreen="projects" onNavigate={onNavigate}>
         <h2 tabIndex={-1}>First screen</h2>
       </AppShell>,
     );
-    const planned = within(rail()).getByRole("button", { name: "Overview" });
-    planned.focus();
-    fireEvent.click(planned);
+    const overview = within(rail()).getByRole("button", { name: "Overview" });
+    fireEvent.click(overview);
+    expect(onNavigate).toHaveBeenCalledWith("overview");
 
-    // `App` would re-render the shell with the same `activeScreen` — a planned entry never calls
-    // `onNavigate` — and the `[activeScreen]` effect does not fire for that.
     rerender(
-      <AppShell backendStatus="ok" activeScreen="projects" onNavigate={() => {}}>
-        <h2 tabIndex={-1}>First screen</h2>
+      <AppShell backendStatus="ok" activeScreen="overview" onNavigate={onNavigate}>
+        <h2 tabIndex={-1}>Overview screen</h2>
       </AppShell>,
     );
-    expect(planned).toHaveFocus();
-    expect(screen.getByRole("heading", { name: "First screen" })).not.toHaveFocus();
+    expect(screen.getByRole("heading", { name: "Overview screen" })).toHaveFocus();
   });
 
   it("puts the screen it frames inside the main landmark, reachable past the rail", () => {

@@ -121,6 +121,7 @@ from app.api.schemas.scenario_history import (
     ScenarioHistoryRead,
     SnapshotPageRead,
 )
+from app.api.schemas.scenario_period_results import ScenarioPeriodResults
 from app.api.schemas.scenario_results import ScenarioResults, ScenarioResultsBase
 from app.api.schemas.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationResults,
@@ -150,6 +151,7 @@ from app.data.project_reads import CallerProjectView
 from app.data.risk import RiskPage, RiskRow
 from app.data.risk_reserve import ReservePage
 from app.data.scenario_history import ScenarioHistoryView
+from app.data.scenario_period_results import ScenarioPeriodResultsView
 from app.data.scenario_results import ScenarioResultsView
 from app.data.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationView,
@@ -1793,6 +1795,210 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
         expected_margin=expected_profitability.expected_margin,
     )
     return _without_scenario_profitability(result, cost_view, caller)
+
+
+def shape_scenario_period_results(
+    view: ScenarioPeriodResultsView, caller: CallerIdentity
+) -> ScenarioPeriodResults:
+    """Shape monthly amounts and explicit periodless totals through the existing cost gate."""
+    from datetime import date
+    from decimal import Decimal
+
+    from app.api.schemas.scenario_period_results import ScenarioPeriodRow, ScenarioPeriodUnallocated
+    from app.core.money import round_money
+    from app.domain.additional_cost import AdditionalCostResult
+    from app.domain.assigned_fte_cost import AssignedFteCostResult
+    from app.domain.exchange_rates import PeriodMoney, convert_component_periods
+    from app.domain.fixed_amount_cost import FixedAmountCostResult
+    from app.domain.paid_absence_cost import PaidAbsenceCostResult
+    from app.domain.personnel_cost import PersonnelCostResult
+    from app.domain.revenue import RevenueResult
+    from app.domain.scenario_period_results import (
+        month_starts,
+        period_profitability,
+        unallocated_amount,
+    )
+
+    period_view = view
+    result_view = period_view.results
+    # Reuse the existing FX composition so an unresolved conversion withholds the complete
+    # component. Its period-level source tuples remain available for exact monthly composition.
+    result_view = _with_exchange_rates(result_view)
+    cost_view = result_view.cost_view
+    answers = (
+        result_view.revenue,
+        cost_view.cost,
+        cost_view.paid_absence,
+        cost_view.assigned_fte,
+        result_view.additional_cost,
+        cost_view.fixed_amount,
+    )
+    result_types = (
+        RevenueResult,
+        PersonnelCostResult,
+        PaidAbsenceCostResult,
+        AssignedFteCostResult,
+        AdditionalCostResult,
+        FixedAmountCostResult,
+    )
+    source_states = tuple(
+        isinstance(answer, kind) for answer, kind in zip(answers, result_types, strict=True)
+    )
+    currency_by_component = tuple(
+        answer.currency if is_result else None
+        for answer, is_result in zip(answers, source_states, strict=True)
+    )
+    reporting_currency = result_view.scenario.currency
+    period_currency_mismatch = reporting_currency is None and len(
+        {
+            currency
+            for currency, is_result in zip(
+                currency_by_component[:5], source_states[:5], strict=True
+            )
+            if is_result and currency is not None
+        }
+    ) > 1
+    cost_currencies = {
+        currency
+        for currency, is_result in zip(
+            currency_by_component[1:5], source_states[1:5], strict=True
+        )
+        if is_result and currency is not None
+    }
+    cost_currency_mismatch = reporting_currency is None and len(cost_currencies) > 1
+    personnel_currencies = {
+        currency
+        for currency, is_result in zip(
+            currency_by_component[1:4], source_states[1:4], strict=True
+        )
+        if is_result and currency is not None
+    }
+    personnel_currency = (
+        next(iter(personnel_currencies)) if len(personnel_currencies) == 1 else None
+    )
+    period_cost_currency = next(iter(cost_currencies)) if len(cost_currencies) == 1 else None
+
+    def monthly_amount(answer: Any, is_result: bool, month: date) -> Decimal:
+        if not is_result:
+            return Decimal("0")
+        items = tuple(
+            PeriodMoney(period, amount, currency)
+            for period, amount, currency in answer.period_amounts
+            if period is not None and period.replace(day=1) == month
+        )
+        if not items:
+            return Decimal("0")
+        if reporting_currency is None:
+            return round_money(sum((item.amount for item in items), Decimal("0")))
+        converted = convert_component_periods(
+            items,
+            result_view.exchange_rates,
+            target_currency=reporting_currency,
+            fallback_period=result_view.scenario.start_date,
+        )
+        return Decimal("0") if converted is None else converted
+
+    def unallocated(answer: Any, is_result: bool) -> Decimal | str:
+        if not is_result:
+            return "n/a"
+        items = tuple(
+            PeriodMoney(period, amount, currency)
+            for period, amount, currency in answer.period_amounts
+            if period is None
+        )
+        if not items:
+            return Decimal("0.00")
+        if reporting_currency is None:
+            if len({item.currency for item in items}) > 1:
+                return "n/a"
+            return unallocated_amount(answer.period_amounts)
+        converted = convert_component_periods(
+            items,
+            result_view.exchange_rates,
+            target_currency=reporting_currency,
+            fallback_period=result_view.scenario.start_date,
+        )
+        return "n/a" if converted is None else converted
+
+    month_entries = [
+        period
+        for answer, is_result in zip(answers[:5], source_states[:5], strict=True)
+        if is_result
+        for period, _amount, _currency in answer.period_amounts
+        if period is not None
+    ]
+    observed = {period.replace(day=1) for period in month_entries}
+    observed.update(period_view.planned_fte_by_month)
+    months = month_starts(
+        result_view.scenario.start_date,
+        result_view.scenario.end_date,
+        observed,
+    )
+    if result_view.scenario.start_date is not None and result_view.scenario.end_date is not None:
+        months = tuple(
+            month
+            for month in months
+            if result_view.scenario.start_date.replace(day=1)
+            <= month
+            <= result_view.scenario.end_date.replace(day=1)
+        )
+
+    target = period_view.target_margin_percent
+    rows: list[ScenarioPeriodRow] = []
+    can_view_costs = _may_view_scenario_costs(cost_view, caller)
+    for month in months:
+        revenue = monthly_amount(answers[0], source_states[0], month)
+        base = monthly_amount(answers[1], source_states[1], month)
+        absence = monthly_amount(answers[2], source_states[2], month)
+        assigned = monthly_amount(answers[3], source_states[3], month)
+        additional = monthly_amount(answers[4], source_states[4], month)
+        result = period_profitability(
+            revenue=revenue,
+            base_cost=base,
+            paid_absence_cost=absence,
+            assigned_fte_cost=assigned,
+            additional_cost=additional,
+            target_margin_percent=target,
+            source_states=source_states[:5],
+            currency_mismatch=period_currency_mismatch,
+            cost_currency_mismatch=cost_currency_mismatch,
+        )
+        fte = period_view.planned_fte_by_month.get(month, Decimal("0"))
+        rows.append(
+            ScenarioPeriodRow(
+                period_month=month,
+                revenue=result.revenue,
+                revenue_currency=currency_by_component[0],
+                personnel_cost=result.personnel_cost if can_view_costs else None,
+                personnel_cost_currency=personnel_currency if can_view_costs else None,
+                additional_cost=result.additional_cost,
+                additional_cost_currency=currency_by_component[4],
+                period_cost=result.period_cost if can_view_costs else None,
+                period_cost_currency=period_cost_currency if can_view_costs else None,
+                profit=result.profit if can_view_costs else None,
+                margin=result.margin if can_view_costs else None,
+                profitability_state=result.state if can_view_costs else None,
+                below_target_margin=result.below_target_margin if can_view_costs else None,
+                negative_profit=result.negative_profit if can_view_costs else None,
+                planned_fte=fte,
+            )
+        )
+
+    return ScenarioPeriodResults(
+        scenario_id=result_view.scenario.id,
+        scenario_status=_SCENARIO_STATUS_LABELS[result_view.scenario.status],
+        reporting_currency=reporting_currency,
+        target_margin_percent=target,
+        periods=rows,
+        unallocated=ScenarioPeriodUnallocated(
+            revenue=unallocated(answers[0], source_states[0]),
+            revenue_currency=currency_by_component[0],
+            fixed_amount_cost=(
+                unallocated(answers[5], source_states[5]) if can_view_costs else None
+            ),
+            fixed_amount_cost_currency=currency_by_component[5] if can_view_costs else None,
+        ),
+    )
 
 
 def _with_exchange_rates(view: ScenarioResultsView) -> ScenarioResultsView:

@@ -1173,3 +1173,86 @@ does not authorize implementation beyond the approved criteria.
 | E-4 | T&M, Story Points, and Fixed Price have no expected-revenue-derived figures; expected markup is absent. |
 
 **Basis:** ADR-0002, SC-7-01 addenda (separate named source states, composite currency and rounding rules); ADR-0005, SC-7-01 addendum (personnel-cost field gate and `RESULTS_READ` boundary); ADR-0003, SC-4-03 point 5d (the deferral superseded here).
+
+### 2026-10-06 — Period results and staffing timeline (SC-7-11, Issue #240)
+
+**Status:** Accepted — 2026-10-06
+
+> This addendum records the human's Gate-1 choices made on 2026-10-06 for Issue #240. It does not
+> change any preceding decision or establish an implementation capability. The human accepted
+> this addendum on 2026-10-06; acceptance approves the design direction only.
+
+The SC-4-05 addendum explicitly deferred F-06.5 period attribution. The whole-scenario result
+contracts and the SC-7-09 draft do not settle how revenue, costs, profit, or margin are attributed
+to reporting periods. Issue #240 asks for those results and a staffing timeline for one selected
+scenario, including a partial reporting interval.
+
+1. **Period results retain existing calculation meaning.** Period values must preserve the selected
+   scenario's existing commercial and cost semantics, currencies, and named non-computable states.
+   This addendum does not create a second formula or permit mixed-currency sums. For contributions
+   at a partial-period boundary, include only contributions attributable to dates within the
+   selected reporting interval, using each contribution's existing time basis. Do not apply a
+   uniform calendar-day proration. If existing inputs do not provide enough temporal detail, that
+   missing foundation must be resolved before implementation.
+2. **A partial period is not an effective-date window.** ADR-0008 decides effective-date windows,
+   not reporting attribution. Its monthly FTE basis and no-proration rule concern FTE-to-hours
+   conversion and do not determine how a result series treats a reporting interval boundary.
+3. **Staffing timeline granularity is aggregate.** Show aggregate planned FTE per period. Do not
+   include role-level or named-person staffing in this Story.
+4. **Approved results and target comparison use the existing decision boundaries.** Approved
+   scenario results must use frozen inputs under ADR-0004. The below-target comparison uses the
+   selected scenario's resolved target margin under ADR-0012. Before implementation, verify that
+   every input required for these outputs, including the resolved target, is covered by the frozen
+   approval inputs; any uncovered input requires a decision before implementation.
+5. **Personnel-cost visibility remains conjunctive.** Period personnel-cost values retain both
+   `PERSONNEL_COSTS_READ` and `project_access.can_view_personnel_costs` checks under ADR-0005,
+   applied while shaping the response. The period series and Overview do not widen access.
+6. **Presentation cues remain accessible.** Negative profit and below-target margin must each have
+   a non-color cue. A zero margin denominator follows ADR-0002 and is represented as `n/a`.
+7. **Amounts without a period remain explicitly unallocated.** Existing calculation components
+   include whole-scenario revenue and cost amounts without a period (`period_month = None`). P-1
+   does not assign those amounts to dates because they have no existing time basis. Keep them as
+   explicitly unallocated scenario totals outside the period series. The API and Overview must
+   distinguish these totals from period-attributed values; period values alone need not sum to
+   the whole-scenario total.
+
+#### Gate-1 decisions recorded
+
+On 2026-10-06, the human selected P-1 A: contributions attributable to dates in the scenario's
+reporting interval follow each contribution's existing time basis, with no uniform calendar-day
+proration. The human selected P-2 A: aggregate planned FTE per period, with no names. The human
+selected P-3 A on 2026-10-06: periodless amounts remain explicitly unallocated scenario totals
+outside the temporal series. Evidence: decisions recorded in the task conversation and summarized
+in Issue #240.
+
+**P-3 — Whole-scenario amounts with no period (resolved: A)**
+
+The existing domain emits periodless amounts for Fixed Price, Story Points, Outcome-based
+revenue, and fixed-amount personnel cost. Fixed Price's domain description also states that
+allocation of revenue to periods remained out of scope under SC-4-05. These amounts cannot be
+placed into a reporting interval by applying P-1 because no contribution dates or existing time
+basis are present.
+
+- **A (accepted):** Keep periodless amounts outside the period series as explicitly unallocated
+  scenario totals. This avoids inventing when revenue or cost occurs, but the per-period series
+  alone will not sum to the whole-scenario total; the contract and Overview must make that
+  distinction clear, or narrow which model results the Story claims to show by period.
+- **B:** Attribute the entire amount to a designated period, such as the first or last period.
+  This makes the period series reconcile arithmetically, but the chosen timing has no basis in the
+  current inputs and can misstate when revenue or cost occurs.
+- **C:** Add explicit model-specific allocation inputs/rules before including these amounts in
+  periods. This supports time-based reporting but expands the Story with new business inputs,
+  contracts, and calculation behavior.
+
+| Control | Acceptance criterion |
+|---|---|
+| K-01 | Results belong to the selected scenario; after live inputs change, an approved scenario's results still reflect its frozen inputs. |
+| K-02 | For a partial reporting interval, only contributions attributable to dates within the interval are included using each contribution's existing time basis; no uniform calendar-day proration occurs. |
+| K-03 | A zero revenue denominator produces margin `n/a`, not a numeric value or error. |
+| K-04 | Negative profit remains negative and is visibly identified without color as its only cue. |
+| K-05 | A margin below the selected scenario's resolved target is identified with a non-color cue; the comparison uses the target covered by the approved-input verification in point 4. |
+| K-06 | The timeline shows aggregate planned FTE by period and contains no role-level or named-person data. |
+| K-07 | Period personnel costs are absent when either personnel-cost gate condition is missing and present only when both conditions are satisfied; the response-level contrast proves the distinction. |
+| K-08 | Whole-scenario amounts with no existing period are handled according to the human-approved P-3 rule; no amount is silently dropped or assigned an invented reporting period. |
+
+**Affected-decision references:** ADR-0002 (fixed-point money and zero denominator), ADR-0004 (approved snapshots), ADR-0005 (personnel-cost gate), ADR-0008 (effective-date windows), ADR-0012 (resolved assumptions), and ADR-0017 only if implementation adds a list endpoint. ADR-0010 remains `Draft — pending approval` and is not elevated by this addendum.

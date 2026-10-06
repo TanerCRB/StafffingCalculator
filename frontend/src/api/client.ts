@@ -88,6 +88,7 @@ import {
   type PersonnelCostSource,
   type ScenarioResults,
   type ScenarioResultsComparison,
+  type ScenarioPeriodResults,
 } from "./contracts/scenarioResults";
 import {
   ABSENCE_BUDGET_STATES,
@@ -1825,6 +1826,87 @@ function isScenarioResultsShape(value: unknown, scenarioId: string): value is Sc
   return true;
 }
 
+function isPeriodAmountShape(value: unknown): boolean {
+  return value === RESULTS_NOT_APPLICABLE || isDecimalString(value);
+}
+
+function isGatedPeriodAmountShape(value: unknown): boolean {
+  return value === null || isPeriodAmountShape(value);
+}
+
+function hasCurrencyForAmount(value: unknown, currency: unknown, reportingCurrency: unknown): boolean {
+  return value === RESULTS_NOT_APPLICABLE || value === null ||
+    (isDecimalString(value) && typeof currency === "string" && currency.length > 0 &&
+      (reportingCurrency === null || currency === reportingCurrency));
+}
+
+function isScenarioPeriodResultsShape(value: unknown, scenarioId: string): value is ScenarioPeriodResults {
+  if (
+    !isRecord(value) ||
+    value.scenario_id !== scenarioId ||
+    !isOneOf(value.scenario_status, SCENARIO_STATUSES) ||
+    !isRequiredNullableString(value.reporting_currency) ||
+    !isNullableDecimalString(value.target_margin_percent) ||
+    !Array.isArray(value.periods) ||
+    !isRecord(value.unallocated)
+  ) {
+    return false;
+  }
+  const unallocated = value.unallocated;
+  if (
+    !isPeriodAmountShape(unallocated.revenue) ||
+    !isRequiredNullableString(unallocated.revenue_currency) ||
+    !isGatedPeriodAmountShape(unallocated.fixed_amount_cost) ||
+    !isRequiredNullableString(unallocated.fixed_amount_cost_currency) ||
+    !hasCurrencyForAmount(unallocated.revenue, unallocated.revenue_currency, value.reporting_currency) ||
+    !hasCurrencyForAmount(unallocated.fixed_amount_cost, unallocated.fixed_amount_cost_currency, value.reporting_currency)
+  ) {
+    return false;
+  }
+  return value.periods.every((period) => {
+    if (
+      !isRecord(period) ||
+      typeof period.period_month !== "string" ||
+      !/^\d{4}-(0[1-9]|1[0-2])-01$/.test(period.period_month) ||
+      !isPeriodAmountShape(period.revenue) ||
+      !isRequiredNullableString(period.revenue_currency) ||
+      !isGatedPeriodAmountShape(period.personnel_cost) ||
+      !isRequiredNullableString(period.personnel_cost_currency) ||
+      !isPeriodAmountShape(period.additional_cost) ||
+      !isRequiredNullableString(period.additional_cost_currency) ||
+      !isGatedPeriodAmountShape(period.period_cost) ||
+      !isRequiredNullableString(period.period_cost_currency) ||
+      !isGatedPeriodAmountShape(period.profit) ||
+      !isGatedPeriodAmountShape(period.margin) ||
+      !(period.profitability_state === null || isOneOf(period.profitability_state, PROFITABILITY_STATES)) ||
+      !(period.below_target_margin === null || typeof period.below_target_margin === "boolean") ||
+      !(period.negative_profit === null || typeof period.negative_profit === "boolean") ||
+      !isPeriodAmountShape(period.planned_fte) ||
+      !hasCurrencyForAmount(period.revenue, period.revenue_currency, value.reporting_currency) ||
+      !hasCurrencyForAmount(period.personnel_cost, period.personnel_cost_currency, value.reporting_currency) ||
+      !hasCurrencyForAmount(period.additional_cost, period.additional_cost_currency, value.reporting_currency) ||
+      !hasCurrencyForAmount(period.period_cost, period.period_cost_currency, value.reporting_currency)
+    ) {
+      return false;
+    }
+    // The response-shaping gate withholds dependent amounts and cues together. A null profit has
+    // no negative-profit flag; an allowed but non-computable profit has an explicit false/true flag.
+    const profitCurrencyExists = value.reporting_currency !== null ||
+      (period.revenue_currency !== null && period.revenue_currency === period.period_cost_currency);
+    const profitabilityIsAvailable = period.personnel_cost !== null;
+    const targetCueIsAvailable = value.target_margin_percent !== null && isDecimalString(period.margin);
+    return (isDecimalString(period.profit) === (period.negative_profit !== null)) &&
+      (!isDecimalString(period.profit) || profitCurrencyExists) &&
+      ((period.profitability_state !== null) === profitabilityIsAvailable) &&
+      ((period.below_target_margin !== null) === (targetCueIsAvailable && profitabilityIsAvailable)) &&
+      (period.personnel_cost !== null || (
+        period.period_cost === null && period.profit === null && period.margin === null &&
+        period.profitability_state === null && period.below_target_margin === null &&
+        period.negative_profit === null
+      ));
+  });
+}
+
 function scenarioResultsPath(projectId: string, scenarioId: string): string {
   return `/projects/${projectId}/scenarios/${scenarioId}/results`;
 }
@@ -1904,6 +1986,31 @@ export async function downloadScenarioResults(
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     },
     REQUEST_TIMEOUT_MS,
+  );
+}
+
+/** Read one scenario's reporting-period financial results and anonymous planned-FTE timeline. */
+export async function getScenarioPeriodResults(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+): Promise<ScenarioPeriodResults> {
+  const path = `${scenarioResultsPath(projectId, scenarioId)}/periods`;
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isScenarioPeriodResultsShape(payload, scenarioId)) {
+        throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
   );
 }
 

@@ -5,8 +5,9 @@ almost everything here is proven without a database; the one test that reads a b
 data layer (A-K04's location with no calendar) uses the real PostgreSQL of the suite.
 
 Not proven here, deliberately (FTE-6): that an *approved* scenario reads the snapshot rather than
-the live calendar. There is no consumer yet, so no path to prove it on; the first consumer (#79
-SC-5-04 or #80) does. A-K01's independence of `scenarios.full_time_hours_per_week` is by
+the live calendar. Consumer-specific tests cover that boundary: the assigned-FTE cost path
+(SC-5-04) and the aggregate monthly staffing path (SC-7-11). A-K01's independence of
+`scenarios.full_time_hours_per_week` is by
 construction (the functions take only a `CalendarBasis`), see the signature test.
 FTE-7 (revenue unmoved by `standard_hours_per_day`) has no honest fixture: no revenue function
 accepts a calendar, so such a test could not fail.

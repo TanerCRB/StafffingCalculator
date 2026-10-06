@@ -143,3 +143,40 @@ export interface ScenarioResults {
 export interface ScenarioResultsComparison {
   results: ScenarioResults[];
 }
+
+/** One reporting month from `GET .../results/periods` (SC-7-11). */
+export interface ScenarioPeriodResult {
+  period_month: string;
+  revenue: string | typeof RESULTS_NOT_APPLICABLE;
+  revenue_currency: string | null;
+  personnel_cost: GatedResultField;
+  personnel_cost_currency: string | null;
+  additional_cost: string | typeof RESULTS_NOT_APPLICABLE;
+  additional_cost_currency: string | null;
+  period_cost: GatedResultField;
+  period_cost_currency: string | null;
+  profit: GatedResultField;
+  margin: GatedResultField;
+  profitability_state: ProfitabilityState | null;
+  below_target_margin: boolean | null;
+  negative_profit: boolean | null;
+  planned_fte: string | typeof RESULTS_NOT_APPLICABLE;
+}
+
+/** Revenue and fixed-amount cost without a temporal basis, shown outside the period series (K-08). */
+export interface ScenarioPeriodUnallocated {
+  revenue: string | typeof RESULTS_NOT_APPLICABLE;
+  revenue_currency: string | null;
+  fixed_amount_cost: GatedResultField;
+  fixed_amount_cost_currency: string | null;
+}
+
+/** `GET /projects/{project_id}/scenarios/{scenario_id}/results/periods` (SC-7-11). */
+export interface ScenarioPeriodResults {
+  scenario_id: string;
+  scenario_status: "Draft" | "Approved";
+  reporting_currency: string | null;
+  target_margin_percent: string | null;
+  periods: ScenarioPeriodResult[];
+  unallocated: ScenarioPeriodUnallocated;
+}
