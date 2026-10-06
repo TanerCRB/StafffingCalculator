@@ -1865,6 +1865,48 @@ export async function getScenarioResults(
   );
 }
 
+export type ScenarioResultsExportFormat = "pdf" | "xlsx";
+
+/** Download one caller-authorized scenario report. The server shapes every field through ADR-0005. */
+export async function downloadScenarioResults(
+  projectId: string,
+  scenarioId: string,
+  format: ScenarioResultsExportFormat,
+): Promise<void> {
+  const path = `${scenarioResultsPath(projectId, scenarioId)}/export.${format}`;
+  await requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) throw await refusalOf(response, `GET ${path}`);
+      const blob = await response.blob();
+      // Content-Disposition is not a CORS-safelisted response header and may be hidden by the
+      // browser. The stable scenario UUID and requested report format already identify the file.
+      const filename = `scenario-${scenarioId}-results.${format}`;
+      const expectedType = format === "pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      if (
+        blob.size === 0 ||
+        response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase() !== expectedType
+      ) {
+        throw new ApiError(response.status, `GET ${path} returned an invalid report`);
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      anchor.hidden = true;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      // Give the browser time to consume the object URL for the attachment navigation.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    },
+    REQUEST_TIMEOUT_MS,
+  );
+}
+
 /** Read one scenario's approval record and its own saved snapshot (SC-8-02). The endpoint requires
  * the dedicated history permission as well as project read access; this client sends no local
  * permission claim and the server remains authoritative. It is called only after the user opens

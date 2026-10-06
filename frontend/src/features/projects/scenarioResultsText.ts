@@ -142,3 +142,8 @@ export const RESULTS_FAILED = "Scenario results could not be loaded — the serv
 
 /** The control that re-reads this section only. */
 export const RESULTS_READ_AGAIN = "Read scenario results again";
+
+export const RESULTS_EXPORT_PDF = "Download PDF report";
+export const RESULTS_EXPORT_XLSX = "Download XLSX report";
+export const RESULTS_EXPORTING = "Preparing scenario report.";
+export const RESULTS_EXPORT_FAILED = "Scenario report could not be downloaded. Try again.";

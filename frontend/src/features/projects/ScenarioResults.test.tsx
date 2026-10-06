@@ -131,13 +131,16 @@ const RESULTS_PATH = /^\/projects\/([^/]+)\/scenarios\/([^/]+)\/results$/;
 
 interface Backend {
   readonly projects?: ProjectListItem[];
+  readonly exportStatus?: number;
+  readonly exportStatuses?: Partial<Record<"pdf" | "xlsx", number>>;
+  readonly exportBody?: Blob;
   /** The `GET …/results` answer per scenario id — a function to answer the n-th read differently.
    * A scenario with none configured hangs, so an unrelated card on the same project never needs an
    * answer this test does not care about. */
   readonly results?: Record<string, Answer | ((call: number) => Answer)>;
 }
 
-function response(status: number, body: unknown) {
+function response(status: number, body: unknown, filename = "scenario-aaaaaaaa-0000-0000-0000-000000000001-results.pdf") {
   return {
     ok: status >= 200 && status < 300,
     status,
@@ -147,6 +150,13 @@ function response(status: number, body: unknown) {
       }
       return body;
     },
+    blob: async () => body instanceof Blob ? body : new Blob(),
+    headers: { get: (name: string) => {
+      if (name.toLowerCase() === "content-type") return filename.endsWith(".xlsx")
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/pdf";
+      return null;
+    } },
   };
 }
 
@@ -157,6 +167,7 @@ function stubBackend(backend: Backend) {
     const method = init.method ?? "GET";
     let answer: Answer | undefined;
     const resultsMatch = RESULTS_PATH.exec(path);
+    const exportMatch = /^\/projects\/([^/]+)\/scenarios\/([^/]+)\/results\/export\.(pdf|xlsx)$/.exec(path);
     if (path === "/health") {
       answer = { status: 200, body: { status: "ok" } };
     } else if (path === "/projects") {
@@ -169,6 +180,11 @@ function stubBackend(backend: Backend) {
     } else if (TERMS_PATH.test(path)) {
       // The commercial-terms section beside this one is not under test — left open forever.
       answer = { hang: true };
+    } else if (exportMatch !== null && method === "GET") {
+      const exportStatus = backend.exportStatuses?.[exportMatch[3] as "pdf" | "xlsx"] ?? backend.exportStatus ?? 200;
+      answer = exportStatus === 200
+        ? { status: exportStatus, body: backend.exportBody ?? new Blob(["report"]) }
+        : { status: exportStatus, body: { detail: "not available" } };
     } else if (resultsMatch !== null && method === "GET") {
       const scenarioId = resultsMatch[2];
       const count = (readCounts.get(scenarioId) ?? 0) + 1;
@@ -186,7 +202,8 @@ function stubBackend(backend: Backend) {
         );
       });
     }
-    return Promise.resolve(response(answer.status, answer.body));
+    const filename = exportMatch === null ? undefined : `scenario-${exportMatch[2]}-results.${exportMatch[3]}`;
+    return Promise.resolve(response(answer.status, answer.body, filename));
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -229,6 +246,7 @@ async function settledSection(scenarioName: string): Promise<HTMLElement> {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 // --- K-01 -----------------------------------------------------------------------------------------
@@ -837,5 +855,98 @@ describe("R-01 — a gated field carrying a real number without a calculated rev
 
     expect(within(results).getByText(RESULTS_UNREADABLE)).toBeVisible();
     expect(results.textContent).not.toContain("550.00");
+  });
+});
+
+describe("SC-7-12 — scenario reports download in both formats with scenario filenames", () => {
+  it("requests each selected scenario's PDF and XLSX and starts separately named downloads", async () => {
+    const fetchMock = stubBackend({ results: {
+      [BASELINE]: { status: 200, body: baseResults(BASELINE) },
+      [STRETCH]: { status: 200, body: baseResults(STRETCH) },
+    } });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:report") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const deferredTimers = vi.spyOn(window, "setTimeout");
+    const downloads: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
+
+    render(<ProjectListScreen />);
+    await openProject();
+    const results = await settledSection("Baseline");
+    fireEvent.click(within(results).getByRole("button", { name: "Download PDF report for Baseline" }));
+    await waitFor(() => expect(downloads).toHaveLength(1));
+    fireEvent.click(within(results).getByRole("button", { name: "Download XLSX report for Baseline" }));
+    await waitFor(() => expect(downloads).toHaveLength(2));
+    const stretchResults = await settledSection("Stretch");
+    fireEvent.click(within(stretchResults).getByRole("button", { name: "Download PDF report for Stretch" }));
+    await waitFor(() => expect(downloads).toHaveLength(3));
+    fireEvent.click(within(stretchResults).getByRole("button", { name: "Download XLSX report for Stretch" }));
+    await waitFor(() => expect(downloads).toEqual([
+      `scenario-${BASELINE}-results.pdf`, `scenario-${BASELINE}-results.xlsx`,
+      `scenario-${STRETCH}-results.pdf`, `scenario-${STRETCH}-results.xlsx`,
+    ]));
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(url).pathname);
+    expect(paths).toContain(`/projects/${PROJECT.id}/scenarios/${BASELINE}/results/export.pdf`);
+    expect(paths).toContain(`/projects/${PROJECT.id}/scenarios/${BASELINE}/results/export.xlsx`);
+    const cleanupTimers = deferredTimers.mock.calls.filter(([callback, delay]) =>
+      delay === 1000 && typeof callback === "function" && callback.toString().includes("revokeObjectURL"),
+    );
+    expect(cleanupTimers).toHaveLength(4);
+    cleanupTimers.forEach(([callback]) => {
+      if (typeof callback === "function") callback();
+    });
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(4);
+  });
+
+  it("shows a visible failure when the server refuses a report", async () => {
+    stubBackend({ exportStatus: 403, results: { [BASELINE]: { status: 200, body: baseResults(BASELINE) } } });
+    render(<ProjectListScreen />);
+    await openProject();
+    const results = await settledSection("Baseline");
+    fireEvent.click(within(results).getByRole("button", { name: "Download PDF report for Baseline" }));
+    expect(await within(results).findByRole("alert")).toHaveTextContent("Scenario report could not be downloaded");
+  });
+
+  it("rejects an empty successful response instead of downloading a blank report", async () => {
+    stubBackend({
+      exportStatus: 200,
+      exportBody: new Blob(),
+      results: { [BASELINE]: { status: 200, body: baseResults(BASELINE) } },
+    });
+    const createObjectUrl = vi.fn(() => "blob:empty-report");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    const download = vi.spyOn(HTMLAnchorElement.prototype, "click");
+
+    // Unlike the successful PDF/XLSX downloads above, this 200 has a zero-byte artifact.
+    render(<ProjectListScreen />);
+    await openProject();
+    const results = await settledSection("Baseline");
+    fireEvent.click(within(results).getByRole("button", { name: "Download PDF report for Baseline" }));
+
+    expect(await within(results).findByRole("alert")).toHaveTextContent("Scenario report could not be downloaded");
+    expect(createObjectUrl).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { refused: "pdf" as const, succeeds: "xlsx" as const },
+    { refused: "xlsx" as const, succeeds: "pdf" as const },
+  ])("keeps $succeeds available when only $refused is refused", async ({ refused, succeeds }) => {
+    stubBackend({ exportStatuses: { [refused]: 403 }, results: { [BASELINE]: { status: 200, body: baseResults(BASELINE) } } });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:report") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const downloads: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
+    render(<ProjectListScreen />);
+    await openProject();
+    const results = await settledSection("Baseline");
+    fireEvent.click(within(results).getByRole("button", { name: `Download ${refused.toUpperCase()} report for Baseline` }));
+    expect(await within(results).findByRole("alert")).toHaveTextContent("Scenario report could not be downloaded");
+    fireEvent.click(within(results).getByRole("button", { name: `Download ${succeeds.toUpperCase()} report for Baseline` }));
+    await waitFor(() => expect(downloads).toEqual([`scenario-${BASELINE}-results.${succeeds}`]));
   });
 });
