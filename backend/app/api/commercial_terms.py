@@ -7,8 +7,10 @@ Under `/projects/{project_id}/scenarios/{scenario_id}/commercial-terms`:
 - `POST ""` — create the rule, with its details row (`COMMERCIAL_WRITE`) — Time & Material, Story
   Points (SC-4-04, F-06.4), Outcome-based (SC-4-03, F-06.3) or Fixed Price with its agreed price
   (SC-4-02, F-06.2), chosen by `model_type`;
-- `PATCH ""` — change the agreed price of a draft's Fixed Price rule (`COMMERCIAL_WRITE`; SC-4-02,
-  D-6 = A).
+- `PATCH ""` — replace a draft Fixed Price, Outcome-based, or Story Points rule using its
+  model-specific fields and current concurrency marker (`COMMERCIAL_WRITE`; SC-4-02/SC-4-08).
+- `DELETE ""` — remove a draft rule of any of the four models with its current concurrency
+  marker (`COMMERCIAL_WRITE`; SC-4-08).
 
 **A router of its own**, not a verb on the staffing or scenario routers: it declares its own pair of
 permissions (ADR-0005, addendum 2026-09-23 SC-4-01, point 2), and a shared router would make them
@@ -25,14 +27,10 @@ reached (criterion K-05). A scenario **with no rule** is not one of them: it is 
 revenue is the named `no_commercial_terms` state, because "no rule yet" is information about a
 scenario the caller may see, not about whether it exists.
 
-**One edit path, and no delete path.** The model is immutable after the write (ADR-0003, point 2);
-`tm_terms` has no column to edit and neither `story_points_terms` nor `outcome_terms` has an edit
-path — a changed Story Points `accepted_points` needs a copy of the scenario (ADR-0003 addendum
-2026-09-25, D-5/A), the same mechanism a changed model would; editing and deleting an
-Outcome-based rule is a separate task (ADR-0003, addendum 2026-09-25 SC-4-03, point 9). The only
-editable value is the Fixed Price agreed price (and its currency), through `PATCH` with ADR-0007's
-marker of the rule — guarded, raced and tested like the creation (ADR-0004, addendum 2026-09-25
-SC-4-02, point 1).
+**Rule model is immutable.** Draft Fixed Price, Outcome-based, and Story Points rules support
+full replacement through `PATCH`; Time & Material has no model-specific fields to replace. Draft
+rules for all four models support `DELETE`. Both write paths use the current `updated_at` marker
+and reject writes after approval; replacement and deletion are guarded at the data layer (SC-4-08).
 """
 
 import uuid

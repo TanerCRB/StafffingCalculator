@@ -104,6 +104,7 @@ class ScenarioAssumptions(BaseModel):
 
     id: uuid.UUID
     status: ScenarioStatusLabel
+    updated_at: AwareDatetime
     target_margin_percent: ResolvedAssumptionRead
     overload_threshold_percent: ResolvedAssumptionRead
 

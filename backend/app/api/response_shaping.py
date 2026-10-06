@@ -364,6 +364,7 @@ def shape_scenario_assumptions(view: ScenarioAssumptionsView) -> ScenarioAssumpt
     return ScenarioAssumptions(
         id=view.scenario.id,
         status=_SCENARIO_STATUS_LABELS[view.scenario.status],
+        updated_at=view.scenario.updated_at,
         **resolved,
     )
 
