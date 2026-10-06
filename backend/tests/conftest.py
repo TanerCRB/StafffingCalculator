@@ -93,7 +93,7 @@ POSTGRES_IMAGE = (
 build, and then a suite that passed yesterday says nothing about what it ran against today.
 Bumping this line is a deliberate, reviewable change."""
 
-IN_SCOPE_USER = "pm-anna"
+IN_SCOPE_USER = "synthetic-00000000-0000-4000-8000-000000000001"
 OUT_OF_SCOPE_USER = "pm-bartek"
 UNKNOWN_USER = "pm-celina"
 """A caller who holds no `project_access` row at all — neither granted nor explicitly denied."""

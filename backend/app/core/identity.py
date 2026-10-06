@@ -11,8 +11,18 @@ session scope — a cached identity is exactly the failure mode `agents/invarian
 describes for shared state.
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+_SYNTHETIC_ACTOR_ID_PATTERN = re.compile(
+    r"synthetic-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+)
+
+
+def is_synthetic_actor_id(value: str) -> bool:
+    """Only accept an explicitly synthetic label followed by a canonical UUIDv4."""
+    return _SYNTHETIC_ACTOR_ID_PATTERN.fullmatch(value) is not None
 
 
 class Permission(StrEnum):
@@ -170,6 +180,10 @@ class Permission(StrEnum):
     no second project for scope to be about. Inherits the known widening of every write permission
     here (point 6 above): the endpoint answers with the duplicate's own representation, so in
     practice this also reads it."""
+
+    SCENARIO_HISTORY_READ = "scenario_history:read"
+    """Read a scenario's approval history. Requires PROJECT_READ separately and never
+    bypasses project_access scope (ADR-0022, Issue #239)."""
 
     PEOPLE_READ = "people:read"
     """Reading the register of named persons (F-03, SC-2-06; ADR-0019; ADR-0005, addendum 2026-09-27

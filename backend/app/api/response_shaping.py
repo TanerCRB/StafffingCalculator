@@ -106,6 +106,21 @@ from app.api.schemas.risk import (
     ScenarioRisks,
 )
 from app.api.schemas.scenario import ResolvedAssumptionRead, ScenarioAssumptions
+from app.api.schemas.scenario_history import (
+    ApprovedAbsenceBudgetInput,
+    ApprovedAbsenceTypeInput,
+    ApprovedCatalogRateRestrictedInput,
+    ApprovedCatalogRateWithCostInput,
+    ApprovedExchangeRateInput,
+    ApprovedOrganizationDefaultsInput,
+    ApprovedScenarioSnapshotInputs,
+    ApprovedWorkingCalendarDayInput,
+    ApprovedWorkingCalendarInput,
+    ScenarioApprovalHistoryEvent,
+    ScenarioHistoryInputs,
+    ScenarioHistoryRead,
+    SnapshotPageRead,
+)
 from app.api.schemas.scenario_results import ScenarioResults, ScenarioResultsBase
 from app.api.schemas.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationResults,
@@ -123,7 +138,7 @@ from app.api.schemas.staffing import (
     StaffingPositionList,
     StaffingPositionRead,
 )
-from app.core.identity import CallerIdentity, Permission
+from app.core.identity import CallerIdentity, Permission, is_synthetic_actor_id
 from app.core.money import NOT_APPLICABLE
 from app.data.additional_cost import AdditionalCostRow, ScenarioAdditionalCostView
 from app.data.assumptions import ScenarioAssumptionsView
@@ -134,6 +149,7 @@ from app.data.personnel_cost import ScenarioCostView
 from app.data.project_reads import CallerProjectView
 from app.data.risk import RiskPage, RiskRow
 from app.data.risk_reserve import ReservePage
+from app.data.scenario_history import ScenarioHistoryView
 from app.data.scenario_results import ScenarioResultsView
 from app.data.scenario_what_if import (
     ScenarioWhatIfBillableUtilizationView,
@@ -366,6 +382,181 @@ def shape_scenario_assumptions(view: ScenarioAssumptionsView) -> ScenarioAssumpt
         status=_SCENARIO_STATUS_LABELS[view.scenario.status],
         updated_at=view.scenario.updated_at,
         **resolved,
+    )
+
+
+def shape_scenario_history(
+    view: ScenarioHistoryView, caller: CallerIdentity
+) -> ScenarioHistoryRead:
+    """Shape only the selected scenario's event and saved values; keep its scope/cost gates."""
+    project_view = view.project_view
+    if project_view.user_id != caller.user_id:
+        raise AssertionError(
+            "A scenario history view and caller must identify the same request subject."
+        )
+    event = view.approval_event
+    approval_event = (
+        ScenarioApprovalHistoryEvent(
+            action_type=event.action_type.value,
+            performed_by=(
+                event.performed_by
+                if is_synthetic_actor_id(event.performed_by)
+                else "unverified-placeholder"
+            ),
+            performed_by_verified=False,
+            created_at=event.created_at,
+        )
+        if event is not None
+        else None
+    )
+    approved_snapshot = None
+    if view.scenario.status.value == "approved":
+        defaults = view.organization_defaults
+        cost_visible = (
+            caller.has(Permission.PERSONNEL_COSTS_READ) and project_view.can_view_personnel_costs
+        )
+        catalog_rates = []
+        for row in view.catalog_rates.items:
+            values = dict(
+                source_rate_id=row.source_rate_id,
+                source_role_id=row.source_role_id,
+                source_seniority_id=row.source_seniority_id,
+                source_location_id=row.source_location_id,
+                source_engagement_type_id=row.source_engagement_type_id,
+                source_vendor_id=row.source_vendor_id,
+                default_selling_rate=row.default_selling_rate,
+                currency=row.currency,
+                unit=row.unit,
+                effective_from=row.effective_from,
+                effective_to=row.effective_to,
+                surcharge_percent=row.surcharge_percent,
+                includes_surcharge=row.includes_surcharge,
+            )
+            catalog_rates.append(
+                ApprovedCatalogRateWithCostInput(
+                    **values,
+                    default_cost_rate=row.default_cost_rate,
+                    cost_rate_unit=row.cost_rate_unit,
+                )
+                if cost_visible
+                else ApprovedCatalogRateRestrictedInput(**values)
+            )
+        approved_snapshot = ApprovedScenarioSnapshotInputs(
+            organization_defaults=(
+                ApprovedOrganizationDefaultsInput(
+                    target_margin_percent=defaults.target_margin_percent,
+                    overload_threshold_percent=defaults.overload_threshold_percent,
+                )
+                if defaults is not None
+                else None
+            ),
+            working_calendars=SnapshotPageRead(
+                items=[
+                    ApprovedWorkingCalendarInput(
+                        source_calendar_id=row.source_calendar_id,
+                        source_location_id=row.source_location_id,
+                        name=row.name,
+                        standard_hours_per_day=row.standard_hours_per_day,
+                        week_pattern=row.week_pattern,
+                    )
+                    for row in view.working_calendars.items
+                ],
+                total=view.working_calendars.total,
+                limit=view.working_calendars.limit,
+                offset=view.working_calendars.offset,
+            ),
+            working_calendar_days=SnapshotPageRead(
+                items=[
+                    ApprovedWorkingCalendarDayInput(
+                        source_calendar_id=row.source_calendar_id,
+                        day=row.day,
+                        source=row.source,
+                        name=row.name,
+                        country_code=row.country_code,
+                        year=row.year,
+                        kind=row.kind.value,
+                    )
+                    for row in view.working_calendar_days.items
+                ],
+                total=view.working_calendar_days.total,
+                limit=view.working_calendar_days.limit,
+                offset=view.working_calendar_days.offset,
+            ),
+            absence_types=SnapshotPageRead(
+                items=[
+                    ApprovedAbsenceTypeInput(
+                        source_absence_type_id=row.source_absence_type_id,
+                        name=row.name,
+                        generates_cost=row.generates_cost,
+                        generates_revenue=row.generates_revenue,
+                        is_statutory_leave=row.is_statutory_leave,
+                    )
+                    for row in view.absence_types.items
+                ],
+                total=view.absence_types.total,
+                limit=view.absence_types.limit,
+                offset=view.absence_types.offset,
+            ),
+            absence_budgets=SnapshotPageRead(
+                items=[
+                    ApprovedAbsenceBudgetInput(
+                        source_calendar_id=row.source_calendar_id,
+                        source_engagement_type_id=row.source_engagement_type_id,
+                        budget_days=row.budget_days,
+                        unit=row.unit,
+                        effective_from=row.effective_from,
+                        effective_to=row.effective_to,
+                    )
+                    for row in view.absence_budgets.items
+                ],
+                total=view.absence_budgets.total,
+                limit=view.absence_budgets.limit,
+                offset=view.absence_budgets.offset,
+            ),
+            catalog_rates=SnapshotPageRead(
+                items=catalog_rates,
+                total=view.catalog_rates.total,
+                limit=view.catalog_rates.limit,
+                offset=view.catalog_rates.offset,
+            ),
+            exchange_rates=SnapshotPageRead(
+                items=[
+                    ApprovedExchangeRateInput(
+                        source_rate_id=row.source_rate_id,
+                        source_scope=row.source_scope,
+                        source_project_id=row.source_project_id,
+                        source_scenario_id=row.source_scenario_id,
+                        source_currency=row.source_currency,
+                        target_currency=row.target_currency,
+                        effective_from=row.effective_from,
+                        effective_to=row.effective_to,
+                        rate=row.rate,
+                        source=row.source,
+                    )
+                    for row in view.exchange_rates.items
+                ],
+                total=view.exchange_rates.total,
+                limit=view.exchange_rates.limit,
+                offset=view.exchange_rates.offset,
+            ),
+        )
+    scenario = view.scenario
+    return ScenarioHistoryRead(
+        scenario_id=scenario.id,
+        name=scenario.name,
+        status=_SCENARIO_STATUS_LABELS[scenario.status],
+        updated_at=scenario.updated_at,
+        inputs=ScenarioHistoryInputs(
+            start_date=scenario.start_date,
+            end_date=scenario.end_date,
+            working_calendar=scenario.working_calendar,
+            full_time_hours_per_week=scenario.full_time_hours_per_week,
+            currency=scenario.currency,
+            target_margin_percent=scenario.target_margin_percent,
+            overload_threshold_percent=scenario.overload_threshold_percent,
+        ),
+        approval_event=approval_event,
+        approved_snapshot=approved_snapshot,
     )
 
 
@@ -989,7 +1180,9 @@ def _commercial_terms_read_of(
     if terms.model_type == "story_points":
         details = view.story_points_terms
         return StoryPointsCommercialTermsRead(
-            id=terms.id, model_type="story_points", updated_at=terms.updated_at,
+            id=terms.id,
+            model_type="story_points",
+            updated_at=terms.updated_at,
             outcome_terms=None,
             price_per_point=None if details is None else details.price_per_point,
             accepted_points=None if details is None else details.accepted_points,
@@ -1367,7 +1560,9 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
             **paid_absence_fully_loaded,
             **fixed_amount,
             **assigned_fte,
-            assigned_fte_above_headcount_position_ids=list(view.assigned_fte_above_headcount_position_ids),
+            assigned_fte_above_headcount_position_ids=list(
+                view.assigned_fte_above_headcount_position_ids
+            ),
         )
     return PersonnelCostRead(
         state=answer.reason,
@@ -1380,7 +1575,9 @@ def _personnel_cost_read_of(view: ScenarioCostView) -> PersonnelCostRead:
         **paid_absence_fully_loaded,
         **fixed_amount,
         **assigned_fte,
-        assigned_fte_above_headcount_position_ids=list(view.assigned_fte_above_headcount_position_ids),
+        assigned_fte_above_headcount_position_ids=list(
+            view.assigned_fte_above_headcount_position_ids
+        ),
     )
 
 
@@ -1573,8 +1770,12 @@ def shape_scenario_results(view: ScenarioResultsView, caller: CallerIdentity) ->
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
-        cost_view.fixed_amount, cost_view.assigned_fte,
+        view.revenue,
+        cost_view.cost,
+        cost_view.paid_absence,
+        view.additional_cost,
+        cost_view.fixed_amount,
+        cost_view.assigned_fte,
     )
     expected_profitability = scenario_expected_profitability(view.revenue, profitability)
     result = ScenarioResults(
@@ -1788,8 +1989,12 @@ def shape_scenario_what_if_billable_utilization(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
-        cost_view.fixed_amount, cost_view.assigned_fte
+        view.revenue,
+        cost_view.cost,
+        cost_view.paid_absence,
+        view.additional_cost,
+        cost_view.fixed_amount,
+        cost_view.assigned_fte,
     )
     result = ScenarioWhatIfBillableUtilizationResults(
         scenario_id=view.scenario.id,
@@ -1840,8 +2045,12 @@ def shape_scenario_what_if_salary_raise(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
-        cost_view.fixed_amount, cost_view.assigned_fte
+        view.revenue,
+        cost_view.cost,
+        cost_view.paid_absence,
+        view.additional_cost,
+        cost_view.fixed_amount,
+        cost_view.assigned_fte,
     )
     result = ScenarioWhatIfSalaryRaiseResults(
         scenario_id=view.scenario.id,
@@ -1869,8 +2078,12 @@ def shape_scenario_what_if_delayed_start(
     )
     additional_cost = _additional_cost_total_read_of(view.additional_cost)
     profitability = scenario_profitability(
-        view.revenue, cost_view.cost, cost_view.paid_absence, view.additional_cost,
-        cost_view.fixed_amount, cost_view.assigned_fte
+        view.revenue,
+        cost_view.cost,
+        cost_view.paid_absence,
+        view.additional_cost,
+        cost_view.fixed_amount,
+        cost_view.assigned_fte,
     )
     result = ScenarioWhatIfDelayedStartResults(
         scenario_id=view.scenario.id,

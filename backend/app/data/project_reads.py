@@ -22,6 +22,7 @@ from app.core.identity import CallerIdentity
 from app.data.organization_defaults import OrganizationLevel, organization_level_for
 from app.models.project import Project, ProjectStatus
 from app.models.project_access import ProjectAccess
+from app.models.scenario import Scenario
 
 
 @dataclass(frozen=True)
@@ -197,3 +198,32 @@ def project_for_caller(
         return None
     project, _ = row
     return _as_view(row, caller, organization_level_for(session, project.scenarios))
+
+
+def scenario_for_caller(
+    session: Session,
+    caller: CallerIdentity,
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+) -> tuple[CallerProjectView, Scenario] | None:
+    """Read one assigned project's addressed scenario without loading its siblings.
+
+    This composes on `accessible_projects()` so the project-access predicate and the caller's
+    personnel-cost flag come from the same scoped statement. Unlike `scenario_view_in_scope`,
+    which builds a full project view for callers that need all scenarios, this targeted read only
+    loads the requested scenario and its organization-level defaults.
+    """
+    statement = (
+        accessible_projects(caller)
+        .join(Scenario, Scenario.project_id == Project.id)
+        .where(Project.id == project_id, Scenario.id == scenario_id)
+        .add_columns(Scenario)
+    )
+    row = session.execute(statement).unique().one_or_none()
+    if row is None:
+        return None
+    project, can_view_personnel_costs, scenario = row
+    view = _as_view(
+        (project, can_view_personnel_costs), caller, organization_level_for(session, [scenario])
+    )
+    return view, scenario

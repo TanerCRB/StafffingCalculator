@@ -124,7 +124,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.identity import CallerIdentity
+from app.core.identity import CallerIdentity, is_synthetic_actor_id
 from app.data.commercial_terms import priced_month_windows
 from app.data.personnel_cost import costed_month_windows
 from app.data.scenario_guard import (
@@ -197,6 +197,10 @@ class ScenarioAlreadyApproved(ScenarioApprovalRejected):
     The permanent kind of refusal: a retry can never succeed, and the way forward is a copy, which
     is a `draft` and can be approved on its own (`app.data.project_writes.copy_scenario`).
     """
+
+
+class ScenarioActorIdentifierInvalid(ScenarioApprovalRejected):
+    """The placeholder actor must be an opaque synthetic UUID before entering the audit log."""
 
 
 def _failure(error: SQLAlchemyError) -> WriteFailed:
@@ -1011,6 +1015,10 @@ def approve_scenario(
     """
     if scenario_in_scope(session, caller, project_id, scenario_id) is None:
         return None
+    if not is_synthetic_actor_id(caller.user_id):
+        raise ScenarioActorIdentifierInvalid(
+            "The caller identifier must use the synthetic development/test format."
+        )
 
     try:
         locked = session.execute(draft_scenario(scenario_id)).one_or_none()
