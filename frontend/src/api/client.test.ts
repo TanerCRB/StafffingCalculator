@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getCatalogAbsenceBudgets, getProjects } from "./client";
+import {
+  editOrganizationDefaults,
+  editScenarioAssumptions,
+  getCatalogAbsenceBudgets,
+  getOrganizationDefaults,
+  getProjects,
+  getScenarioAssumptionResetPreview,
+  getScenarioAssumptions,
+} from "./client";
 
 /**
  * SC-1-09, K-05, second proof: `getProjects` does not merely *accept* an `AbortSignal`, it hands it
@@ -98,6 +106,67 @@ describe("getProjects and the caller's abort signal", () => {
 
     await expect(getProjects(AbortSignal.abort())).rejects.toThrow();
     expect(signalGivenToFetch(fetchMock).aborted).toBe(true);
+  });
+});
+
+describe("SC-1-21 assumption endpoints", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("K-01 reads resolved values and sources through the scenario assumptions contract", async () => {
+    const payload = {
+      id: "scenario-1", status: "Draft", updated_at: "2026-10-06T10:00:00Z",
+      target_margin_percent: { value: "0", state: "resolved", source: "scenario" },
+      overload_threshold_percent: { value: "n/a", state: "no_value", source: null },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getScenarioAssumptions("project-1", "scenario-1")).resolves.toEqual(payload);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:8000/projects/project-1/scenarios/scenario-1/assumptions");
+  });
+
+  it("K-03 reads the dedicated post-reset preview contract", async () => {
+    const payload = {
+      id: "scenario-1", status: "Draft",
+      target_margin_percent: { value: "12.5", state: "resolved", source: "project" },
+      overload_threshold_percent: { value: "20", state: "resolved", source: "organization" },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getScenarioAssumptionResetPreview("project-1", "scenario-1")).resolves.toEqual(payload);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:8000/projects/project-1/scenarios/scenario-1/assumptions/reset-preview");
+  });
+
+  it("K-02 PATCHes only the selected field and returns the server's stored override", async () => {
+    const payload = {
+      id: "scenario-1", status: "Draft", updated_at: "2026-10-06T10:01:00Z",
+      target_margin_percent: "0", overload_threshold_percent: null,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(editScenarioAssumptions("project-1", "scenario-1", {
+      updated_at: "2026-10-06T10:00:00Z", target_margin_percent: "0",
+    })).resolves.toEqual(payload);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PATCH", body: JSON.stringify({
+      updated_at: "2026-10-06T10:00:00Z", target_margin_percent: "0",
+    }) });
+  });
+
+  it("K-04 reads and writes organization defaults through their independent organization endpoint", async () => {
+    const payload = { updated_at: "2026-10-06T10:00:00Z", target_margin_percent: "10", overload_threshold_percent: "20" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getOrganizationDefaults()).resolves.toEqual(payload);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:8000/organization-defaults");
+    await expect(editOrganizationDefaults({ updated_at: payload.updated_at, target_margin_percent: "15" })).resolves.toEqual(payload);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "PATCH", body: JSON.stringify({
+      updated_at: payload.updated_at, target_margin_percent: "15",
+    }) });
   });
 });
 

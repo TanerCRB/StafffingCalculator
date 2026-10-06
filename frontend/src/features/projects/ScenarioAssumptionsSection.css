@@ -1,0 +1,74 @@
+.scenario-assumptions,
+.organization-defaults {
+  display: grid;
+  gap: var(--sc-space-3);
+  margin-block: var(--sc-space-3);
+  padding: var(--sc-space-3);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-color-surface);
+  color: var(--sc-color-text);
+}
+
+.scenario-assumptions h4,
+.organization-defaults h4 {
+  margin: 0;
+  color: var(--sc-color-text);
+  font-size: var(--sc-font-size-md);
+  background: var(--sc-color-surface);
+}
+
+.scenario-assumptions__field {
+  display: grid;
+  gap: var(--sc-space-2);
+  padding-block: var(--sc-space-2);
+  border-top: 1px solid var(--sc-color-border);
+}
+
+.scenario-assumptions__resolved {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--sc-space-2);
+}
+
+.scenario-assumptions label {
+  display: grid;
+  gap: var(--sc-space-1);
+}
+
+.scenario-assumptions input,
+.organization-defaults input {
+  width: min(100%, 18rem);
+  padding: var(--sc-space-2);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-sm);
+  color: var(--sc-color-text);
+  background: var(--sc-color-surface);
+  font: inherit;
+}
+
+.scenario-assumptions__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sc-space-2);
+}
+
+.scenario-assumptions__preview {
+  display: grid;
+  gap: var(--sc-space-2);
+  padding: var(--sc-space-3);
+  border-inline-start: 3px solid var(--sc-color-attention-text);
+  background: var(--sc-color-attention-bg);
+  color: var(--sc-color-attention-text);
+}
+
+.scenario-assumptions__preview p,
+.scenario-assumptions__field p {
+  margin: 0;
+}
+
+.scenario-assumptions button,
+.organization-defaults button {
+  justify-self: start;
+}

@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from app.core.identity import Permission
 from app.domain.assumptions import NO_VALUE, ORGANIZATION, PROJECT, RESOLVED
 from app.models import ApprovedSnapshotOrganizationDefaults
 from tests.conftest import (
@@ -29,6 +30,7 @@ from tests.conftest import (
     approve_path,
     as_caller,
     assumptions_path,
+    caller_holding,
     make_project,
     make_scenario,
     set_organization_defaults,
@@ -54,9 +56,14 @@ def _committed_project_with_two_drafts(engine: Engine) -> dict[str, uuid.UUID]:
 
 
 def _read(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID) -> dict:
-    response = client.get(
-        assumptions_path(project_id, scenario_id), headers=as_caller(IN_SCOPE_USER)
-    )
+    with caller_holding(
+        Permission.PROJECT_READ,
+        Permission.SCENARIO_ASSUMPTIONS_READ,
+        Permission.ORGANIZATION_DEFAULTS_READ,
+    ):
+        response = client.get(
+            assumptions_path(project_id, scenario_id), headers=as_caller(IN_SCOPE_USER)
+        )
     assert response.status_code == 200, response.text
     return response.json()
 

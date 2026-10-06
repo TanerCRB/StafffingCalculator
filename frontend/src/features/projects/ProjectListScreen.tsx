@@ -12,6 +12,7 @@ import { ScenarioAdditionalCostsSection } from "./ScenarioAdditionalCostsSection
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { ScenarioHistorySection } from "./ScenarioHistorySection";
 import { ScenarioApprovalSection } from "./ScenarioApprovalSection";
+import { ScenarioAssumptionsSection } from "./ScenarioAssumptionsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
@@ -694,6 +695,11 @@ function ScenarioDetails({ project, onScenarioDuplicated, onScenarioApproved }: 
                 ? "Not provided"
                 : formatPercentString(scenario.target_margin_percent)}
             </p>
+            <ScenarioAssumptionsSection
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioStatus={scenario.status}
+            />
             {/* SC-4-06: its own read, its own failure states, its own write. Keyed by the card, so
                 switching projects unmounts it and aborts its read (ADR-0010, point 7). */}
             <ScenarioCommercialTermsSection

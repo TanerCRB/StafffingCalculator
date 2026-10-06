@@ -22,6 +22,7 @@ function stubRunningBackend() {
       "/catalog/dimensions/vendors": { entries: [] },
       "/catalog/working-calendars": { calendars: [] },
       "/catalog/absence-budgets": { budgets: [] },
+      "/organization-defaults": { target_margin_percent: "10", overload_threshold_percent: "20", updated_at: "2026-10-06T10:00:00Z" },
     }[path] ?? {};
     return { ok: true, status: 200, json: async () => body };
   });
@@ -158,6 +159,39 @@ describe("App", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("K-04 reaches and saves organization defaults without project access", async () => {
+    const requests: Array<{ path: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      requests.push({ path, init });
+      if (path === "/health") return { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+      if (path === "/projects") return { ok: false, status: 403, json: async () => ({ detail: "denied" }) };
+      if (path === "/organization-defaults") {
+        const body = init?.method === "PATCH"
+          ? { target_margin_percent: "15", overload_threshold_percent: "20", updated_at: "2026-10-06T10:01:00Z" }
+          : { target_margin_percent: "10", overload_threshold_percent: "20", updated_at: "2026-10-06T10:00:00Z" };
+        return { ok: true, status: 200, json: async () => body };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await screen.findByText("You do not have permission to view projects.");
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Sections" })).getByRole("button", { name: "Organization defaults" }));
+
+    const main = screen.getByRole("main");
+    expect(await within(main).findByRole("heading", { level: 2, name: "Organization defaults" })).toBeVisible();
+    const target = await within(main).findByLabelText("Organization Target margin");
+    fireEvent.change(target, { target: { value: "15" } });
+    fireEvent.click(within(main).getAllByRole("button", { name: "Save override" })[0]!);
+    expect(await within(main).findByRole("status")).toHaveTextContent("Saved.");
+    expect(requests.filter(({ path }) => path === "/organization-defaults").map(({ init }) => init?.method ?? "GET"))
+      .toEqual(["GET", "PATCH"]);
+    expect(requests.find(({ path, init }) => path === "/organization-defaults" && init?.method === "PATCH")?.init?.body)
+      .toBe(JSON.stringify({ updated_at: "2026-10-06T10:00:00Z", target_margin_percent: "15" }));
   });
 
   // --- SC-7-04 ---------------------------------------------------------------------------------
