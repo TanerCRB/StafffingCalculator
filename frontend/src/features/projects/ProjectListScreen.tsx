@@ -9,6 +9,7 @@ import { DuplicateScenarioControl } from "./DuplicateScenarioControl";
 import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection";
 import { ScenarioAdditionalCostsSection } from "./ScenarioAdditionalCostsSection";
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
+import { ScenarioHistorySection } from "./ScenarioHistorySection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
@@ -691,6 +692,11 @@ function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps
                 own abort on unmount/re-select (ADR-0010, point 7). Q1 = option A: no new router, no
                 new screen. */}
             <ScenarioResultsSection
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioName={scenario.name}
+            />
+            <ScenarioHistorySection
               projectId={project.id}
               scenarioId={scenario.id}
               scenarioName={scenario.name}

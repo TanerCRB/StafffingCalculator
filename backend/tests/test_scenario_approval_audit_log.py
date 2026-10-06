@@ -43,6 +43,8 @@ from tests.conftest import (
 )
 
 _TIME_WINDOW_SLACK = timedelta(seconds=30)
+_ACTOR_A = "synthetic-00000000-0000-4000-8000-000000000002"
+_ACTOR_B = "synthetic-00000000-0000-4000-8000-000000000003"
 """Generous on purpose: this asserts the row's timestamp is the database's own clock at
 approval time, not that the clocks of the test process and the database container agree to the
 second. A mutation writing a constant or a far-off timestamp still fails it; ordinary clock skew
@@ -74,11 +76,11 @@ def test_k_01_approving_a_scenario_leaves_exactly_one_audit_log_row(
 ) -> None:
     """K-01 — one approval, one row, timestamped now; a second (refused) approval adds none."""
     project, scenario = _draft_scenario(
-        db_session, name="Aurora migration", accessible_to=("pm-anna",)
+        db_session, name="Aurora migration", accessible_to=(_ACTOR_A,)
     )
     before = datetime.now(UTC) - _TIME_WINDOW_SLACK
 
-    response = client.post(approve_path(project.id, scenario.id), headers=as_caller("pm-anna"))
+    response = client.post(approve_path(project.id, scenario.id), headers=as_caller(_ACTOR_A))
     after = datetime.now(UTC) + _TIME_WINDOW_SLACK
 
     assert response.status_code == 200, response.text
@@ -96,12 +98,29 @@ def test_k_01_approving_a_scenario_leaves_exactly_one_audit_log_row(
 
     # The contrast: a second approval of the now-approved scenario is refused (proven `409` by
     # `test_k_19_...` in test_scenario_approval.py) and must add zero new history rows.
-    second = client.post(approve_path(project.id, scenario.id), headers=as_caller("pm-anna"))
+    second = client.post(approve_path(project.id, scenario.id), headers=as_caller(_ACTOR_A))
     assert second.status_code == 409, second.text
     assert count_audit_log_rows(db_session, scenario.id) == 1, (
         "a refused, already-approved second approval added a new audit_log row — the refusal must "
         "leave the history exactly where the first approval left it"
     )
+
+
+def test_approval_refuses_non_synthetic_actor_before_writing_audit_or_snapshot(
+    client: TestClient, db_session: Session
+) -> None:
+    """Arbitrary caller text cannot be persisted as the audit actor or approve the scenario."""
+    actor = "not-a-synthetic-id"
+    project, scenario = _draft_scenario(
+        db_session, name="Synthetic actor guard", accessible_to=(actor,)
+    )
+
+    response = client.post(approve_path(project.id, scenario.id), headers=as_caller(actor))
+
+    assert response.status_code == 422, response.text
+    assert actor not in response.text
+    assert count_audit_log_rows(db_session, scenario.id) == 0
+    assert scenario.status.value == "draft"
 
 
 # --- K-02: a row names the scenario it is about, never another one --------------------------------
@@ -115,14 +134,14 @@ def test_k_02_each_approvals_row_names_its_own_scenario_not_the_other(
     scenarios approved in the same test, that mutation makes both rows agree on one id, and this
     assertion tells the two apart."""
     project_a, scenario_a = _draft_scenario(
-        db_session, name="Aurora migration", accessible_to=("pm-anna",)
+        db_session, name="Aurora migration", accessible_to=(_ACTOR_A,)
     )
     project_b, scenario_b = _draft_scenario(
-        db_session, name="Borealis rollout", accessible_to=("pm-anna",)
+        db_session, name="Borealis rollout", accessible_to=(_ACTOR_A,)
     )
 
-    ok_a = client.post(approve_path(project_a.id, scenario_a.id), headers=as_caller("pm-anna"))
-    ok_b = client.post(approve_path(project_b.id, scenario_b.id), headers=as_caller("pm-anna"))
+    ok_a = client.post(approve_path(project_a.id, scenario_a.id), headers=as_caller(_ACTOR_A))
+    ok_b = client.post(approve_path(project_b.id, scenario_b.id), headers=as_caller(_ACTOR_A))
     assert ok_a.status_code == 200, ok_a.text
     assert ok_b.status_code == 200, ok_b.text
 
@@ -155,16 +174,16 @@ def test_k_03_performed_by_carries_the_identity_the_request_context_carried(
     that waits on the authentication ADR, which does not exist yet.
     """
     project_a, scenario_a = _draft_scenario(
-        db_session, name="Aurora migration", accessible_to=("alice",)
+        db_session, name="Aurora migration", accessible_to=(_ACTOR_A,)
     )
     project_b, scenario_b = _draft_scenario(
-        db_session, name="Borealis rollout", accessible_to=("bob",)
+        db_session, name="Borealis rollout", accessible_to=(_ACTOR_B,)
     )
 
-    with caller_holding(Permission.PROJECT_EDIT, user_id="alice"):
-        ok_a = client.post(approve_path(project_a.id, scenario_a.id), headers=as_caller("alice"))
-    with caller_holding(Permission.PROJECT_EDIT, user_id="bob"):
-        ok_b = client.post(approve_path(project_b.id, scenario_b.id), headers=as_caller("bob"))
+    with caller_holding(Permission.PROJECT_EDIT, user_id=_ACTOR_A):
+        ok_a = client.post(approve_path(project_a.id, scenario_a.id), headers=as_caller(_ACTOR_A))
+    with caller_holding(Permission.PROJECT_EDIT, user_id=_ACTOR_B):
+        ok_b = client.post(approve_path(project_b.id, scenario_b.id), headers=as_caller(_ACTOR_B))
 
     assert ok_a.status_code == 200, ok_a.text
     assert ok_b.status_code == 200, ok_b.text
@@ -172,12 +191,12 @@ def test_k_03_performed_by_carries_the_identity_the_request_context_carried(
     row_a = _audit_row_for(db_session, scenario_a.id)
     row_b = _audit_row_for(db_session, scenario_b.id)
 
-    assert row_a.performed_by == "alice", (
-        f"expected 'alice', got {row_a.performed_by!r} — performed_by did not follow the "
+    assert row_a.performed_by == _ACTOR_A, (
+        f"expected synthetic actor A, got {row_a.performed_by!r} — performed_by did not follow the "
         "substituted request identity"
     )
-    assert row_b.performed_by == "bob", (
-        f"expected 'bob', got {row_b.performed_by!r} — performed_by did not follow the "
+    assert row_b.performed_by == _ACTOR_B, (
+        f"expected synthetic actor B, got {row_b.performed_by!r} — performed_by did not follow the "
         "substituted request identity"
     )
     # The contrast that kills "constant instead of context": the two rows must disagree, because
@@ -200,15 +219,15 @@ def test_a_duplicated_scenario_carries_zero_audit_log_rows_of_its_own(
     duplicate: this is not satisfied by a database that fails to write history at all.
     """
     project, scenario = _draft_scenario(
-        db_session, name="Aurora migration", accessible_to=("pm-anna",)
+        db_session, name="Aurora migration", accessible_to=(_ACTOR_A,)
     )
-    approved = client.post(approve_path(project.id, scenario.id), headers=as_caller("pm-anna"))
+    approved = client.post(approve_path(project.id, scenario.id), headers=as_caller(_ACTOR_A))
     assert approved.status_code == 200, approved.text
     assert count_audit_log_rows(db_session, scenario.id) == 1
 
     duplicate = client.post(
         f"/projects/{project.id}/scenarios/{scenario.id}/duplicate",
-        headers=as_caller("pm-anna"),
+        headers=as_caller(_ACTOR_A),
     )
     assert duplicate.status_code == 201, duplicate.text
     copy_id = uuid.UUID(duplicate.json()["id"])

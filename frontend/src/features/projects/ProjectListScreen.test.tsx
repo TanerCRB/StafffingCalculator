@@ -604,6 +604,16 @@ describe("ProjectListScreen", () => {
     expect(screen.getByRole("heading", { name: "Baseline" })).toBeInTheDocument();
   });
 
+  it("offers history from each scenario card but does not fetch it before explicit activation", async () => {
+    const fetchMock = stubProjectListResponse([AURORA]);
+    render(<ProjectListScreen />);
+    await projectRows();
+    await selectProject("Aurora migration");
+
+    expect(await screen.findByRole("button", { name: "View approval history for Signed plan" })).toBeVisible();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/history"))).toHaveLength(0);
+  });
+
   it("lists the scenarios of the selected project with their status as text, not colour alone", async () => {
     stubProjectListResponse([AURORA, HELIOS]);
 

@@ -53,6 +53,7 @@ import {
 } from "./contracts/commercialTerms";
 import { isDecimalString } from "../lib/money";
 import type { HealthResponse } from "./contracts/health";
+import { isScenarioHistory, type ScenarioHistory, type SnapshotCollectionKey } from "./contracts/scenarioHistory";
 import type {
   ProjectCreateRequest,
   ProjectListItem,
@@ -1777,6 +1778,46 @@ export async function getScenarioResults(
       }
       const payload: unknown = await response.json();
       if (!isScenarioResultsShape(payload, scenarioId)) {
+        throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+      }
+      return payload;
+    },
+    REQUEST_TIMEOUT_MS,
+    signal,
+  );
+}
+
+/** Read one scenario's approval record and its own saved snapshot (SC-8-02). The endpoint requires
+ * the dedicated history permission as well as project read access; this client sends no local
+ * permission claim and the server remains authoritative. It is called only after the user opens
+ * the history section. */
+export async function getScenarioHistory(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+  page?: {
+    readonly limits?: Partial<Record<SnapshotCollectionKey, number>>;
+    readonly offsets?: Partial<Record<SnapshotCollectionKey, number>>;
+  },
+): Promise<ScenarioHistory> {
+  const query = new URLSearchParams();
+  for (const [collection, limit] of Object.entries(page?.limits ?? {})) {
+    if (limit !== undefined) query.set(`${collection}_limit`, String(limit));
+  }
+  for (const [collection, offset] of Object.entries(page?.offsets ?? {})) {
+    if (offset !== undefined && offset > 0) query.set(`${collection}_offset`, String(offset));
+  }
+  const suffix = query.size === 0 ? "" : `?${query.toString()}`;
+  const path = `/projects/${projectId}/scenarios/${scenarioId}/history${suffix}`;
+  return requestWithDeadline(
+    `${API_BASE_URL}${path}`,
+    { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } },
+    async (response) => {
+      if (!response.ok) {
+        throw new ApiError(response.status, `GET ${path} failed: ${response.status}`);
+      }
+      const payload: unknown = await response.json();
+      if (!isScenarioHistory(payload, scenarioId)) {
         throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
       }
       return payload;
