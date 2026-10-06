@@ -271,7 +271,11 @@ def test_k_03_clearing_one_override_inherits_each_level_and_zero_remains_a_value
         overload_threshold_percent=Decimal("140.000"),
     )
 
-    with caller_holding(*OVERRIDE_PERMISSIONS, Permission.PROJECT_READ):
+    with caller_holding(
+        *OVERRIDE_PERMISSIONS,
+        Permission.PROJECT_READ,
+        Permission.ORGANIZATION_DEFAULTS_READ,
+    ):
         zero_read = client.get(
             assumptions_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
         )
