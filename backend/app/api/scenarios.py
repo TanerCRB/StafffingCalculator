@@ -51,7 +51,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission, require_permissions
-from app.api.response_shaping import shape_duplicated_scenario, shape_scenario_assumptions
+from app.api.response_shaping import (
+    shape_duplicated_scenario,
+    shape_scenario_assumptions,
+    shape_scenario_history,
+)
 from app.api.schemas.project import ScenarioListItem
 from app.api.schemas.scenario import (
     ApprovedSnapshotCounts,
@@ -60,10 +64,12 @@ from app.api.schemas.scenario import (
     ScenarioAssumptions,
     ScenarioAssumptionsPatch,
 )
+from app.api.schemas.scenario_history import ScenarioHistoryRead
 from app.core.identity import CallerIdentity, Permission
 from app.data.assumptions import scenario_assumptions_for_caller
 from app.data.organization_defaults import organization_level_for
 from app.data.scenario_approval import (
+    ScenarioActorIdentifierInvalid,
     ScenarioApprovalRefused,
     ScenarioApprovalRejected,
     approve_scenario,
@@ -78,6 +84,7 @@ from app.data.scenario_duplication import (
     ScenarioDuplicationRefused,
     duplicate_scenario,
 )
+from app.data.scenario_history import ScenarioHistoryPageInvalid, scenario_history_for_caller
 from app.db.session import get_session
 
 router = APIRouter(prefix="/projects/{project_id}/scenarios/{scenario_id}", tags=["scenarios"])
@@ -136,6 +143,10 @@ def approve(
     """
     try:
         result = approve_scenario(session, caller, project_id, scenario_id)
+    except ScenarioActorIdentifierInvalid as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refusal)
+        ) from None
     except ScenarioApprovalRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
     except ScenarioApprovalRefused as refusal:
@@ -189,6 +200,78 @@ def read_assumptions(
     if view is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
     return shape_scenario_assumptions(view)
+
+
+@router.get(
+    "/history",
+    response_model=ScenarioHistoryRead,
+    summary="Read one scenario's own approval event and saved inputs",
+    responses={404: {"description": SCENARIO_NOT_FOUND_DETAIL}},
+)
+def read_history(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[
+        CallerIdentity,
+        Depends(
+            require_permissions(
+                Permission.PROJECT_READ,
+                Permission.SCENARIO_HISTORY_READ,
+                Permission.CATALOG_READ,
+            )
+        ),
+    ],
+    session: Annotated[Session, Depends(get_session)],
+    working_calendars_limit: str = "100",
+    working_calendar_days_limit: str = "100",
+    absence_types_limit: str = "100",
+    absence_budgets_limit: str = "100",
+    catalog_rates_limit: str = "100",
+    exchange_rates_limit: str = "100",
+    working_calendars_offset: str = "0",
+    working_calendar_days_offset: str = "0",
+    absence_types_offset: str = "0",
+    absence_budgets_offset: str = "0",
+    catalog_rates_offset: str = "0",
+    exchange_rates_offset: str = "0",
+) -> ScenarioHistoryRead:
+    """Read history for this scenario only (SC-8-02, ADR-0022).
+
+    A draft has its own persisted inputs and no approval metadata. An approved scenario returns
+    only its own scenario_approved audit event and frozen snapshot rows. Duplicated scenarios are
+    independent; this endpoint does not infer or expose a source-version relationship.
+    """
+    try:
+        view = scenario_history_for_caller(
+            session,
+            caller,
+            project_id,
+            scenario_id,
+            limits={
+                "working_calendars_limit": working_calendars_limit,
+                "working_calendar_days_limit": working_calendar_days_limit,
+                "absence_types_limit": absence_types_limit,
+                "absence_budgets_limit": absence_budgets_limit,
+                "catalog_rates_limit": catalog_rates_limit,
+                "exchange_rates_limit": exchange_rates_limit,
+            },
+            offsets={
+                "working_calendars_offset": working_calendars_offset,
+                "working_calendar_days_offset": working_calendar_days_offset,
+                "absence_types_offset": absence_types_offset,
+                "absence_budgets_offset": absence_budgets_offset,
+                "catalog_rates_offset": catalog_rates_offset,
+                "exchange_rates_offset": exchange_rates_offset,
+            },
+        )
+    except ScenarioHistoryPageInvalid as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Query parameter '{error.field}' is outside the allowed range.",
+        ) from error
+    if view is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
+    return shape_scenario_history(view, caller)
 
 
 @router.patch(

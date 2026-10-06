@@ -11,8 +11,18 @@ session scope — a cached identity is exactly the failure mode `agents/invarian
 describes for shared state.
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+_SYNTHETIC_ACTOR_ID_PATTERN = re.compile(
+    r"synthetic-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+)
+
+
+def is_synthetic_actor_id(value: str) -> bool:
+    """Only accept an explicitly synthetic label followed by a canonical UUIDv4."""
+    return _SYNTHETIC_ACTOR_ID_PATTERN.fullmatch(value) is not None
 
 
 class Permission(StrEnum):

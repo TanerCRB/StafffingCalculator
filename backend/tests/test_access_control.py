@@ -107,9 +107,9 @@ def test_project_create_denies_caller_holding_only_project_read(
 
 
 def test_scenario_history_requires_project_read_and_its_dedicated_permission() -> None:
-    """Neither the project read grant nor the history grant substitutes for the other."""
+    """History needs project, history and catalogue read grants independently."""
     dependency = require_permissions(
-        Permission.PROJECT_READ, Permission.SCENARIO_HISTORY_READ
+        Permission.PROJECT_READ, Permission.SCENARIO_HISTORY_READ, Permission.CATALOG_READ
     )
     project_reader = CallerIdentity(
         user_id=IN_SCOPE_USER, permissions=frozenset({Permission.PROJECT_READ})
@@ -117,18 +117,33 @@ def test_scenario_history_requires_project_read_and_its_dedicated_permission() -
     history_only = CallerIdentity(
         user_id=IN_SCOPE_USER, permissions=frozenset({Permission.SCENARIO_HISTORY_READ})
     )
-    both = CallerIdentity(
+    without_catalog = CallerIdentity(
         user_id=IN_SCOPE_USER,
         permissions=frozenset({Permission.PROJECT_READ, Permission.SCENARIO_HISTORY_READ}),
+    )
+    catalog_only = CallerIdentity(
+        user_id=IN_SCOPE_USER, permissions=frozenset({Permission.CATALOG_READ})
+    )
+    both = CallerIdentity(
+        user_id=IN_SCOPE_USER,
+        permissions=frozenset(
+            {Permission.PROJECT_READ, Permission.SCENARIO_HISTORY_READ, Permission.CATALOG_READ}
+        ),
     )
 
     with pytest.raises(HTTPException) as project_reader_denied:
         dependency(caller=project_reader)
     with pytest.raises(HTTPException) as history_only_denied:
         dependency(caller=history_only)
+    with pytest.raises(HTTPException) as without_catalog_denied:
+        dependency(caller=without_catalog)
+    with pytest.raises(HTTPException) as catalog_only_denied:
+        dependency(caller=catalog_only)
 
     assert project_reader_denied.value.status_code == 403
     assert history_only_denied.value.status_code == 403
+    assert without_catalog_denied.value.status_code == 403
+    assert catalog_only_denied.value.status_code == 403
     assert dependency(caller=both) is both
 
 
@@ -196,11 +211,10 @@ def test_personnel_cost_permission_is_not_granted_by_the_placeholder_identity() 
             Permission.RESULTS_READ,
             # SC-6-01 (Issue #11, gate 1 decision 2) — re-armed around the new set, not loosened.
             Permission.SCENARIO_COPY,
-            # SC-8-02 development/test reachability only; not a production grant claim.
-            Permission.SCENARIO_HISTORY_READ,
         }
     )
     assert Permission.PERSONNEL_COSTS_READ not in PLACEHOLDER_PERMISSIONS
+    assert Permission.SCENARIO_HISTORY_READ not in PLACEHOLDER_PERMISSIONS
 
 
 @pytest.mark.parametrize("environment", ["development", "test", "production", ""])
