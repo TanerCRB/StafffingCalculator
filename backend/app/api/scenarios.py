@@ -185,7 +185,15 @@ def approve(
 def read_assumptions(
     project_id: uuid.UUID,
     scenario_id: uuid.UUID,
-    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.PROJECT_READ))],
+    caller: Annotated[
+        CallerIdentity,
+        Depends(
+            require_permissions(
+                Permission.PROJECT_READ,
+                Permission.SCENARIO_ASSUMPTIONS_READ,
+            )
+        ),
+    ],
     session: Annotated[Session, Depends(get_session)],
 ) -> ScenarioAssumptions:
     """The target margin and the overload threshold of one scenario, resolved scenario → project →
@@ -197,14 +205,16 @@ def read_assumptions(
     - **404** — the scenario is not the caller's, does not exist, or belongs to another project:
       one answer for all three (ADR-0005), because the scenario is resolved through
       `project_for_caller` and there is nothing here to tell them apart. Never `403` for a row.
-    - **403** — the permission dependency, before the database.
+    - **403** — missing `PROJECT_READ` or `SCENARIO_ASSUMPTIONS_READ`; after scope is resolved,
+      also missing `ORGANIZATION_DEFAULTS_READ` when any returned value comes from organization.
 
-    `PROJECT_READ`, the permission every other read of a project's contents declares: the values
-    are part of what a caller who may read the project may read.
+    Project assignment remains enforced by `project_for_caller`. The two dedicated read grants
+    are independent: scenario-assumption access does not imply project or organization access.
     """
     view = scenario_assumptions_for_caller(session, caller, project_id, scenario_id)
     if view is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
+    _require_organization_default_read(caller, view.assumptions.values())
     return shape_scenario_assumptions(view)
 
 
@@ -251,13 +261,13 @@ def preview_assumption_reset(
 
 
 def _require_organization_default_read(caller: CallerIdentity, assumptions) -> None:
-    """Preserve the organization-default read boundary for values exposed by a reset."""
+    """Preserve organization-default read access for any resolved value sourced there."""
     if any(item.source == "organization" for item in assumptions) and not caller.has(
         Permission.ORGANIZATION_DEFAULTS_READ
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Caller lacks permission to preview the inherited value.",
+            detail="Caller lacks permission to read the requested resource.",
         )
 @router.get(
     "/history",

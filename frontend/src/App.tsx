@@ -6,6 +6,7 @@ import { WorkingCalendarsScreen } from "./features/catalog/WorkingCalendarsScree
 import { CompareScenariosScreen } from "./features/compare/CompareScenariosScreen";
 import { ProjectListScreen } from "./features/projects/ProjectListScreen";
 import { ProjectOverviewScreen } from "./features/overview/ProjectOverviewScreen";
+import { OrganizationDefaultsScreen } from "./features/projects/OrganizationDefaultsScreen";
 import { AppShell, type BackendStatus, type ScreenKey } from "./shell/AppShell";
 
 export function App() {
@@ -34,6 +35,8 @@ export function App() {
     screen = <CompareScenariosScreen />;
   } else if (activeScreen === "roles-and-rates") {
     screen = <CatalogScreen />;
+  } else if (activeScreen === "organization-defaults") {
+    screen = <OrganizationDefaultsScreen />;
   } else {
     screen = <WorkingCalendarsScreen />;
   }

@@ -59,9 +59,14 @@ THRESHOLD = "overload_threshold_percent"
 
 
 def _read(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID) -> dict:
-    response = client.get(
-        assumptions_path(project_id, scenario_id), headers=as_caller(IN_SCOPE_USER)
-    )
+    with caller_holding(
+        Permission.PROJECT_READ,
+        Permission.SCENARIO_ASSUMPTIONS_READ,
+        Permission.ORGANIZATION_DEFAULTS_READ,
+    ):
+        response = client.get(
+            assumptions_path(project_id, scenario_id), headers=as_caller(IN_SCOPE_USER)
+        )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -267,26 +272,36 @@ def test_resolved_assumptions_of_a_scenario_outside_the_callers_scope_are_not_fo
     set_project_overrides(db_session, foreign.id, target_margin_percent=Decimal("33.000"))
     mine = make_project(db_session, name="Aurora migration", accessible_to=(IN_SCOPE_USER,))
 
-    answers = [
-        # the foreign scenario through its own project
-        client.get(
-            assumptions_path(foreign.id, foreign_scenario.id), headers=as_caller(IN_SCOPE_USER)
-        ),
-        # the foreign scenario addressed through a project the caller *can* see
-        client.get(
-            assumptions_path(mine.id, foreign_scenario.id), headers=as_caller(IN_SCOPE_USER)
-        ),
-        # a scenario that does not exist
-        client.get(assumptions_path(mine.id, uuid.uuid4()), headers=as_caller(IN_SCOPE_USER)),
-    ]
+    with caller_holding(
+        Permission.PROJECT_READ,
+        Permission.SCENARIO_ASSUMPTIONS_READ,
+        Permission.ORGANIZATION_DEFAULTS_READ,
+    ):
+        answers = [
+            # the foreign scenario through its own project
+            client.get(
+                assumptions_path(foreign.id, foreign_scenario.id), headers=as_caller(IN_SCOPE_USER)
+            ),
+            # the foreign scenario addressed through a project the caller *can* see
+            client.get(
+                assumptions_path(mine.id, foreign_scenario.id), headers=as_caller(IN_SCOPE_USER)
+            ),
+            # a scenario that does not exist
+            client.get(assumptions_path(mine.id, uuid.uuid4()), headers=as_caller(IN_SCOPE_USER)),
+        ]
     for response in answers:
         assert response.status_code == 404, response.text
         assert response.json() == {"detail": SCENARIO_NOT_FOUND_DETAIL}
         assert "33" not in response.text
 
-    owner = client.get(
-        assumptions_path(foreign.id, foreign_scenario.id), headers=as_caller(OUT_OF_SCOPE_USER)
-    )
+    with caller_holding(
+        Permission.PROJECT_READ,
+        Permission.SCENARIO_ASSUMPTIONS_READ,
+        user_id=OUT_OF_SCOPE_USER,
+    ):
+        owner = client.get(
+            assumptions_path(foreign.id, foreign_scenario.id), headers=as_caller(OUT_OF_SCOPE_USER)
+        )
     assert owner.status_code == 200, owner.text
     assert owner.json()[MARGIN] == {"value": "33.000", "state": RESOLVED, "source": PROJECT}
 
@@ -301,9 +316,15 @@ def test_the_assumptions_endpoint_declares_a_permission_and_refuses_a_caller_wit
     with caller_holding(Permission.PROJECT_EDIT):
         denied = client.get(assumptions_path(project.id, scenario.id))
     with caller_holding(Permission.PROJECT_READ):
+        project_read_only = client.get(assumptions_path(project.id, scenario.id))
+    with caller_holding(Permission.SCENARIO_ASSUMPTIONS_READ):
+        assumptions_read_only = client.get(assumptions_path(project.id, scenario.id))
+    with caller_holding(Permission.PROJECT_READ, Permission.SCENARIO_ASSUMPTIONS_READ):
         allowed = client.get(assumptions_path(project.id, scenario.id))
 
     assert denied.status_code == 403, denied.text
+    assert project_read_only.status_code == 403, project_read_only.text
+    assert assumptions_read_only.status_code == 403, assumptions_read_only.text
     assert allowed.status_code == 200, allowed.text
 
 

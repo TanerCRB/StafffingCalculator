@@ -79,13 +79,14 @@ function response(status: number, body?: unknown) {
   };
 }
 
-function mount(scenarioId = SCENARIO_A, name = "Baseline") {
+function mount(scenarioId = SCENARIO_A, name = "Baseline", scenarioStatus: "Draft" | "Approved" = "Draft") {
   return render(
     <ScenarioAdditionalCostsSection
       projectId={PROJECT_ID}
       scenarioId={scenarioId}
       scenarioName={name}
       reportingCurrency="EUR"
+      scenarioStatus={scenarioStatus}
     />,
   );
 }
@@ -154,6 +155,27 @@ afterEach(() => {
 });
 
 describe("ScenarioAdditionalCostsSection — SC-5-13", () => {
+  it("hides additional-cost writes for approved scenarios while retaining their values", async () => {
+    installApi({ costs: { [SCENARIO_A]: [COST_A] } });
+    mount(SCENARIO_A, "Baseline", "Approved");
+
+    expect(await screen.findByText("Cloud")).toBeVisible();
+    expect(screen.getByText("Approved values are frozen. Duplicate this scenario to make further changes.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add cost" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
+  it("keeps additional-cost writes available for a draft", async () => {
+    installApi({ costs: { [SCENARIO_A]: [COST_A] } });
+    mount();
+
+    expect(await screen.findByText("Cloud")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add cost" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
+  });
+
   it("test_sc_5_13_01_lists_only_costs_of_the_selected_scenario", async () => {
     const { calls } = installApi({ costs: { [SCENARIO_A]: [COST_A], [SCENARIO_B]: [COST_B] } });
     render(

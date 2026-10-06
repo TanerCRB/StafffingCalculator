@@ -245,6 +245,46 @@ describe("ProjectListScreen", () => {
     vi.useRealTimers();
   });
 
+  it("reloads an approved scenario from the server after a successful approval", async () => {
+    const readyDraft: ProjectListItem = {
+      ...AURORA,
+      scenarios: [{ ...AURORA.scenarios[0], ready_for_approval: true, missing_inputs: [] }],
+    };
+    let serverScenario = readyDraft.scenarios[0];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        const project = { ...readyDraft, scenarios: [serverScenario] };
+        return { ok: true, status: 200, json: async () => ({ projects: [project], total: 1 }) };
+      }
+      if (url.pathname === `/projects/${AURORA.id}/scenarios/${serverScenario.id}/approve` && init?.method === "POST") {
+        serverScenario = { ...serverScenario, status: "Approved", ready_for_approval: false };
+        return { ok: true, status: 200, json: async () => ({
+          id: serverScenario.id,
+          status: "Approved",
+          snapshot: { working_calendars: 1, working_calendar_days: 5, absence_types: 0, absence_budgets: 0, organization_defaults: 1 },
+        }) };
+      }
+      return { ok: false, status: 403, json: async () => ({ detail: "Forbidden" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const firstLoad = render(<ProjectListScreen />);
+    await projectRows();
+    await selectProject("Aurora migration");
+    fireEvent.click(screen.getByRole("button", { name: "Approve scenario: Baseline" }));
+    expect(await screen.findByText(/scenario is already approved\. Its values are frozen/)).toBeVisible();
+    expect(within(scenarioCard("Baseline")).getByText("Status: Approved")).toBeVisible();
+
+    firstLoad.unmount();
+    render(<ProjectListScreen />);
+    await projectRows();
+    await selectProject("Aurora migration");
+
+    expect(within(scenarioCard("Baseline")).getByText("Status: Approved")).toBeVisible();
+    expect(within(scenarioCard("Baseline")).queryByRole("button", { name: /Approve scenario/ })).toBeNull();
+  });
+
   function stubArchiveFlow(archiveResponse: { ok: boolean; status: number; body?: unknown } | Promise<{ ok: boolean; status: number; body?: unknown }>) {
     let listedProject = AURORA;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

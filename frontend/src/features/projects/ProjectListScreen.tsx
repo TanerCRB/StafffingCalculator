@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { ApiError, RequestTimeoutError, archiveProject, copyProject, getProjects } from "../../api/client";
 import type { ProjectDetail, ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
+import type { ScenarioApproval } from "../../api/contracts/scenarioApproval";
 import { formatDeliveryPeriod } from "../../lib/dates";
 import { formatPercentString } from "../../lib/money";
 import { handleNotYetImplemented, notImplementedHint } from "../../lib/notImplemented";
@@ -10,6 +11,8 @@ import { ScenarioCommercialTermsSection } from "./ScenarioCommercialTermsSection
 import { ScenarioAdditionalCostsSection } from "./ScenarioAdditionalCostsSection";
 import { ScenarioResultsSection } from "./ScenarioResultsSection";
 import { ScenarioHistorySection } from "./ScenarioHistorySection";
+import { ScenarioApprovalSection } from "./ScenarioApprovalSection";
+import { ScenarioAssumptionsSection } from "./ScenarioAssumptionsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
 import { missingInputLabel } from "./scenarioInputLabels";
@@ -214,6 +217,18 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
         ),
         total: previous.total,
       };
+    });
+  }
+
+  function markScenarioApproved(scenarioId: string, result: ScenarioApproval) {
+    setState((previous) => previous.kind !== "ready" ? previous : {
+      ...previous,
+      projects: previous.projects.map((project) => ({
+        ...project,
+        scenarios: project.scenarios.map((scenario) => scenario.id === scenarioId
+          ? { ...scenario, status: result.status, ready_for_approval: false }
+          : scenario),
+      })),
     });
   }
 
@@ -560,7 +575,11 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
                 <h2 id="scenario-details-heading" className="project-list__details-title">
                   Scenario details
                 </h2>
-              <ScenarioDetails project={selectedProject} onScenarioDuplicated={addDuplicatedScenario} />
+              <ScenarioDetails
+                project={selectedProject}
+                onScenarioDuplicated={addDuplicatedScenario}
+                onScenarioApproved={markScenarioApproved}
+              />
               </>
             )}
           </section>
@@ -630,9 +649,10 @@ function ListToolbar({ search, status, onSearchChange, onStatusChange, onReset, 
 interface ScenarioDetailsProps {
   readonly project: ProjectListItem;
   readonly onScenarioDuplicated: (projectId: string, scenario: ScenarioListItem) => void;
+  readonly onScenarioApproved: (scenarioId: string, result: ScenarioApproval) => void;
 }
 
-function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps) {
+function ScenarioDetails({ project, onScenarioDuplicated, onScenarioApproved }: ScenarioDetailsProps) {
   if (project.scenarios.length === 0) {
     return (
       <>
@@ -675,6 +695,11 @@ function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps
                 ? "Not provided"
                 : formatPercentString(scenario.target_margin_percent)}
             </p>
+            <ScenarioAssumptionsSection
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioStatus={scenario.status}
+            />
             {/* SC-4-06: its own read, its own failure states, its own write. Keyed by the card, so
                 switching projects unmounts it and aborts its read (ADR-0010, point 7). */}
             <ScenarioCommercialTermsSection
@@ -687,6 +712,7 @@ function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps
               scenarioId={scenario.id}
               scenarioName={scenario.name}
               reportingCurrency={project.reporting_currency}
+              scenarioStatus={scenario.status}
             />
             {/* SC-7-02: a second, independent read on the same card — its own state machine, its
                 own abort on unmount/re-select (ADR-0010, point 7). Q1 = option A: no new router, no
@@ -700,6 +726,14 @@ function ScenarioDetails({ project, onScenarioDuplicated }: ScenarioDetailsProps
               projectId={project.id}
               scenarioId={scenario.id}
               scenarioName={scenario.name}
+            />
+            <ScenarioApprovalSection
+              projectId={project.id}
+              scenarioId={scenario.id}
+              scenarioName={scenario.name}
+              status={scenario.status}
+              ready={scenario.ready_for_approval}
+              onApproved={onScenarioApproved}
             />
             {/* SC-3-09 adds writes to the existing staffing read. Backend permission checks remain
                 authoritative; this client has no permission preflight endpoint. */}

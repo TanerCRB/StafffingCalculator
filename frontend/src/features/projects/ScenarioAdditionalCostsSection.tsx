@@ -15,6 +15,7 @@ import type {
   AdditionalCostType,
   AdditionalCostFundingSource,
 } from "../../api/contracts/additionalCosts";
+import type { ScenarioStatus } from "../../api/contracts/projects";
 import type { DimensionEntry } from "../../api/contracts/catalog";
 import { formatMoneyString } from "../../lib/money";
 import {
@@ -23,6 +24,7 @@ import {
 } from "./additionalCostCreateOperation";
 import {
   ADDITIONAL_COSTS_HEADING,
+  APPROVED_ADDITIONAL_COSTS_NOTE,
   ADD_COST,
   AMOUNT,
   CANCEL,
@@ -99,6 +101,7 @@ export interface ScenarioAdditionalCostsSectionProps {
   readonly scenarioId: string;
   readonly scenarioName: string;
   readonly reportingCurrency: string;
+  readonly scenarioStatus?: ScenarioStatus;
 }
 
 function readFailure(error: unknown): ReadState {
@@ -150,6 +153,7 @@ export function ScenarioAdditionalCostsSection({
   scenarioId,
   scenarioName,
   reportingCurrency,
+  scenarioStatus = "Draft",
 }: ScenarioAdditionalCostsSectionProps) {
   const [read, setRead] = useState<ReadState>({ kind: "loading" });
   const [readRequest, setReadRequest] = useState(0);
@@ -170,6 +174,13 @@ export function ScenarioAdditionalCostsSection({
       categoriesController.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (scenarioStatus === "Approved") {
+      setForm(null);
+      setConfirmDeleteId(null);
+    }
+  }, [scenarioStatus]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -308,10 +319,13 @@ export function ScenarioAdditionalCostsSection({
     <section className="additional-costs" aria-label={`${ADDITIONAL_COSTS_HEADING} for ${scenarioName}`}>
       <div className="additional-costs__heading-row">
         <h4 className="additional-costs__title">{ADDITIONAL_COSTS_HEADING}</h4>
-        <button type="button" className="button button--secondary" onClick={openCreate} disabled={read.kind !== "ready" || writing || deletingId !== null}>
-          {ADD_COST}
-        </button>
+        {scenarioStatus !== "Approved" && (
+          <button type="button" className="button button--secondary" onClick={openCreate} disabled={read.kind !== "ready" || writing || deletingId !== null}>
+            {ADD_COST}
+          </button>
+        )}
       </div>
+      {scenarioStatus === "Approved" && <p className="scenario-card__metric">{APPROVED_ADDITIONAL_COSTS_NOTE}</p>}
 
       {read.kind === "loading" && <p role="status">{READ_LOADING}</p>}
       {read.kind === "denied" && <p role="alert">{READ_DENIED}</p>}
@@ -337,7 +351,7 @@ export function ScenarioAdditionalCostsSection({
                   <span>{COST_TYPE_LABELS[cost.cost_type]}</span>
                   <span>{FUNDING_SOURCE}: {FUNDING_SOURCE_LABELS[cost.funding_source]}</span>
                 </div>
-                <div className="additional-costs__actions">
+                {scenarioStatus !== "Approved" && <div className="additional-costs__actions">
                   <button type="button" className="button button--quiet" onClick={() => openEdit(cost)} disabled={writing || deletingId !== null}>
                     {EDIT_COST}
                   </button>
@@ -353,14 +367,14 @@ export function ScenarioAdditionalCostsSection({
                       {REMOVE_COST}
                     </button>
                   )}
-                </div>
+                </div>}
               </li>
             ))}
           </ul>
         )
       )}
 
-      {form !== null && (
+      {form !== null && scenarioStatus !== "Approved" && (
         <form className="additional-costs__form" onSubmit={(event) => void submit(event)}>
           <label>
             {CATEGORY}

@@ -15,6 +15,7 @@ from app.data import scenario_assumption_writes
 from app.data.scenario_approval import approve_scenario
 from app.models import (
     ApprovedSnapshotOrganizationDefaults,
+    Project,
     Scenario,
     ScenarioStatus,
 )
@@ -114,12 +115,96 @@ def test_k_01_resolved_assumptions_marker_supports_first_override_and_rejects_st
     assert _stored(db_session, scenario.id)[0] == Decimal("25.000")
 
 
+def test_k_01_resolved_assumptions_require_project_scenario_and_conditional_organization_reads(
+    client: TestClient, db_session: Session
+) -> None:
+    project = make_project(
+        db_session,
+        name="K1 assumptions permissions",
+        accessible_to=(IN_SCOPE_USER,),
+    )
+    set_organization_defaults(
+        db_session,
+        target_margin_percent=Decimal("8.000"),
+        overload_threshold_percent=Decimal("88.000"),
+    )
+    set_project_overrides(
+        db_session,
+        project.id,
+        target_margin_percent=Decimal("21.000"),
+        overload_threshold_percent=Decimal("111.000"),
+    )
+    scenario = make_scenario(
+        db_session,
+        project,
+        name="Draft",
+        target_margin_percent=Decimal("31.000"),
+    )
+
+    # Either broad project read or the feature grant alone is insufficient.
+    with caller_holding(Permission.PROJECT_READ):
+        project_only = client.get(_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
+    assert project_only.status_code == 403
+    with caller_holding(READ):
+        assumptions_only = client.get(
+            _path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
+        )
+    assert assumptions_only.status_code == 403
+
+    # Scenario and project sources need both read grants, but no organization grant.
+    with caller_holding(Permission.PROJECT_READ, READ):
+        project_sources = client.get(
+            _path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
+        )
+    assert project_sources.status_code == 200, project_sources.text
+    assert project_sources.json()["target_margin_percent"]["source"] == "scenario"
+    assert project_sources.json()["overload_threshold_percent"]["source"] == "project"
+
+    with caller_holding(Permission.PROJECT_READ, READ, user_id=OUT_OF_SCOPE_USER):
+        out_of_scope = client.get(
+            _path(project.id, scenario.id), headers=as_caller(OUT_OF_SCOPE_USER)
+        )
+    assert out_of_scope.status_code == 404
+
+    # Once resolution falls through to an organization default, its separate grant is required.
+    db_session.execute(
+        sa.update(Scenario)
+        .where(Scenario.id == scenario.id)
+        .values(target_margin_percent=None)
+    )
+    db_session.execute(
+        sa.update(Project)
+        .where(Project.id == project.id)
+        .values(target_margin_percent=None)
+    )
+    db_session.commit()
+    with caller_holding(Permission.PROJECT_READ, READ):
+        organization_without_grant = client.get(
+            _path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
+        )
+    assert organization_without_grant.status_code == 403
+    assert organization_without_grant.json()["detail"] == (
+        "Caller lacks permission to read the requested resource."
+    )
+    with caller_holding(Permission.PROJECT_READ, READ, Permission.ORGANIZATION_DEFAULTS_READ):
+        organization_with_grant = client.get(
+            _path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER)
+        )
+    assert organization_with_grant.status_code == 200, organization_with_grant.text
+    assert organization_with_grant.json()["target_margin_percent"] == {
+        "value": "8.000",
+        "state": "resolved",
+        "source": "organization",
+    }
+    assert organization_with_grant.json()["overload_threshold_percent"]["source"] == "project"
+
+
 def test_k_01_marker_tracks_persisted_timestamp_without_changing_resolution(
     client: TestClient, db_session: Session
 ) -> None:
     project = make_project(db_session, name="K1 marker contrast", accessible_to=(IN_SCOPE_USER,))
     scenario = make_scenario(db_session, project, name="Draft")
-    with caller_holding(Permission.PROJECT_READ):
+    with caller_holding(Permission.PROJECT_READ, READ):
         before = client.get(_path(project.id, scenario.id), headers=as_caller(IN_SCOPE_USER))
         assert before.status_code == 200, before.text
 

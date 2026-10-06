@@ -49,7 +49,8 @@ export type ScreenKey =
   | "overview"
   | "compare-scenarios"
   | "roles-and-rates"
-  | "working-calendars";
+  | "working-calendars"
+  | "organization-defaults";
 
 /**
  * The name of each screen, in one place: the rail entry and the breadcrumb are the same word by
@@ -61,6 +62,7 @@ const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
   "compare-scenarios": "Compare scenarios",
   "roles-and-rates": "Roles & rates",
   "working-calendars": "Working calendars",
+  "organization-defaults": "Organization defaults",
 };
 
 /**
@@ -108,7 +110,7 @@ const RAIL_WORKSPACE: readonly RailEntry[] = [
   { kind: "screen", key: "compare-scenarios" },
   { kind: "screen", key: "roles-and-rates" },
   { kind: "screen", key: "working-calendars" },
-  planned("Organization defaults", "organization-level defaults, F-02 (Issue #4)"),
+  { kind: "screen", key: "organization-defaults" },
 ];
 
 /**

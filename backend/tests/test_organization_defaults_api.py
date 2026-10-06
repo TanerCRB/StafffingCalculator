@@ -12,6 +12,7 @@ from app.models import ApprovedSnapshotOrganizationDefaults, OrganizationDefault
 from tests.conftest import (
     IN_SCOPE_USER,
     as_caller,
+    assumptions_path,
     caller_holding,
     make_project,
     make_scenario,
@@ -21,6 +22,17 @@ from tests.conftest import (
 PATH = "/organization-defaults"
 READ = Permission.ORGANIZATION_DEFAULTS_READ
 WRITE = Permission.ORGANIZATION_DEFAULTS_WRITE
+
+
+def _read_resolved(client: TestClient, path: str) -> dict:
+    with caller_holding(
+        Permission.PROJECT_READ,
+        Permission.SCENARIO_ASSUMPTIONS_READ,
+        Permission.ORGANIZATION_DEFAULTS_READ,
+    ):
+        response = client.get(path, headers=as_caller(IN_SCOPE_USER))
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def _read(client: TestClient) -> dict:
@@ -131,7 +143,7 @@ def test_k_03_changing_org_defaults_updates_draft_resolution_only(
     override_project = make_project(
         db_session, name="Defaults API override", accessible_to=(IN_SCOPE_USER,)
     )
-    from tests.conftest import assumptions_path, set_project_overrides
+    from tests.conftest import set_project_overrides
 
     set_project_overrides(db_session, override_project.id, target_margin_percent=Decimal("12.500"))
     override_draft = make_scenario(db_session, override_project, name="Draft override")
@@ -153,22 +165,14 @@ def test_k_03_changing_org_defaults_updates_draft_resolution_only(
             headers=as_caller(IN_SCOPE_USER),
         )
         assert changed.status_code == 200, changed.text
-    inherited = client.get(
-        assumptions_path(inherited_project.id, inherited_draft.id),
-        headers=as_caller(IN_SCOPE_USER),
-    )
-    assert inherited.status_code == 200, inherited.text
-    assert inherited.json()["target_margin_percent"] == {
+    inherited = _read_resolved(client, assumptions_path(inherited_project.id, inherited_draft.id))
+    assert inherited["target_margin_percent"] == {
         "value": "22.125",
         "state": "resolved",
         "source": "organization",
     }
-    override = client.get(
-        assumptions_path(override_project.id, override_draft.id),
-        headers=as_caller(IN_SCOPE_USER),
-    )
-    assert override.status_code == 200, override.text
-    assert override.json()["target_margin_percent"] == {
+    override = _read_resolved(client, assumptions_path(override_project.id, override_draft.id))
+    assert override["target_margin_percent"] == {
         "value": "12.500",
         "state": "resolved",
         "source": "project",
@@ -194,11 +198,8 @@ def test_k_04_approved_snapshot_is_unchanged_by_live_default_edit(
     )
     db_session.add(snapshot)
     db_session.flush()
-    from tests.conftest import assumptions_path
-
-    before = client.get(assumptions_path(project.id, approved.id), headers=as_caller(IN_SCOPE_USER))
-    assert before.status_code == 200, before.text
-    old = before.json()
+    before = _read_resolved(client, assumptions_path(project.id, approved.id))
+    old = before
     assert old["target_margin_percent"]["value"] == "17.500"
     assert old["overload_threshold_percent"]["value"] == "120.000"
 
@@ -221,19 +222,15 @@ def test_k_04_approved_snapshot_is_unchanged_by_live_default_edit(
             headers=as_caller(IN_SCOPE_USER),
         )
     assert changed.status_code == 200, changed.text
-    after = client.get(assumptions_path(project.id, approved.id), headers=as_caller(IN_SCOPE_USER))
-    assert after.status_code == 200, after.text
-    assert after.json() == old
-    draft_after = client.get(
-        assumptions_path(project.id, draft.id), headers=as_caller(IN_SCOPE_USER)
-    )
-    assert draft_after.status_code == 200, draft_after.text
-    assert draft_after.json()["target_margin_percent"] == {
+    after = _read_resolved(client, assumptions_path(project.id, approved.id))
+    assert after == old
+    draft_after = _read_resolved(client, assumptions_path(project.id, draft.id))
+    assert draft_after["target_margin_percent"] == {
         "value": "21.000",
         "state": "resolved",
         "source": "organization",
     }
-    assert draft_after.json()["overload_threshold_percent"] == {
+    assert draft_after["overload_threshold_percent"] == {
         "value": "95.000",
         "state": "resolved",
         "source": "organization",

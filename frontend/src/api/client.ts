@@ -53,6 +53,7 @@ import {
 } from "./contracts/commercialTerms";
 import { isDecimalString } from "../lib/money";
 import type { HealthResponse } from "./contracts/health";
+import type { ScenarioApproval } from "./contracts/scenarioApproval";
 import { isScenarioHistory, type ScenarioHistory, type SnapshotCollectionKey } from "./contracts/scenarioHistory";
 import type {
   ProjectCreateRequest,
@@ -65,6 +66,18 @@ import type {
   ScenarioListItem,
   ScenarioStatus,
 } from "./contracts/projects";
+import {
+  isOrganizationDefaults,
+  isScenarioAssumptionOverrides,
+  isScenarioAssumptionResetPreview,
+  isScenarioAssumptions,
+  type OrganizationDefaults,
+  type OrganizationDefaultsPatch,
+  type ScenarioAssumptionOverrides,
+  type ScenarioAssumptionResetPreview,
+  type ScenarioAssumptions,
+  type ScenarioAssumptionsPatch,
+} from "./contracts/scenarioAssumptions";
 import {
   ADDITIONAL_COST_STATES,
   PERSONNEL_COST_STATES,
@@ -394,6 +407,56 @@ export async function getProject(projectId: string, signal?: AbortSignal): Promi
 
 export async function editProject(projectId: string, body: ProjectEditRequest): Promise<ProjectDetail> {
   return write(`/projects/${projectId}`, "PATCH", body, isProjectDetailShape);
+}
+
+export async function getScenarioAssumptions(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+): Promise<ScenarioAssumptions> {
+  const path = `/projects/${projectId}/scenarios/${scenarioId}/assumptions`;
+  return requestWithDeadline(`${API_BASE_URL}${path}`, { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } }, async (response) => {
+    if (!response.ok) throw await refusalOf(response, `GET ${path}`);
+    const payload: unknown = await response.json();
+    if (!isScenarioAssumptions(payload)) throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+    return payload;
+  }, REQUEST_TIMEOUT_MS, signal);
+}
+
+export async function getScenarioAssumptionResetPreview(
+  projectId: string,
+  scenarioId: string,
+  signal?: AbortSignal,
+): Promise<ScenarioAssumptionResetPreview> {
+  const path = `/projects/${projectId}/scenarios/${scenarioId}/assumptions/reset-preview`;
+  return requestWithDeadline(`${API_BASE_URL}${path}`, { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } }, async (response) => {
+    if (!response.ok) throw await refusalOf(response, `GET ${path}`);
+    const payload: unknown = await response.json();
+    if (!isScenarioAssumptionResetPreview(payload)) throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+    return payload;
+  }, REQUEST_TIMEOUT_MS, signal);
+}
+
+export async function editScenarioAssumptions(
+  projectId: string,
+  scenarioId: string,
+  body: ScenarioAssumptionsPatch,
+): Promise<ScenarioAssumptionOverrides> {
+  return write(`/projects/${projectId}/scenarios/${scenarioId}/assumptions`, "PATCH", body, isScenarioAssumptionOverrides);
+}
+
+export async function getOrganizationDefaults(signal?: AbortSignal): Promise<OrganizationDefaults> {
+  const path = "/organization-defaults";
+  return requestWithDeadline(`${API_BASE_URL}${path}`, { headers: { [CALLER_ID_HEADER]: CALLER_USER_ID } }, async (response) => {
+    if (!response.ok) throw await refusalOf(response, `GET ${path}`);
+    const payload: unknown = await response.json();
+    if (!isOrganizationDefaults(payload)) throw new ApiError(response.status, `GET ${path} returned a payload of the wrong shape`);
+    return payload;
+  }, REQUEST_TIMEOUT_MS, signal);
+}
+
+export async function editOrganizationDefaults(body: OrganizationDefaultsPatch): Promise<OrganizationDefaults> {
+  return write("/organization-defaults", "PATCH", body, isOrganizationDefaults);
 }
 
 /** Copy a project and its scenarios (`POST /projects/{id}/copy`, SC-1-03). The server response is
@@ -1579,6 +1642,21 @@ export async function duplicateScenario(
     undefined,
     isScenarioListItemShape,
   );
+}
+
+function isScenarioApprovalShape(value: unknown, scenarioId: string): value is ScenarioApproval {
+  if (!isRecord(value) || value.id !== scenarioId || value.status !== "Approved" || !isRecord(value.snapshot)) {
+    return false;
+  }
+  const snapshot = value.snapshot;
+  return ["working_calendars", "working_calendar_days", "absence_types", "absence_budgets", "organization_defaults"]
+    .every((key) => Number.isInteger(snapshot[key]) && (snapshot[key] as number) >= 0);
+}
+
+/** Approve a ready scenario using the server's one-way approval action (ADR-0004). */
+export async function approveScenario(projectId: string, scenarioId: string): Promise<ScenarioApproval> {
+  const path = `/projects/${projectId}/scenarios/${scenarioId}/approve`;
+  return write(path, "POST", undefined, (value) => isScenarioApprovalShape(value, scenarioId));
 }
 
 /**
