@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 
-import { ApiError, RequestTimeoutError, getScenarioResults } from "../../api/client";
+import { ApiError, RequestTimeoutError, downloadScenarioResults, getScenarioResults, type ScenarioResultsExportFormat } from "../../api/client";
 import {
   RESULTS_NOT_APPLICABLE,
   type AdditionalCostSource,
@@ -34,6 +34,10 @@ import {
   PROFITABILITY_CURRENCY_MISMATCH,
   RESULTS_CONFLICT,
   RESULTS_FAILED,
+  RESULTS_EXPORT_FAILED,
+  RESULTS_EXPORTING,
+  RESULTS_EXPORT_PDF,
+  RESULTS_EXPORT_XLSX,
   RESULTS_FIELD_UNAVAILABLE,
   RESULTS_HEADING,
   RESULTS_LOADING,
@@ -145,6 +149,8 @@ export function ScenarioResultsSection({
   const [read, setRead] = useState<ReadState>({ kind: "loading" });
   /** Bumped by "Read scenario results again" — the read effect depends on it. */
   const [readRequest, setReadRequest] = useState(0);
+  const [exporting, setExporting] = useState<ScenarioResultsExportFormat | null>(null);
+  const [exportFailed, setExportFailed] = useState(false);
 
   useEffect(() => {
     // Leaving the card, or asking again, ends the read — it does not merely stop listening to it
@@ -171,6 +177,18 @@ export function ScenarioResultsSection({
   function readAgain() {
     setRead({ kind: "loading" });
     setReadRequest((count) => count + 1);
+  }
+
+  async function exportReport(format: ScenarioResultsExportFormat) {
+    setExporting(format);
+    setExportFailed(false);
+    try {
+      await downloadScenarioResults(projectId, scenarioId, format);
+    } catch {
+      setExportFailed(true);
+    } finally {
+      setExporting(null);
+    }
   }
 
   let body;
@@ -230,6 +248,18 @@ export function ScenarioResultsSection({
       <h4 id={headingId} className="scenario-results__title">
         {RESULTS_HEADING}
       </h4>
+      {read.kind === "ready" && <div className="scenario-results__actions">
+        <button type="button" className="button button--secondary" disabled={exporting !== null}
+          aria-label={`${RESULTS_EXPORT_PDF} for ${scenarioName}`} onClick={() => void exportReport("pdf")}>
+          {RESULTS_EXPORT_PDF}
+        </button>
+        <button type="button" className="button button--secondary" disabled={exporting !== null}
+          aria-label={`${RESULTS_EXPORT_XLSX} for ${scenarioName}`} onClick={() => void exportReport("xlsx")}>
+          {RESULTS_EXPORT_XLSX}
+        </button>
+      </div>}
+      {exporting !== null && <p role="status">{RESULTS_EXPORTING}</p>}
+      {exportFailed && <p role="alert" className="scenario-card__gaps">{RESULTS_EXPORT_FAILED}</p>}
       {body}
     </section>
   );
