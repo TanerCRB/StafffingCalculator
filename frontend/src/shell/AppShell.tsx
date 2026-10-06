@@ -10,7 +10,7 @@ import "./AppShell.css";
  *
  * Visual reference: `Wymagania/prototyp/` (design proposal, UI-01). A reference, not a
  * specification: nothing here is pixel-checked. Since SC-2-05 the rail shows the eleven entries of
- * `15-catalog.png` — five live since SC-7-11 (Overview joined the four earlier screens), with the
+ * `15-catalog.png` — six live since SC-7-11 (Overview joined the five earlier screens), with the
  * remaining project entries still planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
  * The topbar does not follow the mockup's identity chip, "Internal workspace" badge or currency
  * footer: this product has no identity endpoint, no workspace entity and no conversion to state

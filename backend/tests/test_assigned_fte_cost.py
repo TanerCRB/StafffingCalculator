@@ -458,10 +458,14 @@ def test_fa_11_the_fte_formula_imports_no_revenue_module_and_neither_other_formu
     } <= dispatcher
 
 
-def test_fa_11_the_fte_conversion_has_exactly_one_consumer_and_it_is_the_fte_formula() -> None:
-    """A-K07's tripwire lists the modules that must not import `app.domain.fte_hours`; this is the
-    other half: among every module under `app/`, the FTE formula is the only importer. Contrast: it
-    does import it. Mutation: the dispatcher or the what-if importing the conversion directly."""
+def test_fa_11_the_fte_conversion_has_only_approved_consumers() -> None:
+    """A-K07's tripwire lists modules that must not import `app.domain.fte_hours`.
+
+    `assigned_fte_cost` remains the cost formula's consumer. SC-7-11/P-2 adds one approved
+    consumer for anonymous planned FTE by month; every other module or what-if importer remains
+    forbidden. Contrast: both approved consumers import it. Mutation: the dispatcher or a what-if
+    importing the conversion directly.
+    """
     importers = {
         path.relative_to(BACKEND_ROOT).as_posix()
         for path in Path(BACKEND_ROOT, "app").rglob("*.py")
@@ -469,7 +473,7 @@ def test_fa_11_the_fte_conversion_has_exactly_one_consumer_and_it_is_the_fte_for
         in _imports_of(path.relative_to(BACKEND_ROOT).as_posix())
     }
 
-    assert importers == {FORMULA}
+    assert importers == {FORMULA, "app/data/scenario_period_results.py"}
 
 
 def test_fa_11_the_formula_cannot_see_the_planners_hours_or_the_selling_rate() -> None:

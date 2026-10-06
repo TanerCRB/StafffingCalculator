@@ -537,6 +537,8 @@ describe("colour contrast", () => {
       "ProjectListScreen.css .project-list__status-filter": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__gaps": ["--sc-color-surface"],
       "ProjectListScreen.css .scenario-card__metric": ["--sc-color-surface"],
+      "ProjectOverviewScreen.css .overview__scenario-heading span, .overview__target": ["--sc-color-page"],
+      "ProjectOverviewScreen.css .overview__table thead th": ["--sc-color-page"],
       "ScenarioAdditionalCostsSection.css .additional-costs__details": ["--sc-color-surface"],
       "ScenarioAdditionalCostsSection.css .additional-costs__details strong": ["--sc-color-surface"],
       "ScenarioAdditionalCostsSection.css .additional-costs__empty": ["--sc-color-surface"],
@@ -610,6 +612,7 @@ describe("colour contrast", () => {
       ],
       // The orange accent bar on a scenario card: a 4px stripe, no text.
       "ProjectListScreen.css .scenario-card::before": [],
+      "ProjectOverviewScreen.css .overview__unallocated": ["--sc-color-text"],
       "ScenarioAdditionalCostsSection.css .additional-costs__form": ["--sc-color-text", "--sc-color-text-muted"],
       "ScenarioAdditionalCostsSection.css .additional-costs__row": ["--sc-color-text", "--sc-color-text-muted"],
       // The page under every screen: headings and body text, and the catalogue's descriptions.

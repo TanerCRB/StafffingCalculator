@@ -53,6 +53,7 @@ from tests.conftest import (
     make_commercial_terms,
     make_cost_category,
     make_dimension_tuple,
+    make_fixed_price_terms,
     make_project,
     make_rate,
     make_scenario,
@@ -72,6 +73,10 @@ EVERYTHING = frozenset(Permission)
 
 def results_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
     return f"/projects/{project_id}/scenarios/{scenario_id}/results"
+
+
+def period_results_path(project_id: uuid.UUID, scenario_id: uuid.UUID) -> str:
+    return f"{results_path(project_id, scenario_id)}/periods"
 
 
 def _ensure_statutory_bypass(session: Session, *, name: str = "Statutory (no cost)") -> AbsenceType:
@@ -175,6 +180,142 @@ def _results(client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID) 
         response = client.get(results_path(project_id, scenario_id))
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _period_results(
+    client: TestClient, project_id: uuid.UUID, scenario_id: uuid.UUID
+) -> dict[str, Any]:
+    with caller_holding(*EVERYTHING):
+        response = client.get(period_results_path(project_id, scenario_id))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_k_01_k_02_k_04_k_05_k_06_period_results_use_selected_scenario_month_basis_and_cues(
+    client: TestClient, db_session: Session
+) -> None:
+    """The Overview endpoint keeps T&M's monthly basis at a partial-month scenario boundary.
+
+    The second scenario changes one period's additional cost, so its series differs without
+    borrowing the first scenario's result. Exact FTE uses the calendar's 22 x 7.5 hour basis.
+    """
+    _ensure_statutory_bypass(db_session)
+    first_project, first_scenario, dimensions = _full_scenario(
+        db_session, name="Period loss", additional_amount=Decimal("25000.00")
+    )
+    second_position = make_staffing_position(
+        db_session,
+        first_scenario,
+        dimensions,
+        cost_basis="fixed_amount",
+        fixed_amount=Decimal("100.00"),
+        fixed_amount_currency="PLN",
+    )
+    make_allocation(
+        db_session,
+        second_position,
+        period_month=MAR,
+        planned_allocation_hours=Decimal("65.00"),
+        billable_hours=Decimal("0.00"),
+    )
+    first_scenario.start_date = date(2026, 3, 15)
+    first_scenario.end_date = date(2026, 3, 20)
+    first_scenario.target_margin_percent = Decimal("30.00")
+
+    first = _period_results(client, first_project.id, first_scenario.id)
+
+    assert [row["period_month"] for row in first["periods"]] == ["2026-03-01"]
+    march = first["periods"][0]
+    assert march["revenue"] == "20000.00"
+    assert march["profit"] == "-17000.00"
+    assert march["margin"] == "-85.00"
+    assert march["negative_profit"] is True
+    assert march["below_target_margin"] is True
+    assert Decimal(march["planned_fte"]) == Decimal("1.0")
+
+    second_project, second_scenario, _ = _full_scenario(
+        db_session, name="Period contrast", additional_amount=Decimal("1000.00")
+    )
+    second_scenario.start_date = MAR
+    second_scenario.end_date = MAR.replace(day=31)
+    second_scenario.target_margin_percent = Decimal("30.00")
+    second = _period_results(client, second_project.id, second_scenario.id)
+
+    assert second["periods"][0]["profit"] == "7000.00"
+    assert second["periods"][0]["below_target_margin"] is False
+    assert first["periods"][0]["profit"] != second["periods"][0]["profit"]
+
+
+def test_k_03_zero_period_revenue_reports_not_applicable_margin(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(
+        db_session,
+        name="Zero period revenue",
+        billable_hours=Decimal("0.00"),
+        additional_amount=Decimal("1.00"),
+    )
+    scenario.start_date = MAR
+    scenario.end_date = MAR.replace(day=31)
+
+    body = _period_results(client, project.id, scenario.id)
+
+    assert body["periods"][0]["revenue"] == "0.00"
+    assert body["periods"][0]["margin"] == "n/a"
+
+
+def test_k_07_period_cost_and_profitability_are_withheld_when_project_flag_is_missing(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(db_session, name="Hidden period cost", cost_visible=False)
+    scenario.start_date = MAR
+    scenario.end_date = MAR.replace(day=31)
+
+    body = _period_results(client, project.id, scenario.id)
+
+    row = body["periods"][0]
+    assert row["revenue"] == "20000.00"
+    assert row["additional_cost"] == "2000.00"
+    assert row["personnel_cost"] is None
+    assert row["period_cost"] is None
+    assert row["profit"] is None
+    assert row["margin"] is None
+    assert row["below_target_margin"] is None
+    assert row["negative_profit"] is None
+
+
+def test_k_08_periodless_fixed_price_revenue_and_fixed_amount_cost_stay_unallocated(
+    client: TestClient, db_session: Session
+) -> None:
+    _ensure_statutory_bypass(db_session)
+    project, scenario, dimensions = _full_scenario(
+        db_session,
+        name="Unallocated amounts",
+        create_commercial_terms=False,
+        additional_amount=Decimal("1.00"),
+    )
+    scenario.start_date = MAR
+    scenario.end_date = MAR.replace(day=31)
+    make_fixed_price_terms(
+        db_session, scenario, agreed_price=Decimal("50000.0000"), currency="PLN"
+    )
+    make_staffing_position(
+        db_session,
+        scenario,
+        dimensions,
+        cost_basis="fixed_amount",
+        fixed_amount=Decimal("1250.00"),
+        fixed_amount_currency="PLN",
+    )
+
+    body = _period_results(client, project.id, scenario.id)
+
+    assert body["unallocated"]["revenue"] == "50000.00"
+    assert body["unallocated"]["fixed_amount_cost"] == "1250.00"
+    assert body["periods"][0]["revenue"] == "0.00"
+    assert body["periods"][0]["margin"] == "n/a"
 
 
 # --- K-01: AC-01 arithmetic, on a live call, catching a margin/markup argument swap ---------------
