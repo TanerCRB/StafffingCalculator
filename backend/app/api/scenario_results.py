@@ -90,10 +90,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.api.response_shaping import shape_scenario_results, shape_scenario_results_for_export
+from app.api.response_shaping import (
+    shape_scenario_period_results,
+    shape_scenario_results,
+    shape_scenario_results_for_export,
+)
 from app.api.scenario_results_export import render_pdf, render_xlsx
+from app.api.schemas.scenario_period_results import ScenarioPeriodResults
 from app.api.schemas.scenario_results import ScenarioResults, ScenarioResultsComparison
 from app.core.identity import CallerIdentity, Permission
+from app.data.scenario_period_results import scenario_period_results_for_caller
 from app.data.scenario_results import ScenarioResultsRaceDetected, scenario_results_for_caller
 from app.db.session import get_session
 
@@ -123,6 +129,41 @@ SCENARIO_RESULTS_NOT_FOUND_DETAIL = "Scenario not found."
 """The same wording as `app.api.scenarios.SCENARIO_NOT_FOUND_DETAIL`: the thing that may not exist
 is the scenario. The indistinguishability is not maintained by this constant alone —
 `app.data.scenario_results` returns the same `None` for every such case."""
+
+
+@router.get(
+    "/periods",
+    response_model=ScenarioPeriodResults,
+    summary="Read a scenario's results and planned FTE by month",
+    responses={
+        404: {"description": SCENARIO_RESULTS_NOT_FOUND_DETAIL},
+        409: {
+            "description": "Refused: the scenario's approval status changed while this endpoint "
+            "was composing period results. Retry."
+        },
+    },
+)
+def read_scenario_period_results(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[CallerIdentity, Depends(require_permission(Permission.RESULTS_READ))],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioPeriodResults:
+    """Monthly, period-attributed results plus explicitly unallocated whole-scenario amounts.
+
+    All scope resolution, frozen/live input selection, the personnel-cost view, and the approval
+    race guard reuse their existing data-layer mechanisms. A periodless amount remains outside the
+    series; it is never assigned to an invented reporting month.
+    """
+    try:
+        view = scenario_period_results_for_caller(session, caller, project_id, scenario_id)
+    except ScenarioResultsRaceDetected as race:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(race)) from None
+    if view is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_RESULTS_NOT_FOUND_DETAIL
+        )
+    return shape_scenario_period_results(view, caller)
 
 
 @router.get(
