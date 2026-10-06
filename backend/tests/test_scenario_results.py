@@ -279,11 +279,51 @@ def test_k_07_period_cost_and_profitability_are_withheld_when_project_flag_is_mi
     assert row["revenue"] == "20000.00"
     assert row["additional_cost"] == "2000.00"
     assert row["personnel_cost"] is None
+    assert row["personnel_cost_currency"] is None
     assert row["period_cost"] is None
+    assert row["period_cost_currency"] is None
     assert row["profit"] is None
     assert row["margin"] is None
     assert row["below_target_margin"] is None
     assert row["negative_profit"] is None
+
+
+def test_k_07_period_cost_is_withheld_without_permission_even_when_project_flag_is_present(
+    client: TestClient, db_session: Session
+) -> None:
+    """The permission is an independent conjunct: the same project's flag alone cannot expose
+    personnel cost. Contrast: adding only PERSONNEL_COSTS_READ exposes it for this same scenario.
+    """
+    _ensure_statutory_bypass(db_session)
+    project, scenario, _ = _full_scenario(
+        db_session, name="Permission only gate", cost_visible=True
+    )
+    scenario.start_date = MAR
+    scenario.end_date = MAR.replace(day=31)
+    path = period_results_path(project.id, scenario.id)
+
+    with caller_holding(*(EVERYTHING - {Permission.PERSONNEL_COSTS_READ})):
+        withheld_response = client.get(path)
+    assert withheld_response.status_code == 200, withheld_response.text
+    withheld = withheld_response.json()["periods"][0]
+    assert withheld["revenue"] == "20000.00"
+    assert withheld["additional_cost"] == "2000.00"
+    assert withheld["personnel_cost"] is None
+    assert withheld["personnel_cost_currency"] is None
+    assert withheld["period_cost"] is None
+    assert withheld["period_cost_currency"] is None
+    assert withheld["profit"] is None
+    assert withheld["margin"] is None
+
+    with caller_holding(*EVERYTHING):
+        shown_response = client.get(path)
+    assert shown_response.status_code == 200, shown_response.text
+    shown = shown_response.json()["periods"][0]
+    assert shown["personnel_cost"] == "12000.00"
+    assert shown["personnel_cost_currency"] == "PLN"
+    assert shown["period_cost"] == "14000.00"
+    assert shown["period_cost_currency"] == "PLN"
+    assert shown["profit"] == "6000.00"
 
 
 def test_k_08_periodless_fixed_price_revenue_and_fixed_amount_cost_stay_unallocated(
@@ -315,6 +355,9 @@ def test_k_08_periodless_fixed_price_revenue_and_fixed_amount_cost_stay_unalloca
     assert body["unallocated"]["revenue"] == "50000.00"
     assert body["unallocated"]["fixed_amount_cost"] == "1250.00"
     assert body["periods"][0]["revenue"] == "0.00"
+    assert body["periods"][0]["personnel_cost"] == "12000.00"
+    assert body["periods"][0]["period_cost"] == "12001.00"
+    assert body["periods"][0]["profit"] == "-12001.00"
     assert body["periods"][0]["margin"] == "n/a"
 
 
