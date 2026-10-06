@@ -3115,3 +3115,7 @@ history / this file's own change log, not as tracked product work.
   **Out of scope (explicit):** Frontend (Issue #235); changes to PATCH semantics or permissions; runtime authentication/provider changes; other assumptions; scenario-list token; migrations.
   **Basis:** F-02; SC-1-10 and SC-1-23; ADR-0005, ADR-0007, ADR-0009, ADR-0012, ADR-0022; Issues #235 and #255.
   **Done 2026-10-05:** [PR #268](https://github.com/TanerCRB/StafffingCalculator/pull/268), merged as `1a71883`. Evidence: `backend/tests/test_scenario_assumption_overrides.py::test_k_01_resolved_assumptions_marker_supports_first_override_and_rejects_stale_token` and `::test_k_01_marker_tracks_persisted_timestamp_without_changing_resolution`; backend suite 1,610 passed, Ruff passed, frontend pre-push suite 497 passed, and GitHub CI passed 2/2. The QA mutation removing response shaping failed both focused marker tests and was restored; see the capability mutation log. QA did not separately exercise reset using the marker returned by GET.
+
+
+- [ ] **SC-1-25** — Define and expose a draft-only reset preview for target margin and overload threshold, with an explicit authorization boundary for inherited values (Issue #270).
+  Reserved 2026-10-06 after Gate 1 approval. Require `ORGANIZATION_DEFAULTS_READ` when the preview resolves to an organization default; deny reset when that required preview is unavailable; return the same refusal for out-of-scope and nonexistent scenarios. Acceptance criteria and completion evidence will be added with the separate documentation PR.
