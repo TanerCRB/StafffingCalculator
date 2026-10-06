@@ -10,8 +10,8 @@ import "./AppShell.css";
  *
  * Visual reference: `Wymagania/prototyp/` (design proposal, UI-01). A reference, not a
  * specification: nothing here is pixel-checked. Since SC-2-05 the rail shows the eleven entries of
- * `15-catalog.png` — four live since SC-7-04 ("Compare scenarios" joined "Roles & rates" and
- * "Working calendars"), seven planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
+ * `15-catalog.png` — five live since SC-7-11 (Overview joined the four earlier screens), with the
+ * remaining project entries still planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
  * The topbar does not follow the mockup's identity chip, "Internal workspace" badge or currency
  * footer: this product has no identity endpoint, no workspace entity and no conversion to state
  * (gate-1 decision Q-3), and the backend indicator the mockup drops is kept.
@@ -46,6 +46,7 @@ export type BackendStatus = "checking" | "ok" | "unreachable";
  */
 export type ScreenKey =
   | "projects"
+  | "overview"
   | "compare-scenarios"
   | "roles-and-rates"
   | "working-calendars";
@@ -56,6 +57,7 @@ export type ScreenKey =
  */
 const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
   projects: "Projects",
+  overview: "Overview",
   "compare-scenarios": "Compare scenarios",
   "roles-and-rates": "Roles & rates",
   "working-calendars": "Working calendars",
@@ -113,13 +115,13 @@ const RAIL_WORKSPACE: readonly RailEntry[] = [
  * The entries that belong to one project and its scenario. In the mockup this group is headed by
  * the selected project's name ("Commerce platform" — sample data from `UI_SPEC.md`, not a section
  * name); this application has no selected project to name, so the heading is the generic word
- * "Project" (gate-1 decision Q-2). None of these screens exists, so the group needs no project
- * state yet — building the first of them is where that question, and the router one, get decided.
+ * "Project" (gate-1 decision Q-2). Overview is the first live entry; it keeps project and scenario
+ * selection inside its screen, consistent with the existing no-router navigation model.
  */
 const RAIL_PROJECT_GROUP_LABEL = "Project";
 
 const RAIL_PROJECT: readonly RailEntry[] = [
-  planned("Overview", "results and metrics, F-10 and F-11 (Issues #12, #13)"),
+  { kind: "screen", key: "overview" },
   planned(
     "Staffing plan",
     "staffing lines are stored by the backend (SC-3-01); the screen is not built",

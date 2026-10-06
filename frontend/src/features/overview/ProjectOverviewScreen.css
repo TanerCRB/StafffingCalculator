@@ -1,0 +1,99 @@
+.overview__description {
+  margin-bottom: var(--sc-space-4);
+}
+
+.overview__selectors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sc-space-4);
+  margin-bottom: var(--sc-space-4);
+}
+
+.overview__selectors label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sc-space-1);
+  min-width: 14rem;
+}
+
+.overview__selectors select {
+  min-height: 2.5rem;
+  padding: var(--sc-space-2);
+  color: var(--sc-color-text);
+  background-color: var(--sc-color-surface);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-sm);
+}
+
+.overview__attention {
+  padding: var(--sc-space-2) var(--sc-space-3);
+  color: var(--sc-color-attention-text);
+  background-color: var(--sc-color-attention-bg);
+  border-radius: var(--sc-radius-sm);
+}
+
+.overview__scenario-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sc-space-3);
+  margin-bottom: var(--sc-space-3);
+}
+
+.overview__scenario-heading h3 {
+  margin: 0;
+}
+
+.overview__scenario-heading span,
+.overview__target {
+  color: var(--sc-color-text-muted);
+}
+
+.overview__table-wrap {
+  overflow-x: auto;
+}
+
+.overview__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.overview__table th,
+.overview__table td {
+  padding: var(--sc-space-2) var(--sc-space-3);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--sc-color-border);
+}
+
+.overview__table thead th {
+  color: var(--sc-color-text-muted);
+  font-weight: var(--sc-font-weight-bold);
+}
+
+.overview__cue {
+  display: block;
+  margin-top: var(--sc-space-1);
+  font-weight: var(--sc-font-weight-bold);
+}
+
+.overview__unallocated {
+  margin-top: var(--sc-space-4);
+  padding: var(--sc-space-4);
+  background-color: var(--sc-color-surface-muted);
+  border-radius: var(--sc-radius-md);
+}
+
+.overview__unallocated h4 {
+  margin-top: 0;
+}
+
+.overview__unallocated dl {
+  display: grid;
+  grid-template-columns: minmax(12rem, max-content) 1fr;
+  gap: var(--sc-space-2) var(--sc-space-4);
+}
+
+.overview__unallocated dd {
+  margin: 0;
+}
