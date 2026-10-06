@@ -2,6 +2,7 @@
 // commercialTermsText.ts; this app does not yet have a locale-switching translation framework).
 
 export const ADDITIONAL_COSTS_HEADING = "Additional costs";
+export const APPROVED_ADDITIONAL_COSTS_NOTE = "Approved values are frozen. Duplicate this scenario to make further changes.";
 export const ADD_COST = "Add cost";
 export const EDIT_COST = "Edit";
 export const REMOVE_COST = "Remove";
