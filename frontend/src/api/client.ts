@@ -53,6 +53,7 @@ import {
 } from "./contracts/commercialTerms";
 import { isDecimalString } from "../lib/money";
 import type { HealthResponse } from "./contracts/health";
+import type { ScenarioApproval } from "./contracts/scenarioApproval";
 import { isScenarioHistory, type ScenarioHistory, type SnapshotCollectionKey } from "./contracts/scenarioHistory";
 import type {
   ProjectCreateRequest,
@@ -1578,6 +1579,21 @@ export async function duplicateScenario(
     undefined,
     isScenarioListItemShape,
   );
+}
+
+function isScenarioApprovalShape(value: unknown, scenarioId: string): value is ScenarioApproval {
+  if (!isRecord(value) || value.id !== scenarioId || value.status !== "Approved" || !isRecord(value.snapshot)) {
+    return false;
+  }
+  const snapshot = value.snapshot;
+  return ["working_calendars", "working_calendar_days", "absence_types", "absence_budgets", "organization_defaults"]
+    .every((key) => Number.isInteger(snapshot[key]) && (snapshot[key] as number) >= 0);
+}
+
+/** Approve a ready scenario using the server's one-way approval action (ADR-0004). */
+export async function approveScenario(projectId: string, scenarioId: string): Promise<ScenarioApproval> {
+  const path = `/projects/${projectId}/scenarios/${scenarioId}/approve`;
+  return write(path, "POST", undefined, (value) => isScenarioApprovalShape(value, scenarioId));
 }
 
 /**

@@ -3121,6 +3121,11 @@ history / this file's own change log, not as tracked product work.
   *Done when:* Mutation-checked synthetic-data tests prove that reading history requires `PROJECT_READ`, `SCENARIO_HISTORY_READ`, `CATALOG_READ`, and assigned-project scope with out-of-scope concealment; personnel-cost fields require both cost gates; approval metadata identifies its synthetic UUIDv4 actor as an unverified placeholder; and each scenario has its own status and inputs, with drafts distinguished from approved scenarios and no inferred lineage between them.
   **Out of scope (explicit):** Creating history events, linking copies into version families, changing immutable snapshots, and comparing scenarios — copies remain independent scenario records under the current model.
   **Basis:** Issue #239; `Wymagania/Requirements_EN.md` F-12 and F-13; SC-8-01; ADR-0004, ADR-0005, ADR-0017, ADR-0019; `docs/architecture/capabilities.md`.
+- [ ] **SC-8-03** — Approve ready scenarios from the UI (F-01, F-12, Issue #238).
+  **Reserved 2026-10-06 after Gate 1 approval.**
+  *Done when:* Frontend tests prove that a ready draft can be approved and remains Approved after reload; an incomplete draft has no actionable approval; refusal and concurrent-change responses are visible without displaying a false Approved state; and approved values appear frozen while further changes are made to a copy.
+  **Out of scope (explicit):** Historical version/audit-log browsing (SC-8-02); new snapshot rules or changes to backend approval semantics; PM-role authorization, which remains deferred until the approval-role mapping is decided and implemented.
+  **Basis:** Issue #238; `Wymagania/Requirements_EN.md` F-01 and F-12; SC-8-01/SC-8-02; ADR-0004, ADR-0005, ADR-0007, ADR-0009, ADR-0022; frontend approval endpoint and UI.
 - [x] **SC-1-24** — Expose the scenario concurrency marker with resolved assumptions.
   **Identifier reserved 2026-10-05; scope approved at Gate 1 on 2026-10-05.**
   *Done when:* The authorized scenario assumptions read returns its current `updated_at` marker with both resolved values and sources; a client can use it for the first draft save/reset, and a stale marker still receives the existing conflict response without writing. Current authorization, project scope, and ADR-0012 resolution behavior remain unchanged.
