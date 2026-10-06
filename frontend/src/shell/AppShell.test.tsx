@@ -29,15 +29,14 @@ const ALL_RAIL_ENTRIES = [
   "Versions & approval",
 ];
 
-/** The seven of them this application does not have (SC-7-04: "Compare scenarios" moved from
- * planned to live, mirroring "Roles & rates" at SC-2-02 and "Working calendars" at SC-3-06 — see
- * the tests below this filter feeds). */
+/** The six screens this application still marks as planned after SC-1-21. */
 const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
   (label) =>
     label !== "Projects" &&
     label !== "Compare scenarios" &&
     label !== "Roles & rates" &&
-    label !== "Working calendars",
+    label !== "Working calendars" &&
+    label !== "Organization defaults",
 );
 
 interface ShellOptions {
@@ -168,6 +167,20 @@ describe("AppShell", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("offers Organization defaults as a live workspace screen", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const onNavigate = vi.fn();
+    renderShell("ok", { onNavigate });
+
+    const entry = within(rail()).getByRole("button", { name: "Organization defaults" });
+    expect(entry).not.toHaveAttribute("aria-disabled");
+    expect(entry.getAttribute("title")).toBeNull();
+    fireEvent.click(entry);
+    expect(onNavigate).toHaveBeenCalledWith("organization-defaults");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("marks the screen it was told is active, not one of its own choosing", () => {
     // The mirror image of the two tests around it: with the catalogue active, the two rail states
     // swap. A shell that hardcoded "Projects" as current — the shape this file asserted before
@@ -206,9 +219,9 @@ describe("AppShell", () => {
     // SC-2-05 (Issue #59, gate-1 decision Q-1) rewrote this test. Until then the rail had two
     // entries and this asserted that the mockup's other screens were absent. The rail now shows the
     // mockup's eleven entries, so the claim — the rail says truthfully what exists — is asserted
-    // the other way round and more strictly: every entry is pinned by name and position, the four
-    // that exist (SC-7-04 added the fourth) are live, and each of the seven that do not says so, in
-    // the one convention `lib/notImplemented.ts` owns, and does nothing when pressed.
+    // the other way round and more strictly: every entry is pinned by name and position. The five
+    // live entries navigate; the six planned entries use the one convention
+    // `lib/notImplemented.ts` owns, and do nothing when pressed.
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const onNavigate = vi.fn();
@@ -217,7 +230,7 @@ describe("AppShell", () => {
     const entries = within(rail()).getAllByRole("listitem");
     expect(entries.map((entry) => entry.textContent)).toEqual(ALL_RAIL_ENTRIES);
 
-    // The seven planned entries: a button each, reachable and announced, marked as not available
+    // The six planned entries: a button each, reachable and announced, marked as not available
     // with the tooltip every such control carries, and naming why.
     for (const label of PLANNED_RAIL_ENTRIES) {
       const entry = within(rail()).getByRole("button", { name: label });
@@ -228,7 +241,7 @@ describe("AppShell", () => {
       expect(entry, label).not.toHaveAttribute("aria-current");
     }
 
-    // The four that exist carry none of that.
+    // The five that exist carry none of that.
     const projects = within(rail()).getByRole("button", { name: "Projects" });
     expect(projects).not.toHaveAttribute("aria-disabled");
     expect(projects.getAttribute("title")).toBeNull();
@@ -239,6 +252,9 @@ describe("AppShell", () => {
     const workingCalendars = within(rail()).getByRole("button", { name: "Working calendars" });
     expect(workingCalendars).not.toHaveAttribute("aria-disabled");
     expect(workingCalendars.getAttribute("title")).toBeNull();
+    const organizationDefaults = within(rail()).getByRole("button", { name: "Organization defaults" });
+    expect(organizationDefaults).not.toHaveAttribute("aria-disabled");
+    expect(organizationDefaults.getAttribute("title")).toBeNull();
 
     // Pressing a planned entry navigates nowhere and reads nothing.
     for (const label of PLANNED_RAIL_ENTRIES) {
@@ -287,7 +303,6 @@ describe("AppShell", () => {
     );
 
     // The rest name the requirement and the Issue that owns it.
-    expect(hint("Organization defaults")).toContain("F-02 (Issue #4)");
     expect(hint("Overview")).toContain("F-10 and F-11 (Issues #12, #13)");
     expect(hint("Additional costs")).toContain("F-08 (Issue #10)");
     expect(hint("Commercial terms")).toContain("F-06 (Issue #8)");
@@ -312,7 +327,7 @@ describe("AppShell", () => {
         <h2 tabIndex={-1}>First screen</h2>
       </AppShell>,
     );
-    const planned = within(rail()).getByRole("button", { name: "Organization defaults" });
+    const planned = within(rail()).getByRole("button", { name: "Overview" });
     planned.focus();
     fireEvent.click(planned);
 
