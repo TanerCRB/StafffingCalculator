@@ -1,13 +1,15 @@
 """Scenario endpoints — approving a calculation (ADR-0004, F-12; SC-3-02), reading its
 assumptions (F-02; SC-1-10), and duplicating it into its own project (F-09 pt.1, AC-02; SC-6-01).
 
-Three endpoints:
+Endpoints:
 
 - `POST /projects/{project_id}/scenarios/{scenario_id}/approve` — the one-way, human-performed step
   of ADR-0004, and the first path in this repository that ever sets `ScenarioStatus.APPROVED`;
 - `GET /projects/{project_id}/scenarios/{scenario_id}/assumptions` — the scenario's resolved
   assumptions with the level each came from (ADR-0012), and the first path that reads an approval
   snapshot back (gate 1, P-B);
+- `GET /projects/{project_id}/scenarios/{scenario_id}/assumptions/reset-preview` — the two draft
+  values that would be inherited if the scenario overrides were cleared (SC-1-25);
 - `POST /projects/{project_id}/scenarios/{scenario_id}/duplicate` — the second of ADR-0004's three
   entry points into `app.data.project_writes.copy_scenario` (the first is
   `POST /projects/{id}/copy`, SC-1-03), the one that copies a scenario into its **own** project
@@ -57,11 +59,15 @@ from app.api.schemas.scenario import (
     ApprovedSnapshotCounts,
     ScenarioApproval,
     ScenarioAssumptionOverridesRead,
+    ScenarioAssumptionResetPreview,
     ScenarioAssumptions,
     ScenarioAssumptionsPatch,
 )
 from app.core.identity import CallerIdentity, Permission
-from app.data.assumptions import scenario_assumptions_for_caller
+from app.data.assumptions import (
+    scenario_assumptions_for_caller,
+    scenario_reset_preview_for_caller,
+)
 from app.data.organization_defaults import organization_level_for
 from app.data.scenario_approval import (
     ScenarioApprovalRefused,
@@ -191,6 +197,59 @@ def read_assumptions(
     return shape_scenario_assumptions(view)
 
 
+@router.get(
+    "/assumptions/reset-preview",
+    response_model=ScenarioAssumptionResetPreview,
+    summary="Preview the values inherited after clearing draft scenario assumption overrides",
+    responses={
+        404: {"description": SCENARIO_NOT_FOUND_DETAIL},
+        409: {"description": "Reset preview is available only for draft scenarios."},
+    },
+)
+def preview_assumption_reset(
+    project_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    caller: Annotated[
+        CallerIdentity, Depends(require_permission(Permission.SCENARIO_ASSUMPTIONS_READ))
+    ],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioAssumptionResetPreview:
+    """Read the post-reset resolution without persisting a reset or changing the scenario."""
+    preview = scenario_reset_preview_for_caller(session, caller, project_id, scenario_id)
+    if preview is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL)
+    if preview.scenario.status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Reset preview is available only for draft scenarios.",
+        )
+    _require_organization_default_read(caller, preview.assumptions.values())
+    resolved = {
+        name: {
+            "value": assumption.value,
+            "state": assumption.state,
+            "source": assumption.source,
+        }
+        for name, assumption in preview.assumptions.items()
+    }
+    return ScenarioAssumptionResetPreview(
+        id=preview.scenario.id,
+        status="Draft",
+        **resolved,
+    )
+
+
+def _require_organization_default_read(caller: CallerIdentity, assumptions) -> None:
+    """Preserve the organization-default read boundary for values exposed by a reset."""
+    if any(item.source == "organization" for item in assumptions) and not caller.has(
+        Permission.ORGANIZATION_DEFAULTS_READ
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Caller lacks permission to preview the inherited value.",
+        )
+
+
 @router.patch(
     "/assumptions",
     response_model=ScenarioAssumptionOverridesRead,
@@ -223,6 +282,21 @@ def edit_scenario_assumptions(
     resolved in the data layer before status or concurrency refusals can be diagnosed, retaining
     404 for out-of-scope and mismatched scenario IDs.
     """
+    changes = payload.changes()
+    if any(value is None for value in changes.values()):
+        preview = scenario_reset_preview_for_caller(
+            session, caller, project_id, scenario_id, lock_for_reset=True
+        )
+        if preview is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=SCENARIO_NOT_FOUND_DETAIL
+            )
+        if preview.scenario.status != "draft":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Approved scenario assumptions cannot be changed; duplicate the scenario.",
+            )
+        _require_organization_default_read(caller, preview.assumptions.values())
     try:
         edited = update_scenario_assumption_overrides(
             session,
@@ -230,7 +304,7 @@ def edit_scenario_assumptions(
             project_id,
             scenario_id,
             expected_updated_at=payload.updated_at,
-            changes=payload.changes(),
+            changes=changes,
         )
     except ScenarioAssumptionWriteRejected as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None

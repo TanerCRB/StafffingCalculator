@@ -109,6 +109,15 @@ class ScenarioAssumptions(BaseModel):
     overload_threshold_percent: ResolvedAssumptionRead
 
 
+class ScenarioAssumptionResetPreview(BaseModel):
+    """The values and sources inherited after clearing both draft scenario overrides."""
+
+    id: uuid.UUID
+    status: Literal["Draft"]
+    target_margin_percent: ResolvedAssumptionRead
+    overload_threshold_percent: ResolvedAssumptionRead
+
+
 ScenarioTargetMargin = Annotated[
     DecimalString, Field(max_digits=PERCENT_PRECISION, decimal_places=PERCENT_SCALE)
 ]
