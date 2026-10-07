@@ -63,6 +63,7 @@ import type {
   ProjectDetail,
   ProjectEditRequest,
   ProjectStatus,
+  ScenarioCreateRequest,
   ScenarioListItem,
   ScenarioStatus,
 } from "./contracts/projects";
@@ -1640,6 +1641,20 @@ export async function duplicateScenario(
     scenarioDuplicatePath(projectId, scenarioId),
     "POST",
     undefined,
+    isScenarioListItemShape,
+  );
+}
+
+/** Create a named draft scenario in the selected project (SC-1-26). The server response is
+ * shape-checked before the screen may show the new row; no client-side scenario is assembled. */
+export async function createScenario(
+  projectId: string,
+  body: ScenarioCreateRequest,
+): Promise<ScenarioListItem> {
+  return write(
+    `/projects/${projectId}/scenarios`,
+    "POST",
+    body,
     isScenarioListItemShape,
   );
 }

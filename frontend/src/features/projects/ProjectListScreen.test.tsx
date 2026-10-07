@@ -609,10 +609,11 @@ describe("ProjectListScreen", () => {
           expect(control).toHaveFocus();
         }
 
-        if (label === "Edit" || label === "Copy" || (label === "Archive" && project.status === "Active")) {
-          // SC-1-16 wires Edit, SC-1-19 wires Copy, and SC-1-20 wires archive for Active projects.
+        if (label === "Edit" || label === "Copy" || label === "Add scenario" || (label === "Archive" && project.status === "Active")) {
+          // Edit, copy, add-scenario, and archive for Active projects are wired actions.
           expect(control).not.toHaveAttribute("aria-disabled");
           expect(control).not.toHaveAttribute("title");
+          if (label === "Add scenario") fireEvent.click(control);
         } else if (label === "Archive") {
           expect(control).toHaveAttribute("aria-disabled", "true");
           expect(control).not.toHaveAttribute("title");
@@ -624,8 +625,101 @@ describe("ProjectListScreen", () => {
       }
     }
 
-    // Clicking every control on every row triggered no request beyond the initial list read.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Opening the scenario form is local state; no write is sent before submit.
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("shows a new draft from the server response with its own missing-input state", async () => {
+    const created: ProjectListItem["scenarios"][number] = {
+      id: "dddddddd-0000-0000-0000-000000000001",
+      name: " Baseline ",
+      status: "Draft",
+      missing_inputs: ["working_calendar", "target_margin_percent"],
+      ready_for_approval: false,
+      target_margin_percent: null,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        return { ok: true, status: 200, json: async () => ({ projects: [VESTA], total: 1 }) };
+      }
+      if (url.pathname === `/projects/${VESTA.id}/scenarios` && init?.method === "POST") {
+        return { ok: true, status: 201, json: async () => created };
+      }
+      return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: `Add scenario ${VESTA.name}` }));
+    expect(await screen.findByText("This project has no scenarios yet.")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "Scenario name" }), { target: { value: " Baseline " } });
+    fireEvent.click(screen.getByRole("button", { name: "Create scenario" }));
+
+    expect(await screen.findByRole("heading", { name: "Baseline" })).toBeVisible();
+    const card = scenarioCard("Baseline");
+    expect(within(card).getByText("Status: Draft")).toBeVisible();
+    expect(within(card).getByText("Missing inputs: Working calendar, Target margin")).toBeVisible();
+    const post = fetchMock.mock.calls.find(([input, init]) => new URL(String(input)).pathname === `/projects/${VESTA.id}/scenarios` && init?.method === "POST");
+    expect(post).toBeDefined();
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ name: " Baseline " });
+  });
+
+  it.each([
+    ["exact-name conflict", AURORA, "A scenario with this exact name already exists in this project."],
+    ["archived-project refusal", HELIOS, "Scenario creation is refused for an archived project."],
+  ])("shows the named %s and adds no phantom card", async (_case, project, detail) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        return { ok: true, status: 200, json: async () => ({ projects: [project], total: 1 }) };
+      }
+      if (url.pathname === `/projects/${project.id}/scenarios` && init?.method === "POST") {
+        return { ok: false, status: 409, json: async () => ({ detail }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: `Add scenario ${project.name}` }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Scenario name" }), { target: { value: "New plan" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create scenario" }));
+
+    expect(await screen.findByText(detail)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "New plan" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("leaves a timed-out create unresolved without retry and refreshes only when requested", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/projects" && init?.method === undefined) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [VESTA], total: 1 }) });
+      }
+      if (url.pathname === `/projects/${VESTA.id}/scenarios` && init?.method === "POST") {
+        return new Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>(() => {});
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({ detail: "Not found" }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProjectListScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: `Add scenario ${VESTA.name}` }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Scenario name" }), { target: { value: "Timed plan" } });
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Create scenario" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS); });
+    expect(screen.getByText(/result is unresolved/i)).toBeVisible();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)).toHaveLength(1);
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh project list" }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input, init]) => new URL(String(input)).pathname === "/projects" && init?.method === undefined)).toHaveLength(2));
+    expect(screen.queryByRole("heading", { name: "Timed plan" })).not.toBeInTheDocument();
   });
 
   it("renders a prompt instead of scenario details until a project is selected", async () => {

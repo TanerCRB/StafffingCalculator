@@ -29,6 +29,11 @@ export interface ProjectCreateRequest {
   description: string;
 }
 
+/** Exact name submitted when creating a fresh scenario under one project. */
+export interface ScenarioCreateRequest {
+  name: string;
+}
+
 export interface ScenarioListItem {
   id: string;
   name: string;

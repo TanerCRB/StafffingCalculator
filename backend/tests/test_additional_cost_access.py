@@ -330,7 +330,8 @@ def test_k_09_history_permission_does_not_grant_cost_or_org_defaults() -> None:
     # person register, not of this task's additional-cost tables; neither joins the placeholder
     # (the line below is unchanged).
     # SC-8-02 adds only the separate scenario-history permission, not an additional-cost one.
-    assert len(Permission) == 22
+    # SC-1-26 adds a dedicated scenario-creation action; it grants no additional-cost access.
+    assert len(Permission) == 23
     assert Permission.ORGANIZATION_DEFAULTS_READ not in PLACEHOLDER_PERMISSIONS
     assert Permission.ORGANIZATION_DEFAULTS_WRITE not in PLACEHOLDER_PERMISSIONS
     assert Permission.SCENARIO_ASSUMPTIONS_READ not in PLACEHOLDER_PERMISSIONS

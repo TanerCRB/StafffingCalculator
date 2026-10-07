@@ -1370,3 +1370,50 @@ The role/permission successor referenced as SC-1-13 in the 2026-09-27 SC-2-06 ad
 identified here as SC-1-14. SC-1-13 is reserved for the exchange-rate Story (Issue #102) in the
 current plan; this clarification preserves the historical addendum while keeping current routing
 unambiguous.
+
+### 2026-10-06 — tworzenie scenariusza w projekcie (SC-1-26, Issue #233, bramka 1)
+
+**Status:** Draft — pending approval
+
+Issue #233 adds the first browser action that creates a new scenario in an existing project. The
+existing `SCENARIO_COPY` permission is intentionally specific to duplication (SC-6-01); creating
+a fresh draft is a distinct action and must not be inferred from copy permission or project edit.
+
+1. **Dedicated action permission.** `SCENARIO_CREATE` is the permission for creating a fresh
+   scenario. It is distinct from `SCENARIO_COPY`, `PROJECT_EDIT`, and `PROJECT_CREATE`. The
+   request also requires the caller's project scope through the existing `project_access` check;
+   possessing the action permission alone does not grant access to a project.
+2. **Scope and refusal.** The endpoint is addressed within the selected project. A project outside
+   the caller's scope remains indistinguishable from an unknown project, following the existing
+   `project_for_caller` boundary (ADR-0001, 2026-09-19 addendum; ADR-0005 base decision). Missing
+   `SCENARIO_CREATE` is a permission refusal. Creation against an archived project is refused as a
+   distinct named conflict; the project is not changed.
+3. **Placeholder policy.** Adding `SCENARIO_CREATE` to `PLACEHOLDER_PERMISSIONS` is not implied by
+   this decision. Any change to that fixed placeholder set follows the existing dated-change rule
+   and requires its own explicit authorization decision; the placeholder is not a production
+   permission policy.
+
+| Control | Acceptance criterion |
+|---|---|
+| A5-233-1 | `SCENARIO_CREATE` is required for fresh scenario creation and is distinct from `SCENARIO_COPY` and project permissions. |
+| A5-233-2 | A caller with the action permission but without access to the selected project gets the same result as for an unknown project. |
+| A5-233-3 | Missing action permission is refused; creating in an archived project returns the named archived-project conflict and writes no scenario. |
+
+### 2026-10-07 — SC-1-26: creating a scenario also requires project-read permission
+
+**Status:** Draft — pending approval
+
+This dated addendum records the human decision following the SC-1-26 security review. The
+SC-1-26 gate-1 permission rule above is narrowed: a fresh scenario create requires both
+`SCENARIO_CREATE` and `PROJECT_READ`, as well as the existing project-access scope check.
+
+The create response and duplicate-name refusal otherwise form a scenario-name existence oracle.
+A caller with `SCENARIO_CREATE` and project scope could submit a guessed name and distinguish a
+duplicate (`409`) from a successful create (`201`), learning that the name already exists in that
+project despite lacking permission to read the project. Requiring `PROJECT_READ` closes that
+permission crossing; project scope remains independently enforced through `project_access`.
+
+| Control | Acceptance criterion |
+|---|---|
+| A5-233-4 | Fresh scenario creation is refused unless the caller has both `SCENARIO_CREATE` and `PROJECT_READ`, and the selected project is within the caller's `project_access` scope. |
+| A5-233-5 | A caller with project scope and `SCENARIO_CREATE` but without `PROJECT_READ` cannot distinguish an existing exact scenario name from an unused one through the create endpoint. |

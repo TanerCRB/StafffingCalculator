@@ -314,3 +314,39 @@ This addendum extends the browser-write contract only for creation of an additio
 |---|---|
 | A9-236-1 | The browser reuses one key for retries of one logical create; the same caller and payload replay one created cost, while a different payload with that key receives `409` and no write. |
 | A9-236-2 | Current write permission is checked before replay; removing the key-backed cost removes its retained idempotency outcome; a request without a key follows legacy behavior. |
+
+### Addendum 2026-10-06 (Issue #233, SC-1-26 — create a scenario in a project, gate 1)
+
+**Status:** Draft — pending approval
+
+This addendum applies the browser-write contract to creating a fresh scenario in an existing
+project. It is separate from scenario duplication (SC-6-03) and from project creation (SC-1-18).
+
+1. **Name uniqueness and refusal.** A scenario name is unique by exact stored value within its
+   project. The same name may exist in another project; case and whitespace variants are distinct
+   names. A duplicate-name refusal is a named `409 Conflict` and creates no scenario. This rule is
+   evaluated by the authoritative write path, not by a client check-then-act query.
+2. **Project state.** A create request for an archived project receives a distinct named `409`
+   refusal and creates no scenario. A project outside the caller's scope remains indistinguishable
+   from an unknown project (ADR-0005 and the ADR-0001 scope addendum). Missing `SCENARIO_CREATE`
+   remains a distinct permission refusal.
+3. **No idempotency extension.** This endpoint does not accept an idempotency key and the browser
+   does not automatically retry. A write timeout is an unresolved outcome; the client refreshes
+   the project scenario list before the user decides what to do next. The project-specific key in
+   the 2026-10-04 SC-1-18 addendum does not extend to this endpoint.
+4. **Rendered state and refusal.** The screen adds a scenario only after a successful, shape-
+   validated server response. A duplicate-name refusal, archived-project refusal, missing
+   permission, or out-of-scope/unknown project never adds a provisional or phantom card. The new
+   scenario is a draft and its readiness/missing-input state comes from the server's scenario
+   representation, not from client-derived assumptions.
+5. **Response contract.** A write response is validated against the scenario-list item contract
+   before it changes the rendered list, consistent with the SC-6-03 addendum's treatment of the
+   `201` scenario duplication response. No second create is issued automatically after a timeout.
+
+| Control | Acceptance criterion |
+|---|---|
+| A9-233-1 | Exact stored names conflict only within one project; same names in separate projects and case/whitespace variants remain distinct. Duplicate refusal writes no scenario. |
+| A9-233-2 | Archived-project refusal is distinguishable from duplicate-name refusal and writes no scenario. |
+| A9-233-3 | Missing action permission is refused; an out-of-scope project is indistinguishable from an unknown project. |
+| A9-233-4 | No idempotency key or automatic retry is used; a timeout remains unresolved and leads to refreshing the scenario list. |
+| A9-233-5 | Only a successful shape-validated server response adds a draft scenario card; all refusal paths leave the list unchanged. |
