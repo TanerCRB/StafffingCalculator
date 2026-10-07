@@ -183,6 +183,45 @@ describe("Overview scenario selection and period results (SC-7-11)", () => {
     expect(table).toBeVisible();
   });
 
+  it("shows anonymous planned FTE per period and changes only the period whose staffing changed", async () => {
+    stubBackend({
+      periodAnswer: (scenarioId) => ({
+        status: 200,
+        body: periodResults(scenarioId, scenarioId === ALPHA_ID ? "Approved" : "Draft", {
+          periods: [
+            period("2026-01-01", "100.00", "20.00", "20.00", "80.00", "80.00"),
+            period("2026-02-01", "100.00", "80.00", "80.00", "20.00", "20.00", {
+              planned_fte: scenarioId === ALPHA_ID
+                ? "0.2500000000000000000000000000"
+                : "0.7500000000000000000000000000",
+            }),
+            period("2026-03-01", "0.00", "10.00", "10.00", "-10.00", "n/a", {
+              negative_profit: true,
+              below_target_margin: null,
+              planned_fte: "0.0000000000000000000000000000",
+            }),
+          ],
+        }),
+      }),
+    });
+    render(<ProjectOverviewScreen />);
+    await screen.findByRole("option", { name: "Aurora migration" });
+    selectScenario("Alpha");
+
+    expect(await screen.findByText("0.50 FTE")).toBeVisible();
+    expect(within(periodRow("2026-01-01")).getByText("0.50 FTE")).toBeVisible();
+    expect(within(periodRow("2026-02-01")).getByText("0.25 FTE")).toBeVisible();
+    expect(within(periodRow("2026-03-01")).getByText("0.00 FTE")).toBeVisible();
+    expect(screen.queryByText("Alice Example")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Scenario"), { target: { value: BETA_ID } });
+
+    expect(await screen.findByText("0.75 FTE")).toBeVisible();
+    expect(within(periodRow("2026-01-01")).getByText("0.50 FTE")).toBeVisible();
+    expect(within(periodRow("2026-02-01")).getByText("0.75 FTE")).toBeVisible();
+    expect(within(periodRow("2026-03-01")).getByText("0.00 FTE")).toBeVisible();
+  });
+
   it("keeps periodless revenue and fixed costs outside the temporal series as explicit unallocated totals", async () => {
     stubBackend();
     render(<ProjectOverviewScreen />);

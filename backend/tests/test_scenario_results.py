@@ -37,7 +37,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.identity import Permission
-from app.models.catalog import AbsenceType
+from app.models.catalog import AbsenceType, CatalogLocation, WorkingCalendar
 from app.models.exchange_rate import ExchangeRate
 from app.models.project import Project
 from app.models.scenario import Scenario
@@ -45,6 +45,7 @@ from tests.conftest import (
     BACKEND_ROOT,
     IN_SCOPE_USER,
     DimensionTuple,
+    approve_path,
     caller_holding,
     make_absence,
     make_absence_type,
@@ -59,6 +60,7 @@ from tests.conftest import (
     make_scenario,
     make_staffing_position,
     make_working_calendar,
+    set_organization_defaults,
 )
 
 MAR = date(2026, 3, 1)
@@ -263,6 +265,86 @@ def test_k_03_zero_period_revenue_reports_not_applicable_margin(
 
     assert body["periods"][0]["revenue"] == "0.00"
     assert body["periods"][0]["margin"] == "n/a"
+
+
+def test_k_01_approved_period_results_keep_frozen_calendar_and_resolved_target(
+    client: TestClient, db_session: Session
+) -> None:
+    """Approved period results keep the calendar and resolved target they were approved with.
+
+    The approved and draft scenarios share one location/calendar and organization default. Changing
+    those two live sources is the sole contrast: the approved result stays frozen, while the draft
+    follows both new values. This exercises the real approval/snapshot and period-results paths.
+    """
+    _ensure_statutory_bypass(db_session)
+    project, approved_scenario, approved_position = _full_scenario(
+        db_session, name="Approved period snapshot"
+    )
+    dimensions = DimensionTuple(
+        role_id=approved_position.role_id,
+        seniority_id=approved_position.seniority_id,
+        location_id=approved_position.location_id,
+        engagement_type_id=approved_position.engagement_type_id,
+    )
+    draft_scenario = make_scenario(db_session, project, name="Live draft", currency="PLN")
+    draft_position = make_staffing_position(db_session, draft_scenario, dimensions, start_date=MAR)
+    make_commercial_terms(db_session, draft_scenario)
+    make_allocation(
+        db_session,
+        draft_position,
+        period_month=MAR,
+        planned_allocation_hours=PLANNED_HOURS,
+        billable_hours=BILLABLE_HOURS,
+    )
+    draft_category = make_cost_category(db_session, name="Draft snapshot contrast")
+    make_additional_cost(
+        db_session,
+        draft_scenario,
+        draft_category,
+        amount=ADDITIONAL_AMOUNT,
+        start_month=MAR,
+        currency="PLN",
+    )
+    set_organization_defaults(db_session, target_margin_percent=Decimal("40.000"))
+
+    with caller_holding(Permission.PROJECT_EDIT):
+        approval = client.post(approve_path(project.id, approved_scenario.id))
+    assert approval.status_code == 200, approval.text
+
+    approved_before = _period_results(client, project.id, approved_scenario.id)
+    draft_before = _period_results(client, project.id, draft_scenario.id)
+    assert approved_before["target_margin_percent"] == "40.000"
+    assert draft_before["target_margin_percent"] == "40.000"
+    approved_month_before = approved_before["periods"][0]
+    draft_month_before = draft_before["periods"][0]
+    assert Decimal(approved_month_before["planned_fte"]) == Decimal(
+        draft_month_before["planned_fte"]
+    )
+    assert approved_month_before["below_target_margin"] is True
+    assert draft_month_before["below_target_margin"] is True
+
+    location = db_session.get(CatalogLocation, approved_position.location_id)
+    assert location is not None and location.calendar_id is not None
+    calendar = db_session.get(WorkingCalendar, location.calendar_id)
+    assert calendar is not None
+    calendar.standard_hours_per_day = Decimal("6.50")
+    set_organization_defaults(db_session, target_margin_percent=Decimal("10.000"))
+    db_session.flush()
+
+    approved_after = _period_results(client, project.id, approved_scenario.id)
+    draft_after = _period_results(client, project.id, draft_scenario.id)
+    approved_month_after = approved_after["periods"][0]
+    draft_month_after = draft_after["periods"][0]
+    assert approved_after["target_margin_percent"] == "40.000"
+    assert Decimal(approved_month_after["planned_fte"]) == Decimal(
+        approved_month_before["planned_fte"]
+    )
+    assert approved_month_after["below_target_margin"] is True
+    assert draft_after["target_margin_percent"] == "10.000"
+    assert Decimal(draft_month_after["planned_fte"]) == Decimal(PLANNED_HOURS) / (
+        Decimal("22") * Decimal("6.50")
+    )
+    assert draft_month_after["below_target_margin"] is False
 
 
 def test_k_07_period_cost_and_profitability_are_withheld_when_project_flag_is_missing(
