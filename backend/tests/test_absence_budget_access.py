@@ -250,12 +250,14 @@ def test_k_09_the_permission_vocabulary_did_not_grow_in_this_task(
         Permission.ORGANIZATION_DEFAULTS_WRITE,
         Permission.SCENARIO_ASSUMPTIONS_READ,
         Permission.SCENARIO_ASSUMPTIONS_WRITE,
+        # SC-1-26: scenario creation is an explicit action permission, unrelated to catalog tables.
+        Permission.SCENARIO_CREATE,
     }, (
         "the permission vocabulary changed in SC-3-03. ADR-0005's addendum of 2026-09-22 (SC-3-03, "
         "point 2) decides that the absence budget is the eighth table of the catalogue and takes "
         "no permission of its own."
     )
-    assert len(Permission) == 22
+    assert len(Permission) == 23
 
 
 def test_the_budget_carrying_staffing_read_is_not_gated_on_the_personnel_cost_permission(

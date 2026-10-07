@@ -3151,7 +3151,7 @@ history / this file's own change log, not as tracked product work.
 
 - [ ] **SC-1-26** — Create a new scenario in an existing project (F-01, Issue #233).
   **Reserved 2026-10-06 after Gate 1 approval.**
-  *Done when:* Backend and frontend tests prove that a caller with `SCENARIO_CREATE` and project access creates a named draft in an active project; the scenario is persisted under that project and reports its own missing-input state. Tests also prove out-of-scope isolation, exact per-project name uniqueness, archived-project refusal, and no phantom UI card after refused or unresolved writes.
+  *Done when:* Backend and frontend tests prove that a caller with `SCENARIO_CREATE`, `PROJECT_READ`, and project access creates a named draft in an active project; the scenario is persisted under that project and reports its own missing-input state. Tests also prove that removing either permission separately or removing project access refuses creation without a write, that out-of-scope projects are indistinguishable from nonexistent ones, exact per-project name uniqueness, archived-project refusal, and no phantom UI card after refused or unresolved writes.
   **Out of scope (explicit):** Scenario duplication, approval, and editing individual inputs; each is a separate action or lifecycle behavior.
   **Basis:** Issue #233; `Wymagania/Requirements_EN.md` F-01/F-02; SC-1-05; ADR-0001, ADR-0003, ADR-0005, ADR-0009, and ADR-0010.
 

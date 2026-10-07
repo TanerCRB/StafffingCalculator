@@ -181,6 +181,11 @@ class Permission(StrEnum):
     here (point 6 above): the endpoint answers with the duplicate's own representation, so in
     practice this also reads it."""
 
+    SCENARIO_CREATE = "scenario:create"
+    """Creating a fresh draft scenario; distinct from `SCENARIO_COPY` and project permissions
+    (SC-1-26, ADR-0005 addendum 2026-10-06). Project access remains independently checked.
+    """
+
     SCENARIO_HISTORY_READ = "scenario_history:read"
     """Read a scenario's approval history. Requires PROJECT_READ separately and never
     bypasses project_access scope (ADR-0022, Issue #239)."""

@@ -15,6 +15,7 @@ import { ScenarioApprovalSection } from "./ScenarioApprovalSection";
 import { ScenarioAssumptionsSection } from "./ScenarioAssumptionsSection";
 import { StaffingPlanSection } from "./StaffingPlanSection";
 import { ProjectEditForm } from "./ProjectEditForm";
+import { ScenarioCreateForm } from "./ScenarioCreateForm";
 import { missingInputLabel } from "./scenarioInputLabels";
 import { PROJECT_ARCHIVE_MESSAGES, PROJECT_COPY_MESSAGES, PROJECT_LIST_MESSAGES } from "./projectListMessages";
 import { ProjectCreateForm } from "./ProjectCreateForm";
@@ -34,7 +35,8 @@ import "./ProjectListScreen.css";
  * only the server can say.
  *
  * Edit (SC-1-16), copy (SC-1-19), search, filters and pagination (SC-1-17) are wired.
- * Add project opens the F-01 creation form (SC-1-18); remaining row actions are placeholders.
+ * Add project opens the F-01 creation form (SC-1-18), and Add scenario creates a draft under its
+ * selected project (SC-1-26); remaining unimplemented row actions are placeholders.
  *
  * Layout reference: `Wymagania/UI/Project List.jpeg` — a reference, not a specification (Issue #3,
  * out of scope 1). Colours and type come from `src/styles/tokens.css`, never from a literal here.
@@ -77,6 +79,7 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [scenarioCreateProjectId, setScenarioCreateProjectId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"" | ProjectListItem["status"]>("");
   const [page, setPage] = useState(0);
@@ -220,6 +223,15 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
     });
   }
 
+  function addCreatedScenario(projectId: string, scenario: ScenarioListItem) {
+    setState((previous) => previous.kind !== "ready" ? previous : {
+      ...previous,
+      projects: previous.projects.map((project) => project.id === projectId
+        ? { ...project, scenarios: [...project.scenarios, scenario] }
+        : project),
+    });
+  }
+
   function markScenarioApproved(scenarioId: string, result: ScenarioApproval) {
     setState((previous) => previous.kind !== "ready" ? previous : {
       ...previous,
@@ -261,8 +273,13 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
 
   function onRowAction(actionKey: string, projectId: string) {
     if (actionKey === "edit") {
+      setScenarioCreateProjectId(null);
       setSelectedProjectId(projectId);
       setEditingProjectId(projectId);
+    } else if (actionKey === "add-scenario") {
+      setSelectedProjectId(projectId);
+      setEditingProjectId(null);
+      setScenarioCreateProjectId(projectId);
     } else if (actionKey === "copy") {
       void copyProjectRow(projectId);
     } else if (actionKey === "archive") {
@@ -471,6 +488,7 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
                           clearCopiedProjectSnapshot();
                           setSelectedProjectId(project.id);
                           setEditingProjectId(null);
+                          setScenarioCreateProjectId(null);
                         }}
                       >
                         {project.name}
@@ -498,9 +516,9 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
                             type="button"
                             className="button button--quiet"
                             aria-label={`${action.label} ${project.name}`}
-                            aria-disabled={action.key === "edit" || action.key === "copy" || (action.key === "archive" && project.status === "Active") ? undefined : "true"}
+                            aria-disabled={action.key === "edit" || action.key === "copy" || action.key === "add-scenario" || (action.key === "archive" && project.status === "Active") ? undefined : "true"}
                             disabled={(action.key === "copy" && copyingProjectId !== null) || (action.key === "archive" && (project.status !== "Active" || archivingProjectId !== null))}
-                            title={action.key === "edit" || action.key === "copy" || action.key === "archive" ? undefined : NOT_IMPLEMENTED_HINT}
+                            title={action.key === "edit" || action.key === "copy" || action.key === "archive" || action.key === "add-scenario" ? undefined : NOT_IMPLEMENTED_HINT}
                             onClick={() => onRowAction(action.key, project.id)}
                           >
                             {action.key === "copy" && copyingProjectId === project.id ? PROJECT_COPY_MESSAGES.copying : action.key === "archive" && archivingProjectId === project.id ? PROJECT_ARCHIVE_MESSAGES.archiving : action.label}
@@ -575,6 +593,14 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
                 <h2 id="scenario-details-heading" className="project-list__details-title">
                   Scenario details
                 </h2>
+              {scenarioCreateProjectId === selectedProject.id && (
+                <ScenarioCreateForm
+                  projectId={selectedProject.id}
+                  projectName={selectedProject.name}
+                  onCreated={addCreatedScenario}
+                  onRefresh={() => setRetryCount((count) => count + 1)}
+                />
+              )}
               <ScenarioDetails
                 project={selectedProject}
                 onScenarioDuplicated={addDuplicatedScenario}

@@ -83,6 +83,16 @@ class ScenarioListItem(BaseModel):
     `missing_inputs` above *does* use the resolved value (gate 1, Q-5)."""
 
 
+ScenarioName = Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r".*\S.*")]
+
+
+class ScenarioCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Preserve the exact submitted value: name uniqueness is exact, including whitespace.
+    name: ScenarioName
+
+
 class ProjectListItem(BaseModel):
     id: uuid.UUID
     name: str
@@ -228,9 +238,7 @@ class ProjectEditRequest(BaseModel):
         if not changed:
             raise ValueError("An edit must name at least one field to change.")
         nulled = sorted(
-            field
-            for field in changed - NULLABLE_EDIT_FIELDS
-            if getattr(self, field) is None
+            field for field in changed - NULLABLE_EDIT_FIELDS if getattr(self, field) is None
         )
         if nulled:
             raise ValueError(f"These fields cannot be set to null: {', '.join(nulled)}")

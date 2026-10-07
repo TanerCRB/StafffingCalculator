@@ -244,6 +244,26 @@
   margin-bottom: var(--sc-space-1);
 }
 
+.scenario-create {
+  display: grid;
+  gap: var(--sc-space-2);
+  margin-block: var(--sc-space-3);
+  max-width: 28rem;
+}
+
+.scenario-create form {
+  display: grid;
+  gap: var(--sc-space-2);
+}
+
+.scenario-create label {
+  font-size: var(--sc-font-size-sm);
+}
+
+.scenario-create .button {
+  justify-self: start;
+}
+
 .project-list__details-meta,
 .project-list__details-empty {
   color: var(--sc-color-text-muted);

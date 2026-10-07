@@ -17,16 +17,23 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_permission
-from app.api.response_shaping import shape_project_detail, shape_project_list
+from app.api.deps import require_permission, require_permissions
+from app.api.response_shaping import (
+    shape_duplicated_scenario,
+    shape_project_detail,
+    shape_project_list,
+)
 from app.api.schemas.project import (
     ProjectCreateRequest,
     ProjectDetail,
     ProjectEditRequest,
     ProjectListResponse,
+    ScenarioCreateRequest,
+    ScenarioListItem,
 )
 from app.core.identity import CallerIdentity, Permission
 from app.data.commercial_terms import CommercialTermsNotCopyable
+from app.data.organization_defaults import organization_level_for
 from app.data.project_reads import (
     caller_has_accessible_projects,
     list_projects_for_caller,
@@ -40,6 +47,12 @@ from app.data.project_writes import (
     copy_project,
     create_project,
     update_project,
+)
+from app.data.scenario_writes import (
+    ScenarioCreateFailed,
+    ScenarioNameConflict,
+    ScenarioProjectArchived,
+    create_scenario,
 )
 from app.db.session import get_session
 from app.models.project import ProjectStatus
@@ -61,6 +74,7 @@ def _page_integer(raw: str | None, name: str, default: int, maximum: int) -> int
     if value < (1 if name == "limit" else 0) or value > maximum:
         raise HTTPException(status_code=422, detail=f"{name} is outside the allowed range")
     return value
+
 
 PROJECT_NOT_FOUND_DETAIL = "Project not found."
 """One message, one status code, for both "no such project" and "not yours".
@@ -152,6 +166,44 @@ def create_project_endpoint(
     return shape_project_detail(created, caller)
 
 
+@router.post(
+    "/{project_id}/scenarios",
+    response_model=ScenarioListItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a fresh draft scenario in a project",
+    responses={
+        404: {"description": PROJECT_NOT_FOUND_DETAIL},
+        409: {"description": "Scenario create conflict."},
+    },
+)
+def create_scenario_endpoint(
+    project_id: uuid.UUID,
+    payload: ScenarioCreateRequest,
+    caller: Annotated[
+        CallerIdentity,
+        Depends(require_permissions(Permission.SCENARIO_CREATE, Permission.PROJECT_READ)),
+    ],
+    session: Annotated[Session, Depends(get_session)],
+) -> ScenarioListItem:
+    """Create a named draft, requiring both the action grant and project scope."""
+    try:
+        created = create_scenario(session, caller, project_id, payload.name)
+    except ScenarioNameConflict as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
+    except ScenarioProjectArchived as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
+    except ScenarioCreateFailed as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from None
+    if created is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL)
+    scenario, project_view = created
+    level = organization_level_for(session, [scenario])
+    return shape_duplicated_scenario(scenario, project_view.project, level)
+
+
 @router.get(
     "/{project_id}",
     response_model=ProjectDetail,
@@ -171,9 +223,7 @@ def read_project(
     """
     view = project_for_caller(session, caller, project_id)
     if view is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL)
     return shape_project_detail(view, caller)
 
 
@@ -225,9 +275,7 @@ def edit_project(
     except ProjectEditRefused as refusal:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refusal)) from None
     if edited is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL)
     return shape_project_detail(edited, caller)
 
 
@@ -262,9 +310,7 @@ def archive_project_endpoint(
     """
     archived = archive_project(session, caller, project_id)
     if archived is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL)
     return shape_project_detail(archived, caller)
 
 
@@ -306,9 +352,7 @@ def copy_project_endpoint(
     """
     source = project_for_caller(session, caller, project_id)
     if source is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PROJECT_NOT_FOUND_DETAIL)
     try:
         copy = copy_project(session, caller, source)
     except (CommercialTermsNotCopyable, ProjectCopyRefused) as refusal:
