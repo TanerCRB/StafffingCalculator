@@ -17,6 +17,7 @@ export function App() {
    * limitation rather than an omission.
    */
   const [activeScreen, setActiveScreen] = useState<ScreenKey>("projects");
+  const [overviewProjectId, setOverviewProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     getHealth()
@@ -28,9 +29,12 @@ export function App() {
   // screen not named here is not mounted at all, so it fetches nothing in the background.
   let screen;
   if (activeScreen === "projects") {
-    screen = <ProjectListScreen />;
+    screen = <ProjectListScreen onViewProject={(projectId) => {
+      setOverviewProjectId(projectId);
+      setActiveScreen("overview");
+    }} />;
   } else if (activeScreen === "overview") {
-    screen = <ProjectOverviewScreen />;
+    screen = <ProjectOverviewScreen initialProjectId={overviewProjectId} />;
   } else if (activeScreen === "compare-scenarios") {
     screen = <CompareScenariosScreen />;
   } else if (activeScreen === "roles-and-rates") {

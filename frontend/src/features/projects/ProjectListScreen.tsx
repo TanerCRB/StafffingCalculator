@@ -75,7 +75,7 @@ function toFailureState(error: unknown): ScreenState {
   return { kind: "failed" };
 }
 
-export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: { readonly recoveryStorage?: Storage } = {}) {
+export function ProjectListScreen({ recoveryStorage = window.sessionStorage, onViewProject }: { readonly recoveryStorage?: Storage; readonly onViewProject?: (projectId: string) => void } = {}) {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -272,7 +272,9 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
   }
 
   function onRowAction(actionKey: string, projectId: string) {
-    if (actionKey === "edit") {
+    if (actionKey === "view") {
+      onViewProject?.(projectId);
+    } else if (actionKey === "edit") {
       setScenarioCreateProjectId(null);
       setSelectedProjectId(projectId);
       setEditingProjectId(projectId);
@@ -516,9 +518,9 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage }: {
                             type="button"
                             className="button button--quiet"
                             aria-label={`${action.label} ${project.name}`}
-                            aria-disabled={action.key === "edit" || action.key === "copy" || action.key === "add-scenario" || (action.key === "archive" && project.status === "Active") ? undefined : "true"}
+                            aria-disabled={action.key === "view" || action.key === "edit" || action.key === "copy" || action.key === "add-scenario" || (action.key === "archive" && project.status === "Active") ? undefined : "true"}
                             disabled={(action.key === "copy" && copyingProjectId !== null) || (action.key === "archive" && (project.status !== "Active" || archivingProjectId !== null))}
-                            title={action.key === "edit" || action.key === "copy" || action.key === "archive" || action.key === "add-scenario" ? undefined : NOT_IMPLEMENTED_HINT}
+                            title={action.key === "view" || action.key === "edit" || action.key === "copy" || action.key === "archive" || action.key === "add-scenario" ? undefined : NOT_IMPLEMENTED_HINT}
                             onClick={() => onRowAction(action.key, project.id)}
                           >
                             {action.key === "copy" && copyingProjectId === project.id ? PROJECT_COPY_MESSAGES.copying : action.key === "archive" && archivingProjectId === project.id ? PROJECT_ARCHIVE_MESSAGES.archiving : action.label}

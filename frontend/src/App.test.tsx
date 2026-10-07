@@ -83,6 +83,48 @@ describe("App", () => {
     expect(screen.getByRole("navigation", { name: "Sections" })).toBeInTheDocument();
   });
 
+  it("opens Overview for the selected Projects row with that project's scenarios", async () => {
+    const alpha = {
+      id: "aaaaaaaa-0000-0000-0000-000000000001",
+      name: "Alpha forecast",
+      status: "Draft",
+      missing_inputs: [],
+      ready_for_approval: false,
+      target_margin_percent: "20.00",
+    };
+    const beta = { ...alpha, id: "bbbbbbbb-0000-0000-0000-000000000001", name: "Beta forecast" };
+    const projects = [
+      { id: "11111111-1111-1111-1111-111111111111", name: "Aurora", client: "Northwind", delivery_period: { start: "2026-01-01", end: "2026-12-31" }, reporting_currency: "PLN", description: "", status: "Active", scenarios: [alpha] },
+      { id: "22222222-2222-2222-2222-222222222222", name: "Helios", client: "Contoso", delivery_period: { start: "2026-01-01", end: "2026-12-31" }, reporting_currency: "EUR", description: "", status: "Active", scenarios: [beta] },
+    ];
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(url).pathname;
+      const body = path === "/health" ? { status: "ok" }
+        : path === "/projects" ? { projects, total: projects.length }
+          : {};
+      return { ok: true, status: 200, json: async () => body };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await screen.findByRole("button", { name: "View Aurora" });
+    fireEvent.click(screen.getByRole("button", { name: "View Aurora" }));
+
+    const main = screen.getByRole("main");
+    expect(await within(main).findByRole("heading", { level: 2, name: "Aurora" })).toBeVisible();
+    const scenarioPicker = within(main).getByRole("combobox", { name: "Scenario" });
+    expect(within(scenarioPicker).getByRole("option", { name: "Alpha forecast" })).toBeInTheDocument();
+    expect(within(scenarioPicker).queryByRole("option", { name: "Beta forecast" })).toBeNull();
+
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Sections" })).getByRole("button", { name: "Projects" }));
+    await screen.findByRole("button", { name: "View Helios" });
+    fireEvent.click(screen.getByRole("button", { name: "View Helios" }));
+    expect(await within(main).findByRole("heading", { level: 2, name: "Helios" })).toBeVisible();
+    const heliosScenarioPicker = within(main).getByRole("combobox", { name: "Scenario" });
+    expect(within(heliosScenarioPicker).getByRole("option", { name: "Beta forecast" })).toBeInTheDocument();
+    expect(within(heliosScenarioPicker).queryByRole("option", { name: "Alpha forecast" })).toBeNull();
+  });
+
   // --- SC-2-02, K-09 ---------------------------------------------------------------------------
 
   it("makes the catalogue screen reachable from the running application, not only from its own test", async () => {
