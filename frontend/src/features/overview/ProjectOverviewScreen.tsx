@@ -1,8 +1,8 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
-import { ApiError, RequestTimeoutError, getProjects, getScenarioPeriodResults } from "../../api/client";
+import { ApiError, RequestTimeoutError, getProjects, getScenarioPeriodResults, getScenarioResults } from "../../api/client";
 import type { ProjectListItem, ScenarioListItem } from "../../api/contracts/projects";
-import type { ScenarioPeriodResult, ScenarioPeriodResults } from "../../api/contracts/scenarioResults";
+import type { ScenarioPeriodResult, ScenarioPeriodResults, ScenarioResults } from "../../api/contracts/scenarioResults";
 import { formatCalendarMonth } from "../../lib/dates";
 import { formatFteString } from "../../lib/fte";
 import { NOT_APPLICABLE, formatMoneyString, formatPercentString } from "../../lib/money";
@@ -40,6 +40,16 @@ import {
   OVERVIEW_SELECT_SCENARIO,
   OVERVIEW_TARGET_MARGIN,
   OVERVIEW_TITLE,
+  OVERVIEW_TOTAL_COST,
+  OVERVIEW_MONTHLY_TREND,
+  OVERVIEW_COST_COMPOSITION,
+  OVERVIEW_APPROVAL_READINESS,
+  OVERVIEW_READY_FOR_APPROVAL,
+  OVERVIEW_INPUTS_REQUIRED,
+  OVERVIEW_PERIODLESS_NOTE,
+  OVERVIEW_LOADING_SUMMARY,
+  OVERVIEW_SUMMARY_READ_AGAIN,
+  OVERVIEW_SUMMARY_UNAVAILABLE,
   OVERVIEW_PERIOD_SECTION_LABEL,
   OVERVIEW_TABLE_CAPTION,
   OVERVIEW_UNALLOCATED_EXPLANATION,
@@ -65,6 +75,12 @@ type ResultsState =
   | { kind: "timed-out" }
   | { kind: "unreadable" }
   | { kind: "failed" };
+
+type SummaryState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; projectId: string; scenarioId: string; results: ScenarioResults }
+  | { kind: "unavailable" };
 
 function projectsFailure(error: unknown): ProjectsState {
   if (error instanceof RequestTimeoutError) return { kind: "timed-out" };
@@ -92,12 +108,13 @@ const RESULTS_FAILURE_TEXT: Readonly<Record<Exclude<ResultsState["kind"], "idle"
 
 const RETRYABLE = new Set<ResultsState["kind"]>(["conflict", "timed-out", "unreadable", "failed"]);
 
-export function ProjectOverviewScreen() {
+export function ProjectOverviewScreen({ initialProjectId = null }: { readonly initialProjectId?: string | null } = {}) {
   const headingId = useId();
   const [projects, setProjects] = useState<ProjectsState>({ kind: "loading" });
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(initialProjectId ?? "");
   const [scenarioId, setScenarioId] = useState("");
   const [read, setRead] = useState<ResultsState>({ kind: "idle" });
+  const [summary, setSummary] = useState<SummaryState>({ kind: "idle" });
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
@@ -109,6 +126,14 @@ export function ProjectOverviewScreen() {
     return () => { left = true; controller.abort(); };
   }, []);
 
+  useEffect(() => {
+    if (initialProjectId === null || initialProjectId === undefined || projects.kind !== "ready") return;
+    if (projects.projects.some((project) => project.id === initialProjectId)) {
+      setProjectId(initialProjectId);
+      setScenarioId("");
+    }
+  }, [initialProjectId, projects]);
+
   const projectList = projects.kind === "ready" ? projects.projects : [];
   const selectedProject = projectList.find((project) => project.id === projectId);
   const selectedScenario = selectedProject?.scenarios.find((scenario) => scenario.id === scenarioId);
@@ -118,11 +143,17 @@ export function ProjectOverviewScreen() {
     const controller = new AbortController();
     let left = false;
     setRead({ kind: "loading" });
+    setSummary({ kind: "loading" });
     getScenarioPeriodResults(projectId, scenarioId, controller.signal)
       .then((results) => {
         if (!left) setRead({ kind: "ready", projectId, scenarioId, results });
       })
       .catch((error: unknown) => { if (!left) setRead(resultsFailure(error)); });
+    getScenarioResults(projectId, scenarioId, controller.signal)
+      .then((results) => {
+        if (!left) setSummary({ kind: "ready", projectId, scenarioId, results });
+      })
+      .catch(() => { if (!left) setSummary({ kind: "unavailable" }); });
     return () => { left = true; controller.abort(); };
   }, [projectId, scenarioId, retry]);
 
@@ -130,15 +161,18 @@ export function ProjectOverviewScreen() {
     setProjectId(nextProjectId);
     setScenarioId("");
     setRead({ kind: "idle" });
+    setSummary({ kind: "idle" });
   }
 
   function chooseScenario(nextScenarioId: string) {
     setScenarioId(nextScenarioId);
     setRead({ kind: "loading" });
+    setSummary({ kind: "loading" });
   }
 
   function readAgain() {
     setRead({ kind: "loading" });
+    setSummary({ kind: "loading" });
     setRetry((count) => count + 1);
   }
 
@@ -146,18 +180,32 @@ export function ProjectOverviewScreen() {
     (read.projectId !== projectId || read.scenarioId !== scenarioId)
     ? { kind: "loading" as const }
     : read;
+  const visibleSummary = summary.kind === "ready" &&
+    (summary.projectId !== projectId || summary.scenarioId !== scenarioId)
+    ? { kind: "loading" as const }
+    : summary;
 
   return (
     <section className="overview" aria-labelledby={headingId}>
-      <h2 id={headingId} className="overview__title" tabIndex={-1}>{OVERVIEW_TITLE}</h2>
-      <p className="overview__description">{OVERVIEW_DESCRIPTION}</p>
+      <div className="overview__page-heading">
+        <div>
+          <h2 id={headingId} className="overview__title" tabIndex={-1}>
+            {selectedProject?.name ?? OVERVIEW_TITLE}
+          </h2>
+          <p className="overview__description">
+            {selectedProject ? `${selectedProject.client} / Project economics` : OVERVIEW_DESCRIPTION}
+          </p>
+        </div>
+      </div>
 
       {projects.kind === "loading" && <p role="status">{OVERVIEW_LOADING_PROJECTS}</p>}
       {projects.kind === "denied" && <p role="status" className="overview__attention">{OVERVIEW_PROJECTS_DENIED}</p>}
       {projects.kind === "timed-out" && <p role="status" className="overview__attention">{OVERVIEW_PROJECTS_TIMEOUT}</p>}
       {projects.kind === "failed" && <p role="status" className="overview__attention">{OVERVIEW_PROJECTS_FAILED}</p>}
       {projects.kind === "ready" && (
-        <div className="overview__selectors">
+        <div className="overview__scenario-bar">
+          <span className="overview__scenario-label">Scenario</span>
+          <div className="overview__selectors">
           <label>
             {OVERVIEW_PROJECT_LABEL}
             <select value={projectId} onChange={(event) => chooseProject(event.currentTarget.value)}>
@@ -176,10 +224,25 @@ export function ProjectOverviewScreen() {
           )}
           {selectedProject && selectedProject.scenarios.length === 0 && <p role="status">{OVERVIEW_NO_SCENARIOS}</p>}
           {projects.projects.length === 0 && <p role="status">{OVERVIEW_NO_PROJECTS}</p>}
+          </div>
+          {selectedProject && (
+            <div className="overview__project-context">
+              <span>{formatCalendarMonth(selectedProject.delivery_period.start)} – {formatCalendarMonth(selectedProject.delivery_period.end)}</span>
+              <span>{selectedProject.reporting_currency}</span>
+              {selectedScenario && <span className="overview__status" data-scenario-status={selectedScenario.status}>{selectedScenario.status}</span>}
+            </div>
+          )}
         </div>
       )}
 
       {selectedScenario && visibleRead.kind === "loading" && <p role="status">{OVERVIEW_LOADING_RESULTS}</p>}
+      {selectedScenario && visibleSummary.kind === "loading" && visibleRead.kind !== "loading" && <p role="status">{OVERVIEW_LOADING_SUMMARY}</p>}
+      {selectedScenario && visibleSummary.kind === "unavailable" && (
+        <div>
+          <p role="status" className="overview__summary-note">{OVERVIEW_SUMMARY_UNAVAILABLE}</p>
+          <button type="button" className="button button--secondary" onClick={readAgain}>{OVERVIEW_SUMMARY_READ_AGAIN}</button>
+        </div>
+      )}
       {visibleRead.kind !== "idle" && visibleRead.kind !== "loading" && visibleRead.kind !== "ready" && (
         <div>
           <p role="status" className="overview__attention" data-results-failure={visibleRead.kind}>
@@ -189,24 +252,51 @@ export function ProjectOverviewScreen() {
         </div>
       )}
       {visibleRead.kind === "ready" && selectedScenario && (
-        <PeriodResults results={visibleRead.results} scenario={selectedScenario} />
+        <PeriodResults
+          results={visibleRead.results}
+          summary={visibleSummary.kind === "ready" ? visibleSummary.results : null}
+          scenario={selectedScenario}
+        />
       )}
     </section>
   );
 }
 
-function PeriodResults({ results, scenario }: { results: ScenarioPeriodResults; scenario: ScenarioListItem }) {
+function PeriodResults({ results, summary, scenario }: { results: ScenarioPeriodResults; summary: ScenarioResults | null; scenario: ScenarioListItem }) {
   const reportingCurrency = results.reporting_currency;
   return (
     <div className="overview__results" data-scenario-status={results.scenario_status}>
-      <div className="overview__scenario-heading">
-        <h3>{scenario.name}</h3>
-        <span>{results.scenario_status}</span>
-        {results.scenario_status === "Approved" && <span>{OVERVIEW_APPROVED_SNAPSHOT}</span>}
-      </div>
-      {results.target_margin_percent !== null && (
+      {results.scenario_status === "Approved" && <p className="overview__snapshot">{OVERVIEW_APPROVED_SNAPSHOT}</p>}
+      {results.target_margin_percent !== null && summary === null && (
         <p className="overview__target">{OVERVIEW_TARGET_MARGIN} {formatPercentString(results.target_margin_percent)}</p>
       )}
+      {summary && <SummaryCards summary={summary} target={results.target_margin_percent} />}
+      <div className="overview__dashboard-grid">
+        <section className="overview__panel overview__trend" aria-labelledby="overview-trend-heading">
+          <div className="overview__panel-heading">
+            <div>
+              <h3 id="overview-trend-heading">{OVERVIEW_MONTHLY_TREND}</h3>
+              <p>{OVERVIEW_PERIODLESS_NOTE}</p>
+            </div>
+            <div className="overview__legend" aria-hidden="true">
+              <span><i className="overview__legend-revenue" />{OVERVIEW_REVENUE}</span>
+              <span><i className="overview__legend-cost" />{OVERVIEW_PERIOD_COST}</span>
+            </div>
+          </div>
+          {results.periods.length === 0 ? <p role="status">{OVERVIEW_EMPTY_PERIODS}</p> : (
+            <MonthlyTrend periods={results.periods} reportingCurrency={reportingCurrency} />
+          )}
+        </section>
+        <div className="overview__side-panels">
+          {summary && <CostComposition summary={summary} />}
+          <section className="overview__panel overview__readiness" aria-labelledby="overview-readiness-heading">
+            <h3 id="overview-readiness-heading">{OVERVIEW_APPROVAL_READINESS}</h3>
+            <p className={scenario.ready_for_approval ? "overview__readiness-state" : "overview__readiness-state overview__readiness-state--pending"}>
+              {scenario.ready_for_approval ? OVERVIEW_READY_FOR_APPROVAL : `${OVERVIEW_INPUTS_REQUIRED}: ${scenario.missing_inputs.length}`}
+            </p>
+          </section>
+        </div>
+      </div>
       <section aria-label={OVERVIEW_PERIOD_SECTION_LABEL}>
         {results.periods.length === 0 ? <p role="status">{OVERVIEW_EMPTY_PERIODS}</p> : (
           <div className="overview__table-wrap">
@@ -241,6 +331,96 @@ function PeriodResults({ results, scenario }: { results: ScenarioPeriodResults; 
       </section>
     </div>
   );
+}
+
+function SummaryCards({ summary, target }: { summary: ScenarioResults; target: string | null }) {
+  const currency = summary.revenue.state === "calculated" ? summary.revenue.currency : null;
+  return (
+    <section className="overview__metrics" aria-label="Scenario summary">
+      <Metric label={OVERVIEW_REVENUE} value={periodMoney(summary.revenue.amount, currency)} />
+      <Metric label={OVERVIEW_TOTAL_COST} value={periodMoney(summary.included_cost, currency)} />
+      <Metric label={OVERVIEW_PROFIT} value={periodMoney(summary.profit, currency)} />
+      <Metric label={OVERVIEW_MARGIN} value={periodPercent(summary.margin)} accent>
+        {target !== null && <span>{OVERVIEW_TARGET_MARGIN} {formatPercentString(target)}</span>}
+      </Metric>
+    </section>
+  );
+}
+
+function Metric({ label, value, accent = false, children }: { label: string; value: string; accent?: boolean; children?: ReactNode }) {
+  return (
+    <article className={`overview__metric${accent ? " overview__metric--accent" : ""}`}>
+      <h3>{label}</h3>
+      <p>{value}</p>
+      {children && <div className="overview__metric-note">{children}</div>}
+    </article>
+  );
+}
+
+function MonthlyTrend({ periods, reportingCurrency }: { periods: ScenarioPeriodResult[]; reportingCurrency: string | null }) {
+  const values = periods.flatMap((period) => [chartAmount(period.revenue), chartAmount(period.period_cost)]).filter((value): value is number => value !== null);
+  const max = Math.max(...values, 0);
+  return (
+    <figure className="overview__chart" aria-label="Monthly revenue and period cost">
+      <div className="overview__chart-grid" aria-hidden="true">
+        {periods.map((period) => {
+          const revenue = chartAmount(period.revenue);
+          const cost = chartAmount(period.period_cost);
+          const revenueHeight = chartHeight(revenue, max);
+          const costHeight = chartHeight(cost, max);
+          return (
+            <div className="overview__chart-month" key={period.period_month}>
+              <div className="overview__bars">
+                <svg className="overview__bar-chart" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+                  <rect className="overview__bar overview__bar--revenue" x="8" y={100 - revenueHeight} width="34" height={revenueHeight} />
+                  <rect className="overview__bar overview__bar--cost" x="58" y={100 - costHeight} width="34" height={costHeight} />
+                </svg>
+              </div>
+              <span className="overview__chart-label">{formatCalendarMonth(period.period_month)}</span>
+            </div>
+          );
+        })}
+      </div>
+      <figcaption className="visually-hidden">
+        {periods.map((period) => `${formatCalendarMonth(period.period_month)}: ${periodMoney(period.revenue, period.revenue_currency ?? reportingCurrency)}, ${OVERVIEW_PERIOD_COST.toLowerCase()} ${periodMoney(period.period_cost, period.period_cost_currency ?? reportingCurrency)}.`).join(" ")}
+      </figcaption>
+    </figure>
+  );
+}
+
+function CostComposition({ summary }: { summary: ScenarioResults }) {
+  const base = periodMoney(summary.personnel_cost.amount, summary.personnel_cost.currency);
+  const absence = periodMoney(summary.personnel_cost.paid_absence_amount, summary.personnel_cost.paid_absence_currency);
+  const additional = periodMoney(summary.additional_cost.amount, summary.additional_cost.currency);
+  const revenueCurrency = summary.revenue.state === "calculated" ? summary.revenue.currency : null;
+  return (
+    <section className="overview__panel overview__composition" aria-labelledby="overview-composition-heading">
+      <h3 id="overview-composition-heading">{OVERVIEW_COST_COMPOSITION}</h3>
+      <CostLine label={OVERVIEW_PERSONNEL_COST} value={base} />
+      <CostLine label="Paid absence" value={absence} />
+      <CostLine label={OVERVIEW_ADDITIONAL_COST} value={additional} />
+      <div className="overview__composition-total">
+        <CostLine label={OVERVIEW_TOTAL_COST} value={periodMoney(summary.included_cost, revenueCurrency)} />
+      </div>
+    </section>
+  );
+}
+
+function CostLine({ label, value }: { label: string; value: string }) {
+  return <div className="overview__cost-line"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function chartAmount(value: string | null): number | null {
+  if (value === null || value === "n/a") return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+function chartHeight(value: number | null, max: number): number {
+  if (value === null || max <= 0 || value <= 0) return 0;
+  // Numeric conversion is used only for visual bar geometry. Displayed money always stays on the
+  // exact fixed-point formatting path above.
+  return Math.max(2, (value / max) * 100);
 }
 
 function PeriodRow({ period, reportingCurrency }: { period: ScenarioPeriodResult; reportingCurrency: string | null }) {
