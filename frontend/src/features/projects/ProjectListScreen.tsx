@@ -75,7 +75,13 @@ function toFailureState(error: unknown): ScreenState {
   return { kind: "failed" };
 }
 
-export function ProjectListScreen({ recoveryStorage = window.sessionStorage, onViewProject }: { readonly recoveryStorage?: Storage; readonly onViewProject?: (projectId: string) => void } = {}) {
+interface ProjectListScreenProps {
+  readonly recoveryStorage?: Storage;
+  readonly onViewProject?: (projectId: string) => void;
+  readonly screenTitle?: "Projects" | "Staffing plan";
+}
+
+export function ProjectListScreen({ recoveryStorage = window.sessionStorage, onViewProject, screenTitle = "Projects" }: ProjectListScreenProps = {}) {
   const [state, setState] = useState<ScreenState>({ kind: "loading" });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -372,7 +378,7 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage, onV
                 to `document.body` when the rail entry that held it leaves the DOM (Reviewer
                 R-03, SC-2-02). */}
             <h2 id="project-list-heading" className="card__title" tabIndex={-1}>
-              Projects
+              {screenTitle}
             </h2>
             {/* The toolbar belongs to a list that exists. A denied read renders a screen with no
                 action controls at all — not a toolbar above an empty table (ADR-0005). */}

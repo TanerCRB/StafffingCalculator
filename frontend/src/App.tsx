@@ -28,11 +28,15 @@ export function App() {
   // The shell is chrome only: it renders the screen it is given and reads nothing of its own. The
   // screen not named here is not mounted at all, so it fetches nothing in the background.
   let screen;
-  if (activeScreen === "projects") {
-    screen = <ProjectListScreen onViewProject={(projectId) => {
-      setOverviewProjectId(projectId);
-      setActiveScreen("overview");
-    }} />;
+  if (activeScreen === "projects" || activeScreen === "staffing-plan") {
+    screen = <ProjectListScreen
+      key={activeScreen}
+      screenTitle={activeScreen === "staffing-plan" ? "Staffing plan" : "Projects"}
+      onViewProject={(projectId) => {
+        setOverviewProjectId(projectId);
+        setActiveScreen("overview");
+      }}
+    />;
   } else if (activeScreen === "overview") {
     screen = <ProjectOverviewScreen initialProjectId={overviewProjectId} />;
   } else if (activeScreen === "compare-scenarios") {
