@@ -3162,7 +3162,8 @@ history / this file's own change log, not as tracked product work.
   **Out of scope (explicit):** Changing report contents or formats (separate product decision); other backends or delivery channels (separate user need); cross-scenario exports (separate comparison need).
   **Basis:** Issue #241; `Wymagania/Requirements_EN.md` F-11 and F-13; backend export in Issue #110 / SC-7-06; ADR-0005.
 
-- [ ] **SC-1-27** — Open a project from Projects in its Overview (F-01, Issue #288).
+- [x] **SC-1-27** — Open a project from Projects in its Overview (F-01, Issue #288).
+  **Done 2026-10-08:** `frontend/src/App.test.tsx` proves that View opens Overview for each selected project from the API response and exposes only that project's scenarios; the [QA mutation](https://github.com/TanerCRB/StafffingCalculator/issues/288#issuecomment-6062974784) killed the test when the handoff was removed. The user confirmed the running-app walkthrough; see [SC-1-27 walkthrough evidence](evidence/SC-1-27-running-app-walkthrough.md). The walkthrough reached the selected scenario's assumptions write, which the local API refused with 403 because the placeholder caller lacks `scenario_assumptions:write`; this does not affect the project-to-Overview handoff.
   *Done when:* Frontend tests prove that activating View opens the existing Overview with the chosen project and its scenarios available, and that the handoff uses a project from the authorized list returned to the user. A running-app walkthrough shows the end-to-end flow.
   **Out of scope (explicit):** A second or replacement Overview; project CRUD or financial-calculation changes; API fields outside the accepted contract; a full prototype shell or demo data.
   **Basis:** Issue #288; `Wymagania/Requirements_EN.md` F-01; SC-1-05/06 and SC-7-11; ADR-0005.
