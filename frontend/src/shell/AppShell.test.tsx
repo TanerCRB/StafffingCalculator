@@ -29,7 +29,7 @@ const ALL_RAIL_ENTRIES = [
   "Versions & approval",
 ];
 
-/** The five screens this application still marks as planned after SC-7-11. */
+/** The four screens this application still marks as planned after SC-3-10. */
 const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
   (label) =>
     label !== "Projects" &&
@@ -37,7 +37,8 @@ const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
     label !== "Roles & rates" &&
     label !== "Working calendars" &&
     label !== "Organization defaults" &&
-    label !== "Overview",
+    label !== "Overview" &&
+    label !== "Staffing plan",
 );
 
 interface ShellOptions {
@@ -220,8 +221,8 @@ describe("AppShell", () => {
     // SC-2-05 (Issue #59, gate-1 decision Q-1) rewrote this test. Until then the rail had two
     // entries and this asserted that the mockup's other screens were absent. The rail now shows the
     // mockup's eleven entries, so the claim — the rail says truthfully what exists — is asserted
-    // the other way round and more strictly: every entry is pinned by name and position. The six
-    // live entries navigate; the five planned entries use the one convention
+    // the other way round and more strictly: every entry is pinned by name and position. The seven
+    // live entries navigate; the four planned entries use the one convention
     // `lib/notImplemented.ts` owns, and do nothing when pressed.
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -231,7 +232,7 @@ describe("AppShell", () => {
     const entries = within(rail()).getAllByRole("listitem");
     expect(entries.map((entry) => entry.textContent)).toEqual(ALL_RAIL_ENTRIES);
 
-    // The five planned entries: a button each, reachable and announced, marked as not available
+    // The four planned entries: a button each, reachable and announced, marked as not available
     // with the tooltip every such control carries, and naming why.
     for (const label of PLANNED_RAIL_ENTRIES) {
       const entry = within(rail()).getByRole("button", { name: label });
@@ -242,7 +243,7 @@ describe("AppShell", () => {
       expect(entry, label).not.toHaveAttribute("aria-current");
     }
 
-    // The six that exist carry none of that.
+    // The seven that exist carry none of that.
     const projects = within(rail()).getByRole("button", { name: "Projects" });
     expect(projects).not.toHaveAttribute("aria-disabled");
     expect(projects.getAttribute("title")).toBeNull();
@@ -259,6 +260,9 @@ describe("AppShell", () => {
     const overview = within(rail()).getByRole("button", { name: "Overview" });
     expect(overview).not.toHaveAttribute("aria-disabled");
     expect(overview.getAttribute("title")).toBeNull();
+    const staffingPlan = within(rail()).getByRole("button", { name: "Staffing plan" });
+    expect(staffingPlan).not.toHaveAttribute("aria-disabled");
+    expect(staffingPlan.getAttribute("title")).toBeNull();
 
     // Pressing a planned entry navigates nowhere and reads nothing.
     for (const label of PLANNED_RAIL_ENTRIES) {
@@ -293,18 +297,11 @@ describe("AppShell", () => {
     expect(within(rail()).queryAllByRole("heading")).toHaveLength(0);
   });
 
-  it("says why each planned screen is missing — a missing screen, not a missing feature, where the backend already exists", () => {
+  it("says why each remaining planned screen is missing", () => {
     renderShell();
 
     const hint = (label: string) =>
       within(rail()).getByRole("button", { name: label }).getAttribute("title") ?? "";
-
-    // Gate-1 decision Q-4: the staffing lines (SC-3-01) are stored and proven; the calendars
-    // (SC-3-02, SC-3-03) were the other such case until SC-3-06 built the screen behind that entry
-    // — it is live now (see the test above) and carries no tooltip at all.
-    expect(hint("Staffing plan")).toBe(
-      `${NOT_IMPLEMENTED_PREFIX} — staffing lines are stored by the backend (SC-3-01); the screen is not built`,
-    );
 
     // The rest name the requirement and the Issue that owns it.
     expect(hint("Additional costs")).toContain("F-08 (Issue #10)");

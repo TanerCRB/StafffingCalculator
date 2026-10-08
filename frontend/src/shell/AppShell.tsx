@@ -10,7 +10,7 @@ import "./AppShell.css";
  *
  * Visual reference: `Wymagania/prototyp/` (design proposal, UI-01). A reference, not a
  * specification: nothing here is pixel-checked. Since SC-2-05 the rail shows the eleven entries of
- * `15-catalog.png` — six live since SC-7-11 (Overview joined the five earlier screens), with the
+ * `15-catalog.png` — seven live since SC-3-10 (Staffing plan joined the six earlier screens), with the
  * remaining project entries still planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
  * The topbar does not follow the mockup's identity chip, "Internal workspace" badge or currency
  * footer: this product has no identity endpoint, no workspace entity and no conversion to state
@@ -47,6 +47,7 @@ export type BackendStatus = "checking" | "ok" | "unreachable";
 export type ScreenKey =
   | "projects"
   | "overview"
+  | "staffing-plan"
   | "compare-scenarios"
   | "roles-and-rates"
   | "working-calendars"
@@ -59,6 +60,7 @@ export type ScreenKey =
 const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
   projects: "Projects",
   overview: "Overview",
+  "staffing-plan": "Staffing plan",
   "compare-scenarios": "Compare scenarios",
   "roles-and-rates": "Roles & rates",
   "working-calendars": "Working calendars",
@@ -70,9 +72,8 @@ const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
  * decision Q-4).
  *
  * Deliberately **not** a `ScreenKey`. `ScreenKey` is the set of screens `App` can mount, and `App`
- * picks between them with a two-way ternary — a third key would type-check and silently mount the
- * catalogue. A planned entry is a label and the reason it is not built, and nothing it does can
- * reach `onNavigate`.
+ * picks between them explicitly. A planned entry is a label and the reason it is not built, and
+ * nothing it does can reach `onNavigate`.
  */
 interface PlannedRailItem {
   readonly label: string;
@@ -93,11 +94,8 @@ function planned(label: string, reason: string): RailEntry {
 }
 
 /*
- * The reasons say what is missing, and no more than is true. One of the remaining screens has a
- * backend already — the staffing lines (SC-3-01) are stored and proven — so for it the missing
- * piece is the screen, not the feature, and the tooltip says so (gate-1 decision Q-4). The working
- * calendars (SC-3-02, SC-3-03) were the other such case until SC-3-06 built the screen behind this
- * entry; the rest name the requirement block and its open Issue.
+ * The reasons say what is missing, and no more than is true. Working calendars became live in
+ * SC-3-06 and Staffing plan in SC-3-10; the remaining entries name their requirement and open Issue.
  */
 
 /** The workspace-level entries. */
@@ -118,16 +116,14 @@ const RAIL_WORKSPACE: readonly RailEntry[] = [
  * the selected project's name ("Commerce platform" — sample data from `UI_SPEC.md`, not a section
  * name); this application has no selected project to name, so the heading is the generic word
  * "Project" (gate-1 decision Q-2). Overview is the first live entry; it keeps project and scenario
- * selection inside its screen, consistent with the existing no-router navigation model.
+ * selection inside its screen, consistent with the existing no-router navigation model. Staffing
+ * plan reuses the Projects selection and scenario cards under its own screen key.
  */
 const RAIL_PROJECT_GROUP_LABEL = "Project";
 
 const RAIL_PROJECT: readonly RailEntry[] = [
   { kind: "screen", key: "overview" },
-  planned(
-    "Staffing plan",
-    "staffing lines are stored by the backend (SC-3-01); the screen is not built",
-  ),
+  { kind: "screen", key: "staffing-plan" },
   planned("Additional costs", "additional costs, F-08 (Issue #10)"),
   planned("Commercial terms", "commercial models and revenue, F-06 (Issue #8)"),
   planned("Assumptions", "configurable scenario assumptions, F-02 (Issue #4)"),
