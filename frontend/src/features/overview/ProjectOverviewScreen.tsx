@@ -366,11 +366,15 @@ function MonthlyTrend({ periods, reportingCurrency }: { periods: ScenarioPeriodR
         {periods.map((period) => {
           const revenue = chartAmount(period.revenue);
           const cost = chartAmount(period.period_cost);
+          const revenueHeight = chartHeight(revenue, max);
+          const costHeight = chartHeight(cost, max);
           return (
             <div className="overview__chart-month" key={period.period_month}>
               <div className="overview__bars">
-                <span className="overview__bar overview__bar--revenue" style={{ height: chartHeight(revenue, max) }} />
-                <span className="overview__bar overview__bar--cost" style={{ height: chartHeight(cost, max) }} />
+                <svg className="overview__bar-chart" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+                  <rect className="overview__bar overview__bar--revenue" x="8" y={100 - revenueHeight} width="34" height={revenueHeight} />
+                  <rect className="overview__bar overview__bar--cost" x="58" y={100 - costHeight} width="34" height={costHeight} />
+                </svg>
               </div>
               <span className="overview__chart-label">{formatCalendarMonth(period.period_month)}</span>
             </div>
@@ -412,11 +416,11 @@ function chartAmount(value: string | null): number | null {
   return Number.isFinite(amount) && amount >= 0 ? amount : null;
 }
 
-function chartHeight(value: number | null, max: number): string {
-  if (value === null || max <= 0 || value <= 0) return "0%";
+function chartHeight(value: number | null, max: number): number {
+  if (value === null || max <= 0 || value <= 0) return 0;
   // Numeric conversion is used only for visual bar geometry. Displayed money always stays on the
   // exact fixed-point formatting path above.
-  return `${Math.max(2, (value / max) * 100)}%`;
+  return Math.max(2, (value / max) * 100);
 }
 
 function PeriodRow({ period, reportingCurrency }: { period: ScenarioPeriodResult; reportingCurrency: string | null }) {

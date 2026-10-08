@@ -518,9 +518,9 @@ export function ProjectListScreen({ recoveryStorage = window.sessionStorage, onV
                             type="button"
                             className="button button--quiet"
                             aria-label={`${action.label} ${project.name}`}
-                            aria-disabled={action.key === "view" || action.key === "edit" || action.key === "copy" || action.key === "add-scenario" || (action.key === "archive" && project.status === "Active") ? undefined : "true"}
+                            aria-disabled={(action.key === "view" && onViewProject) || action.key === "edit" || action.key === "copy" || action.key === "add-scenario" || (action.key === "archive" && project.status === "Active") ? undefined : "true"}
                             disabled={(action.key === "copy" && copyingProjectId !== null) || (action.key === "archive" && (project.status !== "Active" || archivingProjectId !== null))}
-                            title={action.key === "view" || action.key === "edit" || action.key === "copy" || action.key === "archive" || action.key === "add-scenario" ? undefined : NOT_IMPLEMENTED_HINT}
+                            title={(action.key === "view" && onViewProject) || action.key === "edit" || action.key === "copy" || action.key === "archive" || action.key === "add-scenario" ? undefined : NOT_IMPLEMENTED_HINT}
                             onClick={() => onRowAction(action.key, project.id)}
                           >
                             {action.key === "copy" && copyingProjectId === project.id ? PROJECT_COPY_MESSAGES.copying : action.key === "archive" && archivingProjectId === project.id ? PROJECT_ARCHIVE_MESSAGES.archiving : action.label}

@@ -123,7 +123,7 @@
 
 .overview__metric--accent {
   background-color: var(--sc-color-surface-muted);
-  color: var(--sc-color-blue);
+  color: var(--sc-color-blue-deep);
 }
 
 .overview__metric-note {
@@ -194,14 +194,20 @@
   border-radius: 2px;
 }
 
-.overview__legend-revenue,
-.overview__bar--revenue {
+.overview__legend-revenue {
   background-color: var(--sc-color-blue);
 }
 
-.overview__legend-cost,
-.overview__bar--cost {
+.overview__bar--revenue {
+  fill: var(--sc-color-blue);
+}
+
+.overview__legend-cost {
   background-color: var(--sc-color-steel-gray-75);
+}
+
+.overview__bar--cost {
+  fill: var(--sc-color-steel-gray-75);
 }
 
 .overview__chart {
@@ -230,16 +236,17 @@
 .overview__bars {
   display: flex;
   flex: 1 1 auto;
-  align-items: flex-end;
-  justify-content: center;
-  gap: var(--sc-space-1);
   width: 100%;
 }
 
+.overview__bar-chart {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
 .overview__bar {
-  width: min(38%, 1.25rem);
-  min-height: 0;
-  border-radius: 3px 3px 0 0;
+  rx: 2px;
 }
 
 .overview__chart-label {
