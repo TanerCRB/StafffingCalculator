@@ -97,7 +97,7 @@ describe("SC-3-10 Staffing plan navigation", () => {
     expect(await screen.findByText("Select a project to see its scenarios.")).toBeVisible();
     expect(requestedStaffing(fetchMock)).toEqual([]);
     expect(within(screen.getByRole("navigation", { name: "Sections" }))
-      .getByRole("button", { name: "Additional costs" })).toHaveAttribute("aria-disabled", "true");
+      .getByRole("button", { name: "Additional costs" })).not.toHaveAttribute("aria-disabled");
     fireEvent.click(screen.getByRole("button", { name: "Aurora" }));
     expect(await within(section("Baseline")).findByText(STAFFING_EMPTY)).toBeVisible();
     expect(requestedStaffing(fetchMock)).toContain(staffingPath(P1, A));

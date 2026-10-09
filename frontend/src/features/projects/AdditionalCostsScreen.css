@@ -1,0 +1,35 @@
+.costs-screen__title {
+  margin: 0;
+  font-size: var(--sc-font-size-2xl);
+  font-weight: var(--sc-font-weight-bold);
+}
+
+.costs-screen__description {
+  margin: var(--sc-space-2) 0 var(--sc-space-5);
+  color: var(--sc-color-text-muted);
+}
+
+.costs-screen__context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--sc-space-3);
+  padding: var(--sc-space-4);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background-color: var(--sc-color-surface);
+}
+
+.costs-screen__pages {
+  display: flex;
+  align-items: center;
+  gap: var(--sc-space-2);
+}
+
+.costs-screen__selector {
+  display: grid;
+  flex: 1 1 12rem;
+  gap: var(--sc-space-1);
+  color: var(--sc-color-text-muted);
+  font-size: var(--sc-font-size-sm);
+}

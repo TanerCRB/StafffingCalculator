@@ -10,8 +10,8 @@ import "./AppShell.css";
  *
  * Visual reference: `Wymagania/prototyp/` (design proposal, UI-01). A reference, not a
  * specification: nothing here is pixel-checked. Since SC-2-05 the rail shows the eleven entries of
- * `15-catalog.png` — seven live since SC-3-10 (Staffing plan joined the six earlier screens), with the
- * remaining project entries still planned and saying so (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
+ * `15-catalog.png` — eight live since SC-5-14 (Additional costs joined the seven earlier screens),
+ * with the remaining project entries still planned (see `RAIL_WORKSPACE`, `RAIL_PROJECT`).
  * The topbar does not follow the mockup's identity chip, "Internal workspace" badge or currency
  * footer: this product has no identity endpoint, no workspace entity and no conversion to state
  * (gate-1 decision Q-3), and the backend indicator the mockup drops is kept.
@@ -48,6 +48,7 @@ export type ScreenKey =
   | "projects"
   | "overview"
   | "staffing-plan"
+  | "additional-costs"
   | "compare-scenarios"
   | "roles-and-rates"
   | "working-calendars"
@@ -61,6 +62,7 @@ const SCREEN_LABELS: Readonly<Record<ScreenKey, string>> = {
   projects: "Projects",
   overview: "Overview",
   "staffing-plan": "Staffing plan",
+  "additional-costs": "Additional costs",
   "compare-scenarios": "Compare scenarios",
   "roles-and-rates": "Roles & rates",
   "working-calendars": "Working calendars",
@@ -95,7 +97,8 @@ function planned(label: string, reason: string): RailEntry {
 
 /*
  * The reasons say what is missing, and no more than is true. Working calendars became live in
- * SC-3-06 and Staffing plan in SC-3-10; the remaining entries name their requirement and open Issue.
+ * SC-3-06, Staffing plan in SC-3-10, and Additional costs in SC-5-14; the remaining entries name
+ * their requirement and open Issue.
  */
 
 /** The workspace-level entries. */
@@ -117,14 +120,15 @@ const RAIL_WORKSPACE: readonly RailEntry[] = [
  * name); this application has no selected project to name, so the heading is the generic word
  * "Project" (gate-1 decision Q-2). Overview is the first live entry; it keeps project and scenario
  * selection inside its screen, consistent with the existing no-router navigation model. Staffing
- * plan reuses the Projects selection and scenario cards under its own screen key.
+ * plan reuses the Projects selection and scenario cards under its own screen key. Additional costs
+ * has a dedicated cost view with project/scenario selection under its own key.
  */
 const RAIL_PROJECT_GROUP_LABEL = "Project";
 
 const RAIL_PROJECT: readonly RailEntry[] = [
   { kind: "screen", key: "overview" },
   { kind: "screen", key: "staffing-plan" },
-  planned("Additional costs", "additional costs, F-08 (Issue #10)"),
+  { kind: "screen", key: "additional-costs" },
   planned("Commercial terms", "commercial models and revenue, F-06 (Issue #8)"),
   planned("Assumptions", "configurable scenario assumptions, F-02 (Issue #4)"),
   planned(

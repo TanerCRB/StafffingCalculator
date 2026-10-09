@@ -550,6 +550,8 @@ describe("colour contrast", () => {
       "ProjectOverviewScreen.css .overview__selectors label": ["--sc-color-surface"],
       "ProjectOverviewScreen.css .overview__snapshot, .overview__target, .overview__summary-note": ["--sc-color-surface"],
       "ProjectOverviewScreen.css .overview__table thead th": ["--sc-color-page"],
+      "AdditionalCostsScreen.css .costs-screen__description": ["--sc-color-page"],
+      "AdditionalCostsScreen.css .costs-screen__selector": ["--sc-color-surface"],
       "ScenarioAdditionalCostsSection.css .additional-costs__details": ["--sc-color-surface"],
       "ScenarioAdditionalCostsSection.css .additional-costs__details strong": ["--sc-color-surface"],
       "ScenarioAdditionalCostsSection.css .additional-costs__empty": ["--sc-color-surface"],
@@ -630,6 +632,7 @@ describe("colour contrast", () => {
       "ProjectOverviewScreen.css .overview__readiness": ["--sc-color-text", "--sc-color-text-muted", "--sc-color-blue-deep"],
       "ProjectOverviewScreen.css .overview__scenario-bar": ["--sc-color-text", "--sc-color-text-muted"],
       "ProjectOverviewScreen.css .overview__unallocated": ["--sc-color-text"],
+      "AdditionalCostsScreen.css .costs-screen__context": ["--sc-color-text", "--sc-color-text-muted"],
       "ScenarioAdditionalCostsSection.css .additional-costs__form": ["--sc-color-text", "--sc-color-text-muted"],
       "ScenarioAdditionalCostsSection.css .additional-costs__row": ["--sc-color-text", "--sc-color-text-muted"],
       // The page under every screen: headings and body text, and the catalogue's descriptions.

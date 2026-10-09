@@ -29,7 +29,7 @@ const ALL_RAIL_ENTRIES = [
   "Versions & approval",
 ];
 
-/** The four screens this application still marks as planned after SC-3-10. */
+/** The three screens still planned after SC-5-14. */
 const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
   (label) =>
     label !== "Projects" &&
@@ -38,7 +38,8 @@ const PLANNED_RAIL_ENTRIES = ALL_RAIL_ENTRIES.filter(
     label !== "Working calendars" &&
     label !== "Organization defaults" &&
     label !== "Overview" &&
-    label !== "Staffing plan",
+    label !== "Staffing plan" &&
+    label !== "Additional costs",
 );
 
 interface ShellOptions {
@@ -221,8 +222,8 @@ describe("AppShell", () => {
     // SC-2-05 (Issue #59, gate-1 decision Q-1) rewrote this test. Until then the rail had two
     // entries and this asserted that the mockup's other screens were absent. The rail now shows the
     // mockup's eleven entries, so the claim — the rail says truthfully what exists — is asserted
-    // the other way round and more strictly: every entry is pinned by name and position. The seven
-    // live entries navigate; the four planned entries use the one convention
+    // the other way round and more strictly: every entry is pinned by name and position. The eight
+    // live entries navigate; the three planned entries use the one convention
     // `lib/notImplemented.ts` owns, and do nothing when pressed.
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -232,7 +233,7 @@ describe("AppShell", () => {
     const entries = within(rail()).getAllByRole("listitem");
     expect(entries.map((entry) => entry.textContent)).toEqual(ALL_RAIL_ENTRIES);
 
-    // The four planned entries: a button each, reachable and announced, marked as not available
+    // The three planned entries: a button each, reachable and announced, marked as not available
     // with the tooltip every such control carries, and naming why.
     for (const label of PLANNED_RAIL_ENTRIES) {
       const entry = within(rail()).getByRole("button", { name: label });
@@ -243,7 +244,7 @@ describe("AppShell", () => {
       expect(entry, label).not.toHaveAttribute("aria-current");
     }
 
-    // The seven that exist carry none of that.
+    // The eight that exist carry none of that.
     const projects = within(rail()).getByRole("button", { name: "Projects" });
     expect(projects).not.toHaveAttribute("aria-disabled");
     expect(projects.getAttribute("title")).toBeNull();
@@ -263,6 +264,9 @@ describe("AppShell", () => {
     const staffingPlan = within(rail()).getByRole("button", { name: "Staffing plan" });
     expect(staffingPlan).not.toHaveAttribute("aria-disabled");
     expect(staffingPlan.getAttribute("title")).toBeNull();
+    const additionalCosts = within(rail()).getByRole("button", { name: "Additional costs" });
+    expect(additionalCosts).not.toHaveAttribute("aria-disabled");
+    expect(additionalCosts.getAttribute("title")).toBeNull();
 
     // Pressing a planned entry navigates nowhere and reads nothing.
     for (const label of PLANNED_RAIL_ENTRIES) {
@@ -304,7 +308,6 @@ describe("AppShell", () => {
       within(rail()).getByRole("button", { name: label }).getAttribute("title") ?? "";
 
     // The rest name the requirement and the Issue that owns it.
-    expect(hint("Additional costs")).toContain("F-08 (Issue #10)");
     expect(hint("Commercial terms")).toContain("F-06 (Issue #8)");
     expect(hint("Assumptions")).toContain("F-02 (Issue #4)");
     expect(hint("Versions & approval")).toContain("F-12 (Issue #14)");
