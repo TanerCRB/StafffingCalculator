@@ -110,7 +110,7 @@ function installApi(options: {
   readonly costs?: Record<string, AdditionalCostRead[]>;
   readonly post?: (init: RequestInit) => unknown | Promise<unknown>;
   readonly patch?: (init: RequestInit) => unknown | Promise<unknown>;
-  readonly deleteStatus?: number;
+  readonly deleteStatus?: number | (() => number);
   readonly statuses?: Record<string, string>;
   readonly results?: unknown;
 } = {}) {
@@ -142,7 +142,7 @@ function installApi(options: {
         currency: "PLN",
       })) as ReturnType<typeof response>;
     }
-    if (init?.method === "DELETE") return response(options.deleteStatus ?? 204);
+    if (init?.method === "DELETE") return response(typeof options.deleteStatus === "function" ? options.deleteStatus() : options.deleteStatus ?? 204);
     throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url.pathname}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -265,27 +265,30 @@ describe("ScenarioAdditionalCostsSection — SC-5-13", () => {
     expect(JSON.parse(String(deletion?.init?.body))).toEqual({ updated_at: COST_A.updated_at });
   });
 
-  it("test_sc_5_13_04_approved_scenario_cost_write_is_rejected_without_change", async () => {
-    installApi({ statuses: { [SCENARIO_A]: "Approved" }, post: () => response(409, { detail: "Scenario is approved." }) });
+  it("test_sc_5_13_04_approval_after_read_rejects_cost_write_without_change", async () => {
+    let approved = false;
+    installApi({ post: () => response(approved ? 409 : 201, { detail: "Scenario is approved." }) });
     mount();
     await screen.findByText("No additional costs are recorded for this scenario.");
     await openAndFillCreate();
     await screen.findByRole("option", { name: "Cloud" });
+    approved = true;
     fireEvent.click(screen.getByRole("button", { name: "Save cost" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Not saved — the server refused this change.");
     expect(screen.queryByText("88.13 PLN")).not.toBeInTheDocument();
   });
 
-  it("test_sc_5_13_04_approved_scenario_edit_is_rejected_without_change", async () => {
+  it("test_sc_5_13_04_approval_after_read_rejects_edit_without_change", async () => {
+    let approved = false;
     installApi({
       costs: { [SCENARIO_A]: [COST_A] },
-      statuses: { [SCENARIO_A]: "Approved" },
-      patch: () => response(409, { detail: "Scenario is approved." }),
+      patch: () => response(approved ? 409 : 200, { detail: "Scenario is approved." }),
     });
     mount();
     await screen.findByText("Cloud");
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "100.0000" } });
+    approved = true;
     fireEvent.click(screen.getByRole("button", { name: "Save cost" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Not saved — the server refused this change.");
     expect(screen.getByText("12.50 EUR")).toBeInTheDocument();
@@ -293,15 +296,16 @@ describe("ScenarioAdditionalCostsSection — SC-5-13", () => {
     expect(screen.queryByText("Saved. The row below is the server's response.")).not.toBeInTheDocument();
   });
 
-  it("test_sc_5_13_04_approved_scenario_delete_is_rejected_without_change", async () => {
+  it("test_sc_5_13_04_approval_after_read_rejects_delete_without_change", async () => {
+    let approved = false;
     installApi({
       costs: { [SCENARIO_A]: [COST_A] },
-      statuses: { [SCENARIO_A]: "Approved" },
-      deleteStatus: 409,
+      deleteStatus: () => approved ? 409 : 204,
     });
     mount();
     await screen.findByText("Cloud");
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    approved = true;
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Not saved — the server refused this change.");
     expect(screen.getByText("12.50 EUR")).toBeInTheDocument();

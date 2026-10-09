@@ -64,7 +64,7 @@ import "./ScenarioAdditionalCostsSection.css";
 
 type ReadState =
   | { kind: "loading" }
-  | { kind: "ready"; costs: AdditionalCostRead[] }
+  | { kind: "ready"; costs: AdditionalCostRead[]; scenarioStatus: ScenarioStatus }
   | { kind: "denied" | "not-found" | "failed" };
 
 type CategoriesState =
@@ -166,6 +166,7 @@ export function ScenarioAdditionalCostsSection({
   const pendingCreate = useRef<PendingCreate | null>(null);
   const mounted = useRef(true);
   const categoriesController = useRef<AbortController | null>(null);
+  const isApproved = scenarioStatus === "Approved" || (read.kind === "ready" && read.scenarioStatus === "Approved");
 
   useEffect(() => {
     mounted.current = true;
@@ -176,18 +177,18 @@ export function ScenarioAdditionalCostsSection({
   }, []);
 
   useEffect(() => {
-    if (scenarioStatus === "Approved") {
+    if (isApproved) {
       setForm(null);
       setConfirmDeleteId(null);
     }
-  }, [scenarioStatus]);
+  }, [isApproved]);
 
   useEffect(() => {
     const controller = new AbortController();
     let left = false;
     getScenarioAdditionalCosts(projectId, scenarioId, controller.signal)
       .then((result) => {
-        if (!left) setRead({ kind: "ready", costs: result.costs });
+        if (!left) setRead({ kind: "ready", costs: result.costs, scenarioStatus: result.scenario_status });
       })
       .catch((error: unknown) => {
         if (!left) setRead(readFailure(error));
@@ -273,7 +274,7 @@ export function ScenarioAdditionalCostsSection({
         if (current.kind !== "ready") return current;
         const found = current.costs.some((cost) => cost.id === saved.id);
         return {
-          kind: "ready",
+          ...current,
           costs: found
             ? current.costs.map((cost) => (cost.id === saved.id ? saved : cost))
             : [...current.costs, saved],
@@ -303,7 +304,7 @@ export function ScenarioAdditionalCostsSection({
       if (!mounted.current) return;
       setRead((current) =>
         current.kind === "ready"
-          ? { kind: "ready", costs: current.costs.filter((row) => row.id !== cost.id) }
+          ? { ...current, costs: current.costs.filter((row) => row.id !== cost.id) }
           : current,
       );
       setWrite({ kind: "removed" });
@@ -319,13 +320,13 @@ export function ScenarioAdditionalCostsSection({
     <section className="additional-costs" aria-label={`${ADDITIONAL_COSTS_HEADING} for ${scenarioName}`}>
       <div className="additional-costs__heading-row">
         <h4 className="additional-costs__title">{ADDITIONAL_COSTS_HEADING}</h4>
-        {scenarioStatus !== "Approved" && (
+        {!isApproved && (
           <button type="button" className="button button--secondary" onClick={openCreate} disabled={read.kind !== "ready" || writing || deletingId !== null}>
             {ADD_COST}
           </button>
         )}
       </div>
-      {scenarioStatus === "Approved" && <p className="scenario-card__metric">{APPROVED_ADDITIONAL_COSTS_NOTE}</p>}
+      {isApproved && <p className="scenario-card__metric">{APPROVED_ADDITIONAL_COSTS_NOTE}</p>}
 
       {read.kind === "loading" && <p role="status">{READ_LOADING}</p>}
       {read.kind === "denied" && <p role="alert">{READ_DENIED}</p>}
@@ -351,7 +352,7 @@ export function ScenarioAdditionalCostsSection({
                   <span>{COST_TYPE_LABELS[cost.cost_type]}</span>
                   <span>{FUNDING_SOURCE}: {FUNDING_SOURCE_LABELS[cost.funding_source]}</span>
                 </div>
-                {scenarioStatus !== "Approved" && <div className="additional-costs__actions">
+                {!isApproved && <div className="additional-costs__actions">
                   <button type="button" className="button button--quiet" onClick={() => openEdit(cost)} disabled={writing || deletingId !== null}>
                     {EDIT_COST}
                   </button>
@@ -374,7 +375,7 @@ export function ScenarioAdditionalCostsSection({
         )
       )}
 
-      {form !== null && scenarioStatus !== "Approved" && (
+      {form !== null && !isApproved && (
         <form className="additional-costs__form" onSubmit={(event) => void submit(event)}>
           <label>
             {CATEGORY}

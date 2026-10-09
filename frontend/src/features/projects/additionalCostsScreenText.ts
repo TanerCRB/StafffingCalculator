@@ -1,0 +1,13 @@
+export const COSTS_SCREEN_TITLE = "Additional costs";
+export const COSTS_SCREEN_DESCRIPTION = "Choose a project and scenario to manage its saved additional costs.";
+export const COSTS_PROJECT_LABEL = "Project";
+export const COSTS_SCENARIO_LABEL = "Scenario";
+export const COSTS_SELECT_PROJECT = "Select a project";
+export const COSTS_SELECT_SCENARIO = "Select a scenario";
+export const COSTS_NO_SELECTION = "Select a project and scenario to view additional costs.";
+export const COSTS_NO_PROJECTS = "No projects are available.";
+export const COSTS_NO_SCENARIOS = "This project has no scenarios.";
+export const COSTS_PROJECTS_LOADING = "Loading projects…";
+export const COSTS_PROJECTS_DENIED = "Projects could not be read with the current access.";
+export const COSTS_PROJECTS_FAILED = "Projects could not be loaded.";
+export const COSTS_PROJECTS_RETRY = "Read projects again";
